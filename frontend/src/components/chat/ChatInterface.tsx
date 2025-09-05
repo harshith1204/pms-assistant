@@ -6,6 +6,7 @@ import { Send, StopCircle, Brain, Eye, EyeOff, Wifi, WifiOff } from "lucide-reac
 import { ChatMessage } from "./ChatMessage";
 import { useToast } from "@/hooks/use-toast";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { parseThinkTags } from "@/lib/message-parser";
 
 interface Message {
   id: string;
@@ -65,13 +66,32 @@ export function ChatInterface() {
         
       case "llm_end":
         if (currentStreamingId && currentStreamingMessage) {
-          const newMessage: Message = {
-            id: currentStreamingId,
-            type: "assistant",
-            content: currentStreamingMessage,
-            timestamp,
-          };
-          setMessages(prev => [...prev, newMessage]);
+          // Parse think tags from the accumulated message
+          const parsed = parseThinkTags(currentStreamingMessage);
+          const newMessages: Message[] = [];
+          
+          // Add thought messages if any
+          parsed.thoughts.forEach((thought, index) => {
+            newMessages.push({
+              id: `${currentStreamingId}-thought-${index}`,
+              type: "thought",
+              content: thought,
+              timestamp,
+            });
+          });
+          
+          // Add the main assistant message (without think tags)
+          if (parsed.mainContent) {
+            newMessages.push({
+              id: currentStreamingId,
+              type: "assistant",
+              content: parsed.mainContent,
+              timestamp,
+            });
+          }
+          
+          // Add all messages at once
+          setMessages(prev => [...prev, ...newMessages]);
           setCurrentStreamingMessage("");
           setCurrentStreamingId(null);
         }
@@ -201,16 +221,45 @@ export function ChatInterface() {
             ))}
             
           {/* Show streaming message if available */}
-          {currentStreamingMessage && (
-            <ChatMessage
-              message={{
-                id: currentStreamingId || "streaming",
-                type: "assistant",
-                content: currentStreamingMessage,
-                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              }}
-            />
-          )}
+          {currentStreamingMessage && (() => {
+            // Parse think tags from the streaming content
+            const parsed = parseThinkTags(currentStreamingMessage);
+            const streamingMessages: JSX.Element[] = [];
+            
+            // Show thought messages if any complete think tags are found
+            parsed.thoughts.forEach((thought, index) => {
+              if (showThinking) {
+                streamingMessages.push(
+                  <ChatMessage
+                    key={`streaming-thought-${index}`}
+                    message={{
+                      id: `streaming-thought-${index}`,
+                      type: "thought",
+                      content: thought,
+                      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    }}
+                  />
+                );
+              }
+            });
+            
+            // Show main content (which may still have incomplete think tags)
+            if (parsed.mainContent || (!parsed.thoughts.length && currentStreamingMessage)) {
+              streamingMessages.push(
+                <ChatMessage
+                  key="streaming-main"
+                  message={{
+                    id: currentStreamingId || "streaming",
+                    type: "assistant",
+                    content: parsed.mainContent || currentStreamingMessage,
+                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  }}
+                />
+              );
+            }
+            
+            return streamingMessages;
+          })()}
 
           {isLoading && !currentStreamingMessage && (
             <div className="flex justify-center">
