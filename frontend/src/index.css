@@ -41,8 +41,6 @@ All colors MUST be HSL.
     --chat-bubble-user-foreground: 0 0% 98%;
     --chat-bubble-assistant: 0 0% 100%;
     --chat-bubble-assistant-foreground: 243 23% 12%;
-    --chat-bubble-thought: 45 93% 95%;
-    --chat-bubble-thought-foreground: 243 23% 12%;
     --chat-bubble-tool: 259 20% 96%;
     --chat-bubble-tool-foreground: 243 23% 12%;
 

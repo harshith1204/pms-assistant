@@ -7,18 +7,20 @@ import { useState } from "react";
 
 interface Message {
   id: string;
-  type: "user" | "assistant" | "thought" | "tool";
+  type: "user" | "assistant" | "tool";
   content: string;
   timestamp: string;
   toolName?: string;
   toolOutput?: any;
+  thoughts?: string;
 }
 
 interface ChatMessageProps {
   message: Message;
+  showThinking?: boolean;
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+export function ChatMessage({ message, showThinking = true }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
 
   const copyToClipboard = () => {
@@ -33,8 +35,6 @@ export function ChatMessage({ message }: ChatMessageProps) {
         return <User className="h-4 w-4" />;
       case "assistant":
         return <Bot className="h-4 w-4" />;
-      case "thought":
-        return <Brain className="h-4 w-4" />;
       case "tool":
         return <Wrench className="h-4 w-4" />;
       default:
@@ -55,12 +55,6 @@ export function ChatMessage({ message }: ChatMessageProps) {
           container: "mr-auto max-w-[80%]",
           card: "bg-chat-bubble-assistant text-chat-bubble-assistant-foreground border",
           icon: "bg-primary text-primary-foreground",
-        };
-      case "thought":
-        return {
-          container: "mr-auto max-w-[80%]",
-          card: "bg-chat-bubble-thought text-chat-bubble-thought-foreground border border-accent/30",
-          icon: "bg-accent text-accent-foreground",
         };
       case "tool":
         return {
@@ -123,12 +117,6 @@ export function ChatMessage({ message }: ChatMessageProps) {
           {/* Header */}
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              {message.type === "thought" && (
-                <Badge variant="secondary" className="text-xs">
-                  <Brain className="h-3 w-3 mr-1" />
-                  Thought Process
-                </Badge>
-              )}
               {message.type === "tool" && message.toolName && (
                 <Badge variant="outline" className="text-xs">
                   <Wrench className="h-3 w-3 mr-1" />
@@ -160,6 +148,20 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
           {/* Content */}
           <div className="prose prose-sm max-w-none">
+            {/* Thought Process Section */}
+            {message.type === "assistant" && message.thoughts && showThinking && (
+              <div className="mb-3 p-3 bg-accent/10 rounded-lg border border-accent/20">
+                <div className="flex items-center gap-2 mb-2">
+                  <Brain className="h-4 w-4 text-accent-foreground/70" />
+                  <span className="text-xs font-medium text-accent-foreground/70">Thought Process</span>
+                </div>
+                <div className="text-xs text-muted-foreground whitespace-pre-wrap">
+                  {message.thoughts}
+                </div>
+              </div>
+            )}
+            
+            {/* Main Content */}
             <div className="whitespace-pre-wrap text-sm">
               {message.content}
             </div>
