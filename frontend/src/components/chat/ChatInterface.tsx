@@ -8,11 +8,12 @@ import { useToast } from "@/hooks/use-toast";
 
 interface Message {
   id: string;
-  type: "user" | "assistant" | "thought" | "tool";
+  type: "user" | "assistant" | "tool";
   content: string;
   timestamp: string;
   toolName?: string;
   toolOutput?: any;
+  thoughts?: string; // Optional field to store thinking content
 }
 
 const initialMessages: Message[] = [
@@ -82,39 +83,28 @@ export function ChatInterface() {
       const responseContent = data.response;
       const thinkMatch = responseContent.match(/<think>([\s\S]*?)<\/think>/);
 
+      let thinkingContent: string | undefined;
+      let finalResponse: string;
+
       if (thinkMatch) {
         // Extract thinking content and final response
-        const thinkingContent = thinkMatch[1].trim();
-        const finalResponse = responseContent.replace(/<think>[\s\S]*?<\/think>/, '').trim();
-
-        // Add thinking message
-        const thinkingMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          type: "thought",
-          content: thinkingContent,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-
-        // Add assistant response message
-        const assistantMessage: Message = {
-          id: (Date.now() + 2).toString(),
-          type: "assistant",
-          content: finalResponse,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-
-        setMessages(prev => [...prev, thinkingMessage, assistantMessage]);
+        thinkingContent = thinkMatch[1].trim();
+        finalResponse = responseContent.replace(/<think>[\s\S]*?<\/think>/, '').trim();
       } else {
-        // No thinking content, just add assistant message
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          type: "assistant",
-          content: responseContent,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-
-        setMessages(prev => [...prev, assistantMessage]);
+        // No thinking content
+        finalResponse = responseContent;
       }
+
+      // Add assistant message with optional thoughts
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: "assistant",
+        content: finalResponse,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        thoughts: thinkingContent,
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
 
       setConversationId(data.conversation_id);
 
@@ -149,11 +139,13 @@ export function ChatInterface() {
       {/* Messages Area */}
       <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
         <div className="space-y-4 max-w-4xl mx-auto">
-          {messages
-            .filter((message) => showThinking || message.type !== "thought")
-            .map((message) => (
-              <ChatMessage key={message.id} message={message} />
-            ))}
+          {messages.map((message) => (
+            <ChatMessage 
+              key={message.id} 
+              message={message} 
+              showThinking={showThinking}
+            />
+          ))}
 
           {isLoading && (
             <div className="flex justify-center">
