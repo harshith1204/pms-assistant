@@ -18,6 +18,10 @@ asyncio-mqtt
 aiohttp
 httpx
 
+# Web framework
+fastapi
+uvicorn[standard]
+
 # Development and testing
 pytest
 pytest-asyncio

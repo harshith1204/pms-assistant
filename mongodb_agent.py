@@ -17,7 +17,7 @@ mongodb_server_config = {
         "command": "npx",
         "args": ["-y", "@mongodb-js/mongodb-mcp-server"],
         "env": {
-            "MONGODB_CONNECTION_STRING": "your_connection_string_here",
+            "MONGODB_CONNECTION_STRING": "mongodb://localhost:27017",
             "MONGODB_DATABASE_NAME": DATABASE_NAME
         }
     }
