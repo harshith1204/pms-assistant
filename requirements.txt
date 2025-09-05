@@ -1,0 +1,23 @@
+# LangGraph and LangChain dependencies
+langgraph
+langchain
+langchain-core
+langchain-ollama
+langchain-community
+
+# MCP (Model Context Protocol) dependencies
+mcp
+langchain-mcp-adapters
+
+python-dotenv
+pydantic
+typing-extensions
+
+# Async and utility libraries
+asyncio-mqtt
+aiohttp
+httpx
+
+# Development and testing
+pytest
+pytest-asyncio
