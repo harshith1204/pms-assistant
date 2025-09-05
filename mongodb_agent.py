@@ -7,6 +7,7 @@ import json
 import asyncio
 from typing import Dict, Any, List
 from pydantic import BaseModel
+import os
 
 # Database configuration
 DATABASE_NAME = "ProjectManagement"
@@ -24,9 +25,19 @@ mongodb_server_config = {
 }
 
 # HTTP-based configuration for Smithery
+# Get API key and profile from environment variables
+MCP_API_KEY = os.getenv("MCP_API_KEY", "")
+MCP_PROFILE = os.getenv("MCP_PROFILE", "")
+
+if not MCP_API_KEY or not MCP_PROFILE:
+    print("Warning: MCP_API_KEY and MCP_PROFILE environment variables not set")
+    print("Please set these environment variables:")
+    print("  export MCP_API_KEY=your_api_key")
+    print("  export MCP_PROFILE=your_profile")
+
 smithery_config = {
     "mongodb": {
-        "url": "https://server.smithery.ai/@mongodb-js/mongodb-mcp-server/mcp?api_key=4fd11c6a-4c6f-45ce-ab0d-24cb4c051779&profile=furious-lemming-rvSkqO",
+        "url": f"https://server.smithery.ai/@mongodb-js/mongodb-mcp-server/mcp?api_key={MCP_API_KEY}&profile={MCP_PROFILE}",
         "transport": "streamable_http"
     }
 }
