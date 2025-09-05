@@ -25,3 +25,4 @@ uvicorn[standard]
 # Development and testing
 pytest
 pytest-asyncio
+websockets  # For WebSocket testing

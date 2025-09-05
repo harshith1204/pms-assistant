@@ -116,8 +116,16 @@ tools = [
     find_documents,
 ]
 
-# Initialize the LLM
-llm = ChatOllama(model="qwen3:0.6b-fp16", temperature=0.3)
+# Initialize the LLM with optimized settings for faster performance
+llm = ChatOllama(
+    model="qwen3:0.6b-fp16",
+    temperature=0.3,
+    num_ctx=2048,  # Smaller context window for faster responses
+    num_predict=256,  # Limit token generation
+    num_thread=8,  # Use multiple threads
+    streaming=True,  # Enable streaming
+    verbose=False
+)
 llm_with_tools = llm.bind_tools(tools)
 
 # Define the agent state
@@ -132,8 +140,76 @@ def call_agent(state: AgentState):
 
     return {"messages": [response]}
 
+async def call_agent_streaming(state: AgentState, callback_handler=None):
+    """Main agent logic with streaming support"""
+    messages = state["messages"]
+    
+    # Create a new LLM instance with the callback handler if provided
+    if callback_handler:
+        streaming_llm = ChatOllama(
+            model="qwen3:0.6b-fp16",
+            temperature=0.3,
+            num_ctx=2048,
+            num_predict=256,
+            num_thread=8,
+            streaming=True,
+            callbacks=[callback_handler]
+        )
+        streaming_llm_with_tools = streaming_llm.bind_tools(tools)
+        response = await streaming_llm_with_tools.ainvoke(messages)
+    else:
+        response = await llm_with_tools.ainvoke(messages)
+    
+    return {"messages": [response]}
+
+async def call_tools_async(state: AgentState, callback_handler=None):
+    """Execute tools based on agent response (async version)"""
+    messages = state["messages"]
+    last_message = messages[-1]
+
+    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+        return {"messages": []}
+
+    tool_results = []
+    for tool_call in last_message.tool_calls:
+        tool_name = tool_call["name"]
+        tool_args = tool_call["args"]
+
+        # Find the corresponding tool
+        tool = next((t for t in tools if t.name == tool_name), None)
+        if tool:
+            try:
+                # Notify callback about tool execution
+                if callback_handler:
+                    await callback_handler.on_tool_start(
+                        {"name": tool_name}, 
+                        str(tool_args)
+                    )
+                
+                # Run the async tool
+                result = await tool.ainvoke(tool_args)
+                
+                if callback_handler:
+                    await callback_handler.on_tool_end(str(result))
+                    
+                tool_results.append(ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_call["id"]
+                ))
+            except Exception as e:
+                error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                if callback_handler:
+                    await callback_handler.on_tool_end(error_msg)
+                    
+                tool_results.append(ToolMessage(
+                    content=error_msg,
+                    tool_call_id=tool_call["id"]
+                ))
+
+    return {"messages": tool_results}
+
 def call_tools(state: AgentState):
-    """Execute tools based on agent response"""
+    """Execute tools based on agent response (sync version)"""
     messages = state["messages"]
     last_message = messages[-1]
 
@@ -213,6 +289,34 @@ class MongoDBAgent:
         # Get the final response
         final_message = result["messages"][-1]
         return final_message.content
+    
+    async def run_streaming(self, query: str, callback_handler=None, websocket=None):
+        """Run the agent with streaming support"""
+        if not self.connected:
+            await self.connect()
+            
+        messages = [HumanMessage(content=query)]
+        state = {"messages": messages}
+        
+        # Create a custom graph for streaming
+        while True:
+            # Call agent with streaming
+            agent_result = await call_agent_streaming(state, callback_handler)
+            state["messages"].extend(agent_result["messages"])
+            
+            last_message = state["messages"][-1]
+            
+            # Check if we need to call tools
+            if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+                # Execute tools
+                tool_result = await call_tools_async(state, callback_handler)
+                state["messages"].extend(tool_result["messages"])
+            else:
+                # No more tools to call, we're done
+                break
+                
+        # Return the final response
+        return state["messages"][-1].content
 
 # Example usage
 async def main():

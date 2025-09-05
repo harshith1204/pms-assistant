@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 
 from mongodb_agent import MongoDBAgent
+from websocket_handler import handle_chat_websocket, ws_manager
 
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
@@ -79,9 +80,21 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
 
+@app.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket):
+    """WebSocket endpoint for streaming chat"""
+    global mongodb_agent
+    
+    if not mongodb_agent:
+        await websocket.close(code=1003, reason="MongoDB agent not initialized")
+        return
+        
+    await handle_chat_websocket(websocket, mongodb_agent)
+
+# Keep a minimal HTTP endpoint for backward compatibility
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
-    """Handle chat requests"""
+    """Handle chat requests (legacy HTTP endpoint)"""
     global mongodb_agent
 
     try:
@@ -134,7 +147,9 @@ async def get_status():
     """Get the current status of the MongoDB agent"""
     return {
         "agent_connected": mongodb_agent is not None and mongodb_agent.connected,
-        "database_name": "ProjectManagement"
+        "database_name": "ProjectManagement",
+        "websocket_clients": len(ws_manager.active_connections),
+        "supports_streaming": True
     }
 
 if __name__ == "__main__":
