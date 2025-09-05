@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, StopCircle, Brain, Eye, EyeOff } from "lucide-react";
+import { Send, StopCircle, Brain, Eye, EyeOff, Wifi, WifiOff } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
 import { useToast } from "@/hooks/use-toast";
+import { useWebSocket } from "@/hooks/use-websocket";
 
 interface Message {
   id: string;
@@ -30,9 +31,110 @@ export function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [showThinking, setShowThinking] = useState(true);
+  const [currentStreamingMessage, setCurrentStreamingMessage] = useState<string>("");
+  const [currentStreamingId, setCurrentStreamingId] = useState<string | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
+  
+  // WebSocket connection
+  const wsUrl = `ws://${window.location.hostname}:8000/ws/chat`;
+  
+  const handleWebSocketMessage = useCallback((data: any) => {
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    switch (data.type) {
+      case "connected":
+        console.log("Connected to chat server", data.client_id);
+        break;
+        
+      case "user_message":
+        setConversationId(data.conversation_id);
+        break;
+        
+      case "llm_start":
+        setIsLoading(true);
+        const messageId = Date.now().toString();
+        setCurrentStreamingId(messageId);
+        setCurrentStreamingMessage("");
+        break;
+        
+      case "token":
+        setCurrentStreamingMessage(prev => prev + data.content);
+        break;
+        
+      case "llm_end":
+        if (currentStreamingId && currentStreamingMessage) {
+          const newMessage: Message = {
+            id: currentStreamingId,
+            type: "assistant",
+            content: currentStreamingMessage,
+            timestamp,
+          };
+          setMessages(prev => [...prev, newMessage]);
+          setCurrentStreamingMessage("");
+          setCurrentStreamingId(null);
+        }
+        break;
+        
+      case "tool_start":
+        const toolStartMessage: Message = {
+          id: Date.now().toString(),
+          type: "tool",
+          content: `Calling ${data.tool_name}...`,
+          timestamp,
+          toolName: data.tool_name,
+        };
+        setMessages(prev => [...prev, toolStartMessage]);
+        break;
+        
+      case "tool_end":
+        const toolEndMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          type: "tool",
+          content: data.output,
+          timestamp,
+          toolOutput: data.output,
+        };
+        setMessages(prev => [...prev, toolEndMessage]);
+        break;
+        
+      case "complete":
+        setIsLoading(false);
+        break;
+        
+      case "error":
+        toast({
+          title: "Error",
+          description: data.message || "An error occurred",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        break;
+    }
+  }, [currentStreamingId, currentStreamingMessage, toast]);
+  
+  const { isConnected, isConnecting, sendMessage } = useWebSocket({
+    url: wsUrl,
+    onMessage: handleWebSocketMessage,
+    onOpen: () => {
+      toast({
+        title: "Connected",
+        description: "Connected to chat server",
+      });
+    },
+    onClose: () => {
+      console.log("Disconnected from chat server");
+    },
+    onError: (error) => {
+      console.error("WebSocket error:", error);
+      toast({
+        title: "Connection Error",
+        description: "Failed to connect to chat server",
+        variant: "destructive",
+      });
+    },
+  });
 
   useEffect(() => {
     // Auto-scroll to bottom when new messages arrive
@@ -46,7 +148,7 @@ export function ChatInterface() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !isConnected) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -58,78 +160,21 @@ export function ChatInterface() {
     setMessages(prev => [...prev, userMessage]);
     const currentInput = input.trim();
     setInput("");
-    setIsLoading(true);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: currentInput,
-          conversation_id: conversationId,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      // Parse thinking content from response
-      const responseContent = data.response;
-      const thinkMatch = responseContent.match(/<think>([\s\S]*?)<\/think>/);
-
-      if (thinkMatch) {
-        // Extract thinking content and final response
-        const thinkingContent = thinkMatch[1].trim();
-        const finalResponse = responseContent.replace(/<think>[\s\S]*?<\/think>/, '').trim();
-
-        // Add thinking message
-        const thinkingMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          type: "thought",
-          content: thinkingContent,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-
-        // Add assistant response message
-        const assistantMessage: Message = {
-          id: (Date.now() + 2).toString(),
-          type: "assistant",
-          content: finalResponse,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-
-        setMessages(prev => [...prev, thinkingMessage, assistantMessage]);
-      } else {
-        // No thinking content, just add assistant message
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          type: "assistant",
-          content: responseContent,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-
-        setMessages(prev => [...prev, assistantMessage]);
-      }
-
-      setConversationId(data.conversation_id);
-
-    } catch (error) {
-      console.error("Error sending message:", error);
+    
+    // Send message via WebSocket
+    const success = sendMessage({
+      type: "message",
+      message: currentInput,
+      conversation_id: conversationId,
+    });
+    
+    if (!success) {
       toast({
         title: "Error",
-        description: "Failed to send message. Please check if the backend is running.",
+        description: "Failed to send message. Not connected to server.",
         variant: "destructive",
       });
-
-      // Re-enable input on error
       setInput(currentInput);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -154,8 +199,20 @@ export function ChatInterface() {
             .map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
+            
+          {/* Show streaming message if available */}
+          {currentStreamingMessage && (
+            <ChatMessage
+              message={{
+                id: currentStreamingId || "streaming",
+                type: "assistant",
+                content: currentStreamingMessage,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              }}
+            />
+          )}
 
-          {isLoading && (
+          {isLoading && !currentStreamingMessage && (
             <div className="flex justify-center">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
@@ -195,7 +252,7 @@ export function ChatInterface() {
                   <Button
                     type="submit"
                     size="sm"
-                    disabled={!input.trim()}
+                    disabled={!input.trim() || !isConnected}
                     className="h-8 w-8 p-0"
                   >
                     <Send className="h-4 w-4" />
@@ -206,6 +263,17 @@ export function ChatInterface() {
           </div>
           <div className="flex justify-between items-center mt-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1">
+                {isConnected ? (
+                  <Wifi className="h-3 w-3 text-green-500" />
+                ) : isConnecting ? (
+                  <Wifi className="h-3 w-3 text-yellow-500 animate-pulse" />
+                ) : (
+                  <WifiOff className="h-3 w-3 text-red-500" />
+                )}
+                {isConnected ? "Connected" : isConnecting ? "Connecting..." : "Disconnected"}
+              </span>
+              <span className="mx-2">•</span>
               <span>Press Enter to send, Shift+Enter for new line</span>
               <Button
                 type="button"
