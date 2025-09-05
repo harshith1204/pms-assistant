@@ -109,11 +109,81 @@ async def find_documents(collection: str, query: Dict[str, Any] = None, database
     except Exception as e:
         return f"Error finding documents: {str(e)}"
 
+@tool
+async def insert_document(collection: str, document: Dict[str, Any], database: str = DATABASE_NAME) -> str:
+    """Insert a document into a collection"""
+    try:
+        result = await mongodb_tools.execute_tool("insert-one", {
+            "database": database,
+            "collection": collection,
+            "document": document
+        })
+        return f"Document inserted: {result}"
+    except Exception as e:
+        return f"Error inserting document: {str(e)}"
+
+@tool
+async def update_document(collection: str, filter: Dict[str, Any], update: Dict[str, Any], database: str = DATABASE_NAME) -> str:
+    """Update a document in a collection"""
+    try:
+        result = await mongodb_tools.execute_tool("update-one", {
+            "database": database,
+            "collection": collection,
+            "filter": filter,
+            "update": update
+        })
+        return f"Document updated: {result}"
+    except Exception as e:
+        return f"Error updating document: {str(e)}"
+
+@tool
+async def delete_document(collection: str, filter: Dict[str, Any], database: str = DATABASE_NAME) -> str:
+    """Delete a document from a collection"""
+    try:
+        result = await mongodb_tools.execute_tool("delete-one", {
+            "database": database,
+            "collection": collection,
+            "filter": filter
+        })
+        return f"Document deleted: {result}"
+    except Exception as e:
+        return f"Error deleting document: {str(e)}"
+
+@tool
+async def find_one_document(collection: str, filter: Dict[str, Any], database: str = DATABASE_NAME) -> str:
+    """Find a single document in a collection"""
+    try:
+        result = await mongodb_tools.execute_tool("find-one", {
+            "database": database,
+            "collection": collection,
+            "filter": filter
+        })
+        return f"Found document: {result}"
+    except Exception as e:
+        return f"Error finding document: {str(e)}"
+
+@tool
+async def create_collection(collection: str, database: str = DATABASE_NAME) -> str:
+    """Create a new collection in the database"""
+    try:
+        result = await mongodb_tools.execute_tool("create-collection", {
+            "database": database,
+            "collection": collection
+        })
+        return f"Collection created: {result}"
+    except Exception as e:
+        return f"Error creating collection: {str(e)}"
+
 # Define the tools list
 tools = [
     list_databases,
     list_collections,
     find_documents,
+    insert_document,
+    update_document,
+    delete_document,
+    find_one_document,
+    create_collection,
 ]
 
 # Initialize the LLM
