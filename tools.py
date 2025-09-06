@@ -303,6 +303,28 @@ async def get_project_work_item_details(project_name: str) -> str:
     except Exception as e:
         return f"❌ Error getting work item details for project '{project_name}': {str(e)}"
 
+# New tool to get total number of projects
+@tool
+async def get_total_project_count() -> str:
+    """Returns the total number of projects across all statuses. Use to answer 'how many total projects are there?'."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "project",
+            "pipeline": [
+                {"$count": "total_projects"}
+            ]
+        })
+
+        if result and len(result) > 0:
+            total = result[0].get("total_projects", 0)
+        else:
+            total = 0
+
+        return f"📦 TOTAL PROJECTS:\nTotal: {total}"
+    except Exception as e:
+        return f"❌ Error getting total project count: {str(e)}"
+
 # Define the tools list with ProjectManagement-specific readonly tools
 tools = [
     get_project_overview,
@@ -316,4 +338,5 @@ tools = [
     search_projects_by_name,
     count_work_items_by_project,
     get_project_work_item_details,
+    get_total_project_count,
 ]
