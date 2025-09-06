@@ -77,38 +77,50 @@ export function ChatInterface() {
 
       case "token":
         const token = data.content;
-        const currentFullContent = currentStreamingMessageRef.current + token;
-
+        
         // Check for think tags
-        if (!isInThinkingModeRef.current && currentFullContent.includes('<think>')) {
-          // Starting thinking mode
-          const thinkStartIndex = currentFullContent.indexOf('<think>');
-          const beforeThink = currentFullContent.substring(0, thinkStartIndex);
-          const afterThink = currentFullContent.substring(thinkStartIndex + 7); // 7 is length of '<think>'
+        if (!isInThinkingModeRef.current) {
+          // Not in thinking mode - check if we're starting
+          const currentFullContent = currentStreamingMessageRef.current + token;
+          
+          if (currentFullContent.includes('<think>')) {
+            // Starting thinking mode
+            const thinkStartIndex = currentFullContent.indexOf('<think>');
+            const beforeThink = currentFullContent.substring(0, thinkStartIndex);
+            const afterThink = currentFullContent.substring(thinkStartIndex + 7); // 7 is length of '<think>'
 
-          // Add content before <think> to regular message
-          if (beforeThink) {
-            setCurrentStreamingMessage(beforeThink);
-            currentStreamingMessageRef.current = beforeThink;
+            // Add content before <think> to regular message
+            if (beforeThink) {
+              setCurrentStreamingMessage(beforeThink);
+              currentStreamingMessageRef.current = beforeThink;
+            }
+
+            // Start thought message
+            const thoughtId = Date.now().toString();
+            setCurrentThoughtId(thoughtId);
+            currentThoughtIdRef.current = thoughtId;
+            setCurrentThoughtMessage(afterThink);
+            currentThoughtMessageRef.current = afterThink;
+            setIsInThinkingMode(true);
+            isInThinkingModeRef.current = true;
+          } else {
+            // Regular content
+            setCurrentStreamingMessage(prev => prev + token);
+            currentStreamingMessageRef.current += token;
           }
+        } else {
+          // In thinking mode - check if we're ending
+          const currentThoughtContent = currentThoughtMessageRef.current + token;
+          
+          if (currentThoughtContent.includes('</think>')) {
+            // Ending thinking mode
+            const thinkEndIndex = currentThoughtContent.indexOf('</think>');
+            const thoughtContent = currentThoughtContent.substring(0, thinkEndIndex);
+            const afterEndThink = currentThoughtContent.substring(thinkEndIndex + 8); // 8 is length of '</think>'
 
-          // Start thought message
-          const thoughtId = Date.now().toString();
-          setCurrentThoughtId(thoughtId);
-          currentThoughtIdRef.current = thoughtId;
-          setCurrentThoughtMessage(afterThink);
-          currentThoughtMessageRef.current = afterThink;
-          setIsInThinkingMode(true);
-          isInThinkingModeRef.current = true;
-        } else if (isInThinkingModeRef.current && currentFullContent.includes('</think>')) {
-          // Ending thinking mode
-          const thinkEndIndex = currentFullContent.indexOf('</think>');
-          const thoughtContent = currentFullContent.substring(0, thinkEndIndex);
-          const afterEndThink = currentFullContent.substring(thinkEndIndex + 8); // 8 is length of '</think>'
-
-          // Update thought message
-          setCurrentThoughtMessage(thoughtContent);
-          currentThoughtMessageRef.current = thoughtContent;
+            // Update thought message
+            setCurrentThoughtMessage(thoughtContent);
+            currentThoughtMessageRef.current = thoughtContent;
 
           // Add thought message to messages array
           if (currentThoughtIdRef.current && thoughtContent) {
@@ -118,7 +130,15 @@ export function ChatInterface() {
               content: thoughtContent,
               timestamp,
             };
-            setMessages(prev => [...prev, thoughtMessage]);
+            console.log("Adding thought message on </think>:", thoughtMessage);
+            setMessages(prev => {
+              console.log("Previous messages count:", prev.length);
+              console.log("Previous messages types:", prev.map(m => m.type));
+              const newMessages = [...prev, thoughtMessage];
+              console.log("New messages count:", newMessages.length);
+              console.log("New messages types:", newMessages.map(m => m.type));
+              return newMessages;
+            });
           }
 
           // Reset thought state
@@ -129,23 +149,25 @@ export function ChatInterface() {
           setIsInThinkingMode(false);
           isInThinkingModeRef.current = false;
 
-          // Add remaining content after </think> to regular message
-          if (afterEndThink) {
-            setCurrentStreamingMessage(prev => prev + afterEndThink);
-            currentStreamingMessageRef.current += afterEndThink;
+            // Add remaining content after </think> to regular message
+            if (afterEndThink) {
+              setCurrentStreamingMessage(prev => prev + afterEndThink);
+              currentStreamingMessageRef.current = currentStreamingMessageRef.current + afterEndThink;
+            }
+          } else {
+            // Accumulate thought content
+            setCurrentThoughtMessage(prev => prev + token);
+            currentThoughtMessageRef.current += token;
           }
-        } else if (isInThinkingModeRef.current) {
-          // Accumulate thought content
-          setCurrentThoughtMessage(prev => prev + token);
-          currentThoughtMessageRef.current += token;
-        } else {
-          // Regular content
-          setCurrentStreamingMessage(prev => prev + token);
-          currentStreamingMessageRef.current += token;
         }
         break;
 
       case "llm_end":
+        console.log("LLM_END event received");
+        console.log("isInThinkingMode:", isInThinkingModeRef.current);
+        console.log("currentThoughtId:", currentThoughtIdRef.current);
+        console.log("currentThoughtMessage:", currentThoughtMessageRef.current);
+        
         // Handle any remaining thought content
         if (isInThinkingModeRef.current && currentThoughtIdRef.current && currentThoughtMessageRef.current) {
           const thoughtMessage: Message = {
@@ -154,7 +176,15 @@ export function ChatInterface() {
             content: currentThoughtMessageRef.current,
             timestamp,
           };
-          setMessages(prev => [...prev, thoughtMessage]);
+          console.log("Adding thought message on llm_end:", thoughtMessage);
+          setMessages(prev => {
+            console.log("Previous messages count before thought:", prev.length);
+            console.log("Previous messages types:", prev.map(m => m.type));
+            const newMessages = [...prev, thoughtMessage];
+            console.log("New messages count after thought:", newMessages.length);
+            console.log("New messages types:", newMessages.map(m => m.type));
+            return newMessages;
+          });
         }
 
         // Add final assistant message if there's content
@@ -179,6 +209,7 @@ export function ChatInterface() {
         currentThoughtIdRef.current = null;
         setIsInThinkingMode(false);
         isInThinkingModeRef.current = false;
+        setIsLoading(false);
         break;
         
       case "tool_start":
@@ -319,11 +350,15 @@ export function ChatInterface() {
       {/* Messages Area */}
       <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
         <div className="space-y-4 max-w-4xl mx-auto">
-          {messages
-            .filter((message) => showThinking || message.type !== "thought")
-            .map((message) => (
+          {(() => {
+            const allMessages = messages;
+            const filteredMessages = allMessages.filter((message) => showThinking || message.type !== "thought");
+            console.log("All messages:", allMessages.length, allMessages.map(m => ({ type: m.type, content: m.content.substring(0, 50) + "..." })));
+            console.log("Filtered messages (showThinking=" + showThinking + "):", filteredMessages.length);
+            return filteredMessages.map((message) => (
               <ChatMessage key={message.id} message={message} />
-            ))}
+            ));
+          })()}
             
           {/* Show streaming thought message if available */}
           {currentThoughtMessage && currentThoughtId && (
