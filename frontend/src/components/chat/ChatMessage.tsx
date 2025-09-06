@@ -97,12 +97,21 @@ export function ChatMessage({ message }: ChatMessageProps) {
       );
     }
 
+    // If the tool output is a string, render it directly to preserve newlines and avoid JSON escaping
+    if (typeof message.toolOutput === "string") {
+      return (
+        <div className="mt-3 p-3 bg-muted/30 rounded-md">
+          <p className="text-xs font-medium mb-2">Output:</p>
+          <pre className="text-xs font-mono whitespace-pre-wrap">{message.toolOutput}</pre>
+        </div>
+      );
+    }
+
+    // Fallback for objects
     return (
       <div className="mt-3 p-3 bg-muted/30 rounded-md">
         <p className="text-xs font-medium mb-2">Output:</p>
-        <pre className="text-xs font-mono whitespace-pre-wrap">
-          {JSON.stringify(message.toolOutput, null, 2)}
-        </pre>
+        <pre className="text-xs font-mono whitespace-pre-wrap">{JSON.stringify(message.toolOutput, null, 2)}</pre>
       </div>
     );
   };
