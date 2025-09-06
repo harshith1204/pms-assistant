@@ -597,6 +597,218 @@ async def get_work_items_breakdown_by_project() -> str:
     except Exception as e:
         return f"❌ Error getting work items breakdown by project: {str(e)}"
 
+@tool
+async def get_cycle_overview() -> str:
+    """Returns cycle status distribution with counts and cycle details. Use for understanding cycle/sprint progress across projects."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "cycle",
+            "pipeline": [
+                {
+                    "$group": {
+                        "_id": "$status",
+                        "count": {"$sum": 1},
+                        "cycles": {"$push": {"title": "$title", "project": "$project", "startDate": "$startDate", "endDate": "$endDate"}}
+                    }
+                },
+                {
+                    "$sort": {"count": -1}
+                }
+            ]
+        })
+        return f"🔄 CYCLE STATUS OVERVIEW:\n{result}"
+    except Exception as e:
+        return f"❌ Error getting cycle overview: {str(e)}"
+
+@tool
+async def get_active_cycles() -> str:
+    """Returns all currently active cycles with their details. Use for tracking ongoing sprints."""
+    try:
+        result = await mongodb_tools.execute_tool("find", {
+            "database": DATABASE_NAME,
+            "collection": "cycle",
+            "filter": {"status": "ACTIVE"},
+            "sort": {"startDate": -1},
+            "limit": 20
+        })
+        return f"⚡ ACTIVE CYCLES:\n{result}"
+    except Exception as e:
+        return f"❌ Error getting active cycles: {str(e)}"
+
+@tool
+async def get_module_overview() -> str:
+    """Returns module status and lead distribution across projects. Use for module portfolio analysis."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "module",
+            "pipeline": [
+                {
+                    "$lookup": {
+                        "from": "project",
+                        "localField": "project._id",
+                        "foreignField": "_id",
+                        "as": "project_info"
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "project": {"$arrayElemAt": ["$project_info.name", 0]},
+                            "state": "$state.name"
+                        },
+                        "count": {"$sum": 1},
+                        "modules": {"$push": {"title": "$title", "lead": "$lead.name"}}
+                    }
+                },
+                {
+                    "$sort": {"count": -1}
+                }
+            ]
+        })
+        return f"📦 MODULE OVERVIEW:\n{result}"
+    except Exception as e:
+        return f"❌ Error getting module overview: {str(e)}"
+
+@tool
+async def get_project_states() -> str:
+    """Returns all project states and their sub-states for workflow management. Use for understanding project workflows."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "projectState",
+            "pipeline": [
+                {
+                    "$lookup": {
+                        "from": "project",
+                        "localField": "projectId",
+                        "foreignField": "_id",
+                        "as": "project_info"
+                    }
+                },
+                {
+                    "$project": {
+                        "project_name": {"$arrayElemAt": ["$project_info.name", 0]},
+                        "state_name": "$name",
+                        "icon": "$icon",
+                        "sub_states": "$subStates"
+                    }
+                },
+                {
+                    "$sort": {"project_name": 1, "state_name": 1}
+                }
+            ]
+        })
+        return f"🔄 PROJECT STATES & WORKFLOWS:\n{result}"
+    except Exception as e:
+        return f"❌ Error getting project states: {str(e)}"
+
+@tool
+async def get_team_member_roles() -> str:
+    """Returns team member role distribution across projects. Use for team structure analysis."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "members",
+            "pipeline": [
+                {
+                    "$group": {
+                        "_id": {
+                            "role": "$role",
+                            "project": "$project.name"
+                        },
+                        "count": {"$sum": 1},
+                        "members": {"$push": {"name": "$name", "email": "$email"}}
+                    }
+                },
+                {
+                    "$sort": {"_id.role": 1, "count": -1}
+                }
+            ]
+        })
+        return f"👥 TEAM MEMBER ROLES:\n{result}"
+    except Exception as e:
+        return f"❌ Error getting team member roles: {str(e)}"
+
+@tool
+async def get_upcoming_cycles() -> str:
+    """Returns upcoming cycles sorted by start date. Use for sprint planning."""
+    try:
+        result = await mongodb_tools.execute_tool("find", {
+            "database": DATABASE_NAME,
+            "collection": "cycle",
+            "filter": {"status": "UPCOMING"},
+            "sort": {"startDate": 1},
+            "limit": 15
+        })
+        return f"📅 UPCOMING CYCLES:\n{result}"
+    except Exception as e:
+        return f"❌ Error getting upcoming cycles: {str(e)}"
+
+@tool
+async def get_module_leads() -> str:
+    """Returns module lead distribution and workload. Use for lead assignment analysis."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "module",
+            "pipeline": [
+                {
+                    "$match": {"lead": {"$exists": True}}
+                },
+                {
+                    "$group": {
+                        "_id": "$lead.name",
+                        "module_count": {"$sum": 1},
+                        "projects": {"$addToSet": "$project"},
+                        "modules": {"$push": {"title": "$title", "project": "$project"}}
+                    }
+                },
+                {
+                    "$sort": {"module_count": -1}
+                }
+            ]
+        })
+        return f"👨‍💼 MODULE LEADS WORKLOAD:\n{result}"
+    except Exception as e:
+        return f"❌ Error getting module leads: {str(e)}"
+
+@tool
+async def get_project_workflow_states(project_name: str) -> str:
+    """Returns workflow states for a specific project. Use for project-specific workflow analysis."""
+    try:
+        # First get project ID
+        project_result = await mongodb_tools.execute_tool("find", {
+            "database": DATABASE_NAME,
+            "collection": "project",
+            "filter": {"name": {"$regex": project_name, "$options": "i"}},
+            "projection": {"_id": 1},
+            "limit": 1
+        })
+
+        # Parse project ID from result
+        import json
+        if isinstance(project_result, list) and len(project_result) > 1:
+            try:
+                project_data = json.loads(project_result[1])
+                project_id = project_data.get("_id", {}).get("$binary", {}).get("base64")
+                if project_id:
+                    # Get states for this project
+                    states_result = await mongodb_tools.execute_tool("find", {
+                        "database": DATABASE_NAME,
+                        "collection": "projectState",
+                        "filter": {"projectId": {"$binary": {"base64": project_id, "subType": "03"}}},
+                        "sort": {"name": 1}
+                    })
+                    return f"🔄 WORKFLOW STATES FOR '{project_name.upper()}':\n{states_result}"
+            except:
+                pass
+
+        return f"❌ Could not find project '{project_name}' or parse project data"
+    except Exception as e:
+        return f"❌ Error getting project workflow states: {str(e)}"
+
 # Define the tools list with ProjectManagement-specific readonly tools
 tools = [
     get_project_overview,
@@ -614,4 +826,13 @@ tools = [
     get_total_work_item_count,
     list_all_projects,
     get_work_items_breakdown_by_project,
+    # New cycle, module, member, and project state tools
+    get_cycle_overview,
+    get_active_cycles,
+    get_module_overview,
+    get_project_states,
+    get_team_member_roles,
+    get_upcoming_cycles,
+    get_module_leads,
+    get_project_workflow_states,
 ]
