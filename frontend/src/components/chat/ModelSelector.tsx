@@ -3,7 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Brain } from "lucide-react";
 
 export function ModelSelector() {
-  const [model, setModel] = useState("gpt-4");
+  const [model, setModel] = useState("qwen3:0.6b");
 
   const availableModels = [
     { value: "qwen3:0.6b", label: "Qwen 3" },
