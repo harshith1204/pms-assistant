@@ -15,6 +15,57 @@ from collections import defaultdict, deque
 tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
 
+MAX_TOOL_OUTPUT_CHARS = 1500
+MAX_TOOL_OUTPUT_ITEMS = 10
+
+def _summarize_tool_output(result: Any, max_chars: int = MAX_TOOL_OUTPUT_CHARS, max_items: int = MAX_TOOL_OUTPUT_ITEMS) -> str:
+    """Summarize potentially large tool output to keep context small and concise."""
+    try:
+        data = None
+        text = None
+
+        if isinstance(result, str):
+            text = result
+            try:
+                data = json.loads(result)
+            except Exception:
+                data = None
+        else:
+            data = result
+
+        if data is not None:
+            if isinstance(data, list):
+                preview = data[:max_items]
+                summary_obj = {
+                    "preview": preview,
+                    "total_items": len(data),
+                    "truncated": len(data) > max_items
+                }
+                text = json.dumps(summary_obj, ensure_ascii=False)
+            elif isinstance(data, dict):
+                # If dict has a large list under common keys, truncate it
+                truncated_text = None
+                for key in ["results", "items", "data"]:
+                    if key in data and isinstance(data[key], list) and len(data[key]) > max_items:
+                        summary_obj = dict(data)
+                        summary_obj[key] = data[key][:max_items]
+                        summary_obj[f"{key}_total_items"] = len(data[key])
+                        summary_obj[f"{key}_truncated"] = True
+                        truncated_text = json.dumps(summary_obj, ensure_ascii=False)
+                        break
+                text = truncated_text or json.dumps(data, ensure_ascii=False)
+            else:
+                text = json.dumps(data, ensure_ascii=False)
+
+        if text is None:
+            text = str(result)
+    except Exception:
+        text = str(result)
+
+    if len(text) > max_chars:
+        return text[:max_chars] + f"... [truncated {len(text)-max_chars} chars]"
+    return text
+
 class ConversationMemory:
     """Manages conversation history for maintaining context"""
 
@@ -41,11 +92,11 @@ class ConversationMemory:
 
         # For now, just return the last few messages to stay within context limits
         # In a production system, you'd want to implement proper token counting
-        if len(messages) <= 10:  # Return all if small conversation
+        if len(messages) <= 6:  # Return all if small conversation
             return messages
         else:
             # Return last 10 messages to keep context manageable
-            return messages[-10:]
+            return messages[-6:]
 
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
@@ -53,14 +104,14 @@ conversation_memory = ConversationMemory()
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
     model="qwen3:0.6b-fp16",
-    temperature=0.3,  # Lower temperature for more consistent responses
-    num_ctx=4096,  # Increased context for better understanding
-    num_predict=512,  # Allow longer responses for detailed insights
-    num_thread=8,  # Use multiple threads for speed
-    streaming=True,  # Enable streaming for real-time responses
-    verbose=True,
-    top_p=0.9,  # Better response diversity
-    top_k=40,  # Focus on high-probability tokens
+    temperature=0.2,  # Tighter, more deterministic outputs
+    num_ctx=4096,
+    num_predict=1024,  # Reduce mid-sentence cutoffs
+    num_thread=8,
+    streaming=True,
+    verbose=False,  # Reduce unnecessary verbosity
+    top_p=0.8,
+    top_k=25,
 )
 
 # Enhanced system prompt for better multi-step planning recognition
@@ -86,6 +137,13 @@ When using execute_multi_collection_plan, provide a JSON array of steps where ea
 - "args": the operation arguments
 
 For simple single-collection queries, use the individual collection tools (query_project, aggregate_work_item, etc.).
+
+RESPONSE STYLE:
+- Be concise and direct. Prefer short paragraphs or bullet points.
+- Default to summaries over raw data. If results are long, show top 10 items and totals.
+- Keep answers under ~150 words unless asked to elaborate.
+- Do not repeat yourself. Stop when the question is answered.
+- Do not include raw JSON longer than 1500 characters; summarize instead.
 """
 
 # Bind tools to the LLM for tool calling with enhanced prompt
@@ -109,6 +167,11 @@ class ToolCallingCallbackHandler(AsyncCallbackHandler):
 
     async def on_llm_new_token(self, token: str, **kwargs):
         """Stream each token as it's generated"""
+        if not token:
+            return
+        # Drop overly verbose whitespace-only tokens
+        if token.strip() == "":
+            return
         if self.websocket:
             await self.websocket.send_json({
                 "type": "token",
@@ -286,8 +349,9 @@ class MongoDBAgent:
                     if tool:
                         # Execute the tool
                         result = await tool.ainvoke(tool_call["args"])
+                        summarized = _summarize_tool_output(result)
                         tool_message = ToolMessage(
-                            content=str(result),
+                            content=summarized,
                             tool_call_id=tool_call["id"]
                         )
                         messages.append(tool_message)
@@ -345,10 +409,11 @@ class MongoDBAgent:
                             str(tool_call["args"])
                         )
                         result = await tool.ainvoke(tool_call["args"])
-                        await callback_handler.on_tool_end(str(result))
+                        summarized = _summarize_tool_output(result)
+                        await callback_handler.on_tool_end(summarized)
 
                         tool_message = ToolMessage(
-                            content=str(result),
+                            content=summarized,
                             tool_call_id=tool_call["id"]
                         )
                         messages.append(tool_message)
