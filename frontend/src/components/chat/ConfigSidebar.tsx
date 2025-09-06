@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
@@ -12,15 +12,19 @@ import { Brain, Database, Wrench, Zap } from "lucide-react";
 
 interface ConfigSidebarProps {
   open: boolean;
+  onConfigChange?: (config: any) => void;
 }
 
-export function ConfigSidebar({ open }: ConfigSidebarProps) {
+export function ConfigSidebar({ open, onConfigChange }: ConfigSidebarProps) {
   const [temperature, setTemperature] = useState([0.4]);
   const [contextWindow, setContextWindow] = useState([4096]);
   const [model, setModel] = useState("gpt-4");
   const [showThoughts, setShowThoughts] = useState(true);
   const [enableMCP, setEnableMCP] = useState(true);
   const [selectedTools, setSelectedTools] = useState(["list-collections", "list-databases"]);
+  const [optimizeForSpeed, setOptimizeForSpeed] = useState(false);
+  const [adaptiveContext, setAdaptiveContext] = useState(true);
+  const [preserveThinking, setPreserveThinking] = useState(true);
 
   const availableModels = [
     { value: "gpt-4", label: "GPT-4" },
@@ -44,6 +48,23 @@ export function ConfigSidebar({ open }: ConfigSidebarProps) {
         : [...prev, toolId]
     );
   };
+
+  // Notify parent component of config changes
+  useEffect(() => {
+    const config = {
+      temperature: temperature[0],
+      contextWindow: contextWindow[0],
+      model,
+      showThoughts,
+      enableMCP,
+      selectedTools,
+      optimizeForSpeed,
+      adaptiveContext,
+      preserveThinking,
+    };
+    onConfigChange?.(config);
+  }, [temperature, contextWindow, model, showThoughts, enableMCP, selectedTools, 
+      optimizeForSpeed, adaptiveContext, preserveThinking, onConfigChange]);
 
   const getCategoryIcon = (category: string) => {
     switch (category) {
@@ -146,6 +167,45 @@ export function ConfigSidebar({ open }: ConfigSidebarProps) {
                   <p className="text-xs text-muted-foreground">Model Context Protocol integration</p>
                 </div>
                 <Switch checked={enableMCP} onCheckedChange={setEnableMCP} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Context Management */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Brain className="h-4 w-4 text-primary" />
+                Context Management
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label className="text-xs font-medium">Optimize for Speed</Label>
+                  <p className="text-xs text-muted-foreground">Remove thinking content for faster responses</p>
+                </div>
+                <Switch checked={optimizeForSpeed} onCheckedChange={setOptimizeForSpeed} />
+              </div>
+
+              <Separator />
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label className="text-xs font-medium">Adaptive Context</Label>
+                  <p className="text-xs text-muted-foreground">Automatically adjust context based on complexity</p>
+                </div>
+                <Switch checked={adaptiveContext} onCheckedChange={setAdaptiveContext} />
+              </div>
+
+              <Separator />
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label className="text-xs font-medium">Preserve Recent Thinking</Label>
+                  <p className="text-xs text-muted-foreground">Keep latest thinking content uncompressed</p>
+                </div>
+                <Switch checked={preserveThinking} onCheckedChange={setPreserveThinking} />
               </div>
             </CardContent>
           </Card>

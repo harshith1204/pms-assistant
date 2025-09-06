@@ -13,6 +13,7 @@ from websocket_handler import handle_chat_websocket, ws_manager
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
+    optimize_for_speed: Optional[bool] = False
 
 class ChatResponse(BaseModel):
     response: str
@@ -79,6 +80,33 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+@app.get("/context/stats")
+async def get_context_stats():
+    """Get context management statistics"""
+    from agent import conversation_memory
+    
+    stats = {
+        "total_conversations": len(conversation_memory.conversations),
+        "max_context_tokens": conversation_memory.max_context_tokens,
+        "max_messages_per_conversation": conversation_memory.max_messages_per_conversation,
+        "conversation_sizes": {
+            conv_id: len(messages) 
+            for conv_id, messages in conversation_memory.conversations.items()
+        }
+    }
+    return stats
+
+@app.post("/context/optimize/{conversation_id}")
+async def optimize_conversation_context(conversation_id: str):
+    """Manually trigger context optimization for a conversation"""
+    from agent import conversation_memory
+    
+    if conversation_id in conversation_memory.conversations:
+        conversation_memory.handle_thinking_completion(conversation_id)
+        return {"status": "optimized", "conversation_id": conversation_id}
+    else:
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):

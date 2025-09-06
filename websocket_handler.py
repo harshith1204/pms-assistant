@@ -122,6 +122,11 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{client_id}"
+            optimize_for_speed = data.get("optimize_for_speed", False)
+            
+            # Update agent optimization setting if provided
+            if hasattr(mongodb_agent, 'optimize_for_speed'):
+                mongodb_agent.optimize_for_speed = optimize_for_speed
             
             # Send user message acknowledgment
             await websocket.send_json({
