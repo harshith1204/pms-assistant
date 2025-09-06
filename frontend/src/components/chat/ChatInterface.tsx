@@ -25,12 +25,25 @@ const initialMessages: Message[] = [
   },
 ];
 
-export function ChatInterface() {
+interface ChatInterfaceProps {
+  config?: any;
+}
+
+export function ChatInterface({ config: externalConfig }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [showThinking, setShowThinking] = useState(true);
+  const [config, setConfig] = useState({
+    optimizeForSpeed: false,
+    adaptiveContext: true,
+    preserveThinking: true,
+    showThoughts: true,
+  });
+
+  // Merge external config with internal config
+  const effectiveConfig = { ...config, ...externalConfig };
+  const showThinking = effectiveConfig.showThoughts;
   const [currentStreamingMessage, setCurrentStreamingMessage] = useState<string>("");
   const [currentStreamingId, setCurrentStreamingId] = useState<string | null>(null);
   const [currentThoughtMessage, setCurrentThoughtMessage] = useState<string>("");
@@ -322,6 +335,7 @@ export function ChatInterface() {
       type: "message",
       message: currentInput,
       conversation_id: conversationId,
+      optimize_for_speed: effectiveConfig.optimizeForSpeed,
     });
     
     if (!success) {
