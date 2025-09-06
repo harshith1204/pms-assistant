@@ -251,12 +251,35 @@ async def count_work_items_by_project(project_name: str) -> str:
             ]
         })
 
-        # Extract the count from the result
-        if result and len(result) > 0:
-            count = result[0].get("total_work_items", 0)
-            return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: {count} work items"
+        # Extract the count from the result, handling varying return types
+        data = result
+        total = 0
+
+        if isinstance(data, str):
+            import json, re
+            try:
+                data = json.loads(data)
+            except Exception:
+                match = re.search(r"\btotal_work_items\b\s*[:=]\s*(\d+)", data)
+                if match:
+                    total = int(match.group(1))
+                    return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: {total} work items"
+                return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT (raw):\n{data}"
+
+        if isinstance(data, list) and len(data) > 0:
+            first_item = data[0]
+            if isinstance(first_item, dict):
+                total = int(first_item.get("total_work_items", 0))
+            else:
+                return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT (raw):\n{data}"
+        elif isinstance(data, dict):
+            total = int(data.get("total_work_items", 0))
+        elif isinstance(data, int):
+            total = data
         else:
-            return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: 0 work items"
+            return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT (raw):\n{data}"
+
+        return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: {total} work items"
 
     except Exception as e:
         return f"❌ Error counting work items for project '{project_name}': {str(e)}"
