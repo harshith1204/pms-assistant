@@ -27,3 +27,6 @@ pytest
 pymongo
 pytest-asyncio
 websockets  # For WebSocket testing
+ 
+# Caching and short-term memory
+redis>=5.0.1

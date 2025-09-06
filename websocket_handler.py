@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_ollama import ChatOllama
 import time
+from redis_utils import append_conversation_message
 
 class StreamingCallbackHandler(AsyncCallbackHandler):
     """Callback handler for streaming LLM responses"""
@@ -131,10 +132,15 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
             
+            # Store user message in short-term memory immediately
+            if message:
+                await append_conversation_message(conversation_id, "user", message)
+
             # Process message with streaming tool calling
             async for response_chunk in mongodb_agent.run_streaming(
                 query=message,
-                websocket=websocket
+                websocket=websocket,
+                conversation_id=conversation_id
             ):
                 # The streaming is handled internally by the callback handler
                 # Just iterate through the generator to complete the streaming

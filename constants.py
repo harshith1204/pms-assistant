@@ -24,6 +24,7 @@ smithery_config = {
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from typing import Dict, Any
+from redis_utils import get_cached_json, set_cached_json, tool_cache_key, TOOL_CACHE_TTL_SECONDS
 
 class MongoDBTools:
     """MongoDB MCP Tools wrapper using langchain-mcp-adapters"""
@@ -52,7 +53,7 @@ class MongoDBTools:
         self.tools = []
 
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
-        """Execute a MongoDB MCP tool"""
+        """Execute a MongoDB MCP tool with Redis caching."""
         if not self.connected:
             raise ValueError("Not connected to MCP server")
 
@@ -61,8 +62,20 @@ class MongoDBTools:
         if not tool:
             raise ValueError(f"Tool {tool_name} not available")
 
+        # Try cache first
+        cache_key = tool_cache_key(tool_name, arguments)
+        cached = await get_cached_json(cache_key)
+        if cached is not None:
+            return cached
+
         # Execute the tool directly (it handles MCP communication internally)
         result = await tool.ainvoke(arguments)
+
+        # Set cache with short TTL to reduce latency across identical requests
+        try:
+            await set_cached_json(cache_key, result, ttl_seconds=TOOL_CACHE_TTL_SECONDS)
+        except Exception:
+            pass
         return result
 
 # Global MongoDB tools instance
