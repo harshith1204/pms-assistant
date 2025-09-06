@@ -24,5 +24,6 @@ uvicorn[standard]
 
 # Development and testing
 pytest
+pymongo
 pytest-asyncio
 websockets  # For WebSocket testing

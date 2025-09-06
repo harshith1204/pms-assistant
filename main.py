@@ -84,73 +84,14 @@ async def health_check():
 async def websocket_chat(websocket: WebSocket):
     """WebSocket endpoint for streaming chat"""
     global mongodb_agent
-    
+
+    # Initialize agent if not already done (for testing/development)
     if not mongodb_agent:
-        await websocket.close(code=1003, reason="MongoDB agent not initialized")
-        return
-        
+        print("Initializing MongoDB Agent for WebSocket...")
+        mongodb_agent = MongoDBAgent()
+        await mongodb_agent.connect()
+
     await handle_chat_websocket(websocket, mongodb_agent)
-
-# Keep a minimal HTTP endpoint for backward compatibility
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
-    """Handle chat requests (legacy HTTP endpoint)"""
-    global mongodb_agent
-
-    try:
-        if not mongodb_agent:
-            raise HTTPException(status_code=500, detail="MongoDB agent not initialized")
-
-        # Generate conversation ID if not provided
-        conversation_id = request.conversation_id or f"conv_{asyncio.get_event_loop().time()}"
-
-        # Run the agent with the user's message
-        response = await mongodb_agent.run(request.message)
-
-        return ChatResponse(
-            response=response,
-            conversation_id=conversation_id,
-            timestamp=asyncio.get_event_loop().time().__str__()
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
-
-@app.get("/api/databases")
-async def list_databases():
-    """List available databases"""
-    try:
-        if not mongodb_agent:
-            raise HTTPException(status_code=500, detail="MongoDB agent not initialized")
-
-        # Use the agent to list databases
-        response = await mongodb_agent.run("List all available databases")
-        return {"databases": response}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error listing databases: {str(e)}")
-
-@app.get("/api/collections")
-async def list_collections(database: str = "ProjectManagement"):
-    """List collections in a database"""
-    try:
-        if not mongodb_agent:
-            raise HTTPException(status_code=500, detail="MongoDB agent not initialized")
-
-        # Use the agent to list collections
-        response = await mongodb_agent.run(f"List all collections in the {database} database")
-        return {"collections": response}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error listing collections: {str(e)}")
-
-@app.get("/api/status")
-async def get_status():
-    """Get the current status of the MongoDB agent"""
-    return {
-        "agent_connected": mongodb_agent is not None and mongodb_agent.connected,
-        "database_name": "ProjectManagement",
-        "websocket_clients": len(ws_manager.active_connections),
-        "supports_streaming": True
-    }
 
 if __name__ == "__main__":
     uvicorn.run(
