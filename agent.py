@@ -12,6 +12,12 @@ import time
 
 tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
+from redis_utils import (
+    get_recent_messages_as_langchain,
+    append_conversation_message,
+    get_cached_response,
+    set_cached_response,
+)
 
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
@@ -102,13 +108,25 @@ class MongoDBAgent:
         await mongodb_tools.disconnect()
         self.connected = False
 
-    async def run(self, query: str) -> str:
+    async def run(self, query: str, conversation_id: str = "") -> str:
         """Run the agent with a query"""
         if not self.connected:
             await self.connect()
 
         try:
-            messages = [HumanMessage(content=query)]
+            # Load short-term memory from Redis
+            history_messages = await get_recent_messages_as_langchain(conversation_id, limit=None) if conversation_id else []
+            messages = list(history_messages) if history_messages else []
+
+            # Per-conversation response cache check
+            if conversation_id:
+                cached = await get_cached_response(conversation_id, query)
+                if cached:
+                    # Persist assistant cached reply for continuity
+                    await append_conversation_message(conversation_id, "assistant", cached)
+                    return cached
+
+            messages.append(HumanMessage(content=query))
             response = await self.llm_with_tools.ainvoke(messages)
 
             # Handle tool calls if any
@@ -127,20 +145,40 @@ class MongoDBAgent:
 
                 # Get final response after tool calls
                 final_response = await self.llm_with_tools.ainvoke(messages)
+                # Persist assistant response and cache
+                if conversation_id:
+                    await append_conversation_message(conversation_id, "assistant", final_response.content)
+                    await set_cached_response(conversation_id, query, final_response.content)
                 return final_response.content
             else:
+                # Persist assistant response and cache
+                if conversation_id:
+                    await append_conversation_message(conversation_id, "assistant", response.content)
+                    await set_cached_response(conversation_id, query, response.content)
                 return response.content
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
 
-    async def run_streaming(self, query: str, websocket=None) -> AsyncGenerator[str, None]:
+    async def run_streaming(self, query: str, websocket=None, conversation_id: str = "") -> AsyncGenerator[str, None]:
         """Run the agent with streaming support"""
         if not self.connected:
             await self.connect()
 
         try:
-            messages = [HumanMessage(content=query)]
+            # Load short-term memory from Redis
+            history_messages = await get_recent_messages_as_langchain(conversation_id, limit=None) if conversation_id else []
+            messages = list(history_messages) if history_messages else []
+
+            # Response cache fast-path
+            if conversation_id:
+                cached = await get_cached_response(conversation_id, query)
+                if cached:
+                    await append_conversation_message(conversation_id, "assistant", cached)
+                    yield cached
+                    return
+
+            messages.append(HumanMessage(content=query))
             callback_handler = ToolCallingCallbackHandler(websocket)
 
             # Get initial response with streaming
@@ -174,8 +212,16 @@ class MongoDBAgent:
                     messages,
                     config={"callbacks": [callback_handler]}
                 )
+                # Persist assistant response and cache
+                if conversation_id:
+                    await append_conversation_message(conversation_id, "assistant", final_response.content)
+                    await set_cached_response(conversation_id, query, final_response.content)
                 yield final_response.content
             else:
+                # Persist assistant response and cache
+                if conversation_id:
+                    await append_conversation_message(conversation_id, "assistant", response.content)
+                    await set_cached_response(conversation_id, query, response.content)
                 yield response.content
 
         except Exception as e:
