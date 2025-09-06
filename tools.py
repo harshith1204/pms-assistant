@@ -374,6 +374,229 @@ async def get_total_project_count() -> str:
     except Exception as e:
         return f"❌ Error getting total project count: {str(e)}"
 
+@tool
+async def get_total_work_item_count() -> str:
+    """Returns the total number of work items across all projects. Use to answer 'how many total work items are there?'."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "workItem",
+            "pipeline": [
+                {"$count": "total_work_items"}
+            ]
+        })
+
+        # Handle both structured (list/dict) and string results from MCP tools
+        total = 0
+        data = result
+
+        if isinstance(data, str):
+            import json, re
+            try:
+                data = json.loads(data)
+            except Exception:
+                match = re.search(r"\btotal_work_items\b\s*[:=]\s*(\d+)", data)
+                if match:
+                    total = int(match.group(1))
+                    return f"📊 TOTAL WORK ITEMS:\nTotal: {total}"
+                # Could not parse structured content; return raw response
+                return f"📊 TOTAL WORK ITEMS (raw):\n{data}"
+
+        if isinstance(data, list) and len(data) > 0:
+            first_item = data[0]
+            if isinstance(first_item, dict):
+                total = int(first_item.get("total_work_items", 0))
+            else:
+                # Unexpected list item; return as raw
+                return f"📊 TOTAL WORK ITEMS (raw):\n{data}"
+        elif isinstance(data, dict):
+            total = int(data.get("total_work_items", 0))
+        elif isinstance(data, int):
+            total = data
+        else:
+            # Fallback to stringifying unknown structure
+            return f"📊 TOTAL WORK ITEMS (raw):\n{data}"
+
+        return f"📊 TOTAL WORK ITEMS:\nTotal: {total}"
+    except Exception as e:
+        return f"❌ Error getting total work item count: {str(e)}"
+
+@tool
+async def list_all_projects() -> str:
+    """Returns a comprehensive list of all projects with key details. Use to answer 'list all projects' or 'show me all projects'."""
+    try:
+        result = await mongodb_tools.execute_tool("find", {
+            "database": DATABASE_NAME,
+            "collection": "project",
+            "filter": {},
+            "projection": {
+                "name": 1,
+                "status": 1,
+                "lead.name": 1,
+                "business.name": 1,
+                "description": 1,
+                "createdTimeStamp": 1
+            },
+            "sort": {"createdTimeStamp": -1},
+            "limit": 50
+        })
+
+        # Handle the result - MongoDB MCP returns list with message + JSON strings
+        import json
+
+        if isinstance(result, list) and len(result) > 1:
+            # Skip the first element (message) and parse the JSON strings
+            projects = []
+            for item in result[1:]:  # Skip first element which is the message
+                if isinstance(item, str):
+                    try:
+                        project = json.loads(item)
+                        projects.append(project)
+                    except json.JSONDecodeError:
+                        continue
+
+            if projects:
+                response = "📋 ALL PROJECTS:\n\n"
+                for i, project in enumerate(projects, 1):
+                    name = project.get("name", "Unknown")
+                    status = project.get("status", "Unknown")
+                    lead = project.get("lead", {}).get("name", "Unknown") if project.get("lead") else "Unknown"
+                    business = project.get("business", {}).get("name", "Unknown") if project.get("business") else "Unknown"
+
+                    response += f"{i}. **{name}**\n"
+                    response += f"   Status: {status}\n"
+                    response += f"   Lead: {lead}\n"
+                    response += f"   Business: {business}\n"
+                    response += "\n"
+
+                return response
+            else:
+                return f"📋 ALL PROJECTS (no valid projects found):\n{result}"
+        elif isinstance(result, str):
+            # Fallback for string responses
+            import re
+            json_pattern = r'\{[^}]*\}'
+            json_matches = re.findall(json_pattern, result)
+
+            projects = []
+            for match in json_matches:
+                try:
+                    project = json.loads(match)
+                    projects.append(project)
+                except json.JSONDecodeError:
+                    continue
+
+            if projects:
+                response = "📋 ALL PROJECTS:\n\n"
+                for i, project in enumerate(projects[:50], 1):
+                    name = project.get("name", "Unknown")
+                    status = project.get("status", "Unknown")
+                    lead = project.get("lead", {}).get("name", "Unknown") if project.get("lead") else "Unknown"
+                    business = project.get("business", {}).get("name", "Unknown") if project.get("business") else "Unknown"
+
+                    response += f"{i}. **{name}**\n"
+                    response += f"   Status: {status}\n"
+                    response += f"   Lead: {lead}\n"
+                    response += f"   Business: {business}\n"
+                    response += "\n"
+
+                return response
+            else:
+                return f"📋 ALL PROJECTS (raw):\n{result}"
+        else:
+            return f"📋 ALL PROJECTS (unexpected format):\n{result}"
+
+    except Exception as e:
+        return f"❌ Error listing all projects: {str(e)}"
+
+@tool
+async def get_work_items_breakdown_by_project() -> str:
+    """Returns a breakdown of work items for each project, including counts by status. Use to answer 'give me a breakdown of work items for each project'."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "workItem",
+            "pipeline": [
+                {
+                    "$group": {
+                        "_id": {
+                            "project_name": "$project.name",
+                            "status": "$status"
+                        },
+                        "count": {"$sum": 1}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$_id.project_name",
+                        "total_work_items": {"$sum": "$count"},
+                        "status_breakdown": {
+                            "$push": {
+                                "status": "$_id.status",
+                                "count": "$count"
+                            }
+                        }
+                    }
+                },
+                {
+                    "$sort": {"total_work_items": -1}
+                }
+            ]
+        })
+
+        # Handle the result - parse and format
+        import json
+
+        if isinstance(result, list) and len(result) > 1:
+            # MongoDB MCP typically returns [message, data, data, ...]
+            # Skip the first element (message) and parse the JSON strings
+            parsed_items = []
+            for item_str in result[1:]:  # Skip the message
+                if isinstance(item_str, str):
+                    try:
+                        parsed_item = json.loads(item_str)
+                        parsed_items.append(parsed_item)
+                    except json.JSONDecodeError:
+                        continue
+
+            if parsed_items:
+                response = "📊 WORK ITEMS BREAKDOWN BY PROJECT:\n\n"
+                for item in parsed_items:
+                    project_name = item.get("_id", "Unknown Project")
+                    if project_name is None:
+                        project_name = "No Project Assigned"
+                    total_count = item.get("total_work_items", 0)
+                    status_breakdown = item.get("status_breakdown", [])
+
+                    response += f"**{project_name}**\n"
+                    response += f"Total Work Items: {total_count}\n"
+
+                    if status_breakdown:
+                        response += "Status Breakdown:\n"
+                        for status_item in status_breakdown:
+                            status = status_item.get("status", "Unknown")
+                            count = status_item.get("count", 0)
+                            percentage = (count / total_count * 100) if total_count > 0 else 0
+                            response += f"  • {status}: {count} ({percentage:.1f}%)\n"
+                    response += "\n"
+                return response
+            else:
+                return f"📊 WORK ITEMS BREAKDOWN BY PROJECT (no valid data found):\n{result}"
+        elif isinstance(result, str):
+            # Try to parse JSON from string
+            try:
+                data = json.loads(result)
+                if isinstance(data, list):
+                    return await get_work_items_breakdown_by_project()  # Retry with parsed data
+            except:
+                pass
+            return f"📊 WORK ITEMS BREAKDOWN BY PROJECT (raw):\n{result}"
+        else:
+            return f"📊 WORK ITEMS BREAKDOWN BY PROJECT (unexpected format):\n{result}"
+
+    except Exception as e:
+        return f"❌ Error getting work items breakdown by project: {str(e)}"
+
 # Define the tools list with ProjectManagement-specific readonly tools
 tools = [
     get_project_overview,
@@ -388,4 +611,7 @@ tools = [
     count_work_items_by_project,
     get_project_work_item_details,
     get_total_project_count,
+    get_total_work_item_count,
+    list_all_projects,
+    get_work_items_breakdown_by_project,
 ]
