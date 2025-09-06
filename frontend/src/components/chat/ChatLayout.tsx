@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { ConversationSidebar } from "./ConversationSidebar";
-import { ConfigSidebar } from "./ConfigSidebar";
 import { ChatInterface } from "./ChatInterface";
+import { ModelSelector } from "./ModelSelector";
 import { Button } from "@/components/ui/button";
-import { Settings, MessageSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 
 export function ChatLayout() {
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
 
   return (
     <SidebarProvider>
@@ -31,24 +30,13 @@ export function ChatLayout() {
               </Button>
               <h1 className="font-semibold text-foreground">Agent Chat</h1>
             </div>
-            
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
-              className="h-8 w-8 p-0"
-            >
-              <Settings className="h-4 w-4" />
-            </Button>
+            <ModelSelector />
           </header>
           
           <div className="flex-1 min-h-0">
             <ChatInterface />
           </div>
         </main>
-        
-        {/* Right Sidebar - Configuration */}
-        <ConfigSidebar open={rightSidebarOpen} />
       </div>
     </SidebarProvider>
   );
