@@ -63,32 +63,7 @@ llm = ChatOllama(
     top_k=40,  # Focus on high-probability tokens
 )
 
-# Enhanced system prompt for better multi-step planning recognition
-system_prompt = """
-You are a Project Management System Assistant with advanced MongoDB querying capabilities.
-
-IMPORTANT: For complex queries that require data from multiple collections or involve relationships between different entities, ALWAYS use the 'execute_multi_collection_plan' tool. This tool allows you to:
-
-- Query cycles and then aggregate work items within those cycles
-- Find projects and then get work item counts per project
-- Perform cross-collection analyses and aggregations
-- Handle queries like "work items in cycles", "projects and their tasks", etc.
-
-Examples of queries that should use execute_multi_collection_plan:
-- "How many active work items within cycles?"
-- "Work items breakdown by project"
-- "Find projects and count their work items"
-- "Get cycle details and work item counts"
-
-When using execute_multi_collection_plan, provide a JSON array of steps where each step has:
-- "op": "find" or "aggregate"
-- "collection": the collection name
-- "args": the operation arguments
-
-For simple single-collection queries, use the individual collection tools (query_project, aggregate_work_item, etc.).
-"""
-
-# Bind tools to the LLM for tool calling with enhanced prompt
+# Bind tools to the LLM for tool calling
 llm_with_tools = llm.bind_tools(tools_list)
 
 class ToolCallingCallbackHandler(AsyncCallbackHandler):
@@ -150,9 +125,7 @@ class MongoDBAgent:
     """MongoDB Agent using Tool Calling"""
 
     def __init__(self):
-        from langchain_core.messages import SystemMessage
         self.llm_with_tools = llm_with_tools
-        self.system_message = SystemMessage(content=system_prompt)
         self.connected = False
 
     async def connect(self):
@@ -165,80 +138,6 @@ class MongoDBAgent:
         """Disconnect from MongoDB MCP server"""
         await mongodb_tools.disconnect()
         self.connected = False
-
-    def _analyze_query_complexity(self, query: str) -> bool:
-        """Analyze if a query requires multi-step planning"""
-        query_lower = query.lower()
-
-        # Patterns that indicate multi-step queries
-        multi_step_indicators = [
-            # Cross-collection queries
-            "in cycles", "within cycles", "across projects", "by project",
-            "work items in", "tasks in", "items within",
-
-            # Multiple operations
-            "find.*and.*count", "get.*and.*aggregate",
-            "projects.*work items", "cycles.*work items",
-
-            # Complex aggregations
-            "breakdown by", "distribution of", "summary of",
-            "group by", "aggregate by",
-
-            # Comparative queries
-            "compare", "versus", "vs", "between"
-        ]
-
-        return any(indicator in query_lower for indicator in multi_step_indicators)
-
-    def _generate_multi_step_plan(self, query: str) -> dict:
-        """Generate a multi-step plan based on query analysis"""
-        query_lower = query.lower()
-
-        if "active work items" in query_lower and "cycles" in query_lower:
-            return {
-                "plan_json": [
-                    {
-                        "op": "find",
-                        "collection": "cycle",
-                        "args": {"filter": {"status": "ACTIVE"}, "limit": 20}
-                    },
-                    {
-                        "op": "aggregate",
-                        "collection": "workItem",
-                        "args": {
-                            "pipeline": [
-                                {"$match": {"status": {"$in": ["IN_PROGRESS", "TODO", "OPEN", "ACTIVE"]}}},
-                                {"$group": {"_id": "$cycle.name", "count": {"$sum": 1}}},
-                                {"$sort": {"count": -1}}
-                            ]
-                        }
-                    }
-                ]
-            }
-
-        elif "work items by project" in query_lower:
-            return {
-                "plan_json": [
-                    {
-                        "op": "find",
-                        "collection": "project",
-                        "args": {"filter": {}, "limit": 50}
-                    },
-                    {
-                        "op": "aggregate",
-                        "collection": "workItem",
-                        "args": {
-                            "pipeline": [
-                                {"$group": {"_id": "$project.name", "count": {"$sum": 1}}},
-                                {"$sort": {"count": -1}}
-                            ]
-                        }
-                    }
-                ]
-            }
-
-        # Default fallback
-        return None
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
         """Run the agent with a query and optional conversation context"""
@@ -253,23 +152,9 @@ class MongoDBAgent:
             # Get conversation history
             conversation_context = conversation_memory.get_recent_context(conversation_id)
 
-            # Check if query requires multi-step planning
-            if self._analyze_query_complexity(query):
-                plan = self._generate_multi_step_plan(query)
-                if plan:
-                    # Use multi-step planning tool directly
-                    multi_step_tool = next((t for t in tools_list if t.name == "execute_multi_collection_plan"), None)
-                    if multi_step_tool:
-                        try:
-                            result = await multi_step_tool.ainvoke(plan)
-                            return f"📊 MULTI-STEP ANALYSIS RESULTS:\n{result}"
-                        except Exception as e:
-                            # Fall back to normal processing if multi-step fails
-                            pass
-
             # Add current user message
             human_message = HumanMessage(content=query)
-            messages = [self.system_message] + conversation_context + [human_message]
+            messages = conversation_context + [human_message]
 
             response = await self.llm_with_tools.ainvoke(messages)
 
@@ -318,7 +203,7 @@ class MongoDBAgent:
 
             # Add current user message
             human_message = HumanMessage(content=query)
-            messages = [self.system_message] + conversation_context + [human_message]
+            messages = conversation_context + [human_message]
 
             callback_handler = ToolCallingCallbackHandler(websocket)
 
