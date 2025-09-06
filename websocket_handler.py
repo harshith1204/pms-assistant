@@ -131,15 +131,14 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
             
-            # Create streaming callback handler
-            callback_handler = StreamingCallbackHandler(websocket)
-            
-            # Process message with streaming
-            await mongodb_agent.run_streaming(
+            # Process message with streaming tool calling
+            async for response_chunk in mongodb_agent.run_streaming(
                 query=message,
-                callback_handler=callback_handler,
                 websocket=websocket
-            )
+            ):
+                # The streaming is handled internally by the callback handler
+                # Just iterate through the generator to complete the streaming
+                pass
             
             # Send completion message
             await websocket.send_json({

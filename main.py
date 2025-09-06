@@ -6,7 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 
-from mongodb_agent import MongoDBAgent
+from agent import MongoDBAgent
 from websocket_handler import handle_chat_websocket, ws_manager
 
 # Pydantic models for API requests/responses

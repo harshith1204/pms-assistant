@@ -33,6 +33,14 @@ export function ChatInterface() {
   const [showThinking, setShowThinking] = useState(true);
   const [currentStreamingMessage, setCurrentStreamingMessage] = useState<string>("");
   const [currentStreamingId, setCurrentStreamingId] = useState<string | null>(null);
+  const [currentThoughtMessage, setCurrentThoughtMessage] = useState<string>("");
+  const [currentThoughtId, setCurrentThoughtId] = useState<string | null>(null);
+  const [isInThinkingMode, setIsInThinkingMode] = useState<boolean>(false);
+  const currentStreamingMessageRef = useRef<string>("");
+  const currentStreamingIdRef = useRef<string | null>(null);
+  const currentThoughtMessageRef = useRef<string>("");
+  const currentThoughtIdRef = useRef<string | null>(null);
+  const isInThinkingModeRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
@@ -56,25 +64,121 @@ export function ChatInterface() {
         setIsLoading(true);
         const messageId = Date.now().toString();
         setCurrentStreamingId(messageId);
+        currentStreamingIdRef.current = messageId;
         setCurrentStreamingMessage("");
+        currentStreamingMessageRef.current = "";
+        setCurrentThoughtMessage("");
+        currentThoughtMessageRef.current = "";
+        setCurrentThoughtId(null);
+        currentThoughtIdRef.current = null;
+        setIsInThinkingMode(false);
+        isInThinkingModeRef.current = false;
         break;
-        
+
       case "token":
-        setCurrentStreamingMessage(prev => prev + data.content);
+        const token = data.content;
+        const currentFullContent = currentStreamingMessageRef.current + token;
+
+        // Check for think tags
+        if (!isInThinkingModeRef.current && currentFullContent.includes('<think>')) {
+          // Starting thinking mode
+          const thinkStartIndex = currentFullContent.indexOf('<think>');
+          const beforeThink = currentFullContent.substring(0, thinkStartIndex);
+          const afterThink = currentFullContent.substring(thinkStartIndex + 7); // 7 is length of '<think>'
+
+          // Add content before <think> to regular message
+          if (beforeThink) {
+            setCurrentStreamingMessage(beforeThink);
+            currentStreamingMessageRef.current = beforeThink;
+          }
+
+          // Start thought message
+          const thoughtId = Date.now().toString();
+          setCurrentThoughtId(thoughtId);
+          currentThoughtIdRef.current = thoughtId;
+          setCurrentThoughtMessage(afterThink);
+          currentThoughtMessageRef.current = afterThink;
+          setIsInThinkingMode(true);
+          isInThinkingModeRef.current = true;
+        } else if (isInThinkingModeRef.current && currentFullContent.includes('</think>')) {
+          // Ending thinking mode
+          const thinkEndIndex = currentFullContent.indexOf('</think>');
+          const thoughtContent = currentFullContent.substring(0, thinkEndIndex);
+          const afterEndThink = currentFullContent.substring(thinkEndIndex + 8); // 8 is length of '</think>'
+
+          // Update thought message
+          setCurrentThoughtMessage(thoughtContent);
+          currentThoughtMessageRef.current = thoughtContent;
+
+          // Add thought message to messages array
+          if (currentThoughtIdRef.current && thoughtContent) {
+            const thoughtMessage: Message = {
+              id: currentThoughtIdRef.current,
+              type: "thought",
+              content: thoughtContent,
+              timestamp,
+            };
+            setMessages(prev => [...prev, thoughtMessage]);
+          }
+
+          // Reset thought state
+          setCurrentThoughtMessage("");
+          currentThoughtMessageRef.current = "";
+          setCurrentThoughtId(null);
+          currentThoughtIdRef.current = null;
+          setIsInThinkingMode(false);
+          isInThinkingModeRef.current = false;
+
+          // Add remaining content after </think> to regular message
+          if (afterEndThink) {
+            setCurrentStreamingMessage(prev => prev + afterEndThink);
+            currentStreamingMessageRef.current += afterEndThink;
+          }
+        } else if (isInThinkingModeRef.current) {
+          // Accumulate thought content
+          setCurrentThoughtMessage(prev => prev + token);
+          currentThoughtMessageRef.current += token;
+        } else {
+          // Regular content
+          setCurrentStreamingMessage(prev => prev + token);
+          currentStreamingMessageRef.current += token;
+        }
         break;
-        
+
       case "llm_end":
-        if (currentStreamingId && currentStreamingMessage) {
+        // Handle any remaining thought content
+        if (isInThinkingModeRef.current && currentThoughtIdRef.current && currentThoughtMessageRef.current) {
+          const thoughtMessage: Message = {
+            id: currentThoughtIdRef.current,
+            type: "thought",
+            content: currentThoughtMessageRef.current,
+            timestamp,
+          };
+          setMessages(prev => [...prev, thoughtMessage]);
+        }
+
+        // Add final assistant message if there's content
+        if (currentStreamingIdRef.current && currentStreamingMessageRef.current) {
           const newMessage: Message = {
-            id: currentStreamingId,
+            id: currentStreamingIdRef.current,
             type: "assistant",
-            content: currentStreamingMessage,
+            content: currentStreamingMessageRef.current,
             timestamp,
           };
           setMessages(prev => [...prev, newMessage]);
-          setCurrentStreamingMessage("");
-          setCurrentStreamingId(null);
         }
+
+        // Clear all streaming state
+        setCurrentStreamingMessage("");
+        currentStreamingMessageRef.current = "";
+        setCurrentStreamingId(null);
+        currentStreamingIdRef.current = null;
+        setCurrentThoughtMessage("");
+        currentThoughtMessageRef.current = "";
+        setCurrentThoughtId(null);
+        currentThoughtIdRef.current = null;
+        setIsInThinkingMode(false);
+        isInThinkingModeRef.current = false;
         break;
         
       case "tool_start":
@@ -102,7 +206,7 @@ export function ChatInterface() {
       case "complete":
         setIsLoading(false);
         break;
-        
+
       case "error":
         toast({
           title: "Error",
@@ -112,7 +216,7 @@ export function ChatInterface() {
         setIsLoading(false);
         break;
     }
-  }, [currentStreamingId, currentStreamingMessage, toast]);
+  }, [toast]);
   
   const { isConnected, isConnecting, sendMessage } = useWebSocket({
     url: wsUrl,
@@ -135,6 +239,27 @@ export function ChatInterface() {
       });
     },
   });
+
+  // Sync refs with state
+  useEffect(() => {
+    currentStreamingMessageRef.current = currentStreamingMessage;
+  }, [currentStreamingMessage]);
+
+  useEffect(() => {
+    currentStreamingIdRef.current = currentStreamingId;
+  }, [currentStreamingId]);
+
+  useEffect(() => {
+    currentThoughtMessageRef.current = currentThoughtMessage;
+  }, [currentThoughtMessage]);
+
+  useEffect(() => {
+    currentThoughtIdRef.current = currentThoughtId;
+  }, [currentThoughtId]);
+
+  useEffect(() => {
+    isInThinkingModeRef.current = isInThinkingMode;
+  }, [isInThinkingMode]);
 
   useEffect(() => {
     // Auto-scroll to bottom when new messages arrive
@@ -200,11 +325,23 @@ export function ChatInterface() {
               <ChatMessage key={message.id} message={message} />
             ))}
             
-          {/* Show streaming message if available */}
-          {currentStreamingMessage && (
+          {/* Show streaming thought message if available */}
+          {currentThoughtMessage && currentThoughtId && (
             <ChatMessage
               message={{
-                id: currentStreamingId || "streaming",
+                id: currentThoughtId,
+                type: "thought",
+                content: currentThoughtMessage,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              }}
+            />
+          )}
+
+          {/* Show streaming message if available */}
+          {currentStreamingMessage && currentStreamingId && (
+            <ChatMessage
+              message={{
+                id: currentStreamingId,
                 type: "assistant",
                 content: currentStreamingMessage,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
