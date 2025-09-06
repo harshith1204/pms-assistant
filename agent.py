@@ -15,7 +15,7 @@ from constants import DATABASE_NAME, mongodb_tools
 
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
-    model="qwen3:1.7b-fp16",
+    model="qwen3:0.6b-fp16",
     temperature=0.3,  # Lower temperature for more consistent responses
     num_ctx=4096,  # Increased context for better understanding
     num_predict=512,  # Allow longer responses for detailed insights
@@ -184,6 +184,16 @@ class MongoDBAgent:
 # ProjectManagement Insights Examples
 async def main():
     """Example usage of the ProjectManagement Insights Agent"""
+    agent = MongoDBAgent()
+    await agent.connect()
+
+    # Test the new count_work_items_by_project function
+    result = await agent.run("How many work items are there in the Simpo project?")
+    print(f"Query Result: {result}")
+
+    # Test the detailed breakdown function
+    result2 = await agent.run("Show me detailed work item breakdown for Simpo project")
+    print(f"Detailed Result: {result2}")
 
 if __name__ == "__main__":
     asyncio.run(main())

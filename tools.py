@@ -1,7 +1,7 @@
 from langchain_core.tools import tool
 from typing import Optional
 import constants
-
+import os
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
 
@@ -232,6 +232,77 @@ async def search_projects_by_name(name: str) -> str:
     except Exception as e:
         return f"❌ Error searching projects by name: {str(e)}"
 
+@tool
+async def count_work_items_by_project(project_name: str) -> str:
+    """Returns the total count of work items for a specific project. Use for getting work item counts by project name."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "workItem",
+            "pipeline": [
+                {
+                    "$match": {
+                        "project.name": {"$regex": project_name, "$options": "i"}
+                    }
+                },
+                {
+                    "$count": "total_work_items"
+                }
+            ]
+        })
+
+        # Extract the count from the result
+        if result and len(result) > 0:
+            count = result[0].get("total_work_items", 0)
+            return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: {count} work items"
+        else:
+            return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: 0 work items"
+
+    except Exception as e:
+        return f"❌ Error counting work items for project '{project_name}': {str(e)}"
+
+@tool
+async def get_project_work_item_details(project_name: str) -> str:
+    """Returns detailed breakdown of work items for a specific project including status distribution. Use for comprehensive project work item analysis."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "workItem",
+            "pipeline": [
+                {
+                    "$match": {
+                        "project.name": {"$regex": project_name, "$options": "i"}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$status",
+                        "count": {"$sum": 1}
+                    }
+                },
+                {
+                    "$sort": {"count": -1}
+                }
+            ]
+        })
+
+        if result and len(result) > 0:
+            total_count = sum(item.get("count", 0) for item in result)
+            details = f"📊 DETAILED WORK ITEMS IN '{project_name.upper()}' PROJECT:\n"
+            details += f"Total Work Items: {total_count}\n\n"
+            details += "Breakdown by Status:\n"
+            for item in result:
+                status = item.get("_id", "Unknown")
+                count = item.get("count", 0)
+                percentage = (count / total_count * 100) if total_count > 0 else 0
+                details += f"• {status}: {count} ({percentage:.1f}%)\n"
+            return details
+        else:
+            return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nNo work items found"
+
+    except Exception as e:
+        return f"❌ Error getting work item details for project '{project_name}': {str(e)}"
+
 # Define the tools list with ProjectManagement-specific readonly tools
 tools = [
     get_project_overview,
@@ -243,4 +314,6 @@ tools = [
     get_work_item_by_priority,
     get_member_workload,
     search_projects_by_name,
+    count_work_items_by_project,
+    get_project_work_item_details,
 ]
