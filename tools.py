@@ -252,8 +252,32 @@ async def count_work_items_by_project(project_name: str) -> str:
         })
 
         # Extract the count from the result
-        if result and len(result) > 0:
-            count = result[0].get("total_work_items", 0)
+        # Handle different result formats from MCP
+        if result:
+            # If result is a string, try to parse it
+            if isinstance(result, str):
+                try:
+                    import json
+                    parsed_result = json.loads(result)
+                    if isinstance(parsed_result, list) and len(parsed_result) > 0:
+                        count = parsed_result[0].get("total_work_items", 0)
+                    else:
+                        count = 0
+                except:
+                    # If we can't parse it, try to extract number from string
+                    import re
+                    numbers = re.findall(r'\d+', result)
+                    count = int(numbers[0]) if numbers else 0
+            # If result is already a list
+            elif isinstance(result, list) and len(result) > 0:
+                # Check if first item is a dict
+                if isinstance(result[0], dict):
+                    count = result[0].get("total_work_items", 0)
+                else:
+                    count = 0
+            else:
+                count = 0
+            
             return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: {count} work items"
         else:
             return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nTotal: 0 work items"
@@ -286,17 +310,39 @@ async def get_project_work_item_details(project_name: str) -> str:
             ]
         })
 
-        if result and len(result) > 0:
-            total_count = sum(item.get("count", 0) for item in result)
-            details = f"📊 DETAILED WORK ITEMS IN '{project_name.upper()}' PROJECT:\n"
-            details += f"Total Work Items: {total_count}\n\n"
-            details += "Breakdown by Status:\n"
-            for item in result:
-                status = item.get("_id", "Unknown")
-                count = item.get("count", 0)
-                percentage = (count / total_count * 100) if total_count > 0 else 0
-                details += f"• {status}: {count} ({percentage:.1f}%)\n"
-            return details
+        # Handle different result formats from MCP
+        if result:
+            # If result is a string, try to parse it
+            if isinstance(result, str):
+                try:
+                    import json
+                    result = json.loads(result)
+                except:
+                    return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nUnable to parse results"
+            
+            # Now process the result if it's a list
+            if isinstance(result, list) and len(result) > 0:
+                # Ensure items are dictionaries
+                items = []
+                for item in result:
+                    if isinstance(item, dict):
+                        items.append(item)
+                
+                if items:
+                    total_count = sum(item.get("count", 0) for item in items)
+                    details = f"📊 DETAILED WORK ITEMS IN '{project_name.upper()}' PROJECT:\n"
+                    details += f"Total Work Items: {total_count}\n\n"
+                    details += "Breakdown by Status:\n"
+                    for item in items:
+                        status = item.get("_id", "Unknown")
+                        count = item.get("count", 0)
+                        percentage = (count / total_count * 100) if total_count > 0 else 0
+                        details += f"• {status}: {count} ({percentage:.1f}%)\n"
+                    return details
+                else:
+                    return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nNo valid work items found"
+            else:
+                return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nNo work items found"
         else:
             return f"📊 WORK ITEMS IN '{project_name.upper()}' PROJECT:\nNo work items found"
 
