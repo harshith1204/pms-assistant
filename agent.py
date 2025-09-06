@@ -14,6 +14,10 @@ from collections import defaultdict, deque
 
 tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
+from tool_registry import get_registry, rank_tools
+from planning_schema import Plan, PlanNode
+from planner import build_naive_plan
+from graph import AgentState
 
 class ConversationMemory:
     """Manages conversation history for maintaining context"""
@@ -246,6 +250,11 @@ class MongoDBAgent:
             await self.connect()
 
         try:
+            # Fast router shortlist
+            registry = get_registry()
+            all_specs = list(registry.values())
+            shortlist = rank_tools(query, all_specs, k=5)
+
             # Use default conversation ID if none provided
             if not conversation_id:
                 conversation_id = f"conv_{int(time.time())}"
@@ -266,6 +275,17 @@ class MongoDBAgent:
                         except Exception as e:
                             # Fall back to normal processing if multi-step fails
                             pass
+
+            # Build a minimal plan and execute first node directly
+            plan = build_naive_plan(query, shortlist)
+            if plan.nodes:
+                # Execute first node synchronously to get a fast result
+                top = shortlist[0]
+                try:
+                    result = await top.run(plan.nodes[0].args)
+                    return result if isinstance(result, str) else str(result)
+                except Exception:
+                    pass
 
             # Add current user message
             human_message = HumanMessage(content=query)
