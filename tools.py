@@ -303,6 +303,54 @@ async def get_project_work_item_details(project_name: str) -> str:
     except Exception as e:
         return f"❌ Error getting work item details for project '{project_name}': {str(e)}"
 
+# New tool to get total number of projects
+@tool
+async def get_total_project_count() -> str:
+    """Returns the total number of projects across all statuses. Use to answer 'how many total projects are there?'."""
+    try:
+        result = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": "project",
+            "pipeline": [
+                {"$count": "total_projects"}
+            ]
+        })
+
+        # Handle both structured (list/dict) and string results from MCP tools
+        total = 0
+        data = result
+
+        if isinstance(data, str):
+            import json, re
+            try:
+                data = json.loads(data)
+            except Exception:
+                match = re.search(r"\btotal_projects\b\s*[:=]\s*(\d+)", data)
+                if match:
+                    total = int(match.group(1))
+                    return f"📦 TOTAL PROJECTS:\nTotal: {total}"
+                # Could not parse structured content; return raw response
+                return f"📦 TOTAL PROJECTS (raw):\n{data}"
+
+        if isinstance(data, list) and len(data) > 0:
+            first_item = data[0]
+            if isinstance(first_item, dict):
+                total = int(first_item.get("total_projects", 0))
+            else:
+                # Unexpected list item; return as raw
+                return f"📦 TOTAL PROJECTS (raw):\n{data}"
+        elif isinstance(data, dict):
+            total = int(data.get("total_projects", 0))
+        elif isinstance(data, int):
+            total = data
+        else:
+            # Fallback to stringifying unknown structure
+            return f"📦 TOTAL PROJECTS (raw):\n{data}"
+
+        return f"📦 TOTAL PROJECTS:\nTotal: {total}"
+    except Exception as e:
+        return f"❌ Error getting total project count: {str(e)}"
+
 # Define the tools list with ProjectManagement-specific readonly tools
 tools = [
     get_project_overview,
@@ -316,4 +364,5 @@ tools = [
     search_projects_by_name,
     count_work_items_by_project,
     get_project_work_item_details,
+    get_total_project_count,
 ]
