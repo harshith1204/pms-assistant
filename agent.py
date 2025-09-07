@@ -122,11 +122,44 @@ class ToolCallingCallbackHandler(AsyncCallbackHandler):
             })
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling"""
+    """
+    MongoDB Agent with Iterative Tool Calling Capability
+    
+    This agent supports complex multi-step reasoning by performing iterative tool calling:
+    
+    KEY FEATURES:
+    - Iterative Processing: Continues calling tools until task completion
+    - Sequential Decision Making: Analyzes results from each tool call before deciding next steps
+    - Context Preservation: Maintains conversation context across iterations
+    - Streaming Support: Real-time streaming with iteration progress tracking
+    - Error Handling: Graceful handling of tool failures and max iteration limits
+    
+    FLOW EXAMPLE:
+    User Query → LLM Analysis → Tool Call(s) → Result Analysis → 
+    More Tool Calls (if needed) → Final Response
+    
+    This enables handling of complex queries like:
+    - "Find the highest budget project and analyze all its tasks"
+    - "Compare performance metrics across all teams and provide recommendations"  
+    - "Generate a comprehensive report on project status with risk analysis"
+    
+    PARAMETERS:
+    - max_iterations: Maximum number of tool calling rounds (default: 10)
+    """
 
-    def __init__(self):
+    def __init__(self, max_iterations: int = 10):
         self.llm_with_tools = llm_with_tools
         self.connected = False
+        self.max_iterations = max_iterations
+        
+        # Statistics tracking
+        self.stats = {
+            "total_queries": 0,
+            "total_iterations": 0,
+            "total_tool_calls": 0,
+            "avg_iterations_per_query": 0,
+            "max_iterations_reached": 0
+        }
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
@@ -139,8 +172,26 @@ class MongoDBAgent:
         await mongodb_tools.disconnect()
         self.connected = False
 
+    def get_stats(self) -> Dict[str, Any]:
+        """Get agent performance statistics"""
+        if self.stats["total_queries"] > 0:
+            self.stats["avg_iterations_per_query"] = round(
+                self.stats["total_iterations"] / self.stats["total_queries"], 2
+            )
+        return self.stats.copy()
+    
+    def reset_stats(self):
+        """Reset agent statistics"""
+        self.stats = {
+            "total_queries": 0,
+            "total_iterations": 0,
+            "total_tool_calls": 0,
+            "avg_iterations_per_query": 0,
+            "max_iterations_reached": 0
+        }
+
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
-        """Run the agent with a query and optional conversation context"""
+        """Run the agent with iterative tool calling until task completion"""
         if not self.connected:
             await self.connect()
 
@@ -155,41 +206,65 @@ class MongoDBAgent:
             # Add current user message
             human_message = HumanMessage(content=query)
             messages = conversation_context + [human_message]
-
-            response = await self.llm_with_tools.ainvoke(messages)
-
-            # Add messages to conversation memory
+            
+            # Add human message to memory immediately
             conversation_memory.add_message(conversation_id, human_message)
-            conversation_memory.add_message(conversation_id, response)
 
-            # Handle tool calls if any
-            if response.tool_calls:
+            # Update query stats
+            self.stats["total_queries"] += 1
+
+            # Iterative tool calling loop
+            iteration = 0
+            while iteration < self.max_iterations:
+                print(f"Agent iteration {iteration + 1}")
+                
+                # Get LLM response
+                response = await self.llm_with_tools.ainvoke(messages)
                 messages.append(response)
-                for tool_call in response.tool_calls:
-                    # Find the tool
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if tool:
-                        # Execute the tool
-                        result = await tool.ainvoke(tool_call["args"])
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"]
-                        )
-                        messages.append(tool_message)
-                        conversation_memory.add_message(conversation_id, tool_message)
-
-                # Get final response after tool calls
-                final_response = await self.llm_with_tools.ainvoke(messages)
-                conversation_memory.add_message(conversation_id, final_response)
-                return final_response.content
-            else:
-                return response.content
+                conversation_memory.add_message(conversation_id, response)
+                
+                # Check if there are tool calls to execute
+                if response.tool_calls:
+                    print(f"Executing {len(response.tool_calls)} tool call(s)")
+                    self.stats["total_tool_calls"] += len(response.tool_calls)
+                    
+                    # Execute all tool calls in this iteration
+                    for tool_call in response.tool_calls:
+                        # Find the tool
+                        tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                        if tool:
+                            print(f"Calling tool: {tool_call['name']}")
+                            # Execute the tool
+                            result = await tool.ainvoke(tool_call["args"])
+                            tool_message = ToolMessage(
+                                content=str(result),
+                                tool_call_id=tool_call["id"]
+                            )
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                        else:
+                            print(f"Warning: Tool {tool_call['name']} not found")
+                    
+                    # Continue to next iteration to let LLM process the tool results
+                    iteration += 1
+                    continue
+                else:
+                    # No more tool calls - we're done
+                    print("No more tool calls needed - task complete")
+                    self.stats["total_iterations"] += iteration + 1
+                    return response.content
+            
+            # If we exit the loop due to max iterations, return the last response
+            print(f"Reached maximum iterations ({self.max_iterations})")
+            self.stats["total_iterations"] += self.max_iterations
+            self.stats["max_iterations_reached"] += 1
+            return response.content if 'response' in locals() else "Max iterations reached without completion"
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """Run the agent with streaming support and conversation context"""
+        """Run the agent with iterative tool calling and streaming support"""
         if not self.connected:
             await self.connect()
 
@@ -204,60 +279,189 @@ class MongoDBAgent:
             # Add current user message
             human_message = HumanMessage(content=query)
             messages = conversation_context + [human_message]
+            
+            # Add human message to memory immediately
+            conversation_memory.add_message(conversation_id, human_message)
 
             callback_handler = ToolCallingCallbackHandler(websocket)
 
-            # Get initial response with streaming
-            response = await self.llm_with_tools.ainvoke(
-                messages,
-                config={"callbacks": [callback_handler]}
-            )
+            # Send iteration start event
+            if websocket:
+                await websocket.send_json({
+                    "type": "agent_start",
+                    "query": query,
+                    "conversation_id": conversation_id,
+                    "timestamp": datetime.now().isoformat()
+                })
 
-            # Add messages to conversation memory
-            conversation_memory.add_message(conversation_id, human_message)
-            conversation_memory.add_message(conversation_id, response)
-
-            # Handle tool calls if any
-            if response.tool_calls:
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    # Find the tool
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if tool:
-                        # Execute the tool with callback
-                        await callback_handler.on_tool_start(
-                            {"name": tool.name},
-                            str(tool_call["args"])
-                        )
-                        result = await tool.ainvoke(tool_call["args"])
-                        await callback_handler.on_tool_end(str(result))
-
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"]
-                        )
-                        messages.append(tool_message)
-                        conversation_memory.add_message(conversation_id, tool_message)
-
-                # Get final response after tool calls with streaming
-                final_response = await self.llm_with_tools.ainvoke(
+            # Iterative tool calling loop
+            iteration = 0
+            while iteration < self.max_iterations:
+                # Send iteration event
+                if websocket:
+                    await websocket.send_json({
+                        "type": "iteration_start",
+                        "iteration": iteration + 1,
+                        "max_iterations": self.max_iterations,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                
+                # Get LLM response with streaming
+                response = await self.llm_with_tools.ainvoke(
                     messages,
                     config={"callbacks": [callback_handler]}
                 )
-                conversation_memory.add_message(conversation_id, final_response)
-                yield final_response.content
-            else:
+                messages.append(response)
+                conversation_memory.add_message(conversation_id, response)
+                
+                # Check if there are tool calls to execute
+                if response.tool_calls:
+                    # Send tool execution start event
+                    if websocket:
+                        await websocket.send_json({
+                            "type": "tools_execution_start",
+                            "tool_count": len(response.tool_calls),
+                            "iteration": iteration + 1,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    
+                    # Execute all tool calls in this iteration
+                    for tool_call in response.tool_calls:
+                        # Find the tool
+                        tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                        if tool:
+                            # Execute the tool with callback
+                            await callback_handler.on_tool_start(
+                                {"name": tool.name},
+                                str(tool_call["args"])
+                            )
+                            result = await tool.ainvoke(tool_call["args"])
+                            await callback_handler.on_tool_end(str(result))
+
+                            tool_message = ToolMessage(
+                                content=str(result),
+                                tool_call_id=tool_call["id"]
+                            )
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                        else:
+                            # Send warning about unknown tool
+                            if websocket:
+                                await websocket.send_json({
+                                    "type": "warning",
+                                    "message": f"Tool {tool_call['name']} not found",
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                    
+                    # Continue to next iteration to let LLM process the tool results
+                    iteration += 1
+                    continue
+                else:
+                    # No more tool calls - we're done
+                    if websocket:
+                        await websocket.send_json({
+                            "type": "agent_complete",
+                            "iterations_used": iteration + 1,
+                            "reason": "no_more_tools_needed",
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    yield response.content
+                    return
+            
+            # If we exit the loop due to max iterations
+            if websocket:
+                await websocket.send_json({
+                    "type": "agent_complete",
+                    "iterations_used": self.max_iterations,
+                    "reason": "max_iterations_reached",
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            if 'response' in locals():
                 yield response.content
+            else:
+                yield "Max iterations reached without completion"
 
         except Exception as e:
-            yield f"Error running streaming agent: {str(e)}"
+            error_msg = f"Error running streaming agent: {str(e)}"
+            if websocket:
+                await websocket.send_json({
+                    "type": "agent_error",
+                    "error": error_msg,
+                    "timestamp": datetime.now().isoformat()
+                })
+            yield error_msg
 
 # ProjectManagement Insights Examples
 async def main():
-    """Example usage of the ProjectManagement Insights Agent"""
-    agent = MongoDBAgent()
+    """Example usage of the iterative ProjectManagement Insights Agent"""
+    # Create agent with custom max iterations
+    agent = MongoDBAgent(max_iterations=15)
     await agent.connect()
+    
+    # Test complex query that requires multiple tool calls
+    complex_query = """
+    I need a comprehensive project analysis. Please:
+    1. First, show me all projects in the database
+    2. Then find the project with the highest budget
+    3. Get detailed information about that project's tasks
+    4. Calculate the total estimated time for all tasks in that project
+    5. Find all team members assigned to tasks in that project
+    6. Provide a summary with recommendations
+    """
+    
+    print("Starting complex multi-step analysis...")
+    print("="*50)
+    
+    try:
+        result = await agent.run(complex_query)
+        print("\nFinal Result:")
+        print("-" * 30)
+        print(result)
+        
+        # Show agent performance statistics
+        stats = agent.get_stats()
+        print("\n" + "="*50)
+        print("AGENT PERFORMANCE STATISTICS")
+        print("="*50)
+        print(f"Total Queries: {stats['total_queries']}")
+        print(f"Total Iterations: {stats['total_iterations']}")
+        print(f"Total Tool Calls: {stats['total_tool_calls']}")
+        print(f"Average Iterations per Query: {stats['avg_iterations_per_query']}")
+        print(f"Max Iterations Reached: {stats['max_iterations_reached']}")
+        
+    except Exception as e:
+        print(f"Error during analysis: {e}")
+    
+    await agent.disconnect()
 
+# Example of how the iterative process works:
+"""
+ITERATIVE TOOL CALLING FLOW:
+============================
+
+Query: "Find the highest budget project and analyze its tasks"
+
+Iteration 1:
+- LLM decides to call list_all_projects tool
+- Tool returns: [Project A: $10k, Project B: $25k, Project C: $15k]
+
+Iteration 2: 
+- LLM analyzes results and identifies Project B as highest budget
+- LLM calls get_project_details tool with Project B ID
+- Tool returns: Project B details with task IDs
+
+Iteration 3:
+- LLM calls get_project_tasks tool with Project B ID  
+- Tool returns: List of tasks for Project B
+
+Iteration 4:
+- LLM analyzes task data and calls additional tools if needed
+- Or provides final analysis if sufficient data gathered
+
+This continues until LLM determines the task is complete (no more tool calls)
+or max_iterations is reached.
+"""
 
 if __name__ == "__main__":
     asyncio.run(main())
