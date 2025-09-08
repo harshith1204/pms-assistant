@@ -359,6 +359,8 @@ class PipelineGenerator:
             # For embedded relationships, return empty dict (no lookup needed)
             return {}
 
+        lookup_stage = {}  # Initialize to ensure it's always defined
+
         if "join" in relationship:
             # Simple join relationship
             join_conditions = relationship["join"]
@@ -385,8 +387,8 @@ class PipelineGenerator:
                     lookup_stage["$lookup"]["let"][f"{foreign_collection}_{foreign_field_name.replace('.', '_')}"] = f"${local_field_name}"
 
                     # Check if the local field is an array (for relationships like assignee)
-                    # If local field contains array indicators, use $in instead of $eq
-                    is_array_relationship = local_field_name in ['assignee._id', 'assignee'] or '_id' in local_field_name
+                    # Only use $in for actual array fields, not all _id fields
+                    is_array_relationship = local_field_name in ['assignee._id', 'assignee']
 
                     if is_array_relationship:
                         # For array relationships, use $in
@@ -404,6 +406,21 @@ class PipelineGenerator:
                             }
                         }
                     lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
+
+            # Add defaults if specified
+            if "defaults" in relationship:
+                lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
+
+        elif "expr" in relationship:
+            # Expression-based relationship (like stateMaster)
+            lookup_stage = {
+                "$lookup": {
+                    "from": relationship["target"],
+                    "let": {},
+                    "pipeline": [],
+                    "as": target_entity
+                }
+            }
 
             # Add defaults if specified
             if "defaults" in relationship:

@@ -1514,6 +1514,16 @@ async def get_work_items_with_context(work_item_filters: Dict[str, Any] = None, 
         projection = {
             field: 1 for field in ALLOWED_FIELDS["workItem"]
         }
+
+        # Remove fields that would conflict with renamed lookup results
+        conflicting_fields = []
+        for context in include_context:
+            if context in REL["workItem"] and "join" in REL["workItem"][context]:
+                # If the context field exists in the original document, exclude it to avoid collision
+                if context in projection:
+                    del projection[context]
+                conflicting_fields.append(context)
+
         # Add context fields with renamed fields to avoid conflicts
         for context in include_context:
             if context in REL["workItem"] and "join" in REL["workItem"][context]:
