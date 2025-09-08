@@ -48,7 +48,8 @@ REL: Dict[str, Dict[str, dict]] = {
         },
         "project": {
             "target": "project",
-            "join": {"cycle.project._id": "project._id"}
+            # target collection field on left, local/source field on right
+            "join": {"project._id": "cycle.project._id"}
         }
     },
 
@@ -56,7 +57,8 @@ REL: Dict[str, Dict[str, dict]] = {
     "workItem": {
         "project": {
             "target": "project",
-            "join": {"workItem.project._id": "project._id"}
+            # target collection field on left, local/source field on right
+            "join": {"project._id": "workItem.project._id"}
         },
         "stateMaster": {  # map by state._id OR by name fallback
             "target": "projectState",
@@ -64,19 +66,19 @@ REL: Dict[str, Dict[str, dict]] = {
         },
         "cycle": {
             "target": "cycle",
-            "join": {"workItem.cycleId": "cycle._id"}
+            "join": {"cycle._id": "workItem.cycleId"}
         },
         "module": {
             "target": "module",
-            "join": {"workItem.moduleId": "module._id"}
+            "join": {"module._id": "workItem.moduleId"}
         },
         "assignee": {
             "target": "members",
-            "join": {"workItem.assignee._id": "members._id"}
+            "join": {"members._id": "workItem.assignee._id"}
         },
         "createdBy": {
             "target": "members",
-            "join": {"workItem.createdBy._id": "members._id"}
+            "join": {"members._id": "workItem.createdBy._id"}
         }
     },
 
@@ -84,7 +86,7 @@ REL: Dict[str, Dict[str, dict]] = {
     "members": {
         "project": {
             "target": "project",
-            "join": {"members.project._id": "project._id"}
+            "join": {"project._id": "members.project._id"}
         }
     },
 
@@ -92,11 +94,11 @@ REL: Dict[str, Dict[str, dict]] = {
     "page": {
         "project": {
             "target": "project",
-            "join": {"page.project._id": "project._id"}
+            "join": {"project._id": "page.project._id"}
         },
         "author": {
             "target": "members",
-            "join": {"page.createdBy._id": "members._id"}  # adjust if your members key differs
+            "join": {"members._id": "page.createdBy._id"}  # adjust if your members key differs
         },
         "cycles": {
             "target": "cycle",
@@ -112,7 +114,7 @@ REL: Dict[str, Dict[str, dict]] = {
     "module": {
         "project": {
             "target": "project",
-            "join": {"module.project._id": "project._id"}
+            "join": {"project._id": "module.project._id"}
         },
         "workItems": {
             "target": "workItem",
@@ -124,7 +126,7 @@ REL: Dict[str, Dict[str, dict]] = {
         },
         "assignee": {
             "target": "members",
-            "join": {"module.assignee._id": "members._id"}
+            "join": {"members._id": "module.assignee._id"}
         }
     },
 }
@@ -141,13 +143,13 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "_id", "title", "status", "startDate", "endDate", "project._id"
     },
     "workItem": {
-        "_id", "displayBugNo", "status", "priority",
-        "project._id",
+        "_id", "displayBugNo", "title", "status", "priority",
+        "project._id", "project.name",
         "state._id", "state.name", "stateMaster.name",
         "createdTimeStamp",
         "createdBy._id",
         # if/when you persist these, just leave them here:
-        "moduleId", "cycleId", "assignee._id"
+        "moduleId", "cycleId", "assignee", "assignee._id"
     },
     "members": {
         "_id", "name", "email", "role", "joiningDate", "project._id"
