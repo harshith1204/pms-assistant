@@ -1,6 +1,6 @@
 from langchain_ollama import ChatOllama
 
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import json
@@ -14,6 +14,13 @@ from collections import defaultdict, deque
 
 tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a planning and tool-using agent. For complex requests, break the task into"
+    " sequential steps. Decide what to do next based on previous tool results."
+    " Call tools as needed to gather data, transform it, and iterate until the goal is met."
+    " Only produce the final answer when you have gathered enough evidence."
+)
 
 class ConversationMemory:
     """Manages conversation history for maintaining context"""
@@ -124,9 +131,11 @@ class ToolCallingCallbackHandler(AsyncCallbackHandler):
 class MongoDBAgent:
     """MongoDB Agent using Tool Calling"""
 
-    def __init__(self):
+    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
         self.llm_with_tools = llm_with_tools
         self.connected = False
+        self.max_steps = max_steps
+        self.system_prompt = system_prompt
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
@@ -152,38 +161,65 @@ class MongoDBAgent:
             # Get conversation history
             conversation_context = conversation_memory.get_recent_context(conversation_id)
 
+            # Build messages with optional system instruction
+            messages: List[BaseMessage] = []
+            if self.system_prompt:
+                messages.append(SystemMessage(content=self.system_prompt))
+            messages.extend(conversation_context)
+
             # Add current user message
             human_message = HumanMessage(content=query)
-            messages = conversation_context + [human_message]
+            messages.append(human_message)
 
-            response = await self.llm_with_tools.ainvoke(messages)
-
-            # Add messages to conversation memory
+            # Persist the human message
             conversation_memory.add_message(conversation_id, human_message)
-            conversation_memory.add_message(conversation_id, response)
 
-            # Handle tool calls if any
-            if response.tool_calls:
+            steps = 0
+            last_response: Optional[AIMessage] = None
+
+            while steps < self.max_steps:
+                response = await self.llm_with_tools.ainvoke(messages)
+                last_response = response
+
+                # Persist assistant message
+                conversation_memory.add_message(conversation_id, response)
+
+                # If no tools requested, we are done
+                if not getattr(response, "tool_calls", None):
+                    return response.content
+
+                # Execute requested tools sequentially
                 messages.append(response)
                 for tool_call in response.tool_calls:
-                    # Find the tool
                     tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if tool:
-                        # Execute the tool
-                        result = await tool.ainvoke(tool_call["args"])
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"]
+                    if not tool:
+                        # If tool not found, surface an error message and stop
+                        error_msg = ToolMessage(
+                            content=f"Tool '{tool_call['name']}' not found.",
+                            tool_call_id=tool_call["id"],
                         )
-                        messages.append(tool_message)
-                        conversation_memory.add_message(conversation_id, tool_message)
+                        messages.append(error_msg)
+                        conversation_memory.add_message(conversation_id, error_msg)
+                        continue
 
-                # Get final response after tool calls
-                final_response = await self.llm_with_tools.ainvoke(messages)
-                conversation_memory.add_message(conversation_id, final_response)
-                return final_response.content
-            else:
-                return response.content
+                    try:
+                        result = await tool.ainvoke(tool_call["args"])
+                    except Exception as tool_exc:
+                        result = f"Tool execution error: {tool_exc}"
+
+                    tool_message = ToolMessage(
+                        content=str(result),
+                        tool_call_id=tool_call["id"],
+                    )
+                    messages.append(tool_message)
+                    conversation_memory.add_message(conversation_id, tool_message)
+
+                steps += 1
+
+            # Step cap reached; return best available answer
+            if last_response is not None:
+                return last_response.content
+            return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
@@ -201,53 +237,74 @@ class MongoDBAgent:
             # Get conversation history
             conversation_context = conversation_memory.get_recent_context(conversation_id)
 
+            # Build messages with optional system instruction
+            messages: List[BaseMessage] = []
+            if self.system_prompt:
+                messages.append(SystemMessage(content=self.system_prompt))
+            messages.extend(conversation_context)
+
             # Add current user message
             human_message = HumanMessage(content=query)
-            messages = conversation_context + [human_message]
+            messages.append(human_message)
 
             callback_handler = ToolCallingCallbackHandler(websocket)
 
-            # Get initial response with streaming
-            response = await self.llm_with_tools.ainvoke(
-                messages,
-                config={"callbacks": [callback_handler]}
-            )
-
-            # Add messages to conversation memory
+            # Persist the human message
             conversation_memory.add_message(conversation_id, human_message)
-            conversation_memory.add_message(conversation_id, response)
 
-            # Handle tool calls if any
-            if response.tool_calls:
+            steps = 0
+            last_response: Optional[AIMessage] = None
+
+            while steps < self.max_steps:
+                response = await self.llm_with_tools.ainvoke(
+                    messages,
+                    config={"callbacks": [callback_handler]},
+                )
+                last_response = response
+
+                # Persist assistant message
+                conversation_memory.add_message(conversation_id, response)
+
+                if not getattr(response, "tool_calls", None):
+                    yield response.content
+                    return
+
+                # Execute requested tools sequentially with streaming callbacks
                 messages.append(response)
                 for tool_call in response.tool_calls:
-                    # Find the tool
                     tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if tool:
-                        # Execute the tool with callback
-                        await callback_handler.on_tool_start(
-                            {"name": tool.name},
-                            str(tool_call["args"])
+                    if not tool:
+                        error_msg = ToolMessage(
+                            content=f"Tool '{tool_call['name']}' not found.",
+                            tool_call_id=tool_call["id"],
                         )
+                        messages.append(error_msg)
+                        conversation_memory.add_message(conversation_id, error_msg)
+                        continue
+
+                    await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                    try:
                         result = await tool.ainvoke(tool_call["args"])
                         await callback_handler.on_tool_end(str(result))
+                    except Exception as tool_exc:
+                        result = f"Tool execution error: {tool_exc}"
+                        await callback_handler.on_tool_end(str(result))
 
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"]
-                        )
-                        messages.append(tool_message)
-                        conversation_memory.add_message(conversation_id, tool_message)
+                    tool_message = ToolMessage(
+                        content=str(result),
+                        tool_call_id=tool_call["id"],
+                    )
+                    messages.append(tool_message)
+                    conversation_memory.add_message(conversation_id, tool_message)
 
-                # Get final response after tool calls with streaming
-                final_response = await self.llm_with_tools.ainvoke(
-                    messages,
-                    config={"callbacks": [callback_handler]}
-                )
-                conversation_memory.add_message(conversation_id, final_response)
-                yield final_response.content
+                steps += 1
+
+            # Step cap reached; send best available response
+            if last_response is not None:
+                yield last_response.content
             else:
-                yield response.content
+                yield "Reached maximum reasoning steps without a final answer."
+            return
 
         except Exception as e:
             yield f"Error running streaming agent: {str(e)}"

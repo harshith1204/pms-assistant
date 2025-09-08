@@ -17,6 +17,7 @@ typing-extensions
 asyncio-mqtt
 aiohttp
 httpx
+python-dateutil
 
 # Web framework
 fastapi
