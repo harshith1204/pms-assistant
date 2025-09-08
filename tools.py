@@ -1515,6 +1515,15 @@ async def get_work_items_with_context(work_item_filters: Dict[str, Any] = None, 
             field: 1 for field in ALLOWED_FIELDS["workItem"]
         }
 
+        # Prevent MongoDB path collisions in $project (e.g., projecting both
+        # "assignee" and "assignee._id" causes Invalid $project path collision)
+        # If a parent path exists, drop its sub-paths from projection.
+        for key in list(projection.keys()):
+            if "." in key:
+                root = key.split(".")[0]
+                if root in projection:
+                    del projection[key]
+
         # Remove fields that would conflict with renamed lookup results
         conflicting_fields = []
         for context in include_context:
