@@ -12,6 +12,7 @@ import time
 import re
 
 from constants import DATABASE_NAME
+from query_planner import plan_and_execute_query
 
 def _should_use_planner(message_text: str) -> bool:
     q = (message_text or "").lower()
@@ -151,6 +152,80 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             if force_planner or _should_use_planner(message):
                 # Use deterministic planner
                 op_id = str(uuid.uuid4())
+
+                # Signal start similar to LLM callbacks
+                await websocket.send_json({
+                    "type": "llm_start",
+                    "timestamp": datetime.now().isoformat()
+                })
+
+                try:
+                    planner_result = await plan_and_execute_query(message)
+
+                    if planner_result.get("success"):
+                        # Build a concise, formatted response
+                        intent = planner_result.get("intent", {})
+                        pipeline = planner_result.get("pipeline", [])
+                        result = planner_result.get("result")
+
+                        # Compose text similar to tools.intelligent_query
+                        parts = []
+                        parts.append("🎯 INTELLIGENT QUERY RESULT:\n")
+                        parts.append(f"Query: '{message}'\n\n")
+                        parts.append("📋 UNDERSTOOD INTENT:\n")
+                        primary_entity = intent.get("primary_entity")
+                        if primary_entity:
+                            parts.append(f"• Primary Entity: {primary_entity}\n")
+                        target_entities = intent.get("target_entities") or []
+                        if target_entities:
+                            parts.append(f"• Related Entities: {', '.join(target_entities)}\n")
+                        filters = intent.get("filters")
+                        if filters:
+                            parts.append(f"• Filters: {filters}\n")
+                        aggregations = intent.get("aggregations") or []
+                        if aggregations:
+                            parts.append(f"• Aggregations: {', '.join(aggregations)}\n")
+                        parts.append("\n")
+
+                        if pipeline:
+                            parts.append("🔧 GENERATED PIPELINE:\n")
+                            for stage in pipeline:
+                                if not isinstance(stage, dict) or not stage:
+                                    continue
+                                stage_name = list(stage.keys())[0]
+                                stage_content = json.dumps(stage[stage_name])
+                                parts.append(f"• {stage_name}: {stage_content}\n")
+                            parts.append("\n")
+
+                        parts.append(f"📊 RESULTS:\n{result}")
+                        full_text = "".join(parts)
+
+                        # Send as a single token for simplicity
+                        await websocket.send_json({
+                            "type": "token",
+                            "content": full_text,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    else:
+                        err = planner_result.get("error", "Unknown error")
+                        await websocket.send_json({
+                            "type": "token",
+                            "content": f"❌ QUERY FAILED:\nQuery: '{message}'\nError: {err}",
+                            "timestamp": datetime.now().isoformat()
+                        })
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "token",
+                        "content": f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{message}'\nError: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Signal end
+                await websocket.send_json({
+                    "type": "llm_end",
+                    "elapsed_time": 0,
+                    "timestamp": datetime.now().isoformat()
+                })
             else:
                 # Use regular LLM with tool calling
                 async for response_chunk in mongodb_agent.run_streaming(

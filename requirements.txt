@@ -4,6 +4,8 @@ langchain
 langchain-core
 langchain-ollama
 langchain-community
+langchain-openai
+langchain-mongodb
 
 # MCP (Model Context Protocol) dependencies
 mcp

@@ -14,6 +14,7 @@ from collections import defaultdict, deque
 
 tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
+from query_planner import plan_and_execute_query
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a planning and tool-using agent for a Project Management System. For complex requests, break the task into"
@@ -21,7 +22,7 @@ DEFAULT_SYSTEM_PROMPT = (
     " Call tools as needed to gather data, transform it, and iterate until the goal is met."
     " Only produce the final answer when you have gathered enough evidence."
     "\n\nTOOL SELECTION GUIDANCE:"
-    "\n• ALWAYS start with analyze_query_intent tool to determine the best approach"
+    "\n• ALWAYS start with analyze_query_intent tool to determine the best approach (or call the intelligent planner directly for cross-collection requests)"
     "\n• For module counting: Use count_work_items_by_module (not get_work_items_with_context)"
     "\n• For listing work items: Use get_work_items_with_context"
     "\n• For project details: Use get_project_with_related_data"
@@ -191,8 +192,44 @@ class MongoDBAgent:
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
 
-                # If no tools requested, we are done
+                # If no tools requested, attempt intelligent planner as a final cross-collection fallback
                 if not getattr(response, "tool_calls", None):
+                    try:
+                        planner_result = await plan_and_execute_query(query)
+                        if planner_result.get("success"):
+                            intent = planner_result.get("intent", {})
+                            pipeline = planner_result.get("pipeline", [])
+                            result = planner_result.get("result")
+                            parts = []
+                            parts.append("🎯 INTELLIGENT QUERY RESULT:\n")
+                            parts.append(f"Query: '{query}'\n\n")
+                            parts.append("📋 UNDERSTOOD INTENT:\n")
+                            primary_entity = intent.get("primary_entity")
+                            if primary_entity:
+                                parts.append(f"• Primary Entity: {primary_entity}\n")
+                            target_entities = intent.get("target_entities") or []
+                            if target_entities:
+                                parts.append(f"• Related Entities: {', '.join(target_entities)}\n")
+                            filters = intent.get("filters")
+                            if filters:
+                                parts.append(f"• Filters: {filters}\n")
+                            aggregations = intent.get("aggregations") or []
+                            if aggregations:
+                                parts.append(f"• Aggregations: {', '.join(aggregations)}\n")
+                            parts.append("\n")
+                            if pipeline:
+                                parts.append("🔧 GENERATED PIPELINE:\n")
+                                for stage in pipeline:
+                                    if not isinstance(stage, dict) or not stage:
+                                        continue
+                                    stage_name = list(stage.keys())[0]
+                                    stage_content = json.dumps(stage[stage_name])
+                                    parts.append(f"• {stage_name}: {stage_content}\n")
+                                parts.append("\n")
+                            parts.append(f"📊 RESULTS:\n{result}")
+                            return "".join(parts)
+                    except Exception:
+                        pass
                     return response.content
 
                 # Execute requested tools sequentially
