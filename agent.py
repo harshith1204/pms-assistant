@@ -62,10 +62,10 @@ llm = ChatOllama(
     model="qwen3:0.6b-fp16",
     temperature=0.3,  # Lower temperature for more consistent responses
     num_ctx=4096,  # Increased context for better understanding
-    num_predict=512,  # Allow longer responses for detailed insights
+    num_predict=1024,  # Allow longer responses for detailed insights
     num_thread=8,  # Use multiple threads for speed
     streaming=True,  # Enable streaming for real-time responses
-    verbose=True,
+    verbose=False,
     top_p=0.9,  # Better response diversity
     top_k=40,  # Focus on high-probability tokens
 )

@@ -42,8 +42,14 @@ REL: Dict[str, Dict[str, dict]] = {
             "target": "page",
             "expr": "cycle._id in page.linkedCycle"
         },
-        # add when available:
-        # "workItems": {"target":"workItem","join":{"workItem.cycleId":"cycle._id"}}
+        "workItems": {
+            "target": "workItem",
+            "join": {"workItem.cycleId": "cycle._id"}
+        },
+        "project": {
+            "target": "project",
+            "join": {"cycle.project._id": "project._id"}
+        }
     },
 
     # WORK ITEM
@@ -56,9 +62,22 @@ REL: Dict[str, Dict[str, dict]] = {
             "target": "projectState",
             "expr": "workItem.state._id in projectState.subStates._id OR name-eq"
         },
-        # add when available:
-        # "module": {"target":"module","join":{"workItem.moduleId":"module._id"}}
-        # "cycle":  {"target":"cycle","join":{"workItem.cycleId":"cycle._id"}}
+        "cycle": {
+            "target": "cycle",
+            "join": {"workItem.cycleId": "cycle._id"}
+        },
+        "module": {
+            "target": "module",
+            "join": {"workItem.moduleId": "module._id"}
+        },
+        "assignee": {
+            "target": "members",
+            "join": {"workItem.assignee._id": "members._id"}
+        },
+        "createdBy": {
+            "target": "members",
+            "join": {"workItem.createdBy._id": "members._id"}
+        }
     },
 
     # MEMBERS
@@ -95,9 +114,18 @@ REL: Dict[str, Dict[str, dict]] = {
             "target": "project",
             "join": {"module.project._id": "project._id"}
         },
-        # add when available:
-        # "workItems": {"target":"workItem","join":{"workItem.moduleId":"module._id"}}
-        # "pages": handled via page.modules expr
+        "workItems": {
+            "target": "workItem",
+            "join": {"workItem.moduleId": "module._id"}
+        },
+        "pages": {
+            "target": "page",
+            "expr": "module._id in page.linkedModule"
+        },
+        "assignee": {
+            "target": "members",
+            "join": {"module.assignee._id": "members._id"}
+        }
     },
 }
 
