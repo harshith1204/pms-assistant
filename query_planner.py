@@ -177,6 +177,11 @@ class NaturalLanguageParser:
         if assignee_match:
             filters['assignee_name'] = assignee_match.group(1).strip()
 
+        # Module name filters (e.g., "CRM module", "API module")
+        module_match = re.search(r'(\w+)\s+module', query)
+        if module_match:
+            filters['module_name'] = module_match.group(1)
+
         return filters
 
     def _extract_aggregations(self, query: str) -> List[str]:
@@ -342,6 +347,10 @@ class PipelineGenerator:
         # Assignee name filter (applies to joined members via assignee relation)
         if 'assignee_name' in filters:
             secondary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+
+        # Module name filter (applies to joined module)
+        if 'module_name' in filters:
+            secondary_filters['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
 
         return secondary_filters
 

@@ -1010,11 +1010,12 @@ async def count_work_items_by_module(module_name: str) -> str:
     """Returns the total number of work items (tasks) associated with a specific module.
 
     USE THIS TOOL WHEN:
-    - User asks about work item count for a specific module (not project)
-    - Questions like "How many tasks are in CRM module?", "What's the task count for API module?"
+    - User asks for COUNTING work items in a specific MODULE (not project)
+    - Questions like "How many tasks are in CRM module?", "Count work items in API module", "What's the task count for CRM?"
     - Need to count work items specifically within a module context
-    - User mentions "module" specifically rather than "project"
+    - User specifically mentions "module" in their query
     - Want module-level task counting and workload assessment
+    - THIS IS THE PRIMARY TOOL for module-specific work item counting
 
     Args:
         module_name: Name of the module to count work items for (supports partial matching)
@@ -1332,10 +1333,12 @@ async def get_project_with_related_data(project_name: str, include_relations: Li
     """Get comprehensive project data with related entities using the relationship registry.
 
     USE THIS TOOL WHEN:
-    - User wants to see a project with all its related data (work items, cycles, members, pages, modules)
+    - User wants to see a SPECIFIC PROJECT with all its related data (work items, cycles, members, pages, modules)
     - Questions like "Show me everything about project X", "Get full project details including work items and cycles"
-    - Need to understand project scope and all associated entities
-    - Want to see project context with related entities
+    - Need to understand ONE PROJECT's scope and all associated entities
+    - Want to see project context with related entities for a NAMED project
+    - DO NOT USE for counting work items - use count_work_items_by_module for module-specific counting
+    - DO NOT USE for general queries without a specific project name
 
     Args:
         project_name: Name of the project to query (supports partial matching)
@@ -1471,10 +1474,11 @@ async def get_work_items_with_context(work_item_filters: Dict[str, Any] = None, 
     """Get work items with their full context from related collections.
 
     USE THIS TOOL WHEN:
-    - User wants to see work items with project, state, cycle, and module information
-    - Questions like "Show me work items with their states", "Get tasks with full project context", "Work items and their cycles"
-    - Need to understand work item context across multiple dimensions
-    - Want to see work item relationships and dependencies
+    - User wants to LIST or SEE specific work items with their relationships
+    - Questions like "Show me work items with their states", "List tasks with project context", "Display work items and their cycles"
+    - Need to BROWSE or VIEW individual work items with their full details
+    - Want to see work item relationships and dependencies for SPECIFIC items
+    - DO NOT USE for COUNTING - use count_work_items_by_module for counting by module
 
     Args:
         work_item_filters: Filters to apply to work items (e.g., {"status": "TODO", "priority": "HIGH"})
@@ -1503,6 +1507,10 @@ async def get_work_items_with_context(work_item_filters: Dict[str, Any] = None, 
                 # Rename the lookup result to avoid conflicts
                 if "join" in relationship:
                     lookup_stage["$lookup"]["as"] = f"{context_name}_info"
+                    # Add projection to the lookup pipeline to exclude _id and avoid collisions
+                    if "pipeline" not in lookup_stage["$lookup"]:
+                        lookup_stage["$lookup"]["pipeline"] = []
+                    lookup_stage["$lookup"]["pipeline"].append({"$project": {"_id": 0}})
 
                 pipeline.append(lookup_stage)
 
@@ -1515,16 +1523,30 @@ async def get_work_items_with_context(work_item_filters: Dict[str, Any] = None, 
             field: 1 for field in ALLOWED_FIELDS["workItem"]
         }
 
+        # Prevent MongoDB path collisions in $project (e.g., projecting both
+        # "assignee" and "assignee._id" causes Invalid $project path collision)
+        # If a parent path exists, drop its sub-paths from projection.
+        for key in list(projection.keys()):
+            if "." in key:
+                root = key.split(".")[0]
+                if root in projection:
+                    del projection[key]
+
         # Remove fields that would conflict with renamed lookup results
         conflicting_fields = []
         for context in include_context:
             if context in REL["workItem"] and "join" in REL["workItem"][context]:
-                # If the context field exists in the original document, exclude it to avoid collision
-                if context in projection:
-                    del projection[context]
+                # Remove the base field and any sub-fields that could conflict
+                fields_to_remove = []
+                for field in list(projection.keys()):
+                    if field == context or field.startswith(f"{context}."):
+                        fields_to_remove.append(field)
+
+                for field in fields_to_remove:
+                    del projection[field]
                 conflicting_fields.append(context)
 
-        # Add context fields with renamed fields to avoid conflicts
+        # Add context fields (lookup results are already handled with _id excluded)
         for context in include_context:
             if context in REL["workItem"] and "join" in REL["workItem"][context]:
                 projection[f"{context}_info"] = 1
@@ -1833,22 +1855,59 @@ async def analyze_cross_collection_metrics(metric_type: str, filters: Dict[str, 
         return f"❌ Error analyzing cross-collection metrics: {str(e)}"
 
 @tool
+async def analyze_query_intent(query: str) -> str:
+    """Analyze user query to determine the best tool to use.
+
+    USE THIS TOOL FIRST when deciding which tool to use for a query.
+    This helps route queries to the most appropriate specialized tool.
+
+    Args:
+        query: The user's natural language query
+
+    Returns analysis of query intent and recommended tool to use."""
+    query_lower = query.lower()
+
+    # Check for module-specific counting queries
+    if ('module' in query_lower and
+        any(word in query_lower for word in ['count', 'how many', 'number of', 'total', 'tasks', 'work items'])):
+        return "RECOMMENDATION: Use count_work_items_by_module tool for module-specific counting queries."
+
+    # Check for project-specific queries
+    if ('project' in query_lower and
+        any(word in query_lower for word in ['show me everything', 'full details', 'comprehensive', 'all related'])):
+        return "RECOMMENDATION: Use get_project_with_related_data tool for comprehensive project queries."
+
+    # Check for work item listing queries
+    if (any(word in query_lower for word in ['show me', 'list', 'display', 'view']) and
+        any(word in query_lower for word in ['work items', 'tasks', 'with context', 'with their'])):
+        return "RECOMMENDATION: Use get_work_items_with_context tool for listing work items with context."
+
+    # Default to intelligent query for complex queries
+    return "RECOMMENDATION: Use intelligent_query tool for complex or unspecified queries."
+
+@tool
 async def intelligent_query(query: str) -> str:
     """Intelligent query processor that understands natural language and handles any permutation of PMS queries.
 
     USE THIS TOOL WHEN:
+    - No other specific tool matches the query exactly
     - User asks complex questions spanning multiple collections
     - Questions involve relationships between projects, work items, cycles, members, etc.
     - Need dynamic query generation based on relationship registry
-    - Want to avoid creating individual tools for every query type
     - Questions involve filtering, aggregation, or complex relationships
+    - AS A LAST RESORT when specific tools like count_work_items_by_module don't apply
 
-    This is the SMART tool that replaces the need for hundreds of specific tools by:
+    This is the SMART FALLBACK tool that replaces the need for hundreds of specific tools by:
     ✅ Understanding natural language queries
     ✅ Using relationship registry to build optimal MongoDB pipelines
     ✅ Handling any combination of entities and relationships
     ✅ Applying security constraints automatically
     ✅ Generating appropriate aggregations and projections
+
+    IMPORTANT: Use specific tools first! Only use this when:
+    - count_work_items_by_module is not appropriate
+    - get_work_items_with_context doesn't fit
+    - get_project_with_related_data doesn't apply
 
     Args:
         query: Natural language query (e.g., "Show me high priority tasks in the API project", "How many work items are in upcoming cycles?", "List all projects with their team members")
@@ -1992,6 +2051,8 @@ tools = [
     get_pages_with_relationships,  # Pages with relationships
     get_cycles_with_pages,  # Cycles with pages
     analyze_cross_collection_metrics,  # Cross-collection analytics
+    # QUERY INTENT ANALYZER - ROUTE TO BEST TOOL
+    analyze_query_intent,  # Analyze query intent and recommend best tool
     # INTELLIGENT QUERY PROCESSOR - THE SMART TOOL
     intelligent_query,  # Handles ANY natural language query dynamically
 ]
