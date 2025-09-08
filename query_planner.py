@@ -117,12 +117,18 @@ class NaturalLanguageParser:
 
         # Look for relationship indicators
         relationship_indicators = {
+            # generic
             'workItems': ['work items', 'tasks', 'bugs', 'issues'],
             'cycles': ['cycles', 'sprints', 'iterations'],
-            'members': ['members', 'team', 'assignees', 'owners'],
             'pages': ['pages', 'documentation', 'docs'],
-            'modules': ['modules', 'components'],
-            'states': ['states', 'status', 'workflow']
+            'modules': ['modules', 'components', 'features'],
+            'states': ['states', 'status', 'workflow'],
+            # workItem relations
+            'assignee': ['assignee', 'assigned to', 'assigned', 'owner', 'owned by'],
+            'project': ['project'],
+            'cycle': ['cycle', 'sprint'],
+            'module': ['module', 'component', 'feature'],
+            'stateMaster': ['state', 'workflow']
         }
 
         for relation, keywords in relationship_indicators.items():
@@ -165,6 +171,11 @@ class NaturalLanguageParser:
         cycle_match = re.search(r'cycle\s+["\']([^"\']+)["\']', query)
         if cycle_match:
             filters['cycle_title'] = cycle_match.group(1)
+
+        # Assignee name filters (e.g., "assigned to Aditya Sharma")
+        assignee_match = re.search(r'assigned to\s+([a-zA-Z][\w .\-]+)', query)
+        if assignee_match:
+            filters['assignee_name'] = assignee_match.group(1).strip()
 
         return filters
 
@@ -243,21 +254,34 @@ class PipelineGenerator:
             if primary_filters:
                 pipeline.append({"$match": primary_filters})
 
+        # Ensure lookups needed by secondary filters are included
+        required_relations: Set[str] = set(intent.target_entities)
+        if intent.filters:
+            # If we will filter by joined fields, we must join those relations
+            if 'project_name' in intent.filters and 'project' in REL.get(collection, {}):
+                required_relations.add('project')
+            if 'cycle_title' in intent.filters and 'cycle' in REL.get(collection, {}):
+                required_relations.add('cycle')
+            if 'assignee_name' in intent.filters and 'assignee' in REL.get(collection, {}):
+                required_relations.add('assignee')
+
         # Add relationship lookups
-        for target_entity in intent.target_entities:
+        for target_entity in required_relations:
             if target_entity in REL.get(collection, {}):
                 lookup_stage = self._generate_lookup_stage(collection, target_entity, intent.filters)
-                pipeline.append(lookup_stage)
+                # Only add lookup stage if it's not empty (for embedded relationships, it's empty)
+                if lookup_stage:
+                    pipeline.append(lookup_stage)
 
-                # Unwind for single relationships
-                relationship = REL[collection][target_entity]
-                if "join" in relationship:
-                    pipeline.append({
-                        "$unwind": {
-                            "path": f"${target_entity}",
-                            "preserveNullAndEmptyArrays": True
-                        }
-                    })
+                    # Unwind for single relationships (only if we did a lookup)
+                    relationship = REL[collection][target_entity]
+                    if "join" in relationship:
+                        pipeline.append({
+                            "$unwind": {
+                                "path": f"${target_entity}",
+                                "preserveNullAndEmptyArrays": True
+                            }
+                        })
 
         # Add secondary filters (on joined collections)
         if intent.filters:
@@ -313,7 +337,11 @@ class PipelineGenerator:
 
         # Cycle title filter (applies to joined cycle)
         if 'cycle_title' in filters:
-            secondary_filters['cycle.name'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+            secondary_filters['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+
+        # Assignee name filter (applies to joined members via assignee relation)
+        if 'assignee_name' in filters:
+            secondary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
 
         return secondary_filters
 
@@ -324,20 +352,26 @@ class PipelineGenerator:
 
         relationship = REL[from_collection][target_entity]
 
+        # Check if this is an embedded relationship (data already in the document)
+        # For embedded relationships like assignee, we don't need to lookup
+        embedded_fields = ['assignee']  # Add other embedded fields here as needed
+        if target_entity in embedded_fields:
+            # For embedded relationships, return empty dict (no lookup needed)
+            return {}
+
         if "join" in relationship:
             # Simple join relationship
             join_conditions = relationship["join"]
             lookup_stage = {
                 "$lookup": {
-                    "from": target_entity,
+                    "from": relationship["target"],  # target collection name
                     "let": {},
                     "pipeline": [],
-                    "as": target_entity
+                    "as": target_entity  # alias by relation name (e.g., assignee)
                 }
             }
 
             # Build match conditions
-            match_conditions = {}
             for foreign_field, local_field in join_conditions.items():
                 # Parse field paths
                 foreign_parts = foreign_field.split(".")
@@ -350,11 +384,25 @@ class PipelineGenerator:
 
                     lookup_stage["$lookup"]["let"][f"{foreign_collection}_{foreign_field_name.replace('.', '_')}"] = f"${local_field_name}"
 
-                    match_condition = {
-                        "$expr": {
-                            "$eq": [f"$${foreign_collection}_{foreign_field_name.replace('.', '_')}", f"${foreign_field_name}"]
+                    # Check if the local field is an array (for relationships like assignee)
+                    # If local field contains array indicators, use $in instead of $eq
+                    is_array_relationship = local_field_name in ['assignee._id', 'assignee'] or '_id' in local_field_name
+
+                    if is_array_relationship:
+                        # For array relationships, use $in
+                        # The foreign field (e.g., members._id) should be IN the local array (e.g., assignee._id)
+                        match_condition = {
+                            "$expr": {
+                                "$in": [f"${foreign_field_name}", f"$${foreign_collection}_{foreign_field_name.replace('.', '_')}"]
+                            }
                         }
-                    }
+                    else:
+                        # For single value relationships, use $eq
+                        match_condition = {
+                            "$expr": {
+                                "$eq": [f"$${foreign_collection}_{foreign_field_name.replace('.', '_')}", f"${foreign_field_name}"]
+                            }
+                        }
                     lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
 
             # Add defaults if specified

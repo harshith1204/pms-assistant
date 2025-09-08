@@ -1878,11 +1878,14 @@ async def intelligent_query(query: str) -> str:
             pipeline = result["pipeline"]
             if pipeline:
                 response += f"🔧 GENERATED PIPELINE:\n"
-                for i, stage in enumerate(pipeline[:3]):  # Show first 3 stages
+                for i, stage in enumerate(pipeline):
                     stage_name = list(stage.keys())[0]
-                    response += f"• {stage_name}: {json.dumps(stage[stage_name], indent=None)[:100]}...\n"
-                if len(pipeline) > 3:
-                    response += f"• ... and {len(pipeline) - 3} more stages\n"
+                    # Format the stage content nicely
+                    stage_content = json.dumps(stage[stage_name], indent=2)
+                    # Truncate very long content for readability but show complete structure
+                    if len(stage_content) > 200:
+                        stage_content = stage_content + "..."
+                    response += f"• {stage_name}: {stage_content}\n"
                 response += "\n"
 
             # Show results
