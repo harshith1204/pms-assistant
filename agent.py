@@ -16,10 +16,78 @@ tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a planning and tool-using agent. For complex requests, break the task into"
-    " sequential steps. Decide what to do next based on previous tool results."
-    " Call tools as needed to gather data, transform it, and iterate until the goal is met."
-    " Only produce the final answer when you have gathered enough evidence."
+    "🎯 You are a PMS (Project Management System) assistant with ADVANCED INTELLIGENT QUERY capabilities. "
+    "You have access to powerful tools that understand NATURAL LANGUAGE and handle COMPLEX INTER-RELATED PMS questions!\n\n"
+    "🚀 PRIMARY TOOLS FOR PMS QUERIES:\n\n"
+    "🎯 INTELLIGENT_QUERY (Use this FIRST for most questions):\n"
+    "• ANY question about work items, projects, cycles, modules, members, pages\n"
+    "• Filtering by status, priority, dates, projects, assignees, creators\n"
+    "• Grouping and sorting results\n"
+    "• Cross-collection relationships (members↔tasks, pages↔modules/cycles)\n"
+    "• Complex queries with multiple conditions and inter-dependencies\n"
+    "• ADVANCED: Multi-entity analysis, team productivity, workload distribution\n"
+    "• ADVANCED: Content network analysis, progress tracking, resource allocation\n\n"
+    "🚀 ADVANCED_PIPELINE_QUERY (Use for specialized deep analysis):\n"
+    "• Complex analytical queries requiring specialized aggregation patterns\n"
+    "• Advanced metrics: completion percentages, productivity scores, network density\n"
+    "• Multi-entity relationship mapping and analysis\n"
+    "• When you need deeper insights than standard queries provide\n\n"
+    "📝 NATURAL LANGUAGE EXAMPLES - Just ask conversationally:\n\n"
+    "🔹 BASIC QUERIES:\n"
+    "• \"Show me work items in project Test PMS grouped by status\"\n"
+    "• \"Who are the members in Test PMS and what tasks do they have?\"\n"
+    "• \"Find pages linked to modules in project Test PMS\"\n"
+    "• \"Top 20 recent tickets sorted by creation date\"\n"
+    "• \"High priority work items from last week\"\n"
+    "• \"Cycles ending this month in Test PMS\"\n\n"
+    "🔹 INTER-RELATED/COMPLEX QUERIES:\n"
+    "• \"What's the team productivity in Test PMS? Show me who has the most tasks\"\n"
+    "• \"How is project health across all active projects?\"\n"
+    "• \"Show me the workload distribution - who is overloaded vs underloaded?\"\n"
+    "• \"Find content connections between pages and modules in Test PMS\"\n"
+    "• \"Track progress across all cycles - what's the completion rate?\"\n"
+    "• \"Who is working on what? Show me the resource allocation matrix\"\n"
+    "• \"What's the relationship network between pages, modules, and cycles?\"\n\n"
+    "🔹 ADVANCED ANALYTICAL QUESTIONS:\n"
+    "• \"Analyze team collaboration patterns in project Test PMS\"\n"
+    "• \"Show me bottleneck analysis across all work items\"\n"
+    "• \"What's the velocity trend across recent cycles?\"\n"
+    "• \"Map the knowledge sharing network through task assignments\"\n"
+    "• \"Calculate team productivity metrics and identify top performers\"\n\n"
+    "🔧 SPECIALIZED DASHBOARD TOOLS (use only for high-level overviews):\n"
+    "• get_project_overview: Complete project portfolio status summary\n"
+    "• get_work_item_insights: Task distribution analytics\n"
+    "• get_team_productivity: Team workload summaries\n"
+    "• get_project_timeline: Recent activity feed\n"
+    "• get_business_insights: Business unit performance\n"
+    "• search_projects_by_name: Quick project lookup\n\n"
+    "⚡ DECISION FRAMEWORK:\n\n"
+    "1️⃣ INTER-RELATED QUESTIONS → Use intelligent_query\n"
+    "   • Questions involving multiple entities (projects + members + tasks)\n"
+    "   • Questions about relationships, connections, networks\n"
+    "   • Questions about productivity, workload, progress, health\n\n"
+    "2️⃣ DEEP ANALYTICAL QUESTIONS → Use advanced_pipeline_query\n"
+    "   • Questions requiring complex calculations (percentages, scores, metrics)\n"
+    "   • Questions about patterns, trends, bottlenecks\n"
+    "   • Questions needing specialized aggregation templates\n\n"
+    "3️⃣ SIMPLE OVERVIEW QUESTIONS → Use specialized dashboard tools\n"
+    "   • High-level summaries, basic counts, simple lists\n\n"
+    "🧠 THINKING PATTERN:\n"
+    "When you see: 'show', 'find', 'list', 'analyze', 'what's', 'who', 'how'\n"
+    "+ PMS entities: 'work items', 'projects', 'members', 'cycles', 'modules', 'pages'\n"
+    "+ Complex terms: 'productivity', 'workload', 'progress', 'network', 'relationships'\n"
+    "→ IMMEDIATELY consider intelligent_query or advanced_pipeline_query as primary choice!\n\n"
+    "🎯 GOLDEN RULE: For ANY inter-related or complex PMS question, "
+    "ALWAYS try intelligent_query FIRST! It will automatically build the right database queries, "
+    "handle complex relationships, and provide comprehensive insights.\n\n"
+    "🔄 PIPELINE BUILDING: The system automatically:\n"
+    "• Analyzes relationship complexity between entities\n"
+    "• Builds optimal MongoDB aggregation pipelines\n"
+    "• Handles cross-collection joins and lookups\n"
+    "• Applies security filtering and field validation\n"
+    "• Uses specialized templates for common patterns\n"
+    "• Returns both data and the generated pipeline for transparency\n\n"
+    "Only fall back to specialized tools when you need very specific dashboard-style summaries."
 )
 
 class ConversationMemory:
@@ -137,6 +205,61 @@ class MongoDBAgent:
         self.max_steps = max_steps
         self.system_prompt = system_prompt
 
+    def _should_use_intelligent_query(self, query: str) -> bool:
+        """Determine if intelligent_query should be the first choice for a given query"""
+        query_lower = query.lower()
+
+        # Trigger words that strongly suggest intelligent_query
+        basic_pms_keywords = [
+            'work item', 'work items', 'task', 'tasks', 'ticket', 'tickets', 'bug', 'bugs',
+            'issue', 'issues', 'project', 'projects', 'cycle', 'cycles', 'sprint', 'sprints',
+            'module', 'modules', 'member', 'members', 'team', 'assignee', 'assignees',
+            'page', 'pages', 'doc', 'docs', 'document'
+        ]
+
+        # Advanced keywords that suggest complex queries
+        advanced_keywords = [
+            'productivity', 'workload', 'distribution', 'progress', 'health', 'network',
+            'relationship', 'connection', 'collaboration', 'analysis', 'performance',
+            'resource', 'allocation', 'velocity', 'bottleneck', 'trend', 'pattern',
+            'efficiency', 'completion', 'percentage', 'metric', 'dashboard', 'overview'
+        ]
+
+        # Action words that suggest queries
+        action_keywords = [
+            'show', 'find', 'list', 'get', 'tell me', 'what', 'who', 'how',
+            'analyze', 'calculate', 'track', 'monitor', 'measure', 'compare'
+        ]
+
+        # Complex relationship indicators
+        relationship_keywords = [
+            'between', 'across', 'among', 'with', 'and', 'versus', 'vs',
+            'compared to', 'relative to', 'in relation to'
+        ]
+
+        # Count different types of keywords
+        basic_count = sum(1 for keyword in basic_pms_keywords if keyword in query_lower)
+        advanced_count = sum(1 for keyword in advanced_keywords if keyword in query_lower)
+        action_count = sum(1 for keyword in action_keywords if keyword in query_lower)
+        relationship_count = sum(1 for keyword in relationship_keywords if keyword in query_lower)
+
+        # Decision logic:
+        # 1. High advanced keyword count suggests complex analysis
+        # 2. Multiple basic PMS keywords + actions suggest intelligent_query
+        # 3. Relationship keywords suggest inter-related queries
+        # 4. Overall threshold for using intelligent_query
+
+        if advanced_count >= 1:  # Any advanced keyword suggests intelligent_query
+            return True
+        elif relationship_count >= 2:  # Multiple relationship indicators
+            return True
+        elif basic_count >= 2 and action_count >= 1:  # Basic PMS + action words
+            return True
+        elif basic_count >= 1 and (action_count >= 1 or advanced_count >= 1):
+            return True
+
+        return False
+
     async def connect(self):
         """Connect to MongoDB MCP server"""
         await mongodb_tools.connect()
@@ -164,7 +287,12 @@ class MongoDBAgent:
             # Build messages with optional system instruction
             messages: List[BaseMessage] = []
             if self.system_prompt:
-                messages.append(SystemMessage(content=self.system_prompt))
+                # Enhance system prompt with query-specific guidance
+                enhanced_prompt = self.system_prompt
+                if self._should_use_intelligent_query(query):
+                    enhanced_prompt += "\n\n🎯 DETECTED PMS QUERY: This appears to be a query about PMS data. " \
+                                     "Use the intelligent_query tool as your FIRST choice!"
+                messages.append(SystemMessage(content=enhanced_prompt))
             messages.extend(conversation_context)
 
             # Add current user message
@@ -240,7 +368,12 @@ class MongoDBAgent:
             # Build messages with optional system instruction
             messages: List[BaseMessage] = []
             if self.system_prompt:
-                messages.append(SystemMessage(content=self.system_prompt))
+                # Enhance system prompt with query-specific guidance
+                enhanced_prompt = self.system_prompt
+                if self._should_use_intelligent_query(query):
+                    enhanced_prompt += "\n\n🎯 DETECTED PMS QUERY: This appears to be a query about PMS data. " \
+                                     "Use the intelligent_query tool as your FIRST choice!"
+                messages.append(SystemMessage(content=enhanced_prompt))
             messages.extend(conversation_context)
 
             # Add current user message

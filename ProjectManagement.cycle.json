@@ -1,0 +1,42 @@
+[{
+  "_id": {
+    "$binary": {
+      "base64": "s0S6Uo63Ns/S+amqMWC4hQ==",
+      "subType": "03"
+    }
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "hGPYgkBwBh81c31fbpn8oQ==",
+        "subType": "03"
+      }
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "Z0h0P0SlfZzjN4fUdrU4nw==",
+        "subType": "03"
+      }
+    }
+  },
+  "title": "test",
+  "description": "test",
+  "startDate": {
+    "$date": "2025-08-24T18:30:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-08-25T18:30:00.000Z"
+  },
+  "status": "ACTIVE",
+  "isDefault": false,
+  "isFavourite": false,
+  "createdTimeStamp": {
+    "$date": "2025-08-25T14:16:48.035Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-08-25T14:16:48.035Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Cycle"
+}]
