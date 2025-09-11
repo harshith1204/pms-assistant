@@ -60,12 +60,32 @@ class NaturalLanguageParser:
             'aggregate': ['sum', 'average', 'total', 'summary']
         }
 
-        # Status keywords
+        # Work item status keywords (generic, not project/cycle)
         self.status_keywords = {
             'TODO': ['todo', 'to do', 'pending', 'open'],
-            'ACTIVE': ['in progress', 'working', 'active', 'ongoing'],
-            'COMPLETED': ['completed', 'done', 'finished', 'closed'],
-            'UPCOMING': ['upcoming', 'future', 'planned', 'next']
+            'COMPLETED': ['completed', 'done', 'finished', 'closed']
+        }
+
+        # Project status keywords aligned to PROJECT_STATUS enum
+        self.project_status_keywords = {
+            'NOT_STARTED': ['not started', 'new', 'not begun', 'yet to start'],
+            'STARTED': ['started', 'has started', 'underway'],
+            'COMPLETED': ['completed', 'finished', 'done'],
+            'OVERDUE': ['overdue', 'late', 'past due']
+        }
+
+        # Cycle status keywords aligned to CYCLE_STATUS enum
+        self.cycle_status_keywords = {
+            'ACTIVE': ['active', 'in progress', 'ongoing', 'running'],
+            'UPCOMING': ['upcoming', 'future', 'planned', 'next'],
+            'COMPLETED': ['completed', 'finished', 'done']
+        }
+
+        # Page visibility keywords aligned to PageVisibility enum
+        self.page_visibility_keywords = {
+            'PUBLIC': ['public', 'visible to all'],
+            'PRIVATE': ['private', 'restricted'],
+            'ARCHIVED': ['archived', 'archive']
         }
 
     def parse_query(self, query: str) -> QueryIntent:
@@ -150,17 +170,36 @@ class NaturalLanguageParser:
                     filters['status'] = status
                     break
 
-        # Priority filters
+        # Priority filters aligned to PRIORITY enum
         priority_keywords = {
-            'HIGH': ['high', 'urgent', 'critical'],
+            'URGENT': ['urgent', 'critical', 'asap', 'immediately'],
+            'HIGH': ['high', 'important', 'severe'],
             'MEDIUM': ['medium', 'normal'],
-            'LOW': ['low', 'minor']
+            'LOW': ['low', 'minor', 'low priority'],
+            'NONE': ['none', 'no priority', 'unprioritized']
         }
         for priority, keywords in priority_keywords.items():
-            for keyword in keywords:
-                if keyword in query:
-                    filters['priority'] = priority
-                    break
+            if any(keyword in query for keyword in keywords):
+                filters['priority'] = priority
+                break
+
+        # Project status filters
+        for status, keywords in self.project_status_keywords.items():
+            if any(keyword in query for keyword in keywords):
+                filters['project_status'] = status
+                break
+
+        # Cycle status filters
+        for status, keywords in self.cycle_status_keywords.items():
+            if any(keyword in query for keyword in keywords):
+                filters['cycle_status'] = status
+                break
+
+        # Page visibility filters
+        for visibility, keywords in self.page_visibility_keywords.items():
+            if any(keyword in query for keyword in keywords):
+                filters['page_visibility'] = visibility
+                break
 
         # Project name filters
         project_match = re.search(r'project\s+["\']([^"\']+)["\']', query)
@@ -304,14 +343,38 @@ class PipelineGenerator:
                     pipeline.append({"$count": "total"})
                     return pipeline  # Count is terminal
 
-        # Add projections
+        # Add sorting (handle custom priority order)
+        if intent.sort_order:
+            if 'priority' in intent.sort_order:
+                # Map PRIORITY enum to rank for sorting: URGENT > HIGH > MEDIUM > LOW > NONE
+                pipeline.append({
+                    "$addFields": {
+                        "_priorityRank": {
+                            "$switch": {
+                                "branches": [
+                                    {"case": {"$eq": ["$priority", "URGENT"]}, "then": 5},
+                                    {"case": {"$eq": ["$priority", "HIGH"]}, "then": 4},
+                                    {"case": {"$eq": ["$priority", "MEDIUM"]}, "then": 3},
+                                    {"case": {"$eq": ["$priority", "LOW"]}, "then": 2},
+                                    {"case": {"$eq": ["$priority", "NONE"]}, "then": 1}
+                                ],
+                                "default": 0
+                            }
+                        }
+                    }
+                })
+                # Use computed rank for sorting direction provided
+                direction = intent.sort_order.get('priority', -1)
+                pipeline.append({"$sort": {"_priorityRank": direction}})
+            else:
+                pipeline.append({"$sort": intent.sort_order})
+
+        # Add projections after sorting so computed fields can be hidden
         if intent.projections:
             projection = self._generate_projection(intent.projections, intent.target_entities, intent.primary_entity)
+            # Ensure we exclude helper fields from output
+            projection["_priorityRank"] = 0
             pipeline.append({"$project": projection})
-
-        # Add sorting
-        if intent.sort_order:
-            pipeline.append({"$sort": intent.sort_order})
 
         # Add limit
         if intent.limit:
@@ -330,8 +393,16 @@ class PipelineGenerator:
                 primary_filters['priority'] = filters['priority']
 
         elif collection == "project":
-            if 'status' in filters:
-                primary_filters['status'] = filters['status']
+            if 'project_status' in filters:
+                primary_filters['status'] = filters['project_status']
+
+        elif collection == "cycle":
+            if 'cycle_status' in filters:
+                primary_filters['status'] = filters['cycle_status']
+
+        elif collection == "page":
+            if 'page_visibility' in filters:
+                primary_filters['visibility'] = filters['page_visibility']
 
         return primary_filters
 
