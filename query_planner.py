@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
 
-from registry import REL, ALLOWED_FIELDS, ALIASES, resolve_field_alias, validate_fields
+from registry import REL, ALLOWED_FIELDS, ALIASES, resolve_field_alias, validate_fields, build_lookup_stage
 from constants import mongodb_tools, DATABASE_NAME
 
 @dataclass
@@ -63,7 +63,7 @@ class NaturalLanguageParser:
         # Status keywords
         self.status_keywords = {
             'TODO': ['todo', 'to do', 'pending', 'open'],
-            'IN_PROGRESS': ['in progress', 'working', 'active', 'ongoing'],
+            'ACTIVE': ['in progress', 'working', 'active', 'ongoing'],
             'COMPLETED': ['completed', 'done', 'finished', 'closed'],
             'UPCOMING': ['upcoming', 'future', 'planned', 'next']
         }
@@ -270,23 +270,26 @@ class PipelineGenerator:
             if 'assignee_name' in intent.filters and 'assignee' in REL.get(collection, {}):
                 required_relations.add('assignee')
 
-        # Add relationship lookups
+        # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in required_relations:
-            if target_entity in REL.get(collection, {}):
-                lookup_stage = self._generate_lookup_stage(collection, target_entity, intent.filters)
-                # Only add lookup stage if it's not empty (for embedded relationships, it's empty)
-                if lookup_stage:
-                    pipeline.append(lookup_stage)
-
-                    # Unwind for single relationships (only if we did a lookup)
-                    relationship = REL[collection][target_entity]
-                    if "join" in relationship:
+            # Allow multi-hop relation names like "project.stateMaster" from queries
+            hops = target_entity.split(".")
+            current_collection = collection
+            for hop in hops:
+                if hop not in REL.get(current_collection, {}):
+                    break
+                relationship = REL[current_collection][hop]
+                lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
+                if lookup:
+                    pipeline.append(lookup)
+                    if "join" in relationship or "expr" in relationship:
                         pipeline.append({
                             "$unwind": {
-                                "path": f"${target_entity}",
+                                "path": f"${relationship['target']}",
                                 "preserveNullAndEmptyArrays": True
                             }
                         })
+                current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)
         if intent.filters:
@@ -355,87 +358,11 @@ class PipelineGenerator:
         return secondary_filters
 
     def _generate_lookup_stage(self, from_collection: str, target_entity: str, filters: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate lookup stage for a relationship"""
+        # Deprecated in favor of build_lookup_stage imported from registry
         if from_collection not in REL or target_entity not in REL[from_collection]:
             return {}
-
         relationship = REL[from_collection][target_entity]
-
-        # Check if this is an embedded relationship (data already in the document)
-        # For embedded relationships like assignee, we don't need to lookup
-        embedded_fields = ['assignee']  # Add other embedded fields here as needed
-        if target_entity in embedded_fields:
-            # For embedded relationships, return empty dict (no lookup needed)
-            return {}
-
-        lookup_stage = {}  # Initialize to ensure it's always defined
-
-        if "join" in relationship:
-            # Simple join relationship
-            join_conditions = relationship["join"]
-            lookup_stage = {
-                "$lookup": {
-                    "from": relationship["target"],  # target collection name
-                    "let": {},
-                    "pipeline": [],
-                    "as": target_entity  # alias by relation name (e.g., assignee)
-                }
-            }
-
-            # Build match conditions
-            for foreign_field, local_field in join_conditions.items():
-                # Parse field paths
-                foreign_parts = foreign_field.split(".")
-                local_parts = local_field.split(".")
-
-                if len(foreign_parts) > 1 and len(local_parts) > 1:
-                    foreign_collection = foreign_parts[0]
-                    foreign_field_name = ".".join(foreign_parts[1:])
-                    local_field_name = ".".join(local_parts[1:])
-
-                    lookup_stage["$lookup"]["let"][f"{foreign_collection}_{foreign_field_name.replace('.', '_')}"] = f"${local_field_name}"
-
-                    # Check if the local field is an array (for relationships like assignee)
-                    # Only use $in for actual array fields, not all _id fields
-                    is_array_relationship = local_field_name in ['assignee._id', 'assignee']
-
-                    if is_array_relationship:
-                        # For array relationships, use $in
-                        # The foreign field (e.g., members._id) should be IN the local array (e.g., assignee._id)
-                        match_condition = {
-                            "$expr": {
-                                "$in": [f"${foreign_field_name}", f"$${foreign_collection}_{foreign_field_name.replace('.', '_')}"]
-                            }
-                        }
-                    else:
-                        # For single value relationships, use $eq
-                        match_condition = {
-                            "$expr": {
-                                "$eq": [f"$${foreign_collection}_{foreign_field_name.replace('.', '_')}", f"${foreign_field_name}"]
-                            }
-                        }
-                    lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
-
-            # Add defaults if specified
-            if "defaults" in relationship:
-                lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
-
-        elif "expr" in relationship:
-            # Expression-based relationship (like stateMaster)
-            lookup_stage = {
-                "$lookup": {
-                    "from": relationship["target"],
-                    "let": {},
-                    "pipeline": [],
-                    "as": target_entity
-                }
-            }
-
-            # Add defaults if specified
-            if "defaults" in relationship:
-                lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
-
-        return lookup_stage
+        return build_lookup_stage(relationship["target"], relationship, from_collection)
 
     def _generate_projection(self, projections: List[str], target_entities: List[str], primary_entity: str) -> Dict[str, Any]:
         """Generate projection object"""

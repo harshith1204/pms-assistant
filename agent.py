@@ -21,12 +21,7 @@ DEFAULT_SYSTEM_PROMPT = (
     " Call tools as needed to gather data, transform it, and iterate until the goal is met."
     " Only produce the final answer when you have gathered enough evidence."
     "\n\nTOOL SELECTION GUIDANCE:"
-    "\n• ALWAYS start with analyze_query_intent tool to determine the best approach"
-    "\n• For module counting: Use count_work_items_by_module (not get_work_items_with_context)"
-    "\n• For listing work items: Use get_work_items_with_context"
-    "\n• For project details: Use get_project_with_related_data"
     "\n• For complex queries: Use intelligent_query as fallback"
-    "\n• Avoid using general tools for specific counting tasks"
 )
 
 class ConversationMemory:
