@@ -1,0 +1,32 @@
+[{
+  "_id": {
+    "$binary": {
+      "base64": "OEwyhTOzQo3zaPInIkeFsQ==",
+      "subType": "03"
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "W0zni91t0XXulreiTDqbkQ==",
+        "subType": "03"
+      }
+    }
+  },
+  "isFavourite": true,
+  "createdTimeStamp": {
+    "$date": "2025-09-04T11:56:56.279Z"
+  },
+  "title": "jhggjy gjkgjgh jkj kjhjhk hlk kj. khjjk kjhjk kg",
+  "description": "",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "h24OhNvMBx8aHG3bN19UmA==",
+        "subType": "03"
+      }
+    }
+  },
+  "assignee": [],
+  "_class": "com.lm.project.project_management.pms.model.Module"
+}]

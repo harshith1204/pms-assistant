@@ -1,0 +1,30 @@
+[{
+  "_id": {
+    "$binary": {
+      "base64": "/2YcWw7DBx8c0IHT8elSkw==",
+      "subType": "03"
+    }
+  },
+  "projectId": {
+    "$binary": {
+      "base64": "xEOqWRV0k+G8xcP4aRb8lA==",
+      "subType": "03"
+    }
+  },
+  "name": "Unstarted",
+  "icon": "N/A",
+  "subStates": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "AGccWw7DBx9fzaoDw/lSkw==",
+          "subType": "03"
+        }
+      },
+      "name": "Unstarted",
+      "isDefault": false,
+      "order": 1
+    }
+  ],
+  "_class": "com.lm.project.project_management.pms.model.ProjectState"
+}]

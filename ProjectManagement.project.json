@@ -1,0 +1,34 @@
+[{
+  "_id": {
+    "$binary": {
+      "base64": "W0zni91t0XXulreiTDqbkQ==",
+      "subType": "03"
+    }
+  },
+  "projectDisplayId": "TESTP",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "h24OhNvMBx8aHG3bN19UmA==",
+        "subType": "03"
+      }
+    },
+    "name": "Jewellers Book"
+  },
+  "name": "TEST PMS",
+  "description": "",
+  "imageUrl": "https://dev-beeos.s3.amazonaws.com/Blogs/707258c1755599266439ChatGPT%20Image%20Aug%2012%2C%202025%2C%2011_51_07%20AM.png",
+  "icon": "🥳",
+  "access": "PUBLIC",
+  "isActive": false,
+  "status": "NOT_STARTED",
+  "favourite": false,
+  "isArchived": false,
+  "createdTimeStamp": {
+    "$date": "2025-09-05T06:24:03.149Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-09-05T06:24:03.149Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Project"
+}]
