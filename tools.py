@@ -1294,7 +1294,7 @@ async def traverse_relationships(start_collection: str, start_filters: Dict[str,
             target_collection = relationship["target"]
 
             # Build lookup stage for this relationship
-            lookup_stage = build_lookup_stage(target_collection, relationship)
+            lookup_stage = build_lookup_stage(target_collection, relationship, current_collection)
             pipeline.append(lookup_stage)
 
             # Unwind the results if it's a single relationship (not many-to-many)
@@ -1362,7 +1362,7 @@ async def get_project_with_related_data(project_name: str, include_relations: Li
                 relationship = REL["project"][relation_name]
                 target_collection = relationship["target"]
 
-                lookup_stage = build_lookup_stage(target_collection, relationship)
+                lookup_stage = build_lookup_stage(target_collection, relationship, "project")
                 pipeline.append(lookup_stage)
 
                 # Limit related items for readability
@@ -1503,7 +1503,7 @@ async def get_work_items_with_context(work_item_filters: Dict[str, Any] = None, 
                 target_collection = relationship["target"]
 
                 # Use different field names to avoid conflicts
-                lookup_stage = build_lookup_stage(target_collection, relationship)
+                lookup_stage = build_lookup_stage(target_collection, relationship, "workItem")
                 # Rename the lookup result to avoid conflicts
                 if "join" in relationship:
                     lookup_stage["$lookup"]["as"] = f"{context_name}_info"
@@ -1596,7 +1596,7 @@ async def get_pages_with_relationships(page_filters: Dict[str, Any] = None, incl
                 relationship = REL["page"][relation_name]
                 target_collection = relationship["target"]
 
-                lookup_stage = build_lookup_stage(target_collection, relationship)
+                lookup_stage = build_lookup_stage(target_collection, relationship, "page")
                 pipeline.append(lookup_stage)
 
                 # Handle array relationships (cycles, modules)
@@ -1650,13 +1650,13 @@ async def get_cycles_with_pages(cycle_filters: Dict[str, Any] = None, include_pa
 
         # Add project lookup
         if "project" in REL["cycle"]:
-            project_lookup = build_lookup_stage("project", REL["cycle"]["project"])
+            project_lookup = build_lookup_stage("project", REL["cycle"]["project"], "cycle")
             pipeline.append(project_lookup)
             pipeline.append({"$unwind": {"path": "$project", "preserveNullAndEmptyArrays": True}})
 
         # Add pages lookup if requested
         if include_pages and "pages" in REL["cycle"]:
-            pages_lookup = build_lookup_stage("page", REL["cycle"]["pages"])
+            pages_lookup = build_lookup_stage("page", REL["cycle"]["pages"], "cycle")
             pipeline.append(pages_lookup)
 
         # Project relevant fields
