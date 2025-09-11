@@ -194,61 +194,134 @@ def validate_fields(collection: str, fields: List[str]) -> List[str]:
     allowed = ALLOWED_FIELDS[collection]
     return [field for field in fields if resolve_field_alias(collection, field) in allowed]
 
-def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], additional_filters: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Build MongoDB $lookup stage based on relationship definition."""
-    if "join" in relationship:
-        # Simple join relationship
-        join_conditions = relationship["join"]
-        lookup_stage = {
-            "$lookup": {
-                "from": from_collection,
-                "let": {},
-                "pipeline": [],
-                "as": relationship["target"]
-            }
-        }
+def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], current_collection: str, additional_filters: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Build MongoDB $lookup stage based on relationship definition.
 
-        # Build match conditions
+    Enhancements:
+    - Supports field-to-field joins with $expr
+    - Handles array-joins using $in when appropriate
+    - Parses simple "X in Y" and "X = Y" expressions from relationship["expr"]
+    - Keeps local field paths relative to current document context
+    """
+    def _is_array_like(path: str) -> bool:
+        candidates = [
+            "assignee", "assignee._id", "linkedCycle", "linkedModule",
+            "assignees", "members", "labels", "subStates._id"
+        ]
+        return any(c in path for c in candidates)
+
+    lookup_stage: Dict[str, Any] = {
+        "$lookup": {
+            "from": from_collection,
+            "let": {},
+            "pipeline": [],
+            "as": relationship.get("target", from_collection)
+        }
+    }
+
+    if "join" in relationship:
+        # Simple join relationship using field mappings
+        join_conditions = relationship["join"]
         for foreign_field, local_field in join_conditions.items():
-            # Parse field paths
             foreign_parts = foreign_field.split(".")
             local_parts = local_field.split(".")
-
             if len(foreign_parts) > 1 and len(local_parts) > 1:
                 foreign_collection = foreign_parts[0]
                 foreign_field_name = ".".join(foreign_parts[1:])
-                local_field_name = ".".join(local_parts[1:])
 
-                lookup_stage["$lookup"]["let"][f"{foreign_collection}_{foreign_field_name.replace('.', '_')}"] = f"${local_field_name}"
+                # Keep the local path relative to current document unless it's prefixed with current_collection
+                if local_parts[0] == current_collection:
+                    local_field_path = ".".join(local_parts[1:])
+                else:
+                    local_field_path = ".".join(local_parts)
 
-                match_condition = {
-                    "$expr": {
-                        "$eq": [f"$${foreign_collection}_{foreign_field_name.replace('.', '_')}", f"${foreign_field_name}"]
+                var_name = f"local_{local_field_path.replace('.', '_')}"
+                lookup_stage["$lookup"]["let"][var_name] = f"${local_field_path}"
+
+                # Choose $eq or $in depending on whether local looks like an array
+                if _is_array_like(local_field_path):
+                    match_condition = {
+                        "$expr": {"$in": [f"${foreign_field_name}", f"$${var_name}"]}
                     }
-                }
+                else:
+                    match_condition = {
+                        "$expr": {"$eq": [f"$${var_name}", f"${foreign_field_name}"]}
+                    }
                 lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
 
-        # Add additional filters if provided
-        if additional_filters:
-            lookup_stage["$lookup"]["pipeline"].append({"$match": additional_filters})
-
-        # Add defaults if specified
-        if "defaults" in relationship:
-            lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
-
     elif "expr" in relationship:
-        # Expression-based relationship
-        lookup_stage = {
-            "$lookup": {
-                "from": from_collection,
-                "let": {},
-                "pipeline": [],
-                "as": relationship["target"]
-            }
-        }
+        # Parse simple expressions like "A.B in C.D" or "A.B = C.D"
+        expr_str: str = relationship["expr"].strip()
+        # Normalize operators
+        normalized = expr_str.replace("==", "=")
+        op = "in" if " in " in normalized else "=" if "=" in normalized else None
+        if op is not None:
+            left, right = [p.strip() for p in normalized.split(" in " if op == "in" else "=")]
+            # left refers to one side (could be local or foreign), right the other
+            # Determine which side is remote (from_collection) and which is local (current_collection)
+            left_prefix = left.split(".")[0]
+            right_prefix = right.split(".")[0]
 
-        # Add defaults if specified
-        if "defaults" in relationship:
-            lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
+            # Build paths without their collection prefixes when referencing remote
+            def strip_prefix(path: str, prefix: str) -> str:
+                parts = path.split(".")
+                if parts[0] == prefix:
+                    return ".".join(parts[1:])
+                return path
+
+            # Identify local and remote sides
+            if left_prefix == from_collection:
+                remote_field = strip_prefix(left, from_collection)
+                # right should be from current document
+                if right_prefix == current_collection:
+                    local_field_path = strip_prefix(right, current_collection)
+                else:
+                    local_field_path = right  # already relative to current doc
+                var_name = f"local_{local_field_path.replace('.', '_')}"
+                lookup_stage["$lookup"]["let"][var_name] = f"${local_field_path}"
+
+                if op == "in":
+                    # remote scalar IN local array
+                    match_condition = {"$expr": {"$in": [f"${remote_field}", f"$${var_name}"]}}
+                else:
+                    # equality
+                    match_condition = {"$expr": {"$eq": [f"${remote_field}", f"$${var_name}"]}}
+                lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
+
+            else:
+                # Treat left as local, right as remote
+                if left_prefix == current_collection:
+                    local_field_path = strip_prefix(left, current_collection)
+                else:
+                    local_field_path = left
+                var_name = f"local_{local_field_path.replace('.', '_')}"
+                lookup_stage["$lookup"]["let"][var_name] = f"${local_field_path}"
+                remote_field = strip_prefix(right, from_collection)
+
+                if op == "in":
+                    # local scalar IN remote array
+                    match_condition = {"$expr": {"$in": [f"$${var_name}", f"${remote_field}"]}}
+                else:
+                    match_condition = {"$expr": {"$eq": [f"$${var_name}", f"${remote_field}"]}}
+                lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
+
+        # Special-case: optional fallback noted in expr string
+        if "name-eq" in expr_str.lower():
+            # Heuristic: attempt to match by name fields as a fallback
+            # local: try state.name, remote: try name or subStates.name
+            or_conditions = []
+            # local state.name
+            lookup_stage["$lookup"]["let"]["local_state_name"] = "$state.name"
+            or_conditions.append({"$expr": {"$eq": ["$name", "$$local_state_name"]}})
+            or_conditions.append({"$expr": {"$in": ["$$local_state_name", "$subStates.name"]}})
+            lookup_stage["$lookup"]["pipeline"].append({"$match": {"$or": or_conditions}})
+
+    # Add additional filters if provided
+    if additional_filters:
+        lookup_stage["$lookup"]["pipeline"].append({"$match": additional_filters})
+
+    # Add defaults if specified
+    if "defaults" in relationship:
+        lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
 
     return lookup_stage
