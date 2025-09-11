@@ -308,6 +308,8 @@ class PipelineGenerator:
                 required_relations.add('cycle')
             if 'assignee_name' in intent.filters and 'assignee' in REL.get(collection, {}):
                 required_relations.add('assignee')
+            if 'module_name' in intent.filters and 'module' in REL.get(collection, {}):
+                required_relations.add('module')
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in required_relations:
@@ -318,16 +320,18 @@ class PipelineGenerator:
                 if hop not in REL.get(current_collection, {}):
                     break
                 relationship = REL[current_collection][hop]
-                lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
+                # Use relation name as alias so downstream filters/projections like 'assignee.name' work
+                lookup = build_lookup_stage(relationship["target"], relationship, current_collection, alias=hop)
                 if lookup:
                     pipeline.append(lookup)
                     if "join" in relationship or "expr" in relationship:
                         pipeline.append({
                             "$unwind": {
-                                "path": f"${relationship['target']}",
+                                "path": f"${hop}",
                                 "preserveNullAndEmptyArrays": True
                             }
                         })
+                # For multi-hop, the current collection context for building the next lookup remains the remote collection
                 current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)

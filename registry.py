@@ -194,7 +194,7 @@ def validate_fields(collection: str, fields: List[str]) -> List[str]:
     allowed = ALLOWED_FIELDS[collection]
     return [field for field in fields if resolve_field_alias(collection, field) in allowed]
 
-def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], current_collection: str, additional_filters: Dict[str, Any] = None) -> Dict[str, Any]:
+def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], current_collection: str, additional_filters: Dict[str, Any] = None, alias: str = None) -> Dict[str, Any]:
     """Build MongoDB $lookup stage based on relationship definition.
 
     Enhancements:
@@ -215,7 +215,7 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
             "from": from_collection,
             "let": {},
             "pipeline": [],
-            "as": relationship.get("target", from_collection)
+            "as": alias or relationship.get("as") or relationship.get("target", from_collection)
         }
     }
 
@@ -252,8 +252,20 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
     elif "expr" in relationship:
         # Parse simple expressions like "A.B in C.D" or "A.B = C.D"
         expr_str: str = relationship["expr"].strip()
-        # Normalize operators
-        normalized = expr_str.replace("==", "=")
+
+        # Extract optional flags like "OR name-eq" without letting them corrupt field parsing
+        has_name_eq_flag = False
+        # Split on case-insensitive OR and keep first condition for parsing
+        import re as _re
+        parts = _re.split(r"\s+or\s+", expr_str, flags=_re.IGNORECASE)
+        cond_str = parts[0].strip()
+        if len(parts) > 1:
+            for extra in parts[1:]:
+                if "name-eq" in extra.lower():
+                    has_name_eq_flag = True
+
+        # Normalize operators for the condition string only
+        normalized = cond_str.replace("==", "=")
         op = "in" if " in " in normalized else "=" if "=" in normalized else None
         if op is not None:
             left, right = [p.strip() for p in normalized.split(" in " if op == "in" else "=")]
@@ -264,9 +276,9 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
 
             # Build paths without their collection prefixes when referencing remote
             def strip_prefix(path: str, prefix: str) -> str:
-                parts = path.split(".")
-                if parts[0] == prefix:
-                    return ".".join(parts[1:])
+                parts2 = path.split(".")
+                if parts2[0] == prefix:
+                    return ".".join(parts2[1:])
                 return path
 
             # Identify local and remote sides
@@ -305,12 +317,11 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
                     match_condition = {"$expr": {"$eq": [f"$${var_name}", f"${remote_field}"]}}
                 lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
 
-        # Special-case: optional fallback noted in expr string
-        if "name-eq" in expr_str.lower():
+        # Optional fallback noted in expr flags (e.g., "OR name-eq")
+        if has_name_eq_flag:
             # Heuristic: attempt to match by name fields as a fallback
             # local: try state.name, remote: try name or subStates.name
             or_conditions = []
-            # local state.name
             lookup_stage["$lookup"]["let"]["local_state_name"] = "$state.name"
             or_conditions.append({"$expr": {"$eq": ["$name", "$$local_state_name"]}})
             or_conditions.append({"$expr": {"$in": ["$$local_state_name", "$subStates.name"]}})
