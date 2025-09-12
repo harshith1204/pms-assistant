@@ -497,16 +497,17 @@ class PipelineGenerator:
         defaults_map: Dict[str, List[str]] = {
             "workItem": [
                 "displayBugNo", "title", "status", "priority",
+                "state.name", "stateMaster.name", "assignee",
                 "project.name", "createdTimeStamp"
             ],
             "project": [
-                "projectDisplayId", "name", "status", "createdTimeStamp"
+                "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp"
             ],
             "cycle": [
                 "title", "status", "startDate", "endDate"
             ],
             "members": [
-                "name", "email", "role"
+                "name", "email", "role", "joiningDate"
             ],
             "page": [
                 "title", "visibility", "createdAt"
@@ -515,7 +516,7 @@ class PipelineGenerator:
                 "title", "description", "isFavourite", "createdTimeStamp"
             ],
             "projectState": [
-                "name", "subStates.name"
+                "name", "subStates.name", "subStates.order"
             ],
         }
 
