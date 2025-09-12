@@ -25,6 +25,8 @@ class QueryIntent:
     projections: List[str]  # Fields to return
     sort_order: Optional[Dict[str, int]]  # Sort specification
     limit: Optional[int]  # Result limit
+    wants_details: bool  # Prefer detailed documents over counts
+    wants_count: bool  # Whether the user asked for a count
 
 @dataclass
 class RelationshipPath:
@@ -113,6 +115,15 @@ class NaturalLanguageParser:
         # Extract limit
         limit = self._extract_limit(query_lower)
 
+        # Determine intent for details vs count
+        wants_count = ('count' in aggregations)
+        wants_details = self._detect_detail_intent(query_lower, projections, wants_count)
+
+        # If both are requested, prefer details per requirement
+        if wants_details and wants_count:
+            aggregations = [a for a in aggregations if a != 'count']
+            wants_count = False
+
         return QueryIntent(
             primary_entity=primary_entity,
             target_entities=target_entities,
@@ -120,7 +131,9 @@ class NaturalLanguageParser:
             aggregations=aggregations,
             projections=projections,
             sort_order=sort_order,
-            limit=limit
+            limit=limit,
+            wants_details=wants_details,
+            wants_count=wants_count
         )
 
     def _extract_primary_entity(self, query: str) -> str:
@@ -279,6 +292,27 @@ class NaturalLanguageParser:
             return int(limit_match.group(1))
         return 20  # Default limit
 
+    def _detect_detail_intent(self, query: str, projections: List[str], wants_count: bool) -> bool:
+        """Detect whether the user wants detailed records rather than just counts.
+
+        Rules:
+        - Explicit phrases like 'details', 'exact details' => True
+        - If user specifies field-like words (projections extracted) => True
+        - If the query is a numeric question ('how many', 'number of', 'count of') => False unless 'details' also present
+        - Generic list verbs ('list', 'show', 'get', 'display') => True only when not explicitly a count question
+        """
+        if 'exact details' in query or 'details' in query:
+            return True
+        count_markers = any(kw in query for kw in ['how many', 'number of', 'count of'])
+        if count_markers and not ('details' in query):
+            return False
+        if projections:
+            return True
+        list_markers = any(kw in query for kw in ['list', 'show', 'display', 'get', 'which', 'what are'])
+        if list_markers and not wants_count:
+            return True
+        return False
+
 class PipelineGenerator:
     """Generates MongoDB aggregation pipelines based on query intent and relationships"""
 
@@ -336,8 +370,8 @@ class PipelineGenerator:
             if secondary_filters:
                 pipeline.append({"$match": secondary_filters})
 
-        # Add aggregations
-        if intent.aggregations:
+        # Add aggregations (skip count when details are requested)
+        if intent.aggregations and not intent.wants_details:
             for agg in intent.aggregations:
                 if agg == 'count':
                     pipeline.append({"$count": "total"})
@@ -369,9 +403,14 @@ class PipelineGenerator:
             else:
                 pipeline.append({"$sort": intent.sort_order})
 
+        # Determine projections for details
+        effective_projections: List[str] = intent.projections
+        if intent.wants_details and not effective_projections:
+            effective_projections = self._get_default_projections(intent.primary_entity)
+
         # Add projections after sorting so computed fields can be hidden
-        if intent.projections:
-            projection = self._generate_projection(intent.projections, intent.target_entities, intent.primary_entity)
+        if effective_projections:
+            projection = self._generate_projection(effective_projections, intent.target_entities, intent.primary_entity)
             # Ensure we exclude helper fields from output
             projection["_priorityRank"] = 0
             pipeline.append({"$project": projection})
@@ -450,6 +489,47 @@ class PipelineGenerator:
                 projection[entity] = 1
 
         return projection
+
+    def _get_default_projections(self, primary_entity: str) -> List[str]:
+        """Return sensible default fields for detail queries per collection.
+        Only returns fields that are allow-listed for the given collection.
+        """
+        defaults_map: Dict[str, List[str]] = {
+            "workItem": [
+                "displayBugNo", "title", "status", "priority",
+                "project.name", "createdTimeStamp"
+            ],
+            "project": [
+                "projectDisplayId", "name", "status", "createdTimeStamp"
+            ],
+            "cycle": [
+                "title", "status", "startDate", "endDate"
+            ],
+            "members": [
+                "name", "email", "role"
+            ],
+            "page": [
+                "title", "visibility", "createdAt"
+            ],
+            "module": [
+                "title", "description", "isFavourite", "createdTimeStamp"
+            ],
+            "projectState": [
+                "name", "subStates.name"
+            ],
+        }
+
+        candidates = defaults_map.get(primary_entity, ["_id"])  # fallback _id
+
+        # Validate against allow-listed fields for safety
+        allowed = ALLOWED_FIELDS.get(primary_entity, set())
+        validated: List[str] = []
+        for field in candidates:
+            # Keep only fields that are explicitly allow-listed for primary entity
+            if field in allowed:
+                validated.append(field)
+        # If none survived validation, just return _id (already always projected)
+        return validated
 
 class QueryPlanner:
     """Main query planner that orchestrates the entire process"""
