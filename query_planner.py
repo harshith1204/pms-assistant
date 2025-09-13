@@ -410,7 +410,12 @@ class PipelineGenerator:
 
         # Add projections after sorting so computed fields can be hidden
         if effective_projections:
-            projection = self._generate_projection(effective_projections, intent.target_entities, intent.primary_entity)
+            projection = self._generate_projection(
+                effective_projections,
+                intent.target_entities,
+                intent.primary_entity,
+                intent.filters,
+            )
             # Ensure we exclude helper fields from output
             pipeline.append({"$project": projection})
             pipeline.append({"$unset": "_priorityRank"})
@@ -474,19 +479,77 @@ class PipelineGenerator:
         relationship = REL[from_collection][target_entity]
         return build_lookup_stage(relationship["target"], relationship, from_collection)
 
-    def _generate_projection(self, projections: List[str], target_entities: List[str], primary_entity: str) -> Dict[str, Any]:
-        """Generate projection object"""
-        projection = {"_id": 1}  # Always include ID
+    def _generate_projection(self, projections: List[str], target_entities: List[str], primary_entity: str, filters: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate projection object limited to fields relevant to the query.
 
-        # Add requested projections
-        for field in projections:
-            if field in ALLOWED_FIELDS.get(primary_entity, {}):
-                projection[field] = 1
+        Rules:
+        - Always include _id
+        - Expand generic projection tokens (e.g., 'project', 'cycle', 'created') into
+          specific allow-listed fields for the primary entity
+        - Include minimal fields needed to reflect applied filters (e.g., project.name when
+          filtering by project name), constrained by ALLOWED_FIELDS
+        - Avoid including entire related subdocuments by name (no blanket projection of target_entities)
+        """
+        projection: Dict[str, int] = {"_id": 1}
 
-        # Add target entity fields
-        for entity in target_entities:
-            if entity in REL.get(primary_entity, {}):
-                projection[entity] = 1
+        def choose_field(preferred_fields: List[str], allowed: Set[str]) -> Optional[str]:
+            for f in preferred_fields:
+                if f in allowed:
+                    return f
+            return None
+
+        allowed: Set[str] = ALLOWED_FIELDS.get(primary_entity, set())
+
+        # Map generic projection tokens to concrete fields
+        expanded_fields: List[str] = []
+        for token in projections:
+            token_lower = token.lower()
+            selected: Optional[str] = None
+
+            if token in allowed:
+                selected = token
+            elif token_lower in ("title", "name"):
+                selected = choose_field(["title", "name"], allowed)
+            elif token_lower == "status":
+                selected = choose_field(["status", "state.name", "stateMaster.name"], allowed)
+            elif token_lower == "priority":
+                selected = choose_field(["priority"], allowed)
+            elif token_lower == "assignee":
+                selected = choose_field(["assignee.name", "assignee", "assignee._id"], allowed)
+            elif token_lower == "created":
+                # Prefer fields containing 'created'
+                created_candidates = [f for f in allowed if "created" in f.lower()]
+                selected = created_candidates[0] if created_candidates else None
+            elif token_lower == "project":
+                selected = choose_field(["project.name", "project._id"], allowed)
+            elif token_lower == "cycle":
+                selected = choose_field(["cycle.title", "cycleId"], allowed)
+
+            if selected and selected in allowed:
+                expanded_fields.append(selected)
+
+        # Include minimal fields tied to filters since they are part of the user intent
+        if filters:
+            if "project_name" in filters:
+                selected = choose_field(["project.name", "project._id"], allowed)
+                if selected:
+                    expanded_fields.append(selected)
+            if "cycle_title" in filters:
+                selected = choose_field(["cycle.title", "cycleId"], allowed)
+                if selected:
+                    expanded_fields.append(selected)
+            if "assignee_name" in filters:
+                selected = choose_field(["assignee.name", "assignee", "assignee._id"], allowed)
+                if selected:
+                    expanded_fields.append(selected)
+            if "module_name" in filters:
+                selected = choose_field(["module.title", "moduleId"], allowed)
+                if selected:
+                    expanded_fields.append(selected)
+
+        # De-duplicate and constrain to allowed
+        for field in sorted(set(f for f in expanded_fields if f in allowed)):
+            projection[field] = 1
 
         return projection
 
