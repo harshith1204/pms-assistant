@@ -373,8 +373,9 @@ class PipelineGenerator:
         if intent.projections:
             projection = self._generate_projection(intent.projections, intent.target_entities, intent.primary_entity)
             # Ensure we exclude helper fields from output
-            projection["_priorityRank"] = 0
+            # projection["_priorityRank"] = 0
             pipeline.append({"$project": projection})
+            pipeline.append({"$unset": "_priorityRank"})
 
         # Add limit
         if intent.limit:
@@ -471,17 +472,16 @@ class QueryPlanner:
             pipeline = self.generator.generate_pipeline(intent)
 
             # Execute the query
-            result = await mongodb_tools.execute_tool("aggregate", {
-                "database": DATABASE_NAME,
-                "collection": intent.primary_entity,
-                "pipeline": pipeline
-            })
+            # result = await mongodb_tools.execute_tool("aggregate", {
+            #     "database": DATABASE_NAME,
+            #     "collection": intent.primary_entity,
+            #     "pipeline": pipeline
+            # })
 
             return {
                 "success": True,
                 "intent": intent.__dict__,
-                "pipeline": pipeline,
-                "result": result
+                "pipeline": pipeline
             }
 
         except Exception as e:

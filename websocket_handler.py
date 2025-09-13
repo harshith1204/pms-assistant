@@ -5,9 +5,10 @@ import json
 import asyncio
 from datetime import datetime
 import uuid
+from query_planner import query_planner
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_ollama import ChatOllama
+# from langchain_ollama import ChatOllama
 import time
 import re
 
@@ -147,20 +148,27 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Route to planner or LLM based on heuristics/flag
-            if force_planner or _should_use_planner(message):
-                # Use deterministic planner
-                op_id = str(uuid.uuid4())
-            else:
+            # # Route to planner or LLM based on heuristics/flag
+            # if force_planner or _should_use_planner(message):
+            #     # Use deterministic planner
+            #     op_id = str(uuid.uuid4())
+            #     await query_planner.plan_and_execute(message)
+            # else:
                 # Use regular LLM with tool calling
-                async for response_chunk in mongodb_agent.run_streaming(
-                    query=message,
-                    websocket=websocket,
-                    conversation_id=conversation_id
-                ):
+            async for response_chunk in mongodb_agent.run_streaming(
+                query=message,
+                websocket=websocket,
+                conversation_id=conversation_id
+            ):
+                if response_chunk == "__END__":
+                    await websocket.send_json({
+                        "type": "complete",
+                        "conversation_id": conversation_id,
+                        "timestamp": datetime.now().isoformat()
+                    })
                     # The streaming is handled internally by the callback handler
                     # Just iterate through the generator to complete the streaming
-                    pass
+                pass
 
             # Send completion message
             await websocket.send_json({
@@ -179,4 +187,4 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         })
-        ws_manager.disconnect(client_id)
+        # ws_manager.disconnect(client_id)

@@ -1,8 +1,9 @@
-from langchain_ollama import ChatOllama
+# from langchain_ollama import ChatOllama
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_groq import ChatGroq
 import json
 import asyncio
 from typing import Dict, Any, List, AsyncGenerator, Optional
@@ -11,9 +12,18 @@ import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
-
+import os
+from dotenv import load_dotenv
+load_dotenv()
 tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
+
+groq_api_key = os.getenv("GROQ_API_KEY")
+if not groq_api_key:
+    raise ValueError(
+        "FATAL: GROQ_API_KEY environment variable not set.\n"
+        "Please create a .env file and add your Groq API key to it."
+    )
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a planning and tool-using agent for a Project Management System. For complex requests, break the task into"
@@ -21,7 +31,7 @@ DEFAULT_SYSTEM_PROMPT = (
     " Call tools as needed to gather data, transform it, and iterate until the goal is met."
     " Only produce the final answer when you have gathered enough evidence."
     "\n\nTOOL SELECTION GUIDANCE:"
-    "\n• For complex queries: Use intelligent_query as fallback"
+    "\n•Use intelligent_query tool."
 )
 
 class ConversationMemory:
@@ -60,17 +70,24 @@ class ConversationMemory:
 conversation_memory = ConversationMemory()
 
 # Initialize the LLM with optimized settings for tool calling
-llm = ChatOllama(
-    model="qwen3:0.6b-fp16",
-    temperature=0.3,  # Lower temperature for more consistent responses
-    num_ctx=4096,  # Increased context for better understanding
-    num_predict=1024,  # Allow longer responses for detailed insights
-    num_thread=8,  # Use multiple threads for speed
-    streaming=True,  # Enable streaming for real-time responses
-    verbose=False,
-    top_p=0.9,  # Better response diversity
-    top_k=40,  # Focus on high-probability tokens
-)
+# llm = ChatOllama(
+#     model="qwen3:0.6b-fp16",
+#     temperature=0.3,  # Lower temperature for more consistent responses
+#     num_ctx=4096,  # Increased context for better understanding
+#     num_predict=1024,  # Allow longer responses for detailed insights
+#     num_thread=8,  # Use multiple threads for speed
+#     streaming=True,  # Enable streaming for real-time responses
+#     verbose=False,
+#     top_p=0.9,  # Better response diversity
+#     top_k=40,  # Focus on high-probability tokens
+# )
+
+llm = ChatGroq(
+            api_key=groq_api_key,
+            model="llama-3.1-8b-instant",
+            streaming=False
+        )
+
 
 # Bind tools to the LLM for tool calling
 llm_with_tools = llm.bind_tools(tools_list)
@@ -306,11 +323,11 @@ class MongoDBAgent:
                 yield last_response.content
             else:
                 yield "Reached maximum reasoning steps without a final answer."
+            yield "__END__"
             return
-
         except Exception as e:
             yield f"Error running streaming agent: {str(e)}"
-
+            yield "__END__"
 # ProjectManagement Insights Examples
 async def main():
     """Example usage of the ProjectManagement Insights Agent"""
