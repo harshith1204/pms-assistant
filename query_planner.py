@@ -352,7 +352,19 @@ class PipelineGenerator:
                 if hop not in REL.get(current_collection, {}):
                     break
                 relationship = REL[current_collection][hop]
-                lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
+                # Compute minimal fields to project from the related collection
+                lookup_project_fields = self._get_lookup_projection_fields(
+                    relation_name=hop,
+                    target_collection=relationship["target"],
+                    intent=intent,
+                    primary_entity=collection
+                )
+                lookup = build_lookup_stage(
+                    relationship["target"],
+                    relationship,
+                    current_collection,
+                    project_fields=lookup_project_fields
+                )
                 if lookup:
                     pipeline.append(lookup)
                     if "join" in relationship or "expr" in relationship:
@@ -472,7 +484,8 @@ class PipelineGenerator:
         if from_collection not in REL or target_entity not in REL[from_collection]:
             return {}
         relationship = REL[from_collection][target_entity]
-        return build_lookup_stage(relationship["target"], relationship, from_collection)
+        # Fallback without fine-grained projection
+        return build_lookup_stage(relationship["target"], relationship, from_collection, project_fields=self._get_lookup_projection_fields(target_entity, relationship["target"], QueryIntent(primary_entity=from_collection, target_entities=[], filters={}, aggregations=[], projections=[], sort_order=None, limit=None, wants_details=False, wants_count=False), from_collection))
 
     def _generate_projection(self, projections: List[str], target_entities: List[str], primary_entity: str) -> Dict[str, Any]:
         """Generate projection object"""
@@ -489,6 +502,64 @@ class PipelineGenerator:
                 projection[entity] = 1
 
         return projection
+
+    def _get_lookup_projection_fields(self, relation_name: str, target_collection: str, intent: QueryIntent, primary_entity: str) -> List[str]:
+        """Return a minimal allow-listed field set to fetch from a related collection.
+
+        Strategy:
+        - Always include "_id".
+        - Add fields required by filters (e.g., name/title for project/cycle/assignee/module).
+        - If the relation is explicitly requested as a target entity, include a small, meaningful subset.
+        - Keep the set constrained to ALLOWED_FIELDS[target_collection].
+        """
+        minimal_map: Dict[str, List[str]] = {
+            # relation_name -> fields on target_collection (without prefix)
+            "project": ["_id", "name"],
+            "cycle": ["_id", "title"],
+            "assignee": ["_id", "name"],  # target_collection == members
+            "members": ["_id", "name"],
+            "module": ["_id", "title"],
+            "pages": ["_id", "title"],
+            "page": ["_id", "title"],
+            "stateMaster": ["_id", "name", "subStates._id", "subStates.name"],  # projectState
+            "states": ["_id", "name", "subStates._id", "subStates.name"],
+            "workItems": ["_id", "title", "status", "priority"],
+        }
+
+        # Start with defaults for the relation name
+        candidate_fields: List[str] = minimal_map.get(relation_name, ["_id"])
+
+        # Ensure filter-driven fields are included
+        if intent.filters:
+            # Project name filter
+            if relation_name == "project" and ("project_name" in intent.filters):
+                if "name" not in candidate_fields:
+                    candidate_fields.append("name")
+            # Cycle title filter
+            if relation_name == "cycle" and ("cycle_title" in intent.filters):
+                if "title" not in candidate_fields:
+                    candidate_fields.append("title")
+            # Assignee name filter
+            if relation_name == "assignee" and ("assignee_name" in intent.filters):
+                if "name" not in candidate_fields:
+                    candidate_fields.append("name")
+            # Module title filter
+            if relation_name == "module" and ("module_name" in intent.filters):
+                if "title" not in candidate_fields:
+                    candidate_fields.append("title")
+
+        # If the relation appears in target entities, keep minimal subset (already present)
+        # Constrain to allowed fields for the target collection
+        allowed = ALLOWED_FIELDS.get(target_collection, set())
+        safe: List[str] = []
+        for f in candidate_fields:
+            if f == "_id" or f in allowed:
+                safe.append(f)
+
+        # Always include _id
+        if "_id" not in safe:
+            safe.insert(0, "_id")
+        return safe
 
     def _get_default_projections(self, primary_entity: str) -> List[str]:
         """Return sensible default fields for detail queries per collection.
