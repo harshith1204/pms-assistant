@@ -412,8 +412,8 @@ class PipelineGenerator:
         if effective_projections:
             projection = self._generate_projection(effective_projections, intent.target_entities, intent.primary_entity)
             # Ensure we exclude helper fields from output
-            projection["_priorityRank"] = 0
             pipeline.append({"$project": projection})
+            pipeline.append({"$unset": "_priorityRank"})
 
         # Add limit
         if intent.limit:
