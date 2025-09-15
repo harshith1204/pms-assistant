@@ -1,15 +1,24 @@
 # Database configuration
 DATABASE_NAME = "ProjectManagement"
-MONGODB_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
+MONGODB_CONNECTION_STRING = "mongodb://backendInterns:mUXe57JwdugphnEn@4.213.88.219:27017/?authSource=admin"
 
 # MCP Server Configuration for ProjectManagement
 mongodb_server_config = {
-    "mongodb": {
-        "command": "npx",
-        "args": ["-y", "@mongodb-js/mongodb-mcp-server"],
-        "env": {
-            "MONGODB_CONNECTION_STRING": MONGODB_CONNECTION_STRING,
-            "MONGODB_DATABASE_NAME": DATABASE_NAME
+    "mcpServers": {
+        "mongodb": {
+            "command": "docker",
+            "args": [
+                "run",
+                "-i",
+                "--rm",
+                "-e",
+                "MDB_MCP_CONNECTION_STRING",
+                "mcp/mongodb"
+            ],
+            "env": {
+                "MDB_MCP_CONNECTION_STRING": MONGODB_CONNECTION_STRING
+            },
+            "transport": "stdio"
         }
     }
 }
@@ -29,7 +38,7 @@ class MongoDBTools:
     """MongoDB MCP Tools wrapper using langchain-mcp-adapters"""
 
     def __init__(self):
-        self.client = MultiServerMCPClient(smithery_config)
+        self.client = MultiServerMCPClient(mongodb_server_config)
         self.tools = []
         self.connected = False
 
