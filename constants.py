@@ -1,6 +1,6 @@
 # Database configuration
 DATABASE_NAME = "ProjectManagement"
-MONGODB_CONNECTION_STRING = "mongodb://backendInterns:mUXe57JwdugphnEn@4.213.88.219:27017/?authSource=admin"
+MONGODB_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
 
 # MCP Server Configuration for ProjectManagement
 mongodb_server_config = {
