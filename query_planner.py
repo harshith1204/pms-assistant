@@ -22,6 +22,7 @@ class QueryIntent:
     target_entities: List[str]  # Related entities to include
     filters: Dict[str, Any]  # Filter conditions
     aggregations: List[str]  # Aggregation operations (count, group, etc.)
+    group_by: List[str]  # Grouping keys (e.g., ["cycle"]) when 'group by' present
     projections: List[str]  # Fields to return
     sort_order: Optional[Dict[str, int]]  # Sort specification
     limit: Optional[int]  # Result limit
@@ -106,6 +107,9 @@ class NaturalLanguageParser:
         # Extract aggregations
         aggregations = self._extract_aggregations(query_lower)
 
+        # Extract grouping targets (e.g., grouped by cycle)
+        group_by = self._extract_group_by(query_lower)
+
         # Extract projections
         projections = self._extract_projections(query_lower)
 
@@ -129,6 +133,7 @@ class NaturalLanguageParser:
             target_entities=target_entities,
             filters=filters,
             aggregations=aggregations,
+            group_by=group_by,
             projections=projections,
             sort_order=sort_order,
             limit=limit,
@@ -214,10 +219,16 @@ class NaturalLanguageParser:
                 filters['page_visibility'] = visibility
                 break
 
-        # Project name filters
-        project_match = re.search(r'project\s+["\']([^"\']+)["\']', query)
-        if project_match:
-            filters['project_name'] = project_match.group(1)
+        # Project name filters - support multiple phrasings
+        project_match1 = re.search(r'project\s+["\']([^"\']+)["\']', query)
+        project_match2 = re.search(r'["\']([^"\']+)["\']\s+project', query)
+        project_match3 = re.search(r'in\s+(?:the\s+)?([a-z0-9 _\-]+)\s+project', query)
+        if project_match1:
+            filters['project_name'] = project_match1.group(1).strip()
+        elif project_match2:
+            filters['project_name'] = project_match2.group(1).strip()
+        elif project_match3:
+            filters['project_name'] = project_match3.group(1).strip()
 
         # Cycle name filters
         cycle_match = re.search(r'cycle\s+["\']([^"\']+)["\']', query)
@@ -225,7 +236,7 @@ class NaturalLanguageParser:
             filters['cycle_title'] = cycle_match.group(1)
 
         # Assignee name filters (e.g., "assigned to Aditya Sharma")
-        assignee_match = re.search(r'assigned to\s+([a-zA-Z][\w .\-]+)', query)
+        assignee_match = re.search(r'assigned to\s+([A-Za-z][\w .\-]+?)(?=(\s+(?:in|on|for|within|of|project|cycle|grouped|group|by)\b|[\.,]|$))', query)
         if assignee_match:
             filters['assignee_name'] = assignee_match.group(1).strip()
 
@@ -235,6 +246,42 @@ class NaturalLanguageParser:
             filters['module_name'] = module_match.group(1)
 
         return filters
+
+    def _extract_group_by(self, query: str) -> List[str]:
+        """Extract grouping targets from phrases like 'grouped by cycle' or 'group by project, cycle'."""
+        group_by: List[str] = []
+        raw = None
+        m = re.search(r'group(?:ed)? by\s+([a-zA-Z][a-zA-Z .,_\-]+)', query)
+        if m:
+            raw = m.group(1)
+        elif 'group' in query:
+            # Fallback: try ' by <term>' after a 'group' mention
+            m2 = re.search(r' by\s+([a-zA-Z][a-zA-Z .,_\-]+)', query)
+            if m2:
+                raw = m2.group(1)
+        if not raw:
+            return group_by
+
+        parts = re.split(r'(?:,| and | & )', raw)
+        for p in parts:
+            token = p.strip().lower()
+            token = re.sub(r'[\.,;:!?].*$', '', token).strip()
+            mapped = None
+            if token.startswith('cycle'):
+                mapped = 'cycle'
+            elif token.startswith('project'):
+                mapped = 'project'
+            elif token.startswith('assignee') or token.startswith('owner'):
+                mapped = 'assignee'
+            elif token.startswith('status') or token.startswith('state'):
+                mapped = 'status'
+            elif token.startswith('priority'):
+                mapped = 'priority'
+            elif token.startswith('module'):
+                mapped = 'module'
+            if mapped and mapped not in group_by:
+                group_by.append(mapped)
+        return group_by
 
     def _extract_aggregations(self, query: str) -> List[str]:
         """Extract aggregation operations"""
@@ -332,7 +379,7 @@ class PipelineGenerator:
             if primary_filters:
                 pipeline.append({"$match": primary_filters})
 
-        # Ensure lookups needed by secondary filters are included
+        # Ensure lookups needed by secondary filters or grouping are included
         required_relations: Set[str] = set(intent.target_entities)
         if intent.filters:
             # If we will filter by joined fields, we must join those relations
@@ -342,6 +389,17 @@ class PipelineGenerator:
                 required_relations.add('cycle')
             if 'assignee_name' in intent.filters and 'assignee' in REL.get(collection, {}):
                 required_relations.add('assignee')
+
+        # Include relations used by grouping keys
+        if intent.group_by:
+            if 'cycle' in intent.group_by and 'cycle' in REL.get(collection, {}):
+                required_relations.add('cycle')
+            if 'project' in intent.group_by and 'project' in REL.get(collection, {}):
+                required_relations.add('project')
+            if 'assignee' in intent.group_by and 'assignee' in REL.get(collection, {}):
+                required_relations.add('assignee')
+            if 'module' in intent.group_by and 'module' in REL.get(collection, {}):
+                required_relations.add('module')
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in required_relations:
@@ -370,15 +428,53 @@ class PipelineGenerator:
             if secondary_filters:
                 pipeline.append({"$match": secondary_filters})
 
-        # Add aggregations (skip count when details are requested)
-        if intent.aggregations and not intent.wants_details:
+        # Add grouping if requested
+        if intent.group_by:
+            group_id_expr: Any
+            id_fields: Dict[str, Any] = {}
+            for token in intent.group_by:
+                field_path = self._resolve_group_field(intent.primary_entity, token)
+                if field_path:
+                    id_fields[token] = f"${field_path}"
+            if not id_fields:
+                # Fallback: do nothing if we can't resolve
+                pass
+            else:
+                group_id_expr = list(id_fields.values())[0] if len(id_fields) == 1 else id_fields
+                group_stage: Dict[str, Any] = {
+                    "$group": {
+                        "_id": group_id_expr,
+                        "count": {"$sum": 1},
+                    }
+                }
+                if intent.wants_details:
+                    group_stage["$group"]["items"] = {
+                        "$push": {
+                            "_id": "$_id",
+                            "displayBugNo": "$displayBugNo",
+                            "title": "$title",
+                            "priority": "$priority",
+                        }
+                    }
+                pipeline.append(group_stage)
+                # Sort by count desc for readability
+                pipeline.append({"$sort": {"count": -1}})
+                # Present a tidy shape
+                project_shape: Dict[str, Any] = {"count": 1}
+                if intent.wants_details:
+                    project_shape["items"] = 1
+                project_shape["group"] = "$_id"
+                pipeline.append({"$project": project_shape})
+
+        # Add aggregations like count (skip count when details are requested)
+        if intent.aggregations and not intent.wants_details and not intent.group_by:
             for agg in intent.aggregations:
                 if agg == 'count':
                     pipeline.append({"$count": "total"})
                     return pipeline  # Count is terminal
 
-        # Add sorting (handle custom priority order)
-        if intent.sort_order:
+        # Add sorting (handle custom priority order) — skip if already grouped
+        if intent.sort_order and not intent.group_by:
             if 'priority' in intent.sort_order:
                 # Map PRIORITY enum to rank for sorting: URGENT > HIGH > MEDIUM > LOW > NONE
                 pipeline.append({
@@ -403,13 +499,13 @@ class PipelineGenerator:
             else:
                 pipeline.append({"$sort": intent.sort_order})
 
-        # Determine projections for details
+        # Determine projections for details (skip when grouping since we reshape after $group)
         effective_projections: List[str] = intent.projections
-        if intent.wants_details and not effective_projections:
+        if intent.wants_details and not intent.group_by and not effective_projections:
             effective_projections = self._get_default_projections(intent.primary_entity)
 
         # Add projections after sorting so computed fields can be hidden
-        if effective_projections:
+        if effective_projections and not intent.group_by:
             projection = self._generate_projection(effective_projections, intent.target_entities, intent.primary_entity)
             # Ensure we exclude helper fields from output
             pipeline.append({"$project": projection})
@@ -457,9 +553,12 @@ class PipelineGenerator:
         if 'cycle_title' in filters:
             secondary_filters['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
 
-        # Assignee name filter (applies to joined members via assignee relation)
+        # Assignee name filter: support both raw embedded and joined members
         if 'assignee_name' in filters:
-            secondary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            secondary_filters['$or'] = [
+                {'assignee.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
+                {'members.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
+            ]
 
         # Module name filter (applies to joined module)
         if 'module_name' in filters:
@@ -531,6 +630,28 @@ class PipelineGenerator:
                 validated.append(field)
         # If none survived validation, just return _id (already always projected)
         return validated
+
+    def _resolve_group_field(self, primary_entity: str, token: str) -> Optional[str]:
+        """Map a grouping token to a concrete field path in the current pipeline."""
+        mapping = {
+            'workItem': {
+                'cycle': 'cycle.title',
+                'project': 'project.name',
+                'assignee': 'members.name',  # joined alias for assignee relation
+                'status': 'status',
+                'priority': 'priority',
+                'module': 'module.title',
+            },
+            'project': {
+                'status': 'status',
+            },
+            'cycle': {
+                'project': 'project.name',
+                'status': 'status',
+            },
+        }
+        entity_map = mapping.get(primary_entity, {})
+        return entity_map.get(token)
 
 class QueryPlanner:
     """Main query planner that orchestrates the entire process"""
