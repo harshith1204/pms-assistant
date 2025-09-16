@@ -131,77 +131,8 @@ async def run_aggregation(
         return {"success": False, "error": str(e)}
 
 
-@tool
-async def describe_local_collections(pattern: Optional[str] = None, max_docs_per_file: int = 50) -> Any:
-    """Summarize local JSON dumps (ProjectManagement.*.json) to reveal collections and fields.
-
-    When to use:
-    - You are unsure of collection names or available fields
-    - You want a quick schema overview before planning joins or projections
-
-    Args:
-        pattern: Optional glob to match files (defaults to 'ProjectManagement.*.json').
-        max_docs_per_file: Number of sample documents to scan for field discovery.
-
-    Returns: A JSON summary per file with collection name, count hint, and discovered fields.
-    """
-    try:
-        search_roots = list({os.getcwd(), "/workspace"})
-        glob_pattern = pattern or "ProjectManagement.*.json"
-
-        summaries: List[Dict[str, Any]] = []
-
-        for root in search_roots:
-            for file_path in glob(os.path.join(root, glob_pattern)):
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    # Normalize to list of docs
-                    if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
-                        docs = data["data"]
-                    elif isinstance(data, list):
-                        docs = data
-                    else:
-                        docs = []
-
-                    sample = docs[: max_docs_per_file]
-                    field_set = set()
-                    for d in sample:
-                        if isinstance(d, dict):
-                            field_set.update(d.keys())
-
-                    base = os.path.basename(file_path)
-                    # Heuristic collection name extraction: ProjectManagement.<collection>.json
-                    parts = base.split(".")
-                    collection_name = parts[1] if len(parts) >= 3 and parts[0].lower().startswith("projectmanagement") else base.replace(".json", "")
-
-                    rels = list(REL.get(collection_name, {}).keys()) if 'REL' in globals() else []
-
-                    summaries.append(
-                        {
-                            "file": file_path,
-                            "collection": collection_name,
-                            "sample_count": len(sample),
-                            "top_level_fields": sorted(field_set),
-                            "known_relations": rels,
-                        }
-                    )
-                except Exception as inner_e:
-                    summaries.append(
-                        {
-                            "file": file_path,
-                            "error": str(inner_e),
-                        }
-                    )
-
-        return {"success": True, "summaries": summaries}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-# Define the tools list with intelligent query and utility tools
+# Define the tools list (no schema tool)
 tools = [
     intelligent_query,
     run_aggregation,
-    describe_local_collections,
 ]

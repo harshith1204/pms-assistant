@@ -21,8 +21,6 @@ DEFAULT_SYSTEM_PROMPT = (
     " Call tools to gather data, transform it, and iterate until the goal is met."
     " Only produce the final answer when you have gathered enough evidence."
     "\n\nTOOL SELECTION GUIDANCE:"
-    "\n• Schema discovery: If unsure about collections/fields, call describe_local_collections first."
-    " It summarizes local JSON dumps (ProjectManagement.*.json) and known relations."
     "\n• Natural language queries: Prefer intelligent_query. It plans cross-collection joins using the"
     " relationship registry and executes the optimal MongoDB aggregation pipeline."
     "\n• Explicit aggregations: When a precise pipeline is provided or needed, call run_aggregation with"
