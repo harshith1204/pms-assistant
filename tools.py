@@ -4,6 +4,8 @@ import constants
 import os
 import json
 import re
+from glob import glob
+
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
 
@@ -19,34 +21,23 @@ except ImportError:
 
 @tool
 async def intelligent_query(query: str) -> str:
-    """Intelligent query processor that understands natural language and handles any permutation of PMS queries.
+    """Plan and run cross-collection MongoDB queries from natural language.
 
-    USE THIS TOOL WHEN:
-    - No other specific tool matches the query exactly
-    - User asks complex questions spanning multiple collections
-    - Questions involve relationships between projects, work items, cycles, members, etc.
-    - Need dynamic query generation based on relationship registry
-    - Questions involve filtering, aggregation, or complex relationships
-    - AS A LAST RESORT when specific tools like count_work_items_by_module don't apply
+    When to use:
+    - Complex, multi-hop questions across collections (projects, work items, cycles, members, pages, modules, states)
+    - You need automatic join planning using the registry-defined relations and allow-listed fields
+    - You want details or counts without hand-writing a pipeline
 
-    This is the SMART FALLBACK tool that replaces the need for hundreds of specific tools by:
-    ✅ Understanding natural language queries
-    ✅ Using relationship registry to build optimal MongoDB pipelines
-    ✅ Handling any combination of entities and relationships
-    ✅ Applying security constraints automatically
-    ✅ Generating appropriate aggregations and projections
+    What it does:
+    - Parses the query, selects the primary collection, joins required relations, applies filters, projections, sorting
+    - Generates and executes an aggregation pipeline via the Mongo MCP server
+
+    Tip: If you already have a precise pipeline, use run_aggregation instead.
 
     Args:
-        query: Natural language query (e.g., "Show me high priority tasks in the API project", "How many work items are in upcoming cycles?", "List all projects with their team members")
+        query: Natural language prompt, e.g. "Show urgent work items in project 'CRM' grouped by cycle".
 
-    Returns intelligently processed query results based on the relationship registry.
-
-    Examples:
-    - "Show me work items for upcoming cycles"
-    - "How many high priority tasks are in the mobile project?"
-    - "List projects with their active cycles and work items"
-    - "Find members working on completed tasks"
-    - "Get project overview with cycle and task counts"
+    Returns: A formatted string with understood intent, generated pipeline, and results.
     """
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
@@ -94,7 +85,123 @@ async def intelligent_query(query: str) -> str:
     except Exception as e:
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
-# Define the tools list with only main collection related tools and intelligent query tool
+@tool
+async def run_aggregation(
+    collection: str,
+    pipeline_json: Union[str, List[Dict[str, Any]]],
+    database: Optional[str] = None,
+) -> Any:
+    """Execute a MongoDB aggregation pipeline against a collection.
+
+    When to use:
+    - You have an explicit pipeline to run (including cross-collection $lookup stages)
+    - You want to iterate on a pipeline that intelligent_query cannot infer
+
+    Args:
+        collection: Target collection name (e.g., "workItem", "project").
+        pipeline_json: Aggregation pipeline as a JSON string or a native list of stages.
+        database: Optional database name. Defaults to 'ProjectManagement'.
+
+    Examples:
+        - Run a prebuilt pipeline string:
+          collection="workItem", pipeline_json='[{"$match": {"priority": "HIGH"}}]'
+        - Run a native pipeline list:
+          collection="project", pipeline_json=[{"$limit": 5}]
+    """
+    try:
+        pipeline: List[Dict[str, Any]]
+        if isinstance(pipeline_json, str):
+            pipeline = json.loads(pipeline_json)
+        else:
+            pipeline = pipeline_json
+
+        if not isinstance(pipeline, list):
+            raise ValueError("pipeline must be a list of stages")
+
+        result = await mongodb_tools.execute_tool(
+            "aggregate",
+            {
+                "database": database or DATABASE_NAME,
+                "collection": collection,
+                "pipeline": pipeline,
+            },
+        )
+        return result
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@tool
+async def describe_local_collections(pattern: Optional[str] = None, max_docs_per_file: int = 50) -> Any:
+    """Summarize local JSON dumps (ProjectManagement.*.json) to reveal collections and fields.
+
+    When to use:
+    - You are unsure of collection names or available fields
+    - You want a quick schema overview before planning joins or projections
+
+    Args:
+        pattern: Optional glob to match files (defaults to 'ProjectManagement.*.json').
+        max_docs_per_file: Number of sample documents to scan for field discovery.
+
+    Returns: A JSON summary per file with collection name, count hint, and discovered fields.
+    """
+    try:
+        search_roots = list({os.getcwd(), "/workspace"})
+        glob_pattern = pattern or "ProjectManagement.*.json"
+
+        summaries: List[Dict[str, Any]] = []
+
+        for root in search_roots:
+            for file_path in glob(os.path.join(root, glob_pattern)):
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    # Normalize to list of docs
+                    if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+                        docs = data["data"]
+                    elif isinstance(data, list):
+                        docs = data
+                    else:
+                        docs = []
+
+                    sample = docs[: max_docs_per_file]
+                    field_set = set()
+                    for d in sample:
+                        if isinstance(d, dict):
+                            field_set.update(d.keys())
+
+                    base = os.path.basename(file_path)
+                    # Heuristic collection name extraction: ProjectManagement.<collection>.json
+                    parts = base.split(".")
+                    collection_name = parts[1] if len(parts) >= 3 and parts[0].lower().startswith("projectmanagement") else base.replace(".json", "")
+
+                    rels = list(REL.get(collection_name, {}).keys()) if 'REL' in globals() else []
+
+                    summaries.append(
+                        {
+                            "file": file_path,
+                            "collection": collection_name,
+                            "sample_count": len(sample),
+                            "top_level_fields": sorted(field_set),
+                            "known_relations": rels,
+                        }
+                    )
+                except Exception as inner_e:
+                    summaries.append(
+                        {
+                            "file": file_path,
+                            "error": str(inner_e),
+                        }
+                    )
+
+        return {"success": True, "summaries": summaries}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# Define the tools list with intelligent query and utility tools
 tools = [
     intelligent_query,
+    run_aggregation,
+    describe_local_collections,
 ]
