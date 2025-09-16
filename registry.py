@@ -194,7 +194,7 @@ def validate_fields(collection: str, fields: List[str]) -> List[str]:
     allowed = ALLOWED_FIELDS[collection]
     return [field for field in fields if resolve_field_alias(collection, field) in allowed]
 
-def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], current_collection: str, additional_filters: Dict[str, Any] = None) -> Dict[str, Any]:
+def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], current_collection: str, additional_filters: Dict[str, Any] = None, project_fields: List[str] = None) -> Dict[str, Any]:
     """Build MongoDB $lookup stage based on relationship definition.
 
     Enhancements:
@@ -323,5 +323,21 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
     # Add defaults if specified
     if "defaults" in relationship:
         lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
+
+    # Add projection to minimize fetched fields when requested
+    if project_fields is not None:
+        # Always include _id, and only allow-list fields defined for the from_collection
+        allowed = ALLOWED_FIELDS.get(from_collection, set())
+        # project_fields are expected without collection prefix
+        safe_fields: Set[str] = set()
+        for f in project_fields:
+            # accept nested fields like "subStates.name"
+            if f == "_id" or f in allowed:
+                safe_fields.add(f)
+        projection: Dict[str, int] = {"_id": 1}
+        for f in sorted(safe_fields):
+            if f != "_id":
+                projection[f] = 1
+        lookup_stage["$lookup"]["pipeline"].append({"$project": projection})
 
     return lookup_stage
