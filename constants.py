@@ -38,7 +38,7 @@ class MongoDBTools:
     """MongoDB MCP Tools wrapper using langchain-mcp-adapters"""
 
     def __init__(self):
-        self.client = MultiServerMCPClient(mongodb_server_config)
+        self.client = MultiServerMCPClient(smithery_config)
         self.tools = []
         self.connected = False
 

@@ -205,7 +205,7 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
     """
     def _is_array_like(path: str) -> bool:
         candidates = [
-            "assignee", "assignee._id", "linkedCycle", "linkedModule",
+            "assignee", "linkedCycle", "linkedModule",
             "assignees", "members", "labels", "subStates._id"
         ]
         return any(c in path for c in candidates)
