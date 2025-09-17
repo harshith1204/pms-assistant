@@ -27,6 +27,8 @@ class QueryIntent:
     limit: Optional[int]  # Result limit
     wants_details: bool  # Prefer detailed documents over counts
     wants_count: bool  # Whether the user asked for a count
+    group_by: List[str]  # Grouping fields (supports dotted paths)
+    explicit_limit: bool  # Whether the limit was explicitly requested by the user
 
 @dataclass
 class RelationshipPath:
@@ -106,23 +108,33 @@ class NaturalLanguageParser:
         # Extract aggregations
         aggregations = self._extract_aggregations(query_lower)
 
+        # Extract group by fields
+        group_by = self._extract_group_by(query_lower)
+
         # Extract projections
         projections = self._extract_projections(query_lower)
 
         # Extract sorting
         sort_order = self._extract_sorting(query_lower)
 
-        # Extract limit
-        limit = self._extract_limit(query_lower)
+        # Extract limit and whether explicit
+        limit, explicit_limit = self._extract_limit(query_lower)
 
         # Determine intent for details vs count
         wants_count = ('count' in aggregations)
-        wants_details = self._detect_detail_intent(query_lower, projections, wants_count)
+        wants_details = self._detect_detail_intent(query_lower, projections, wants_count, group_by)
 
         # If both are requested, prefer details per requirement
         if wants_details and wants_count:
             aggregations = [a for a in aggregations if a != 'count']
             wants_count = False
+
+        # Default limit policy: only for detail queries when not explicitly provided
+        if not explicit_limit:
+            if wants_details and not group_by:
+                limit = 20
+            else:
+                limit = None
 
         return QueryIntent(
             primary_entity=primary_entity,
@@ -133,7 +145,9 @@ class NaturalLanguageParser:
             sort_order=sort_order,
             limit=limit,
             wants_details=wants_details,
-            wants_count=wants_count
+            wants_count=wants_count,
+            group_by=group_by,
+            explicit_limit=explicit_limit
         )
 
     def _extract_primary_entity(self, query: str) -> str:
@@ -251,6 +265,44 @@ class NaturalLanguageParser:
 
         return aggregations
 
+    def _extract_group_by(self, query: str) -> List[str]:
+        """Extract group-by fields from the query.
+
+        Supports patterns like:
+        - group by <field>[, <field>...]
+        - grouped by <field>
+        - breakdown by <field>
+        - per <field>
+        Returns raw field tokens; mapping to concrete fields happens in generator using aliases/allow-list.
+        """
+        group_terms: List[str] = []
+        patterns = [
+            r"grouped?\s+by\s+([\w .,_\-]+)",
+            r"breakdown\s+by\s+([\w .,_\-]+)",
+            r"per\s+([\w .,_\-]+)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, query)
+            if m:
+                captured = m.group(1)
+                # stop at known delimiters if they appear later
+                captured = re.split(r"\b(order|sort|limit|where|with|having)\b", captured)[0].strip()
+                # split by commas and 'and'
+                parts = re.split(r",| and ", captured)
+                for p in parts:
+                    token = p.strip()
+                    if token:
+                        group_terms.append(token)
+                break
+        # Normalize simple synonyms
+        normalized: List[str] = []
+        for term in group_terms:
+            t = term
+            t = t.replace("project name", "project").replace("cycle title", "cycle")
+            t = t.replace("assignee name", "assignee").replace("state name", "state")
+            normalized.append(t.strip())
+        return normalized
+
     def _extract_projections(self, query: str) -> List[str]:
         """Extract fields to project"""
         projections = []
@@ -272,27 +324,83 @@ class NaturalLanguageParser:
                     projections.append(field)
                     break
 
-        return projections[:5] if projections else []  # Limit to 5 fields
+        # Prefer dotted fields for related entities to avoid projecting whole documents
+        dotted_map = {
+            'project': 'project.name',
+            'cycle': 'cycleId',
+            'assignee': 'assignee._id'
+        }
+        normalized: List[str] = []
+        for f in projections:
+            normalized.append(dotted_map.get(f, f))
+        return normalized[:5] if normalized else []  # Limit to 5 fields
 
     def _extract_sorting(self, query: str) -> Optional[Dict[str, int]]:
-        """Extract sorting information"""
+        """Extract sorting information with direction and common synonyms."""
+        def direction_for(query_fragment: str, default_desc: bool = True) -> int:
+            if any(k in query_fragment for k in ['desc', 'descending', 'latest', 'newest', 'most recent', 'highest', 'top']):
+                return -1
+            if any(k in query_fragment for k in ['asc', 'ascending', 'oldest', 'earliest', 'lowest']):
+                return 1
+            return -1 if default_desc else 1
+
+        order_idx = max(query.find('order by'), query.find('sorted by'))
+        if order_idx != -1:
+            tail = query[order_idx:]
+            # try common fields
+            if 'priority' in tail:
+                return {'priority': direction_for(tail)}
+            if 'status' in tail:
+                return {'status': direction_for(tail, default_desc=False)}
+            if 'date' in tail or 'created' in tail:
+                return {'createdTimeStamp': direction_for(tail)}
+            if 'count' in tail:
+                return {'count': direction_for(tail)}
+
         if 'sort' in query or 'order' in query:
             if 'date' in query or 'created' in query:
-                return {'createdTimeStamp': -1}
+                return {'createdTimeStamp': direction_for(query)}
             elif 'priority' in query:
-                return {'priority': -1}
+                return {'priority': direction_for(query)}
             elif 'status' in query:
-                return {'status': 1}
+                return {'status': direction_for(query, default_desc=False)}
+            elif 'project' in query:
+                return {'project.name': direction_for(query)}
+            elif 'count' in query:
+                return {'count': direction_for(query)}
+        # natural words
+        if any(k in query for k in ['latest', 'newest', 'most recent']):
+            return {'createdTimeStamp': -1}
+        if any(k in query for k in ['oldest', 'earliest']):
+            return {'createdTimeStamp': 1}
+        if 'highest priority' in query:
+            return {'priority': -1}
+        if 'lowest priority' in query:
+            return {'priority': 1}
         return None
 
-    def _extract_limit(self, query: str) -> Optional[int]:
-        """Extract result limit"""
-        limit_match = re.search(r'(?:show|list|get)\s+(\d+)', query)
-        if limit_match:
-            return int(limit_match.group(1))
-        return 20  # Default limit
+    def _extract_limit(self, query: str) -> Tuple[Optional[int], bool]:
+        """Extract result limit and whether it was explicitly provided.
 
-    def _detect_detail_intent(self, query: str, projections: List[str], wants_count: bool) -> bool:
+        Returns (limit, explicit)
+        """
+        # explicit patterns
+        patterns = [
+            r'(?:show|list|get)\s+(\d+)',
+            r'(?:top|first)\s+(\d+)',
+            r'last\s+(\d+)',
+            r'limit\s+(\d+)',
+        ]
+        for pat in patterns:
+            m = re.search(pat, query)
+            if m:
+                try:
+                    return int(m.group(1)), True
+                except Exception:
+                    break
+        return None, False
+
+    def _detect_detail_intent(self, query: str, projections: List[str], wants_count: bool, group_by: List[str]) -> bool:
         """Detect whether the user wants detailed records rather than just counts.
 
         Rules:
@@ -301,6 +409,8 @@ class NaturalLanguageParser:
         - If the query is a numeric question ('how many', 'number of', 'count of') => False unless 'details' also present
         - Generic list verbs ('list', 'show', 'get', 'display') => True only when not explicitly a count question
         """
+        if group_by:
+            return False
         if 'exact details' in query or 'details' in query:
             return True
         count_markers = any(kw in query for kw in ['how many', 'number of', 'count of'])
@@ -332,36 +442,77 @@ class PipelineGenerator:
             if primary_filters:
                 pipeline.append({"$match": primary_filters})
 
-        # Ensure lookups needed by secondary filters are included
+        # Ensure lookups needed by secondary filters, projections, sorting, and grouping are included
         required_relations: Set[str] = set(intent.target_entities)
+
         if intent.filters:
-            # If we will filter by joined fields, we must join those relations
             if 'project_name' in intent.filters and 'project' in REL.get(collection, {}):
                 required_relations.add('project')
             if 'cycle_title' in intent.filters and 'cycle' in REL.get(collection, {}):
                 required_relations.add('cycle')
             if 'assignee_name' in intent.filters and 'assignee' in REL.get(collection, {}):
                 required_relations.add('assignee')
+            if 'module_name' in intent.filters and 'module' in REL.get(collection, {}):
+                required_relations.add('module')
+
+        # Relations required by projections (e.g., project.name → project)
+        def add_relations_from_fields(fields: List[str]):
+            for f in fields or []:
+                if '.' in f:
+                    prefix = f.split('.')[0]
+                    if prefix in REL.get(collection, {}):
+                        required_relations.add(prefix)
+                else:
+                    # if the bare name is a relation alias (e.g., assignee)
+                    if f in REL.get(collection, {}):
+                        required_relations.add(f)
+
+        add_relations_from_fields(intent.projections)
+
+        # Relations required by sorting (e.g., project.name)
+        if intent.sort_order:
+            add_relations_from_fields(list(intent.sort_order.keys()))
+
+        # Relations required by group-by tokens
+        def add_relations_from_group(tokens: List[str]):
+            for tok in tokens or []:
+                if '.' in tok:
+                    prefix = tok.split('.')[0]
+                    if prefix in REL.get(collection, {}):
+                        required_relations.add(prefix)
+                else:
+                    if tok in REL.get(collection, {}):
+                        required_relations.add(tok)
+
+        add_relations_from_group(intent.group_by)
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
-        for target_entity in required_relations:
-            # Allow multi-hop relation names like "project.stateMaster" from queries
+        added_aliases: Set[str] = set()
+        for target_entity in sorted(required_relations):
             hops = target_entity.split(".")
             current_collection = collection
             for hop in hops:
                 if hop not in REL.get(current_collection, {}):
                     break
+                if hop in added_aliases:
+                    # already joined this alias at this level
+                    current_collection = REL[current_collection][hop]["target"]
+                    continue
                 relationship = REL[current_collection][hop]
                 lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
                 if lookup:
+                    # Override alias to use the relation alias (hop) instead of raw collection name
+                    if "$lookup" in lookup and "as" in lookup["$lookup"]:
+                        lookup["$lookup"]["as"] = hop
                     pipeline.append(lookup)
                     if "join" in relationship or "expr" in relationship:
                         pipeline.append({
                             "$unwind": {
-                                "path": f"${relationship['target']}",
+                                "path": f"${hop}",
                                 "preserveNullAndEmptyArrays": True
                             }
                         })
+                    added_aliases.add(hop)
                 current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)
@@ -369,6 +520,49 @@ class PipelineGenerator:
             secondary_filters = self._extract_secondary_filters(intent.filters)
             if secondary_filters:
                 pipeline.append({"$match": secondary_filters})
+
+        # Grouping support: if group_by requested, build a $group pipeline (overrides details)
+        if intent.group_by:
+            group_fields: List[str] = self._resolve_group_fields(collection, intent.group_by)
+
+            # build _id object
+            group_id_obj: Dict[str, Any] = {}
+            for gf in group_fields:
+                key_name = gf.split('.')[-1] if '.' in gf else gf
+                # ensure stable key names for dotted paths
+                safe_key = key_name if key_name not in group_id_obj else gf.replace('.', '_')
+                group_id_obj[safe_key] = f"${gf}"
+
+            pipeline.append({
+                "$group": {
+                    "_id": group_id_obj if len(group_id_obj) > 1 else (list(group_id_obj.values())[0] if group_id_obj else None),
+                    "count": {"$sum": 1}
+                }
+            })
+
+            # Flatten _id back to fields
+            project_stage: Dict[str, Any] = {"_id": 0, "count": 1}
+            if isinstance(group_id_obj, dict) and group_id_obj:
+                for key in group_id_obj.keys():
+                    project_stage[key] = f"$_id.{key}"
+            else:
+                # single scalar id
+                project_stage['group'] = "$_id"
+            pipeline.append({"$project": project_stage})
+
+            # Sorting for grouped results
+            if intent.sort_order:
+                sanitized_sort = self._sanitize_sort_order(collection, intent.sort_order, grouping=True)
+                if sanitized_sort:
+                    pipeline.append({"$sort": sanitized_sort})
+            else:
+                pipeline.append({"$sort": {"count": -1}})
+
+            # Limit if provided
+            if intent.limit:
+                pipeline.append({"$limit": intent.limit})
+
+            return pipeline
 
         # Add aggregations (skip count when details are requested)
         if intent.aggregations and not intent.wants_details:
@@ -379,7 +573,9 @@ class PipelineGenerator:
 
         # Add sorting (handle custom priority order)
         if intent.sort_order:
-            if 'priority' in intent.sort_order:
+            # validate and resolve aliases
+            sanitized_sort = self._sanitize_sort_order(collection, intent.sort_order, grouping=False)
+            if sanitized_sort and 'priority' in sanitized_sort:
                 # Map PRIORITY enum to rank for sorting: URGENT > HIGH > MEDIUM > LOW > NONE
                 pipeline.append({
                     "$addFields": {
@@ -398,10 +594,11 @@ class PipelineGenerator:
                     }
                 })
                 # Use computed rank for sorting direction provided
-                direction = intent.sort_order.get('priority', -1)
+                direction = sanitized_sort.get('priority', -1)
                 pipeline.append({"$sort": {"_priorityRank": direction}})
             else:
-                pipeline.append({"$sort": intent.sort_order})
+                if sanitized_sort:
+                    pipeline.append({"$sort": sanitized_sort})
 
         # Determine projections for details
         effective_projections: List[str] = intent.projections
@@ -415,11 +612,113 @@ class PipelineGenerator:
             pipeline.append({"$project": projection})
             pipeline.append({"$unset": "_priorityRank"})
 
-        # Add limit
-        if intent.limit:
+        # Add limit only for detail queries
+        if intent.wants_details and intent.limit:
             pipeline.append({"$limit": intent.limit})
 
         return pipeline
+
+    def _resolve_group_fields(self, primary_entity: str, group_by_tokens: List[str]) -> List[str]:
+        """Resolve group-by tokens into concrete document field paths, constrained to allowed fields.
+
+        Heuristics prefer human-friendly fields (names) when allowed; otherwise fall back to IDs.
+        """
+        resolved: List[str] = []
+        allowed = ALLOWED_FIELDS.get(primary_entity, set())
+
+        def prefer_or_fallback(preferred: str, fallback: str) -> str:
+            return preferred if preferred in allowed else fallback
+
+        for token in group_by_tokens or []:
+            t = token.strip().lower()
+
+            # Explicit dotted path
+            if '.' in token and token in allowed:
+                resolved.append(token)
+                continue
+
+            if primary_entity == 'workItem':
+                if t in ['project', 'project name']:
+                    resolved.append(prefer_or_fallback('project.name', 'project._id'))
+                elif t in ['assignee', 'owner']:
+                    resolved.append(prefer_or_fallback('assignee._id', 'assignee._id'))
+                elif t in ['cycle', 'sprint']:
+                    # workItem has only cycleId allow-listed
+                    resolved.append(prefer_or_fallback('cycleId', 'cycleId'))
+                elif t in ['module', 'component', 'feature']:
+                    resolved.append(prefer_or_fallback('moduleId', 'moduleId'))
+                elif t in ['state', 'workflow', 'state name']:
+                    resolved.append(prefer_or_fallback('stateMaster.name', 'state._id'))
+                elif t in ['priority']:
+                    resolved.append('priority')
+                elif t in ['status']:
+                    resolved.append('status')
+                elif t in ['created', 'date', 'created date', 'created timestamp']:
+                    resolved.append('createdTimeStamp')
+                else:
+                    # fallback to token itself if allow-listed
+                    if token in allowed:
+                        resolved.append(token)
+
+            elif primary_entity == 'project':
+                if t in ['status']:
+                    resolved.append('status')
+                elif t in ['active', 'isactive']:
+                    resolved.append('isActive')
+                elif t in ['archived', 'isarchived']:
+                    resolved.append('isArchived')
+                else:
+                    if token in allowed:
+                        resolved.append(token)
+
+            elif primary_entity == 'cycle':
+                if t in ['status']:
+                    resolved.append('status')
+                elif t in ['project']:
+                    resolved.append(prefer_or_fallback('project._id', 'project._id'))
+                else:
+                    if token in allowed:
+                        resolved.append(token)
+
+            elif primary_entity == 'members':
+                if t in ['project']:
+                    resolved.append(prefer_or_fallback('project._id', 'project._id'))
+                elif t in ['role']:
+                    resolved.append('role')
+                else:
+                    if token in allowed:
+                        resolved.append(token)
+
+            elif primary_entity == 'page':
+                if t in ['visibility']:
+                    resolved.append('visibility')
+                elif t in ['project']:
+                    resolved.append(prefer_or_fallback('project._id', 'project._id'))
+                else:
+                    if token in allowed:
+                        resolved.append(token)
+
+            elif primary_entity == 'module':
+                if t in ['project']:
+                    resolved.append(prefer_or_fallback('project._id', 'project._id'))
+                elif t in ['assignee']:
+                    resolved.append(prefer_or_fallback('assignee', 'assignee'))
+                else:
+                    if token in allowed:
+                        resolved.append(token)
+
+            else:
+                if token in allowed:
+                    resolved.append(token)
+
+        # Deduplicate while preserving order
+        seen: Set[str] = set()
+        ordered: List[str] = []
+        for f in resolved:
+            if f not in seen:
+                seen.add(f)
+                ordered.append(f)
+        return ordered
 
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
         """Extract filters that apply to the primary collection"""
@@ -480,15 +779,31 @@ class PipelineGenerator:
 
         # Add requested projections
         for field in projections:
-            if field in ALLOWED_FIELDS.get(primary_entity, {}):
-                projection[field] = 1
+            resolved_field = resolve_field_alias(primary_entity, field)
+            if resolved_field in ALLOWED_FIELDS.get(primary_entity, {}):
+                projection[resolved_field] = 1
 
-        # Add target entity fields
+        # Add target entity fields (only for explicitly requested target entities)
         for entity in target_entities:
             if entity in REL.get(primary_entity, {}):
                 projection[entity] = 1
 
         return projection
+
+    def _sanitize_sort_order(self, primary_entity: str, sort_order: Optional[Dict[str, int]], grouping: bool) -> Optional[Dict[str, int]]:
+        """Resolve aliases and filter sort fields against allow-list, except 'count' when grouping."""
+        if not sort_order:
+            return None
+        allowed = ALLOWED_FIELDS.get(primary_entity, set())
+        sanitized: Dict[str, int] = {}
+        for key, direction in sort_order.items():
+            if key == 'count' and grouping:
+                sanitized[key] = -1 if direction not in (-1, 1) else direction
+                continue
+            resolved_key = resolve_field_alias(primary_entity, key)
+            if resolved_key in allowed:
+                sanitized[resolved_key] = -1 if direction not in (-1, 1) else direction
+        return sanitized or ( {'count': -1} if grouping else None )
 
     def _get_default_projections(self, primary_entity: str) -> List[str]:
         """Return sensible default fields for detail queries per collection.
