@@ -68,6 +68,8 @@ async def intelligent_query(query: str) -> str:
                 response += f"• Filters: {intent['filters']}\n"
             if intent['aggregations']:
                 response += f"• Aggregations: {', '.join(intent['aggregations'])}\n"
+            if 'group_by' in intent and intent['group_by']:
+                response += f"• Group By: {', '.join(intent['group_by'])}\n"
             response += "\n"
 
             # Show the generated pipeline (first few stages)
