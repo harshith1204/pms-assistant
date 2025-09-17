@@ -147,11 +147,14 @@ class LLMIntentParser:
             return None
 
         try:
-            return self._sanitize_intent(data)
+            return self._sanitize_intent(data, raw_query=query)
         except Exception:
             return None
 
-    def _sanitize_intent(self, data: Dict[str, Any]) -> QueryIntent:
+    def _sanitize_intent(self, data: Dict[str, Any], raw_query: Optional[str] = None) -> QueryIntent:
+        # Normalize raw query for heuristic adjustments
+        rq = (raw_query or "").lower()
+
         # Primary entity
         primary = data.get("primary_entity") or "project"
         if primary not in self.entities:
@@ -159,10 +162,10 @@ class LLMIntentParser:
 
         # Allowed relations for primary
         allowed_rels = set(self.entity_relations.get(primary, []))
-        target_entities: List[str] = []
+        requested_entities: List[str] = []
         for rel in (data.get("target_entities") or []):
             if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
-                target_entities.append(rel)
+                requested_entities.append(rel)
 
         # Filters: pick only known keys
         raw_filters = data.get("filters") or {}
@@ -170,15 +173,55 @@ class LLMIntentParser:
             "status", "priority", "project_status", "cycle_status", "page_visibility",
             "project_name", "cycle_title", "assignee_name", "module_name"
         }
-        filters = {k: v for k, v in raw_filters.items() if k in known_filter_keys and isinstance(v, (str, int))}
+        # Start with only known keys and string/int values
+        filters: Dict[str, Any] = {k: v for k, v in raw_filters.items() if k in known_filter_keys and isinstance(v, (str, int))}
+
+        # 1) Strip uncertain enum values (like "COMPLETED?") — drop them rather than guessing
+        def _is_uncertain(value: Any) -> bool:
+            return isinstance(value, str) and value.endswith("?")
+
+        for k in ["status", "project_status", "cycle_status", "page_visibility"]:
+            if k in filters and _is_uncertain(filters[k]):
+                filters.pop(k, None)
+
+        # 2) Remove spurious name filters that mirror the assignee_name when the query does not mention those entities
+        assignee_val = filters.get("assignee_name") if isinstance(filters.get("assignee_name"), str) else None
+        if assignee_val:
+            # If the text doesn't talk about project/cycle/module explicitly, drop same-valued filters
+            if "project" not in rq and filters.get("project_name") == assignee_val:
+                filters.pop("project_name", None)
+            if "cycle" not in rq and filters.get("cycle_title") == assignee_val:
+                filters.pop("cycle_title", None)
+            if "module" not in rq and filters.get("module_name") == assignee_val:
+                filters.pop("module_name", None)
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
-        # Group by tokens
+        # Group by tokens (with synonym mapping: team -> assignee)
         allowed_group = {"cycle", "project", "assignee", "status", "priority", "module"}
-        group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
+        raw_group_by: List[str] = list(data.get("group_by") or [])
+        # Map common synonyms from LLM or user phrasing
+        synonym_map = {
+            "team": "assignee",
+            "teams": "assignee",
+            "member": "assignee",
+            "members": "assignee",
+            "owner": "assignee",
+            "assignees": "assignee",
+        }
+        normalized_group_by: List[str] = []
+        for g in raw_group_by:
+            g_norm = synonym_map.get(str(g).lower(), g)
+            if g_norm in allowed_group and g_norm not in normalized_group_by:
+                normalized_group_by.append(g_norm)
+
+        # Heuristic: if query says "group by/grouped by" and mentions team-like phrases, ensure assignee grouping
+        if ("group by" in rq or "grouped by" in rq) and any(word in rq for word in ["team", "teams", "member", "members", "assignee", "assignees", "owner"]):
+            if "assignee" not in normalized_group_by:
+                normalized_group_by.append("assignee")
+        group_by = normalized_group_by
 
         # Projections limited to allow-listed fields for primary
         allowed_projection_set = set(self.allowed_fields.get(primary, []))
@@ -205,10 +248,30 @@ class LLMIntentParser:
         # Detail vs count flags
         wants_details = bool(data.get("wants_details", False))
         wants_count = bool(data.get("wants_count", False))
+
+        # Heuristic: if user said "show all" and also asked to group, prefer details within groups
+        if not wants_details and ("show all" in rq) and group_by:
+            wants_details = True
+            wants_count = False
         if wants_details and wants_count:
             wants_count = False
             if "count" in aggregations:
                 aggregations = [a for a in aggregations if a != "count"]
+
+        # Minimize target entities to only what is necessary for filters/grouping
+        minimal_required: Set[str] = set()
+        if "project_name" in filters:
+            minimal_required.add("project")
+        if "cycle_title" in filters:
+            minimal_required.add("cycle")
+        if "assignee_name" in filters:
+            minimal_required.add("assignee")
+        if "module_name" in filters:
+            minimal_required.add("module")
+        for g in group_by:
+            minimal_required.add(g)
+        # Keep only allowed relations and dedupe
+        target_entities = [rel for rel in requested_entities if rel.split(".")[0] in minimal_required]
 
         return QueryIntent(
             primary_entity=primary,
@@ -445,10 +508,11 @@ class PipelineGenerator:
             if field in ALLOWED_FIELDS.get(primary_entity, {}):
                 projection[field] = 1
 
-        # Add target entity fields
-        for entity in target_entities:
-            if entity in REL.get(primary_entity, {}):
-                projection[entity] = 1
+        # Add target entity fields using their joined alias (relationship target name)
+        for relation_name in target_entities:
+            if relation_name in REL.get(primary_entity, {}):
+                joined_alias = REL[primary_entity][relation_name].get("target", relation_name)
+                projection[joined_alias] = 1
 
         return projection
 
