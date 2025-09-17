@@ -8,12 +8,15 @@ based on the relationship registry
 import re
 import json
 from typing import Dict, List, Any, Optional, Set, Tuple
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
 
 from registry import REL, ALLOWED_FIELDS, ALIASES, resolve_field_alias, validate_fields, build_lookup_stage
 from constants import mongodb_tools, DATABASE_NAME
+from langchain_ollama import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage
 
 @dataclass
 class QueryIntent:
@@ -360,6 +363,187 @@ class NaturalLanguageParser:
             return True
         return False
 
+class LLMIntentParser:
+    """LLM-backed intent parser that produces a structured plan compatible with QueryIntent.
+
+    The LLM proposes:
+    - primary_entity
+    - target_entities (relations to join)
+    - filters (normalized keys: status, priority, project_status, cycle_status, page_visibility,
+      project_name, cycle_title, assignee_name, module_name)
+    - aggregations: ["count"|"group"|"summary"]
+    - group_by tokens: ["cycle","project","assignee","status","priority","module"]
+    - projections (subset of allow-listed fields for the primary entity)
+    - sort_order (field -> 1|-1), supported keys: createdTimeStamp, priority, status
+    - limit (int)
+    - wants_details, wants_count
+
+    Safety: we filter LLM output against REL and ALLOWED_FIELDS before use.
+    """
+
+    def __init__(self, model_name: Optional[str] = None):
+        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "qwen3:0.6b-fp16")
+        # Keep the model reasonably deterministic for planning
+        self.llm = ChatOllama(
+            model=self.model_name,
+            temperature=0.1,
+            num_ctx=4096,
+            num_predict=768,
+            top_p=0.9,
+            top_k=40,
+        )
+
+        # Precompute compact schema context to keep prompts short
+        self.entities: List[str] = list(REL.keys())
+        self.entity_relations: Dict[str, List[str]] = {
+            entity: list(REL.get(entity, {}).keys()) for entity in self.entities
+        }
+        self.allowed_fields: Dict[str, List[str]] = {
+            entity: sorted(list(ALLOWED_FIELDS.get(entity, set()))) for entity in self.entities
+        }
+
+    async def parse(self, query: str) -> Optional[QueryIntent]:
+        """Use the LLM to produce a structured intent. Returns None on failure."""
+        system = (
+            "You are an expert MongoDB query planner for a Project Management System. "
+            "Given a natural-language question, output a STRICT JSON object describing the intent. "
+            "Use only the provided entity names, relations, and allow-listed fields. "
+            "Do not generate raw pipelines; produce a plan that a downstream generator will realize.\n\n"
+            "Collections (entities): " + ", ".join(self.entities) + "\n" +
+            "Relations per entity (use only these as target_entities):\n" +
+            "\n".join(f"- {e}: {', '.join(self.entity_relations.get(e, []))}" for e in self.entities) + "\n\n" +
+            "Allow-listed fields per entity (projections must be subset of primary's list):\n" +
+            "\n".join(f"- {e}: {', '.join(self.allowed_fields.get(e, []))}" for e in self.entities) + "\n\n" +
+            "Normalize keys as follows: status, priority, project_status, cycle_status, page_visibility, "
+            "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
+            "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module.\n"
+            "sort_order keys allowed: createdTimeStamp, priority, status.\n"
+            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown."
+        )
+
+        schema = {
+            "primary_entity": "string; one of " + ", ".join(self.entities),
+            "target_entities": "string[]; relations to join for primary, from the allowed list above",
+            "filters": {
+                "status": "TODO|COMPLETED?",
+                "priority": "URGENT|HIGH|MEDIUM|LOW|NONE?",
+                "project_status": "NOT_STARTED|STARTED|COMPLETED|OVERDUE?",
+                "cycle_status": "ACTIVE|UPCOMING|COMPLETED?",
+                "page_visibility": "PUBLIC|PRIVATE|ARCHIVED?",
+                "project_name": "string? (free text, used as case-insensitive regex)",
+                "cycle_title": "string?",
+                "assignee_name": "string?",
+                "module_name": "string?"
+            },
+            "aggregations": "string[]; subset of [count, group, summary]",
+            "group_by": "string[]; subset of [cycle, project, assignee, status, priority, module]",
+            "projections": "string[]; subset of allow-listed fields for primary_entity",
+            "sort_order": "object?; single key among allowed sort keys mapping to 1 or -1",
+            "limit": "integer <= 100; default 20",
+            "wants_details": "boolean",
+            "wants_count": "boolean"
+        }
+
+        user = (
+            "TASK: Convert the user's request into a strict JSON intent object.\n"
+            "Rules:\n"
+            "- Only use allowed entities, relations, and fields.\n"
+            "- If both details and count are implied, set wants_details true and wants_count false.\n"
+            "- Keep target_entities minimal but sufficient to support filters and group_by.\n"
+            "- Do NOT include any explanations or prose. Output JSON ONLY.\n\n"
+            f"Schema (for reference, keys only): {json.dumps(schema)}\n\n"
+            f"User Query: {query}"
+        )
+
+        try:
+            ai = await self.llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+            content = ai.content.strip()
+            # Some models wrap JSON in code fences; strip if present
+            if content.startswith("```"):
+                content = content.strip("`\n").split("\n", 1)[-1]
+                if content.startswith("json\n"):
+                    content = content[5:]
+            data = json.loads(content)
+        except Exception:
+            return None
+
+        try:
+            return self._sanitize_intent(data)
+        except Exception:
+            return None
+
+    def _sanitize_intent(self, data: Dict[str, Any]) -> QueryIntent:
+        # Primary entity
+        primary = data.get("primary_entity") or "project"
+        if primary not in self.entities:
+            primary = "project"
+
+        # Allowed relations for primary
+        allowed_rels = set(self.entity_relations.get(primary, []))
+        target_entities: List[str] = []
+        for rel in (data.get("target_entities") or []):
+            if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
+                target_entities.append(rel)
+
+        # Filters: pick only known keys
+        raw_filters = data.get("filters") or {}
+        known_filter_keys = {
+            "status", "priority", "project_status", "cycle_status", "page_visibility",
+            "project_name", "cycle_title", "assignee_name", "module_name"
+        }
+        filters = {k: v for k, v in raw_filters.items() if k in known_filter_keys and isinstance(v, (str, int))}
+
+        # Aggregations
+        allowed_aggs = {"count", "group", "summary"}
+        aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
+
+        # Group by tokens
+        allowed_group = {"cycle", "project", "assignee", "status", "priority", "module"}
+        group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
+
+        # Projections limited to allow-listed fields for primary
+        allowed_projection_set = set(self.allowed_fields.get(primary, []))
+        projections = [p for p in (data.get("projections") or []) if p in allowed_projection_set][:10]
+
+        # Sort order
+        sort_order = None
+        so = data.get("sort_order") or {}
+        if isinstance(so, dict) and so:
+            key, val = next(iter(so.items()))
+            if key in {"createdTimeStamp", "priority", "status"} and val in (1, -1):
+                sort_order = {key: val}
+
+        # Limit
+        limit_val = data.get("limit")
+        try:
+            limit = int(limit_val) if limit_val is not None else 20
+            if limit <= 0:
+                limit = 20
+            limit = min(limit, 100)
+        except Exception:
+            limit = 20
+
+        # Detail vs count flags
+        wants_details = bool(data.get("wants_details", False))
+        wants_count = bool(data.get("wants_count", False))
+        if wants_details and wants_count:
+            wants_count = False
+            if "count" in aggregations:
+                aggregations = [a for a in aggregations if a != "count"]
+
+        return QueryIntent(
+            primary_entity=primary,
+            target_entities=target_entities,
+            filters=filters,
+            aggregations=aggregations,
+            group_by=group_by,
+            projections=projections,
+            sort_order=sort_order,
+            limit=limit,
+            wants_details=wants_details,
+            wants_count=wants_count,
+        )
+
 class PipelineGenerator:
     """Generates MongoDB aggregation pipelines based on query intent and relationships"""
 
@@ -659,6 +843,7 @@ class QueryPlanner:
     def __init__(self):
         self.parser = NaturalLanguageParser()
         self.generator = PipelineGenerator()
+        self.llm_parser = LLMIntentParser()
 
     async def plan_and_execute(self, query: str) -> Dict[str, Any]:
         """Plan and execute a natural language query"""
@@ -666,8 +851,12 @@ class QueryPlanner:
             # Ensure MongoDB connection
             await mongodb_tools.connect()
 
-            # Parse the query
-            intent = self.parser.parse_query(query)
+            # Try LLM-backed parsing first; fall back to heuristic if it fails
+            intent_source = "llm"
+            intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
+            if not intent:
+                intent = self.parser.parse_query(query)
+                intent_source = "heuristic"
 
             # Generate the pipeline
             pipeline = self.generator.generate_pipeline(intent)
@@ -683,7 +872,8 @@ class QueryPlanner:
                 "success": True,
                 "intent": intent.__dict__,
                 "pipeline": pipeline,
-                "result": result
+                "result": result,
+                "planner": intent_source
             }
 
         except Exception as e:
