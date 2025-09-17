@@ -5,15 +5,12 @@ Handles natural language queries and generates optimal MongoDB aggregation pipel
 based on the relationship registry
 """
 
-import re
 import json
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Optional, Set
 import os
-from collections import defaultdict
 from dataclasses import dataclass
-import asyncio
 
-from registry import REL, ALLOWED_FIELDS, ALIASES, resolve_field_alias, validate_fields, build_lookup_stage
+from registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -42,326 +39,7 @@ class RelationshipPath:
     filters: Dict[str, Any]  # Filters that can be applied at each step
 
 class NaturalLanguageParser:
-    """Parses natural language queries to extract intent"""
-
-    def __init__(self):
-        # Entity keywords mapped to collections
-        self.entity_keywords = {
-            'workItem': ['work item', 'task', 'bug', 'issue', 'story', 'ticket'],
-            'project': ['project', 'initiative', 'program'],
-            'cycle': ['cycle', 'sprint', 'iteration', 'phase'],
-            'members': ['member', 'user', 'person', 'team member', 'developer'],
-            'page': ['page', 'document', 'wiki', 'documentation'],
-            'module': ['module', 'component', 'feature'],
-            'projectState': ['state', 'status', 'workflow', 'stage']
-        }
-
-        # Action keywords
-        self.action_keywords = {
-            'find': ['find', 'get', 'show', 'list', 'display'],
-            'count': ['count', 'how many', 'number of', 'total'],
-            'filter': ['with', 'having', 'where', 'that have'],
-            'group': ['grouped by', 'by', 'per'],
-            'sort': ['sorted by', 'order by', 'ordered'],
-            'aggregate': ['sum', 'average', 'total', 'summary']
-        }
-
-        # Work item status keywords (generic, not project/cycle)
-        self.status_keywords = {
-            'TODO': ['todo', 'to do', 'pending', 'open'],
-            'COMPLETED': ['completed', 'done', 'finished', 'closed']
-        }
-
-        # Project status keywords aligned to PROJECT_STATUS enum
-        self.project_status_keywords = {
-            'NOT_STARTED': ['not started', 'new', 'not begun', 'yet to start'],
-            'STARTED': ['started', 'has started', 'underway'],
-            'COMPLETED': ['completed', 'finished', 'done'],
-            'OVERDUE': ['overdue', 'late', 'past due']
-        }
-
-        # Cycle status keywords aligned to CYCLE_STATUS enum
-        self.cycle_status_keywords = {
-            'ACTIVE': ['active', 'in progress', 'ongoing', 'running'],
-            'UPCOMING': ['upcoming', 'future', 'planned', 'next'],
-            'COMPLETED': ['completed', 'finished', 'done']
-        }
-
-        # Page visibility keywords aligned to PageVisibility enum
-        self.page_visibility_keywords = {
-            'PUBLIC': ['public', 'visible to all'],
-            'PRIVATE': ['private', 'restricted'],
-            'ARCHIVED': ['archived', 'archive']
-        }
-
-    def parse_query(self, query: str) -> QueryIntent:
-        """Parse natural language query into structured intent"""
-        query_lower = query.lower().strip()
-
-        # Extract primary entity
-        primary_entity = self._extract_primary_entity(query_lower)
-
-        # Extract target entities (related collections to include)
-        target_entities = self._extract_target_entities(query_lower, primary_entity)
-
-        # Extract filters
-        filters = self._extract_filters(query_lower)
-
-        # Extract aggregations
-        aggregations = self._extract_aggregations(query_lower)
-
-        # Extract grouping targets (e.g., grouped by cycle)
-        group_by = self._extract_group_by(query_lower)
-
-        # Extract projections
-        projections = self._extract_projections(query_lower)
-
-        # Extract sorting
-        sort_order = self._extract_sorting(query_lower)
-
-        # Extract limit
-        limit = self._extract_limit(query_lower)
-
-        # Determine intent for details vs count
-        wants_count = ('count' in aggregations)
-        wants_details = self._detect_detail_intent(query_lower, projections, wants_count)
-
-        # If both are requested, prefer details per requirement
-        if wants_details and wants_count:
-            aggregations = [a for a in aggregations if a != 'count']
-            wants_count = False
-
-        return QueryIntent(
-            primary_entity=primary_entity,
-            target_entities=target_entities,
-            filters=filters,
-            aggregations=aggregations,
-            group_by=group_by,
-            projections=projections,
-            sort_order=sort_order,
-            limit=limit,
-            wants_details=wants_details,
-            wants_count=wants_count
-        )
-
-    def _extract_primary_entity(self, query: str) -> str:
-        """Extract the primary entity from the query"""
-        for collection, keywords in self.entity_keywords.items():
-            for keyword in keywords:
-                if keyword in query:
-                    return collection
-        return "project"  # Default fallback
-
-    def _extract_target_entities(self, query: str, primary_entity: str) -> List[str]:
-        """Extract related entities to include in the query"""
-        target_entities = []
-
-        # Look for relationship indicators
-        relationship_indicators = {
-            # generic
-            'workItems': ['work items', 'tasks', 'bugs', 'issues'],
-            'cycles': ['cycles', 'sprints', 'iterations'],
-            'pages': ['pages', 'documentation', 'docs'],
-            'modules': ['modules', 'components', 'features'],
-            'states': ['states', 'status', 'workflow'],
-            # workItem relations
-            'assignee': ['assignee', 'assigned to', 'assigned', 'owner', 'owned by'],
-            'project': ['project'],
-            'cycle': ['cycle', 'sprint'],
-            'module': ['module', 'component', 'feature'],
-            'stateMaster': ['state', 'workflow']
-        }
-
-        for relation, keywords in relationship_indicators.items():
-            for keyword in keywords:
-                if keyword in query and relation in REL.get(primary_entity, {}):
-                    target_entities.append(relation)
-                    break
-
-        return target_entities
-
-    def _extract_filters(self, query: str) -> Dict[str, Any]:
-        """Extract filter conditions from the query"""
-        filters = {}
-
-        # Status filters
-        for status, keywords in self.status_keywords.items():
-            for keyword in keywords:
-                if keyword in query:
-                    filters['status'] = status
-                    break
-
-        # Priority filters aligned to PRIORITY enum
-        priority_keywords = {
-            'URGENT': ['urgent', 'critical', 'asap', 'immediately'],
-            'HIGH': ['high', 'important', 'severe'],
-            'MEDIUM': ['medium', 'normal'],
-            'LOW': ['low', 'minor', 'low priority'],
-            'NONE': ['none', 'no priority', 'unprioritized']
-        }
-        for priority, keywords in priority_keywords.items():
-            if any(keyword in query for keyword in keywords):
-                filters['priority'] = priority
-                break
-
-        # Project status filters
-        for status, keywords in self.project_status_keywords.items():
-            if any(keyword in query for keyword in keywords):
-                filters['project_status'] = status
-                break
-
-        # Cycle status filters
-        for status, keywords in self.cycle_status_keywords.items():
-            if any(keyword in query for keyword in keywords):
-                filters['cycle_status'] = status
-                break
-
-        # Page visibility filters
-        for visibility, keywords in self.page_visibility_keywords.items():
-            if any(keyword in query for keyword in keywords):
-                filters['page_visibility'] = visibility
-                break
-
-        # Project name filters - support multiple phrasings
-        project_match1 = re.search(r'project\s+["\']([^"\']+)["\']', query)
-        project_match2 = re.search(r'["\']([^"\']+)["\']\s+project', query)
-        project_match3 = re.search(r'in\s+(?:the\s+)?([a-z0-9 _\-]+)\s+project', query)
-        if project_match1:
-            filters['project_name'] = project_match1.group(1).strip()
-        elif project_match2:
-            filters['project_name'] = project_match2.group(1).strip()
-        elif project_match3:
-            filters['project_name'] = project_match3.group(1).strip()
-
-        # Cycle name filters
-        cycle_match = re.search(r'cycle\s+["\']([^"\']+)["\']', query)
-        if cycle_match:
-            filters['cycle_title'] = cycle_match.group(1)
-
-        # Assignee name filters (e.g., "assigned to Aditya Sharma")
-        assignee_match = re.search(r'assigned to\s+([A-Za-z][\w .\-]+?)(?=(\s+(?:in|on|for|within|of|project|cycle|grouped|group|by)\b|[\.,]|$))', query)
-        if assignee_match:
-            filters['assignee_name'] = assignee_match.group(1).strip()
-
-        # Module name filters (e.g., "CRM module", "API module")
-        module_match = re.search(r'(\w+)\s+module', query)
-        if module_match:
-            filters['module_name'] = module_match.group(1)
-
-        return filters
-
-    def _extract_group_by(self, query: str) -> List[str]:
-        """Extract grouping targets from phrases like 'grouped by cycle' or 'group by project, cycle'."""
-        group_by: List[str] = []
-        raw = None
-        m = re.search(r'group(?:ed)? by\s+([a-zA-Z][a-zA-Z .,_\-]+)', query)
-        if m:
-            raw = m.group(1)
-        elif 'group' in query:
-            # Fallback: try ' by <term>' after a 'group' mention
-            m2 = re.search(r' by\s+([a-zA-Z][a-zA-Z .,_\-]+)', query)
-            if m2:
-                raw = m2.group(1)
-        if not raw:
-            return group_by
-
-        parts = re.split(r'(?:,| and | & )', raw)
-        for p in parts:
-            token = p.strip().lower()
-            token = re.sub(r'[\.,;:!?].*$', '', token).strip()
-            mapped = None
-            if token.startswith('cycle'):
-                mapped = 'cycle'
-            elif token.startswith('project'):
-                mapped = 'project'
-            elif token.startswith('assignee') or token.startswith('owner'):
-                mapped = 'assignee'
-            elif token.startswith('status') or token.startswith('state'):
-                mapped = 'status'
-            elif token.startswith('priority'):
-                mapped = 'priority'
-            elif token.startswith('module'):
-                mapped = 'module'
-            if mapped and mapped not in group_by:
-                group_by.append(mapped)
-        return group_by
-
-    def _extract_aggregations(self, query: str) -> List[str]:
-        """Extract aggregation operations"""
-        aggregations = []
-
-        if any(word in query for word in ['count', 'how many', 'number of', 'total']):
-            aggregations.append('count')
-
-        if any(word in query for word in ['group', 'grouped by', 'by']):
-            aggregations.append('group')
-
-        if any(word in query for word in ['summary', 'overview', 'breakdown']):
-            aggregations.append('summary')
-
-        return aggregations
-
-    def _extract_projections(self, query: str) -> List[str]:
-        """Extract fields to project"""
-        projections = []
-
-        # Common field keywords
-        field_keywords = {
-            'title': ['title', 'name'],
-            'status': ['status', 'state'],
-            'priority': ['priority', 'importance'],
-            'assignee': ['assignee', 'assigned to', 'owner'],
-            'created': ['created', 'date', 'when'],
-            'project': ['project', 'project name'],
-            'cycle': ['cycle', 'sprint']
-        }
-
-        for field, keywords in field_keywords.items():
-            for keyword in keywords:
-                if keyword in query:
-                    projections.append(field)
-                    break
-
-        return projections[:5] if projections else []  # Limit to 5 fields
-
-    def _extract_sorting(self, query: str) -> Optional[Dict[str, int]]:
-        """Extract sorting information"""
-        if 'sort' in query or 'order' in query:
-            if 'date' in query or 'created' in query:
-                return {'createdTimeStamp': -1}
-            elif 'priority' in query:
-                return {'priority': -1}
-            elif 'status' in query:
-                return {'status': 1}
-        return None
-
-    def _extract_limit(self, query: str) -> Optional[int]:
-        """Extract result limit"""
-        limit_match = re.search(r'(?:show|list|get)\s+(\d+)', query)
-        if limit_match:
-            return int(limit_match.group(1))
-        return 20  # Default limit
-
-    def _detect_detail_intent(self, query: str, projections: List[str], wants_count: bool) -> bool:
-        """Detect whether the user wants detailed records rather than just counts.
-
-        Rules:
-        - Explicit phrases like 'details', 'exact details' => True
-        - If user specifies field-like words (projections extracted) => True
-        - If the query is a numeric question ('how many', 'number of', 'count of') => False unless 'details' also present
-        - Generic list verbs ('list', 'show', 'get', 'display') => True only when not explicitly a count question
-        """
-        if 'exact details' in query or 'details' in query:
-            return True
-        count_markers = any(kw in query for kw in ['how many', 'number of', 'count of'])
-        if count_markers and not ('details' in query):
-            return False
-        if projections:
-            return True
-        list_markers = any(kw in query for kw in ['list', 'show', 'display', 'get', 'which', 'what are'])
-        if list_markers and not wants_count:
-            return True
-        return False
+    pass
 
 class LLMIntentParser:
     """LLM-backed intent parser that produces a structured plan compatible with QueryIntent.
@@ -841,7 +519,6 @@ class QueryPlanner:
     """Main query planner that orchestrates the entire process"""
 
     def __init__(self):
-        self.parser = NaturalLanguageParser()
         self.generator = PipelineGenerator()
         self.llm_parser = LLMIntentParser()
 
@@ -851,12 +528,11 @@ class QueryPlanner:
             # Ensure MongoDB connection
             await mongodb_tools.connect()
 
-            # Try LLM-backed parsing first; fall back to heuristic if it fails
+            # Parse intent via LLM (single source of truth)
             intent_source = "llm"
             intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
             if not intent:
-                intent = self.parser.parse_query(query)
-                intent_source = "heuristic"
+                raise ValueError("Failed to parse query intent via LLM parser")
 
             # Generate the pipeline
             pipeline = self.generator.generate_pipeline(intent)
