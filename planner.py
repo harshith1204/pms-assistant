@@ -9,6 +9,8 @@ import json
 from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+import re
 
 from registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from constants import mongodb_tools, DATABASE_NAME
@@ -135,9 +137,13 @@ class LLMIntentParser:
             "Allow-listed fields per entity (projections must be subset of primary's list):\n" +
             "\n".join(f"- {e}: {', '.join(self.allowed_fields.get(e, []))}" for e in self.entities) + "\n\n" +
             "Normalize keys as follows: status, priority, project_status, cycle_status, page_visibility, "
-            "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
-            "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module.\n"
-            "sort_order keys allowed: createdTimeStamp, priority, status.\n"
+            "project_name, project_display_id, business_name, page_title, page_created_by, assignee_name, module_name, "
+            "member_name, member_role, member_email, access_type, state_name, state_master_name, label_name, label_color, "
+            "created_by_name, updated_by_name, lead_name, title_contains, page_seq, "
+            "favourite, is_favourite, is_archived, is_active, project_access, locked, has_image, has_cycles, has_pages, has_modules, has_members, has_stickies, "
+            "created_after, created_before, updated_after, updated_before, joining_after, joining_before. Use uppercase enum values if obvious.\n"
+            "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module, label.\n"
+            "sort_order keys allowed: createdTimeStamp, updatedTimeStamp, createdAt, updatedAt, priority, status.\n"
             "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown."
         )
 
@@ -150,13 +156,43 @@ class LLMIntentParser:
                 "project_status": "NOT_STARTED|STARTED|COMPLETED|OVERDUE?",
                 "cycle_status": "ACTIVE|UPCOMING|COMPLETED?",
                 "page_visibility": "PUBLIC|PRIVATE|ARCHIVED?",
-                "project_name": "string? (free text, used as case-insensitive regex)",
+                "project_name": "string? (free text, case-insensitive regex)",
+                "project_display_id": "string?",
+                "business_name": "string?",
                 "cycle_title": "string?",
                 "assignee_name": "string?",
-                "module_name": "string?"
+                "module_name": "string?",
+                "member_name": "string?",
+                "member_role": "string?",
+                "member_email": "string?",
+                "access_type": "PUBLIC|PRIVATE|GUEST?",
+                "page_title": "string?",
+                "page_created_by": "string?",
+                "state_name": "string?",
+                "state_master_name": "string?",
+                "label_name": "string?",
+                "label_color": "string?",
+                "favourite": "boolean?",
+                "is_favourite": "boolean?",
+                "is_archived": "boolean?",
+                "is_active": "boolean?",
+                "project_access": "PUBLIC|PRIVATE|GUEST?",
+                "locked": "boolean?",
+                "has_image": "boolean?",
+                "has_cycles": "boolean?",
+                "has_pages": "boolean?",
+                "has_modules": "boolean?",
+                "has_members": "boolean?",
+                "has_stickies": "boolean?",
+                "created_after": "ISO date string?",
+                "created_before": "ISO date string?",
+                "updated_after": "ISO date string?",
+                "updated_before": "ISO date string?",
+                "joining_after": "ISO date string?",
+                "joining_before": "ISO date string?"
             },
             "aggregations": "string[]; subset of [count, group, summary]",
-            "group_by": "string[]; subset of [cycle, project, assignee, status, priority, module]",
+            "group_by": "string[]; subset of [cycle, project, assignee, status, priority, module, label]",
             "projections": "string[]; subset of allow-listed fields for primary_entity",
             "sort_order": "object?; single key among allowed sort keys mapping to 1 or -1",
             "limit": "integer <= 100; default 20",
@@ -208,15 +244,35 @@ class LLMIntentParser:
         raw_filters = data.get("filters") or {}
         known_filter_keys = {
             "status", "priority", "project_status", "cycle_status", "page_visibility",
-            "project_name", "cycle_title", "assignee_name", "module_name"
+            "project_name", "project_display_id", "business_name",
+            "cycle_title", "assignee_name", "module_name",
+            "member_name", "member_role", "member_email", "access_type",
+            "page_title", "page_created_by",
+            "state_name", "state_master_name", "label_name", "label_color",
+            "favourite", "is_favourite", "is_archived", "is_active", "project_access",
+            "locked", "has_image", "has_cycles", "has_pages", "has_modules", "has_members", "has_stickies",
+            "created_after", "created_before", "updated_after", "updated_before",
+            "joining_after", "joining_before",
+            "created_by_name", "updated_by_name", "title_contains",
+            "staff_id", "member_id", "page_seq"
         }
         filters: Dict[str, Any] = {}
         for k, v in raw_filters.items():
-            if k in known_filter_keys and isinstance(v, (str, int)) and not self._is_placeholder(v):
+            # Accept booleans and strings for the extended set
+            if k in known_filter_keys and v is not None and not self._is_placeholder(v):
+                if isinstance(v, str):
+                    vv = v.strip()
+                    # Normalize common booleans
+                    if vv.lower() in {"true", "yes", "y"}:
+                        v = True
+                    elif vv.lower() in {"false", "no", "n"}:
+                        v = False
                 # keep exact enums only for enum fields
-                if k in {"status", "project_status", "cycle_status", "page_visibility"} and isinstance(v, str):
-                    if "?" in v or not v.isupper():
+                if k in {"status", "project_status", "cycle_status", "page_visibility", "project_access", "access_type"} and isinstance(v, str):
+                    if "?" in v:
                         continue
+                    # Uppercase enums when not obviously a free text field
+                    v = v.upper()
                 filters[k] = v
 
         # Aggregations
@@ -224,7 +280,7 @@ class LLMIntentParser:
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "status", "priority", "module"}
+        allowed_group = {"cycle", "project", "assignee", "status", "priority", "module", "label"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
@@ -248,7 +304,7 @@ class LLMIntentParser:
         so = data.get("sort_order") or {}
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
-            if key in {"createdTimeStamp", "priority", "status"} and val in (1, -1):
+            if key in {"createdTimeStamp", "updatedTimeStamp", "createdAt", "updatedAt", "priority", "status"} and val in (1, -1):
                 sort_order = {key: val}
 
         # Limit
@@ -368,12 +424,20 @@ class PipelineGenerator:
         if intent.filters:
             if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['project'])
+            if 'project_display_id' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
+                required_relations.add(relation_alias_by_token['project'])
+            if 'business_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
+                required_relations.add(relation_alias_by_token['project'])
             if 'cycle_title' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['cycle'])
             if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['assignee'])
             if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['module'])
+            # Presence filters that require lookups on project
+            for presence_key, rel in [('has_cycles', 'cycle'), ('has_pages', 'page'), ('has_modules', 'module'), ('has_members', 'assignee')]:
+                if intent.filters.get(presence_key) and relation_alias_by_token.get(rel) in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token[rel])
 
         # Group-by → relations
         for token in (intent.group_by or []):
@@ -407,10 +471,27 @@ class PipelineGenerator:
         if secondary_filters:
             pipeline.append({"$match": secondary_filters})
 
+        # Presence filters that depend on lookups (e.g., has_cycles/pages/modules/members for project)
+        if collection == 'project' and intent.filters:
+            presence_map = {
+                'has_cycles': 'cycles',
+                'has_pages': 'pages',
+                'has_modules': 'modules',
+                'has_members': 'members',
+            }
+            for key, alias in presence_map.items():
+                if key in intent.filters and intent.filters[key] is True:
+                    pipeline.append({"$match": {alias: {"$exists": True, "$ne": []}}})
+                elif key in intent.filters and intent.filters[key] is False:
+                    pipeline.append({"$match": {alias: {"$in": [[], None]}}})
+
         # Add grouping if requested
         if intent.group_by:
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
+            # Special-case: label grouping requires unwind for workItem
+            if 'label' in intent.group_by and collection == 'workItem':
+                pipeline.append({"$unwind": {"path": "$label", "preserveNullAndEmptyArrays": False}})
             for token in intent.group_by:
                 field_path = self._resolve_group_field(intent.primary_entity, token)
                 if field_path:
@@ -459,12 +540,37 @@ class PipelineGenerator:
                 if intent.limit:
                     pipeline.append({"$limit": intent.limit})
 
-        # Add aggregations like count (skip count when details are requested)
+        # Add aggregations like count and summary (skip count when details are requested)
         if intent.aggregations and not intent.wants_details and not intent.group_by:
             for agg in intent.aggregations:
                 if agg == 'count':
                     pipeline.append({"$count": "total"})
                     return pipeline  # Count is terminal
+                if agg == 'summary':
+                    # Compute average age in days between updated and created timestamps where available
+                    created_field, updated_field = self._get_datetime_fields(collection)
+                    if created_field and updated_field:
+                        pipeline.append({
+                            "$addFields": {
+                                "_ageDays": {
+                                    "$cond": [
+                                        {"$and": [
+                                            {"$ne": [f"${updated_field}", None]},
+                                            {"$ne": [f"${created_field}", None]},
+                                        ]},
+                                        {"$divide": [
+                                            {"$subtract": [f"${updated_field}", f"${created_field}"]},
+                                            1000 * 60 * 60 * 24
+                                        ]},
+                                        None
+                                    ]
+                                }
+                            }
+                        })
+                        pipeline.append({"$match": {"_ageDays": {"$ne": None}}})
+                        pipeline.append({"$group": {"_id": None, "avgDays": {"$avg": "$_ageDays"}}})
+                        pipeline.append({"$project": {"_id": 0, "avgDays": 1}})
+                        return pipeline
 
         # Determine projections for details (skip when grouping since we reshape after $group)
         effective_projections: List[str] = intent.projections
@@ -526,18 +632,84 @@ class PipelineGenerator:
                 primary_filters['status'] = filters['status']
             if 'priority' in filters:
                 primary_filters['priority'] = filters['priority']
+            if 'label_name' in filters:
+                primary_filters['label.name'] = {"$regex": filters['label_name'], "$options": "i"}
+            if 'label_color' in filters:
+                primary_filters['label.color'] = {"$regex": filters['label_color'], "$options": "i"}
+            if 'created_by_name' in filters:
+                primary_filters['createdBy.name'] = {"$regex": filters['created_by_name'], "$options": "i"}
+            if 'updated_by_name' in filters:
+                primary_filters['updatedBy.name'] = {"$regex": filters['updated_by_name'], "$options": "i"}
+            if 'title_contains' in filters:
+                primary_filters['title'] = {"$regex": filters['title_contains'], "$options": "i"}
+            if 'created_after' in filters or 'created_before' in filters:
+                rng = self._build_date_range(filters.get('created_after'), filters.get('created_before'))
+                if rng:
+                    primary_filters['createdTimeStamp'] = rng
+            if 'updated_after' in filters or 'updated_before' in filters:
+                rng = self._build_date_range(filters.get('updated_after'), filters.get('updated_before'))
+                if rng:
+                    primary_filters['updatedTimeStamp'] = rng
 
         elif collection == "project":
             if 'project_status' in filters:
                 primary_filters['status'] = filters['project_status']
+            if 'is_active' in filters:
+                primary_filters['isActive'] = bool(filters['is_active'])
+            if 'is_archived' in filters:
+                primary_filters['isArchived'] = bool(filters['is_archived'])
+            if 'favourite' in filters or 'is_favourite' in filters:
+                primary_filters['favourite'] = bool(filters.get('favourite', filters.get('is_favourite')))
+            if 'project_access' in filters:
+                primary_filters['access'] = filters['project_access']
+            if 'project_display_id' in filters:
+                primary_filters['projectDisplayId'] = {"$regex": f"^{re.escape(str(filters['project_display_id']))}$", "$options": "i"}
+            if 'has_image' in filters and filters['has_image']:
+                primary_filters['imageUrl'] = {"$exists": True, "$ne": ""}
+            if 'created_after' in filters or 'created_before' in filters:
+                rng = self._build_date_range(filters.get('created_after'), filters.get('created_before'))
+                if rng:
+                    primary_filters['createdTimeStamp'] = rng
 
         elif collection == "cycle":
             if 'cycle_status' in filters:
                 primary_filters['status'] = filters['cycle_status']
+            if 'cycle_title' in filters:
+                primary_filters['title'] = {"$regex": filters['cycle_title'], "$options": "i"}
+            if 'title_contains' in filters:
+                primary_filters['title'] = {"$regex": filters['title_contains'], "$options": "i"}
+            if 'is_favourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['is_favourite'])
+            if 'created_after' in filters or 'created_before' in filters:
+                rng = self._build_date_range(filters.get('created_after'), filters.get('created_before'))
+                if rng:
+                    primary_filters['createdTimeStamp'] = rng
 
         elif collection == "page":
             if 'page_visibility' in filters:
                 primary_filters['visibility'] = filters['page_visibility']
+            if 'locked' in filters:
+                primary_filters['locked'] = bool(filters['locked'])
+            if 'is_favourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['is_favourite'])
+            if 'page_title' in filters:
+                primary_filters['title'] = {"$regex": filters['page_title'], "$options": "i"}
+            if 'title_contains' in filters:
+                primary_filters['title'] = {"$regex": filters['title_contains'], "$options": "i"}
+            if 'page_seq' in filters:
+                primary_filters['seq'] = filters['page_seq']
+            if 'has_stickies' in filters and filters['has_stickies']:
+                primary_filters['stickies'] = {"$exists": True, "$ne": []}
+            if 'page_created_by' in filters:
+                primary_filters['createdBy.name'] = {"$regex": filters['page_created_by'], "$options": "i"}
+            if 'created_after' in filters or 'created_before' in filters:
+                rng = self._build_date_range(filters.get('created_after'), filters.get('created_before'))
+                if rng:
+                    primary_filters['createdAt'] = rng
+            if 'updated_after' in filters or 'updated_before' in filters:
+                rng = self._build_date_range(filters.get('updated_after'), filters.get('updated_before'))
+                if rng:
+                    primary_filters['updatedAt'] = rng
 
         return primary_filters
 
@@ -552,6 +724,13 @@ class PipelineGenerator:
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
 
+        # Project display id across primaries (works via lookup when needed)
+        if 'project_display_id' in filters:
+            s.setdefault('$or', []).extend([
+                {'project.projectDisplayId': {'$regex': f"^{re.escape(str(filters['project_display_id']))}$", '$options': 'i'}},
+                {'projectDoc.projectDisplayId': {'$regex': f"^{re.escape(str(filters['project_display_id']))}$", '$options': 'i'}},
+            ])
+
         # Assignee name via joined alias 'assignees' (only if relation exists)
         if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
             s['assignees.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
@@ -563,6 +742,18 @@ class PipelineGenerator:
         # Module name filter (only if relation exists for this primary collection)
         if 'module_name' in filters and 'module' in REL.get(collection, {}):
             s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+
+        # Business name on either primary or joined project
+        if 'business_name' in filters:
+            s.setdefault('$or', []).extend([
+                {'business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+            ])
+
+        # Page created by (author)
+        if collection == 'page' and 'page_created_by' in filters:
+            s['createdBy.name'] = {'$regex': filters['page_created_by'], '$options': 'i'}
 
         return s
 
@@ -644,6 +835,7 @@ class PipelineGenerator:
                 'assignee': 'assignees.name',  # joined alias for assignee relation
                 'status': 'status',
                 'priority': 'priority',
+                'label': 'label.name',
             },
             'project': {
                 'status': 'status',
@@ -655,6 +847,65 @@ class PipelineGenerator:
         }
         entity_map = mapping.get(primary_entity, {})
         return entity_map.get(token)
+
+    def _build_date_range(self, after_val: Optional[Any], before_val: Optional[Any]) -> Optional[Dict[str, Any]]:
+        """Build a MongoDB range filter from after/before values. Accepts ISO strings or yyyy-mm-dd."""
+        def parse(v: Any) -> Optional[datetime]:
+            if v is None:
+                return None
+            if isinstance(v, (int, float)):
+                # treat as epoch ms
+                try:
+                    return datetime.fromtimestamp(float(v) / 1000.0)
+                except Exception:
+                    return None
+            if isinstance(v, datetime):
+                return v
+            if isinstance(v, str):
+                s = v.strip()
+                # common shortcuts
+                now = datetime.utcnow()
+                if s.lower() in {"today"}:
+                    return datetime(now.year, now.month, now.day)
+                if s.lower() in {"yesterday"}:
+                    d = now - timedelta(days=1)
+                    return datetime(d.year, d.month, d.day)
+                m = re.match(r"last\s+(\d+)\s+days", s.lower())
+                if m:
+                    n = int(m.group(1))
+                    d = now - timedelta(days=n)
+                    return datetime(d.year, d.month, d.day)
+                # try ISO
+                try:
+                    # Normalize to full ISO if only date provided
+                    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+                        return datetime.fromisoformat(s + "T00:00:00")
+                    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+                except Exception:
+                    return None
+            return None
+
+        gte = parse(after_val)
+        lte = parse(before_val)
+        rng: Dict[str, Any] = {}
+        if gte:
+            rng['$gte'] = gte
+        if lte:
+            rng['$lte'] = lte
+        return rng or None
+
+    def _get_datetime_fields(self, collection: str) -> (Optional[str], Optional[str]):
+        """Return (created_field, updated_field) for a collection."""
+        mapping = {
+            'workItem': ('createdTimeStamp', 'updatedTimeStamp'),
+            'project': ('createdTimeStamp', 'updatedTimeStamp'),
+            'cycle': ('createdTimeStamp', 'updatedTimeStamp'),
+            'module': ('createdTimeStamp', None),
+            'members': ('joiningDate', None),
+            'page': ('createdAt', 'updatedAt'),
+            'projectState': (None, None),
+        }
+        return mapping.get(collection, (None, None))
 
 class Planner:
     """Main query planner that orchestrates the entire process"""
