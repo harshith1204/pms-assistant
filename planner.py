@@ -538,128 +538,6 @@ class PipelineGenerator:
 
         return pipeline
 
-def _prune_pipeline(stages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    pruned: List[Dict[str, Any]] = []
-    for s in stages:
-        if "$project" in s and not s["$project"]:
-            continue
-        if "$addFields" in s and not s["$addFields"]:
-            continue
-        if pruned and "$project" in s and "$project" in pruned[-1]:
-            pruned[-1]["$project"].update(s["$project"])
-            continue
-        pruned.append(s)
-
-    MAX_STAGES = 6
-    if len(pruned) > MAX_STAGES:
-        compact: List[Dict[str, Any]] = []
-        for st in pruned:
-            if "$project" in st and len(pruned) - len(compact) > MAX_STAGES:
-                continue
-            compact.append(st)
-        pruned = compact[:MAX_STAGES]
-    return pruned
-
-def _filters_to_match(filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
-    """Build a match filter suitable for find() using only primary and embedded fields."""
-    if not filters:
-        return {}
-    # Reuse primary filters logic
-    pg = PipelineGenerator()
-    match_filter = pg._extract_primary_filters(filters, collection)
-
-    # Embedded-friendly secondary filters (avoid joined-only fields)
-    embedded = EMBEDDED_FIELDS.get(collection, set())
-    if "project_name" in filters and "project.name" in embedded:
-        # Case-insensitive regex on embedded name
-        match_filter["project.name"] = {"$regex": filters["project_name"], "$options": "i"}
-    if collection == "workItem" and "assignee_name" in filters:
-        # Requires join; skip in find()
-        pass
-    if collection == "cycle" and "cycle_title" in filters:
-        # Title is local field
-        match_filter["title"] = {"$regex": filters["cycle_title"], "$options": "i"}
-    if collection == "module" and "module_name" in filters:
-        match_filter["title"] = {"$regex": filters["module_name"], "$options": "i"}
-    return match_filter
-
-def _projections_for(intent: QueryIntent, collection: str) -> Dict[str, int]:
-    """Derive a find() projection from intent or defaults, constrained to allow-list."""
-    fields = intent.projections or PipelineGenerator()._get_default_projections(collection)
-    allowed = ALLOWED_FIELDS.get(collection, set())
-    proj: Dict[str, int] = {"_id": 1}
-    for f in fields:
-        if f in allowed:
-            proj[f] = 1
-    return proj
-
-def _required_relations_for(intent: QueryIntent) -> List[str]:
-    collection = intent.primary_entity
-    required: Set[str] = set()
-    relation_alias_by_token = {
-        'workItem': {'project': 'project', 'assignee': 'assignee'},
-        'project': {'cycle': 'cycles', 'module': 'modules', 'assignee': 'members', 'page': 'pages', 'project': None},
-        'cycle': {'project': 'project'},
-        'module': {'project': 'project'},
-        'page': {'project': 'project'},
-        'members': {'project': 'project'},
-        'projectState': {'project': 'project'},
-    }.get(collection, {})
-    # Filters
-    if intent.filters:
-        if 'project_name' in intent.filters:
-            if 'project.name' not in EMBEDDED_FIELDS.get(collection, set()):
-                if relation_alias_by_token.get('project') in REL.get(collection, {}):
-                    required.add(relation_alias_by_token['project'])
-        if 'cycle_title' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
-            required.add(relation_alias_by_token['cycle'])
-        if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
-            required.add(relation_alias_by_token['assignee'])
-        if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
-            required.add(relation_alias_by_token['module'])
-    # Group by
-    for token in (intent.group_by or []):
-        rel_alias = relation_alias_by_token.get(token)
-        if rel_alias and rel_alias in REL.get(collection, {}):
-            required.add(rel_alias)
-    return sorted(required)
-
-def _should_use_find(intent: QueryIntent) -> bool:
-    if intent.group_by:
-        return False
-    if 'count' in (intent.aggregations or []) or intent.wants_count:
-        return False
-    # Avoid find if joins are needed
-    if _required_relations_for(intent):
-        return False
-    return True
-
-def _build_pipeline(intent: QueryIntent, collection: str) -> List[Dict[str, Any]]:
-    pg = PipelineGenerator()
-    stages = pg.generate_pipeline(intent)
-    # Ensure limit at end for aggregates if not present
-    if intent.limit:
-        has_limit = any("$limit" in s for s in stages)
-        if not has_limit:
-            stages.append({"$limit": intent.limit})
-    return _prune_pipeline(stages)
-
-def compile_intent(intent: QueryIntent) -> CompiledQuery:
-    collection = intent.primary_entity
-    if _should_use_find(intent):
-        mongo_filter = _filters_to_match(intent.filters, collection)
-        projection = _projections_for(intent, collection)
-        return CompiledQuery(
-            collection=collection,
-            kind="find",
-            filter=mongo_filter or {},
-            projection=projection or None,
-            sort=intent.sort_order or None,
-            limit=intent.limit or 20,
-        )
-    pipeline = _build_pipeline(intent, collection)
-    return CompiledQuery(collection=collection, kind="aggregate", pipeline=pipeline, limit=intent.limit or 20)
-
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
         """Extract filters that apply to the primary collection"""
         primary_filters = {}
@@ -798,6 +676,130 @@ def compile_intent(intent: QueryIntent) -> CompiledQuery:
         }
         entity_map = mapping.get(primary_entity, {})
         return entity_map.get(token)
+
+def _prune_pipeline(stages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    pruned: List[Dict[str, Any]] = []
+    for s in stages:
+        if "$project" in s and not s["$project"]:
+            continue
+        if "$addFields" in s and not s["$addFields"]:
+            continue
+        if pruned and "$project" in s and "$project" in pruned[-1]:
+            pruned[-1]["$project"].update(s["$project"])
+            continue
+        pruned.append(s)
+
+    MAX_STAGES = 6
+    if len(pruned) > MAX_STAGES:
+        compact: List[Dict[str, Any]] = []
+        for st in pruned:
+            if "$project" in st and len(pruned) - len(compact) > MAX_STAGES:
+                continue
+            compact.append(st)
+        pruned = compact[:MAX_STAGES]
+    return pruned
+
+def _filters_to_match(filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
+    """Build a match filter suitable for find() using only primary and embedded fields."""
+    if not filters:
+        return {}
+    # Reuse primary filters logic
+    pg = PipelineGenerator()
+    match_filter = pg._extract_primary_filters(filters, collection)
+
+    # Embedded-friendly secondary filters (avoid joined-only fields)
+    embedded = EMBEDDED_FIELDS.get(collection, set())
+    if "project_name" in filters and "project.name" in embedded:
+        # Case-insensitive regex on embedded name
+        match_filter["project.name"] = {"$regex": filters["project_name"], "$options": "i"}
+    if collection == "workItem" and "assignee_name" in filters:
+        # Requires join; skip in find()
+        pass
+    if collection == "cycle" and "cycle_title" in filters:
+        # Title is local field
+        match_filter["title"] = {"$regex": filters["cycle_title"], "$options": "i"}
+    if collection == "module" and "module_name" in filters:
+        match_filter["title"] = {"$regex": filters["module_name"], "$options": "i"}
+    return match_filter
+
+def _projections_for(intent: QueryIntent, collection: str) -> Dict[str, int]:
+    """Derive a find() projection from intent or defaults, constrained to allow-list."""
+    fields = intent.projections or PipelineGenerator()._get_default_projections(collection)
+    allowed = ALLOWED_FIELDS.get(collection, set())
+    proj: Dict[str, int] = {"_id": 1}
+    for f in fields:
+        if f in allowed:
+            proj[f] = 1
+    return proj
+
+def _required_relations_for(intent: QueryIntent) -> List[str]:
+    collection = intent.primary_entity
+    required: Set[str] = set()
+    relation_alias_by_token = {
+        'workItem': {'project': 'project', 'assignee': 'assignee'},
+        'project': {'cycle': 'cycles', 'module': 'modules', 'assignee': 'members', 'page': 'pages', 'project': None},
+        'cycle': {'project': 'project'},
+        'module': {'project': 'project'},
+        'page': {'project': 'project'},
+        'members': {'project': 'project'},
+        'projectState': {'project': 'project'},
+    }.get(collection, {})
+    # Filters
+    if intent.filters:
+        if 'project_name' in intent.filters:
+            if 'project.name' not in EMBEDDED_FIELDS.get(collection, set()):
+                if relation_alias_by_token.get('project') in REL.get(collection, {}):
+                    required.add(relation_alias_by_token['project'])
+        if 'cycle_title' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
+            required.add(relation_alias_by_token['cycle'])
+        if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
+            required.add(relation_alias_by_token['assignee'])
+        if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
+            required.add(relation_alias_by_token['module'])
+    # Group by
+    for token in (intent.group_by or []):
+        rel_alias = relation_alias_by_token.get(token)
+        if rel_alias and rel_alias in REL.get(collection, {}):
+            required.add(rel_alias)
+    return sorted(required)
+
+def _should_use_find(intent: QueryIntent) -> bool:
+    if intent.group_by:
+        return False
+    if 'count' in (intent.aggregations or []) or intent.wants_count:
+        return False
+    # Avoid find if joins are needed
+    if _required_relations_for(intent):
+        return False
+    return True
+
+def _build_pipeline(intent: QueryIntent, collection: str) -> List[Dict[str, Any]]:
+    pg = PipelineGenerator()
+    stages = pg.generate_pipeline(intent)
+    # Ensure limit at end for aggregates if not present
+    if intent.limit:
+        has_limit = any("$limit" in s for s in stages)
+        if not has_limit:
+            stages.append({"$limit": intent.limit})
+    return _prune_pipeline(stages)
+
+def compile_intent(intent: QueryIntent) -> CompiledQuery:
+    collection = intent.primary_entity
+    if _should_use_find(intent):
+        mongo_filter = _filters_to_match(intent.filters, collection)
+        projection = _projections_for(intent, collection)
+        return CompiledQuery(
+            collection=collection,
+            kind="find",
+            filter=mongo_filter or {},
+            projection=projection or None,
+            sort=intent.sort_order or None,
+            limit=intent.limit or 20,
+        )
+    pipeline = _build_pipeline(intent, collection)
+    return CompiledQuery(collection=collection, kind="aggregate", pipeline=pipeline, limit=intent.limit or 20)
+
+    # (Removed duplicate methods erroneously placed here)
 
 class Planner:
     """Main query planner that orchestrates the entire process"""
