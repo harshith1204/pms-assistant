@@ -9,7 +9,7 @@ from glob import glob
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
 try:
-    from planner import plan_and_execute_query
+from planner import plan_and_execute_query, plan_and_execute_query_v2
 except ImportError:
     plan_and_execute_query = None
 
@@ -153,3 +153,25 @@ tools = [
     intelligent_query,
     run_aggregation,
 ]
+
+
+@tool
+async def intelligent_query_v2(query: str) -> str:
+    """Experimental IR-based planner: routable, join-aware, explainable.
+
+    - Parses NLQ to a minimal QueryPlan (collections, filters, joins, sort)
+    - Executes per-collection capped queries, then performs key-based joins outside Mongo
+    - Returns results and an explain block with the plan and which joins/filters fired
+    """
+    if not plan_and_execute_query_v2:
+        return "❌ intelligent_query_v2 not available."
+    try:
+        result = await plan_and_execute_query_v2(query)
+        import json as _json
+        return _json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        return f"❌ IR planner error: {str(e)}"
+
+
+# Register v2 as well
+tools.append(intelligent_query_v2)

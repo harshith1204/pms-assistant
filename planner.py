@@ -6,11 +6,18 @@ based on the relationship registry
 """
 
 import json
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Literal
 import os
 from dataclasses import dataclass
 
 from registry import REL, ALLOWED_FIELDS, build_lookup_stage
+from registry import SCHEMA as ENTITY_SCHEMA  # new IR schema
+from registry import (
+    resolve_entity,
+    resolve_field,
+    foreign_keys,
+    resolve_entity_from_text,
+)
 from constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -709,3 +716,314 @@ query_planner = Planner()
 async def plan_and_execute_query(query: str) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
     return await query_planner.plan_and_execute(query)
+
+# ======= IR-based planning and execution (v2) =======
+# A minimal, typed query plan that supports multi-collection routing and outside-Mongo joins
+
+from pydantic import BaseModel
+
+OpType = Literal["lookup", "search", "aggregate", "join", "merge", "rerank"]
+
+
+class Filter(BaseModel):
+    field: str
+    op: Literal["eq", "neq", "gt", "gte", "lt", "lte", "in", "contains", "regex", "text"]
+    value: Any
+
+
+class CollectionOp(BaseModel):
+    collection: str
+    op: OpType
+    filters: List[Filter] = []
+    projection: Optional[List[str]] = None
+    limit: int = 50
+    score_weight: float = 1.0
+
+
+class JoinEdge(BaseModel):
+    left: str
+    right: str
+    left_on: str
+    right_on: str
+
+
+class QueryPlan(BaseModel):
+    intent: Literal["fetch", "summarize", "count", "explain"]
+    steps: List[CollectionOp]
+    joins: List[JoinEdge] = []
+    sort: Optional[List[Dict[str, Literal["asc", "desc"]]]] = None
+    natural_language_query: str
+
+
+def _nl_lower(text: str) -> str:
+    return (text or "").strip().lower()
+
+
+def _extract_project_name(nlq_lower: str) -> Optional[str]:
+    """Extract project name from simple patterns like: project "X", in project X, project X"""
+    import re
+
+    # Patterns with quotes
+    m = re.search(r"project\s+['\"]([^'\"]+)['\"]", nlq_lower)
+    if m:
+        return m.group(1).strip()
+
+    # in project <name>
+    m = re.search(r"in\s+project\s+([a-z0-9 _-]+)", nlq_lower)
+    if m:
+        return m.group(1).strip()
+
+    # project <name> (end or before verb)
+    m = re.search(r"project\s+([a-z0-9 _-]+)(?:\s|$)", nlq_lower)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _extract_date_constraint(nlq_lower: str) -> Optional[Dict[str, Any]]:
+    """Find simple 'after YYYY-MM-DD' or 'before YYYY-MM-DD' constraints.
+    Returns dict: {"op": "gte"|"lte", "value": "YYYY-MM-DD"}
+    """
+    import re
+
+    m = re.search(r"after\s+(\d{4}-\d{2}-\d{2})", nlq_lower)
+    if m:
+        return {"op": "gte", "value": m.group(1)}
+    m = re.search(r"before\s+(\d{4}-\d{2}-\d{2})", nlq_lower)
+    if m:
+        return {"op": "lte", "value": m.group(1)}
+    m = re.search(r"since\s+(\d{4}-\d{2}-\d{2})", nlq_lower)
+    if m:
+        return {"op": "gte", "value": m.group(1)}
+    return None
+
+
+def _detect_status(nlq_lower: str) -> Optional[str]:
+    # Minimal mapping; extend as needed
+    if any(x in nlq_lower for x in ["accepted", "acknowledged"]):
+        return "ACCEPTED"
+    if any(x in nlq_lower for x in ["completed", "done", "closed"]):
+        return "COMPLETED"
+    if any(x in nlq_lower for x in ["open", "todo", "new"]):
+        return "TODO"
+    return None
+
+
+def build_query_plan_from_nlq(query: str) -> QueryPlan:
+    """Lightweight routing: infer target collections, filters, joins from NLQ.
+
+    Strategy:
+    - Resolve primary entity from aliases (bugs/issues → WorkItem, pages/docs → Page, etc.)
+    - Detect project name and add a Project lookup step with eq(name)
+    - Detect status words and add WorkItem.status eq
+    - Detect simple dates (after/before/since) mapped to createdTimeStamp gte/lte
+    - If both Project and another entity present → add join on common key per SCHEMA
+    """
+    ql = _nl_lower(query)
+
+    # Try to infer an entity from text aliases
+    inferred_entity = resolve_entity_from_text(ql) or "WorkItem"
+
+    steps: List[CollectionOp] = []
+    joins: List[JoinEdge] = []
+    sort: List[Dict[str, Literal["asc", "desc"]]] = []
+
+    # Optional Project constraint
+    project_name = _extract_project_name(ql)
+    if project_name:
+        steps.append(
+            CollectionOp(
+                collection="Project",
+                op="lookup",
+                filters=[Filter(field="name", op="eq", value=project_name)],
+                projection=["name", "_id"],
+                limit=5,
+                score_weight=0.5,
+            )
+        )
+
+    # Build main entity step
+    entity = inferred_entity
+    entity_schema = ENTITY_SCHEMA.get(entity, {})
+    text_fields = entity_schema.get("text_fields", [])
+
+    entity_filters: List[Filter] = []
+    status_token = _detect_status(ql)
+    if status_token and entity == "WorkItem":
+        entity_filters.append(Filter(field="status", op="eq", value=status_token))
+
+    dt = _extract_date_constraint(ql)
+    if dt:
+        # Prefer createdTimeStamp if whitelisted, else fall back to updatedTimeStamp
+        candidate_fields = ["createdTimeStamp", "updatedTimeStamp"]
+        date_field = next((f for f in candidate_fields if f in ALLOWED_FIELDS.get("workItem", set())), "createdTimeStamp")
+        entity_filters.append(Filter(field=date_field, op=dt["op"], value=dt["value"]))
+        # Default sort by recency when time constrained
+        sort.append({f"{date_field}": "desc"})
+
+    # If no explicit text search, keep to lookup filters
+    steps.append(
+        CollectionOp(
+            collection=entity,
+            op="search" if text_fields else "lookup",
+            filters=entity_filters,
+            projection=None,
+            limit=200 if entity == "WorkItem" else 100,
+            score_weight=1.0,
+        )
+    )
+
+    # Add a join if both project step present and entity has a suitable FK
+    if project_name and entity != "Project":
+        # Use SCHEMA fk hints if available; otherwise fall back to project.name
+        fk_map = foreign_keys(entity)
+        left_on = next((k for k, v in fk_map.items() if v == ("Project", "name")), "project.name")
+        joins.append(JoinEdge(left=entity, right="Project", left_on=left_on, right_on="name"))
+
+    plan = QueryPlan(
+        intent="fetch",
+        steps=steps,
+        joins=joins,
+        sort=sort or None,
+        natural_language_query=query,
+    )
+    return plan
+
+
+def _filters_to_match(filters: List[Filter]) -> Dict[str, Any]:
+    """Translate IR filters to a Mongo $match dict (lexical only)."""
+    match: Dict[str, Any] = {}
+    for f in filters or []:
+        field = f.field
+        if f.op == "eq":
+            match[field] = f.value
+        elif f.op == "neq":
+            match[field] = {"$ne": f.value}
+        elif f.op in {"gt", "gte", "lt", "lte"}:
+            op_map = {"gt": "$gt", "gte": "$gte", "lt": "$lt", "lte": "$lte"}
+            match.setdefault(field, {}).update({op_map[f.op]: f.value})
+        elif f.op == "in":
+            match[field] = {"$in": f.value if isinstance(f.value, list) else [f.value]}
+        elif f.op == "contains":
+            match[field] = {"$regex": str(f.value), "$options": "i"}
+        elif f.op == "regex":
+            match[field] = {"$regex": str(f.value)}
+        elif f.op == "text":
+            # Requires text index; prefer regex as safe fallback
+            match["$text"] = {"$search": str(f.value)}
+    return match
+
+
+def _build_pipeline_for_step(step: CollectionOp) -> List[Dict[str, Any]]:
+    pipeline: List[Dict[str, Any]] = []
+    match = _filters_to_match(step.filters)
+    if match:
+        pipeline.append({"$match": match})
+    if step.projection:
+        projection: Dict[str, Any] = {k: 1 for k in step.projection}
+        projection.setdefault("_id", 1)
+        pipeline.append({"$project": projection})
+    if step.limit:
+        pipeline.append({"$limit": int(step.limit)})
+    return pipeline
+
+
+def _get_nested(doc: Dict[str, Any], path: str) -> Any:
+    cur: Any = doc
+    for part in path.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return None
+    return cur
+
+
+async def execute_query_plan(plan: QueryPlan) -> Dict[str, Any]:
+    """Execute a QueryPlan by running per-collection capped queries and performing key-based joins outside Mongo."""
+    results_by_collection: Dict[str, List[Dict[str, Any]]] = {}
+    explain: Dict[str, Any] = {"steps": [], "joins": []}
+
+    # Run steps sequentially (can be parallelized if desired)
+    for step in plan.steps:
+        pipeline = _build_pipeline_for_step(step)
+        explain["steps"].append({"collection": step.collection, "op": step.op, "pipeline": pipeline})
+        try:
+            rows = await mongodb_tools.execute_tool(
+                "aggregate",
+                {
+                    "database": DATABASE_NAME,
+                    "collection": ENTITY_SCHEMA[step.collection]["collection"],
+                    "pipeline": pipeline,
+                },
+            )
+            if isinstance(rows, str):
+                try:
+                    import json as _json
+
+                    rows = _json.loads(rows)
+                except Exception:
+                    rows = []
+            if not isinstance(rows, list):
+                rows = []
+            results_by_collection[step.collection] = rows
+        except Exception as e:
+            results_by_collection[step.collection] = []
+            explain["steps"][-1]["error"] = str(e)
+
+    # Perform joins
+    join_failed = False
+    for edge in plan.joins or []:
+        left_rows = results_by_collection.get(edge.left, [])
+        right_rows = results_by_collection.get(edge.right, [])
+        right_index: Dict[Any, Dict[str, Any]] = {}
+        for r in right_rows:
+            key = _get_nested(r, edge.right_on)
+            if key is not None:
+                right_index[key] = r
+
+        filtered_left: List[Dict[str, Any]] = []
+        for l in left_rows:
+            lk = _get_nested(l, edge.left_on)
+            if lk in right_index:
+                filtered_left.append(l)
+        if not filtered_left and left_rows:
+            join_failed = True
+        # Overwrite the left collection to reflect join filtering
+        results_by_collection[edge.left] = filtered_left
+        explain["joins"].append({
+            "edge": edge.model_dump(),
+            "left_count": len(left_rows),
+            "right_count": len(right_rows),
+            "joined_left_count": len(filtered_left),
+        })
+
+    # Decide final collection: prefer the last step's collection
+    final_collection = plan.steps[-1].collection if plan.steps else "WorkItem"
+    final_rows = results_by_collection.get(final_collection, [])
+
+    # Sort if requested (only handle first key for simplicity)
+    if plan.sort:
+        sort_spec = plan.sort[0]
+        sort_field, sort_dir = next(iter(sort_spec.items()))
+        reverse = sort_dir == "desc"
+        try:
+            final_rows = sorted(final_rows, key=lambda d: _get_nested(d, sort_field) or 0, reverse=reverse)
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "plan": plan.model_dump(),
+        "results": final_rows,
+        "explain": {**explain, "join_failed": join_failed},
+    }
+
+
+async def plan_and_execute_query_v2(query: str) -> Dict[str, Any]:
+    """End-to-end IR route: build plan, execute steps, perform joins, return explainable result."""
+    # Ensure MCP connection
+    await mongodb_tools.connect()
+
+    plan = build_query_plan_from_nlq(query)
+    exec_result = await execute_query_plan(plan)
+    return exec_result
