@@ -142,14 +142,18 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "state.name", "stateMaster.name",
         "project._id", "project.name",
         "createdBy._id", "createdBy.name",
+        "updatedBy._id", "updatedBy.name",
+        "business._id", "business.name",
         "createdTimeStamp", "updatedTimeStamp",
-        "assignee", "label"
+        "assignee", "label", "label.name", "label.color",
+        "isFavourite"
     },
     "project": {
         "_id", "projectDisplayId", "name", "description",
         "imageUrl", "icon", "access", "isActive", "status",
         "favourite", "isArchived", "createdTimeStamp", "updatedTimeStamp",
-        "business._id", "business.name"
+        "business._id", "business.name",
+        "lead._id", "lead.name"
     },
     "cycle": {
         "_id", "title", "description", "status",
@@ -166,7 +170,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
     },
     "members": {
         "_id", "name", "email", "role", "joiningDate",
-        "type", "project._id",
+        "type", "project._id", "project.name",
         "memberId", "staff._id", "staff.name"
     },
     "page": {
@@ -176,7 +180,8 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "linkedCycle", "linkedModule",
         "locked", "isFavourite",
         "createdAt", "updatedAt",
-        "business._id", "business.name"
+        "business._id", "business.name",
+        "seq", "stickies"
     },
     "projectState": {
         "_id", "projectId", "name", "icon",
@@ -186,11 +191,11 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
 
 # ---- Optional field aliases (normalize synonyms / UI names)
 ALIASES: Dict[str, Dict[str, str]] = {
-    "project": {"id": "_id", "displayId": "projectDisplayId"},
-    "workItem": {"bug": "displayBugNo", "stateName": "stateMaster.name"},
-    "members": {"memberId": "_id"},
+    "project": {"id": "_id", "displayId": "projectDisplayId", "visibility": "access", "isFavourite": "favourite"},
+    "workItem": {"bug": "displayBugNo", "stateName": "stateMaster.name", "stateMasterName": "stateMaster.name", "state": "state.name"},
+    "members": {"memberId": "_id", "emailAddress": "email"},
     "module": {},
-    "page": {},
+    "page": {"author": "createdBy.name"},
     "cycle": {},
     "projectState": {},
 }

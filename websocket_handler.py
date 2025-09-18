@@ -149,8 +149,26 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
             # Route to planner or LLM based on heuristics/flag
             if force_planner or _should_use_planner(message):
-                # Use deterministic planner
-                op_id = str(uuid.uuid4())
+                # Use deterministic planner via intelligent_query tool path
+                try:
+                    await websocket.send_json({
+                        "type": "planner_start",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    # Import here to avoid circular deps
+                    from planner import plan_and_execute_query
+                    result = await plan_and_execute_query(message)
+                    await websocket.send_json({
+                        "type": "planner_result",
+                        "content": result,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "planner_error",
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    })
             else:
                 # Use regular LLM with tool calling
                 async for response_chunk in mongodb_agent.run_streaming(
