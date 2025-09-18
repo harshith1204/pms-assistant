@@ -269,15 +269,25 @@ class LLMIntentParser:
         wants_count = bool(wants_count_raw) if wants_count_raw is not None else False
         wants_count = wants_count or ("how many" in oq)
 
-        # If group_by present, details default to False unless explicitly requested
-        if group_by and wants_details_raw is None:
-            wants_details = False
-
-        # Never have both; count wins if user explicitly asked
-        if wants_details and wants_count:
-            wants_details = False
-        if wants_count and not group_by:
+        # If user asked a count-style question, force count-only intent
+        if wants_count:
+            group_by = []
             aggregations = ["count"]
+            wants_details = False
+            # Drop target entities to avoid unnecessary lookups for pure counts
+            target_entities = []
+            # Sorting is irrelevant for counts
+            sort_order = None
+        else:
+            # If group_by present, details default to False unless explicitly requested
+            if group_by and wants_details_raw is None:
+                wants_details = False
+
+            # Never have both; count wins if user explicitly asked
+            if wants_details and wants_count:
+                wants_details = False
+            if wants_count and not group_by:
+                aggregations = ["count"]
 
         return QueryIntent(
             primary_entity=primary,
