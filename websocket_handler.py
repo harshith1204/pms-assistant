@@ -7,7 +7,7 @@ from datetime import datetime
 import uuid
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_ollama import ChatOllama
+# from langchain_ollama import ChatOllama
 import time
 import re
 
@@ -147,13 +147,13 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Route to planner or LLM based on heuristics/flag
-            if force_planner or _should_use_planner(message):
-                # Use deterministic planner
-                op_id = str(uuid.uuid4())
-            else:
-                # Use regular LLM with tool calling
-                async for response_chunk in mongodb_agent.run_streaming(
+            # # Route to planner or LLM based on heuristics/flag
+            # if force_planner or _should_use_planner(message):
+            #     # Use deterministic planner
+            #     op_id = str(uuid.uuid4())
+            # else:
+            #     # Use regular LLM with tool calling
+            async for response_chunk in mongodb_agent.run_streaming(
                     query=message,
                     websocket=websocket,
                     conversation_id=conversation_id
