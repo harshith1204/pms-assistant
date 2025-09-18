@@ -5,7 +5,7 @@ import os
 import json
 import re
 from glob import glob
-
+from query_planner import plan_and_execute_query
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
 try:
@@ -46,6 +46,7 @@ async def intelligent_query(query: str) -> str:
 
             # Show parsed intent
             intent = result["intent"]
+            print(intent)
             response += f"📋 UNDERSTOOD INTENT:\n"
             response += f"• Primary Entity: {intent['primary_entity']}\n"
             if intent['target_entities']:
