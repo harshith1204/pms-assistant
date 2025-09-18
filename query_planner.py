@@ -109,6 +109,19 @@ class LLMIntentParser:
             entity: sorted(list(ALLOWED_FIELDS.get(entity, set()))) for entity in self.entities
         }
 
+    def _is_placeholder(self, v) -> bool:
+        if v is None:
+            return True
+        if not isinstance(v, str):
+            return False
+        s = v.strip().lower()
+        return (
+            s == "" or
+            "?" in s or
+            s.startswith("string") or
+            s in {"none?", "todo?", "n/a", "<none>", "<unknown>"}
+        )
+
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
         system = (
@@ -175,11 +188,11 @@ class LLMIntentParser:
             return None
 
         try:
-            return self._sanitize_intent(data)
+            return self._sanitize_intent(data, query)
         except Exception:
             return None
 
-    def _sanitize_intent(self, data: Dict[str, Any]) -> QueryIntent:
+    def _sanitize_intent(self, data: Dict[str, Any], original_query: str = "") -> QueryIntent:
         # Primary entity (prefer workItem; flip to workItem if cross-entity grouping is requested)
         requested_primary = (data.get("primary_entity") or "").strip()
         primary = requested_primary if requested_primary in self.entities else "workItem"
@@ -191,13 +204,20 @@ class LLMIntentParser:
             if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
                 target_entities.append(rel)
 
-        # Filters: pick only known keys
+        # Filters: keep only known keys and drop placeholders
         raw_filters = data.get("filters") or {}
         known_filter_keys = {
             "status", "priority", "project_status", "cycle_status", "page_visibility",
             "project_name", "cycle_title", "assignee_name", "module_name"
         }
-        filters = {k: v for k, v in raw_filters.items() if k in known_filter_keys and isinstance(v, (str, int))}
+        filters: Dict[str, Any] = {}
+        for k, v in raw_filters.items():
+            if k in known_filter_keys and isinstance(v, (str, int)) and not self._is_placeholder(v):
+                # keep exact enums only for enum fields
+                if k in {"status", "project_status", "cycle_status", "page_visibility"} and isinstance(v, str):
+                    if "?" in v or not v.isupper():
+                        continue
+                filters[k] = v
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
@@ -212,9 +232,12 @@ class LLMIntentParser:
         if any(g in cross_tokens for g in group_by):
             primary = "workItem"
 
-        # Ensure grouping when group_by present
+        # Aggregations & group_by coherence
         if group_by and "group" not in aggregations:
             aggregations.insert(0, "group")
+        if not group_by:
+            # drop stray 'group'
+            aggregations = [a for a in aggregations if a != "group"]
 
         # Projections limited to allow-listed fields for primary
         allowed_projection_set = set(self.allowed_fields.get(primary, []))
@@ -238,11 +261,13 @@ class LLMIntentParser:
         except Exception:
             limit = 20
 
-        # Detail vs count flags
+        # Details vs count (mutually exclusive) + heuristic for "how many"
+        oq = (original_query or "").lower()
         wants_details_raw = data.get("wants_details")
         wants_count_raw = data.get("wants_count")
         wants_details = bool(wants_details_raw) if wants_details_raw is not None else False
         wants_count = bool(wants_count_raw) if wants_count_raw is not None else False
+        wants_count = wants_count or ("how many" in oq)
 
         # If group_by present, details default to False unless explicitly requested
         if group_by and wants_details_raw is None:
@@ -251,6 +276,8 @@ class LLMIntentParser:
         # Never have both; count wins if user explicitly asked
         if wants_details and wants_count:
             wants_details = False
+        if wants_count and not group_by:
+            aggregations = ["count"]
 
         return QueryIntent(
             primary_entity=primary,
@@ -273,19 +300,29 @@ class PipelineGenerator:
 
     def generate_pipeline(self, intent: QueryIntent) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
-        pipeline = []
+        pipeline: List[Dict[str, Any]] = []
 
         # Start with the primary collection
         collection = intent.primary_entity
 
-        # Add filters for the primary collection
-        if intent.filters:
-            primary_filters = self._extract_primary_filters(intent.filters, collection)
+        # Build sanitized filters once
+        primary_filters = self._extract_primary_filters(intent.filters, collection) if intent.filters else {}
+        secondary_filters = self._extract_secondary_filters(intent.filters) if intent.filters else {}
+
+        # COUNT-ONLY: no group_by, no details → do not add lookups
+        if (("count" in intent.aggregations) or intent.wants_count) and not intent.group_by and not intent.wants_details:
             if primary_filters:
-                pipeline.append({"$match": primary_filters})
+                return [{"$match": primary_filters}, {"$count": "total"}]
+            if not secondary_filters:
+                return [{"$count": "total"}]
+            # fall through only if secondary filters exist (rare for "how many …")
+
+        # Add filters for the primary collection
+        if primary_filters:
+            pipeline.append({"$match": primary_filters})
 
         # Ensure lookups needed by secondary filters or grouping are included
-        required_relations: Set[str] = set(intent.target_entities)
+        required_relations: Set[str] = set()
         # Filters → relations
         if intent.filters:
             if 'project_name' in intent.filters and 'project' in REL.get(collection, {}):
@@ -318,20 +355,18 @@ class PipelineGenerator:
                 lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
                 if lookup:
                     pipeline.append(lookup)
-                    # If the relation is array-like, always unwind for deterministic paths
-                    is_many = bool(relationship.get("isArray") or relationship.get("many", False) or ("expr" in relationship and " in " in str(relationship.get("expr", ""))) or hop.endswith("s"))
+                    # If array relation, unwind the alias used in $lookup
+                    is_many = bool(relationship.get("isArray") or relationship.get("many", False))
                     if is_many:
-                        unwind_path = relationship.get("alias") or relationship.get("target") or hop
+                        unwind_path = relationship.get("as") or relationship.get("alias") or relationship.get("target")
                         pipeline.append({
                             "$unwind": {"path": f"${unwind_path}", "preserveNullAndEmptyArrays": True}
                         })
                 current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)
-        if intent.filters:
-            secondary_filters = self._extract_secondary_filters(intent.filters)
-            if secondary_filters:
-                pipeline.append({"$match": secondary_filters})
+        if secondary_filters:
+            pipeline.append({"$match": secondary_filters})
 
         # Add grouping if requested
         if intent.group_by:
@@ -469,28 +504,28 @@ class PipelineGenerator:
 
     def _extract_secondary_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
         """Extract filters that apply to joined collections"""
-        secondary_filters = {}
+        s: Dict[str, Any] = {}
 
-        # Project name filter (applies to joined project)
+        # Project name: allow both embedded project.name and joined alias projectDoc.name
         if 'project_name' in filters:
-            secondary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            s['$or'] = [
+                {'project.name': {'$regex': filters['project_name'], '$options': 'i'}},
+                {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
+            ]
+
+        # Assignee name via joined alias 'assignees'
+        if 'assignee_name' in filters:
+            s['assignees.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
 
         # Cycle title filter (applies to joined cycle)
         if 'cycle_title' in filters:
-            secondary_filters['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
-
-        # Assignee name filter: support both raw embedded and joined members
-        if 'assignee_name' in filters:
-            secondary_filters['$or'] = [
-                {'assignee.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
-                {'members.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
-            ]
+            s['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
 
         # Module name filter (applies to joined module)
         if 'module_name' in filters:
-            secondary_filters['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+            s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
 
-        return secondary_filters
+        return s
 
     def _generate_lookup_stage(self, from_collection: str, target_entity: str, filters: Dict[str, Any]) -> Dict[str, Any]:
         # Deprecated in favor of build_lookup_stage imported from registry
