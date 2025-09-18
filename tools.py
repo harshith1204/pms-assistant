@@ -84,6 +84,10 @@ async def intelligent_query(query: str) -> str:
                 parsed = rows
 
             if isinstance(parsed, list):
+                # If it's a single count document, render a friendly summary
+                if len(parsed) == 1 and isinstance(parsed[0], dict) and "total" in parsed[0]:
+                    response += f"📊 RESULTS:\nTotal: {parsed[0]['total']}"
+                    return response
                 first_n = parsed[:10]
                 preview = json.dumps(first_n, indent=2)
                 more = f"\n… and {max(len(parsed) - 10, 0)} more" if len(parsed) > 10 else ""
