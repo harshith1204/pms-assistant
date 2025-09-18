@@ -138,6 +138,9 @@ class LLMIntentParser:
             "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
             "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module.\n"
             "sort_order keys allowed: createdTimeStamp, priority, status.\n"
+            "Default to SINGLE-COLLECTION minimal intent: leave target_entities empty unless the question explicitly "
+            "requires cross-collection logic (e.g., mentions relations, filters on related entities, or cross-entity grouping). "
+            "Prefer minimal projections; if not explicitly requested, keep projections empty to let downstream defaults apply.\n"
             "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown."
         )
 
@@ -168,8 +171,10 @@ class LLMIntentParser:
             "TASK: Convert the user's request into a strict JSON intent object.\n"
             "Rules:\n"
             "- Only use allowed entities, relations, and fields.\n"
+            "- Prefer single-collection plans: set target_entities=[] unless filters or group_by require joins.\n"
             "- If both details and count are implied, set wants_details true and wants_count false.\n"
             "- Keep target_entities minimal but sufficient to support filters and group_by.\n"
+            "- Keep projections minimal: only include fields the user clearly asked for; otherwise leave empty.\n"
             "- Do NOT include any explanations or prose. Output JSON ONLY.\n\n"
             f"Schema (for reference, keys only): {json.dumps(schema)}\n\n"
             f"User Query: {query}"
@@ -193,16 +198,30 @@ class LLMIntentParser:
             return None
 
     def _sanitize_intent(self, data: Dict[str, Any], original_query: str = "") -> QueryIntent:
-        # Primary entity (prefer workItem; flip to workItem if cross-entity grouping is requested)
+        # Primary entity selection: prefer explicit match from query; fallback to LLM; else workItem
         requested_primary = (data.get("primary_entity") or "").strip()
         primary = requested_primary if requested_primary in self.entities else "workItem"
 
+        # Heuristic: if the user clearly mentions a single collection, lock to it
+        oq = (original_query or "").lower()
+        token_to_entity = {
+            "work item": "workItem", "work items": "workItem", "bug": "workItem", "bugs": "workItem",
+            "ticket": "workItem", "tickets": "workItem", "task": "workItem", "tasks": "workItem",
+            "project": "project", "projects": "project",
+            "cycle": "cycle", "cycles": "cycle",
+            "module": "module", "modules": "module",
+            "page": "page", "pages": "page",
+            "member": "members", "members": "members",
+            "state": "projectState", "states": "projectState",
+        }
+        mentioned_entities = {ent for tok, ent in token_to_entity.items() if tok in oq}
+        if len(mentioned_entities) == 1:
+            primary = next(iter(mentioned_entities))
+
         # Allowed relations for primary
         allowed_rels = set(self.entity_relations.get(primary, []))
+        # Start with no target entities; we will add only if needed for filters/group_by
         target_entities: List[str] = []
-        for rel in (data.get("target_entities") or []):
-            if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
-                target_entities.append(rel)
 
         # Filters: keep only known keys and drop placeholders
         raw_filters = data.get("filters") or {}
@@ -289,6 +308,26 @@ class LLMIntentParser:
             if wants_count and not group_by:
                 aggregations = ["count"]
 
+        # Determine minimal target_entities strictly required for joins
+        # Joins are needed for: assignee on workItem (names), cycle/module filters when relation exists, and cross-entity groupings that cannot be served by embedded fields
+        minimal_relations: List[str] = []
+        if primary == "workItem":
+            if "assignee_name" in filters:
+                minimal_relations.append("assignee")
+            if any(g in {"assignee"} for g in group_by):
+                minimal_relations.append("assignee")
+            # project name and grouping can be satisfied via embedded project fields → no join
+        elif primary == "project":
+            # No default joins unless explicitly grouped/filtered on related collections (not common in our schema)
+            pass
+        elif primary in {"cycle", "module", "page", "members", "projectState"}:
+            # Only join project if filters/group_by require it
+            if any(g in {"project"} for g in group_by):
+                minimal_relations.append("project")
+
+        # Keep only relations that are allowed for this primary
+        target_entities = [rel for rel in minimal_relations if rel in allowed_rels]
+
         return QueryIntent(
             primary_entity=primary,
             target_entities=target_entities,
@@ -337,7 +376,8 @@ class PipelineGenerator:
         # Determine relation tokens per primary collection
         relation_alias_by_token = {
             'workItem': {
-                'project': 'project',
+                # 'project' fields are embedded in workItem; avoid joining unless truly needed
+                'project': None,
                 'assignee': 'assignee',
             },
             'project': {
@@ -582,10 +622,7 @@ class PipelineGenerator:
             if field in ALLOWED_FIELDS.get(primary_entity, {}):
                 projection[field] = 1
 
-        # Add target entity fields
-        for entity in target_entities:
-            if entity in REL.get(primary_entity, {}):
-                projection[entity] = 1
+        # Do not include entire joined entities by default; keep output lean and single-collection focused
 
         return projection
 
@@ -595,27 +632,25 @@ class PipelineGenerator:
         """
         defaults_map: Dict[str, List[str]] = {
             "workItem": [
-                "displayBugNo", "title", "status", "priority",
-                "stateMaster.name", "assignee",
-                "project.name", "createdTimeStamp"
+                "displayBugNo", "title", "status", "priority", "createdTimeStamp"
             ],
             "project": [
-                "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp"
+                "projectDisplayId", "name", "status", "createdTimeStamp"
             ],
             "cycle": [
                 "title", "status", "startDate", "endDate"
             ],
             "members": [
-                "name", "email", "role", "joiningDate"
+                "name", "email", "role"
             ],
             "page": [
                 "title", "visibility", "createdAt"
             ],
             "module": [
-                "title", "description", "isFavourite", "createdTimeStamp"
+                "title", "createdTimeStamp"
             ],
             "projectState": [
-                "name", "subStates.name", "subStates.order"
+                "name", "subStates.name"
             ],
         }
 
