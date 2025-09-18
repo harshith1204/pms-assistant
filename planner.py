@@ -204,7 +204,7 @@ class LLMIntentParser:
             if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
                 target_entities.append(rel)
 
-        # Filters: keep only known keys and drop placeholders
+        # Filters: keep only known keys and drop placeholders; drop enums if not aligned with query
         raw_filters = data.get("filters") or {}
         known_filter_keys = {
             "status", "priority", "project_status", "cycle_status", "page_visibility",
@@ -218,6 +218,17 @@ class LLMIntentParser:
                     if "?" in v or not v.isupper():
                         continue
                 filters[k] = v
+
+        # If the original query is a count-only question, prune likely hallucinated unrelated enum filters
+        oq = (original_query or "").lower()
+        if "how many" in oq:
+            enum_keys = ["priority", "project_status", "cycle_status", "page_visibility"]
+            for ek in enum_keys:
+                # Only keep enum filters if the enum token appears in the query text
+                if ek in filters:
+                    token = str(filters[ek]).lower()
+                    if token not in oq:
+                        filters.pop(ek)
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
@@ -319,13 +330,10 @@ class PipelineGenerator:
         primary_filters = self._extract_primary_filters(intent.filters, collection) if intent.filters else {}
         secondary_filters = self._extract_secondary_filters(intent.filters, collection) if intent.filters else {}
 
-        # COUNT-ONLY: no group_by, no details → do not add lookups
+        # COUNT-ONLY: if there are no filters, return immediately; otherwise continue to include joins/secondary filters
         if (("count" in intent.aggregations) or intent.wants_count) and not intent.group_by and not intent.wants_details:
-            if primary_filters:
-                return [{"$match": primary_filters}, {"$count": "total"}]
-            if not secondary_filters:
+            if not primary_filters and not secondary_filters:
                 return [{"$count": "total"}]
-            # fall through only if secondary filters exist (rare for "how many …")
 
         # Add filters for the primary collection
         if primary_filters:
@@ -460,11 +468,10 @@ class PipelineGenerator:
                     pipeline.append({"$limit": intent.limit})
 
         # Add aggregations like count (skip count when details are requested)
-        if intent.aggregations and not intent.wants_details and not intent.group_by:
-            for agg in intent.aggregations:
-                if agg == 'count':
-                    pipeline.append({"$count": "total"})
-                    return pipeline  # Count is terminal
+        # Count aggregation (treat wants_count as implicit 'count') — skip when grouped or when details requested
+        if (intent.wants_count or ('count' in (intent.aggregations or []))) and not intent.wants_details and not intent.group_by:
+            pipeline.append({"$count": "total"})
+            return pipeline  # Count is terminal
 
         # Determine projections for details (skip when grouping since we reshape after $group)
         effective_projections: List[str] = intent.projections
