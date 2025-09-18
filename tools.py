@@ -84,8 +84,15 @@ async def intelligent_query(query: str) -> str:
                     response += f"• {stage_name}: {stage_content}\n"
                 response += "\n"
 
-            # Show results
-            response += f"📊 RESULTS:\n{result['result']}"
+            # Show results (compact preview)
+            rows = result.get("result")
+            if isinstance(rows, list):
+                preview_rows = rows[:10]
+                preview = json.dumps(preview_rows, indent=2)
+                more = f"\n… and {max(len(rows)-10, 0)} more" if len(rows) > 10 else ""
+                response += f"📊 RESULTS (first {min(10, len(rows))}):\n{preview}{more}"
+            else:
+                response += f"📊 RESULTS:\n{rows}"
 
             return response
         else:
