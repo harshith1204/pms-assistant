@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
 
-from registry import REL, ALLOWED_FIELDS, build_lookup_stage
+from registry import REL, ALLOWED_FIELDS, build_lookup_stage, INDEX_HINTS, EMBEDDED_FIELDS
 from constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -37,6 +37,16 @@ class RelationshipPath:
     path: List[str]  # List of relationship names
     cost: int  # Computational cost of this path
     filters: Dict[str, Any]  # Filters that can be applied at each step
+
+@dataclass
+class CompiledQuery:
+    collection: str
+    kind: str                 # "find" | "aggregate"
+    filter: Dict[str, Any] = None
+    projection: Dict[str, Any] = None
+    sort: Dict[str, int] = None
+    limit: int = 20
+    pipeline: List[Dict[str, Any]] = None
 
 class NaturalLanguageParser:
     def parse(self, query: str) -> "QueryIntent":
@@ -126,9 +136,10 @@ class LLMIntentParser:
         """Use the LLM to produce a structured intent. Returns None on failure."""
         system = (
             "You are an expert MongoDB query planner for a Project Management System. "
-            "Given a natural-language question, output a STRICT JSON object describing the intent. "
+            "Given a natural-language question, output a STRICT JSON object describing the intent (IR). "
+            "Output JSON ONLY; never emit a Mongo pipeline. "
             "Use only the provided entity names, relations, and allow-listed fields. "
-            "Do not generate raw pipelines; produce a plan that a downstream generator will realize.\n\n"
+            "Do NOT propose joins not listed in REL. If filters and projections are resolvable from the primary collection, leave target_entities empty.\n\n"
             "Collections (entities): " + ", ".join(self.entities) + "\n" +
             "Relations per entity (use only these as target_entities):\n" +
             "\n".join(f"- {e}: {', '.join(self.entity_relations.get(e, []))}" for e in self.entities) + "\n\n" +
@@ -138,7 +149,12 @@ class LLMIntentParser:
             "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
             "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module.\n"
             "sort_order keys allowed: createdTimeStamp, priority, status.\n"
-            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown."
+            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown.\n\n"
+            "Examples (few-shot, output keys only; values illustrative):\n"
+            "1) 'List open work items in CRM project, newest first' → {" 
+            "\"primary_entity\": \"workItem\", \"target_entities\": [], \"filters\": {\"status\": \"TODO\", \"project_name\": \"CRM\"}, \"aggregations\": [], \"group_by\": [], \"projections\": [\"displayBugNo\",\"title\",\"priority\"], \"sort_order\": {\"createdTimeStamp\": -1}, \"limit\": 20, \"wants_details\": true, \"wants_count\": false}"
+            "\n2) 'How many work items are completed?' → {\"primary_entity\": \"workItem\", \"target_entities\": [], \"filters\": {\"status\": \"COMPLETED\"}, \"aggregations\": [\"count\"], \"group_by\": [], \"projections\": [], \"sort_order\": null, \"limit\": 20, \"wants_details\": false, \"wants_count\": true}"
+            "\n3) 'Modules under project TESTP' → {\"primary_entity\": \"module\", \"target_entities\": [\"project\"], \"filters\": {}, \"aggregations\": [], \"group_by\": [], \"projections\": [\"title\"], \"sort_order\": null, \"limit\": 20, \"wants_details\": true, \"wants_count\": false}"
         )
 
         schema = {
@@ -170,6 +186,8 @@ class LLMIntentParser:
             "- Only use allowed entities, relations, and fields.\n"
             "- If both details and count are implied, set wants_details true and wants_count false.\n"
             "- Keep target_entities minimal but sufficient to support filters and group_by.\n"
+            "- Do NOT propose joins not listed in REL.\n"
+            "- If filters & projections are resolvable from the primary collection, leave target_entities empty.\n"
             "- Do NOT include any explanations or prose. Output JSON ONLY.\n\n"
             f"Schema (for reference, keys only): {json.dumps(schema)}\n\n"
             f"User Query: {query}"
@@ -366,8 +384,11 @@ class PipelineGenerator:
 
         # Filters → relations (map filter tokens to relation alias for this primary)
         if intent.filters:
-            if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
-                required_relations.add(relation_alias_by_token['project'])
+            # Prefer embedded fields when available; avoid $lookup for those
+            if 'project_name' in intent.filters:
+                if 'project.name' not in EMBEDDED_FIELDS.get(collection, set()):
+                    if relation_alias_by_token.get('project') in REL.get(collection, {}):
+                        required_relations.add(relation_alias_by_token['project'])
             if 'cycle_title' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['cycle'])
             if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
@@ -656,6 +677,130 @@ class PipelineGenerator:
         entity_map = mapping.get(primary_entity, {})
         return entity_map.get(token)
 
+def _prune_pipeline(stages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    pruned: List[Dict[str, Any]] = []
+    for s in stages:
+        if "$project" in s and not s["$project"]:
+            continue
+        if "$addFields" in s and not s["$addFields"]:
+            continue
+        if pruned and "$project" in s and "$project" in pruned[-1]:
+            pruned[-1]["$project"].update(s["$project"])
+            continue
+        pruned.append(s)
+
+    MAX_STAGES = 6
+    if len(pruned) > MAX_STAGES:
+        compact: List[Dict[str, Any]] = []
+        for st in pruned:
+            if "$project" in st and len(pruned) - len(compact) > MAX_STAGES:
+                continue
+            compact.append(st)
+        pruned = compact[:MAX_STAGES]
+    return pruned
+
+def _filters_to_match(filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
+    """Build a match filter suitable for find() using only primary and embedded fields."""
+    if not filters:
+        return {}
+    # Reuse primary filters logic
+    pg = PipelineGenerator()
+    match_filter = pg._extract_primary_filters(filters, collection)
+
+    # Embedded-friendly secondary filters (avoid joined-only fields)
+    embedded = EMBEDDED_FIELDS.get(collection, set())
+    if "project_name" in filters and "project.name" in embedded:
+        # Case-insensitive regex on embedded name
+        match_filter["project.name"] = {"$regex": filters["project_name"], "$options": "i"}
+    if collection == "workItem" and "assignee_name" in filters:
+        # Requires join; skip in find()
+        pass
+    if collection == "cycle" and "cycle_title" in filters:
+        # Title is local field
+        match_filter["title"] = {"$regex": filters["cycle_title"], "$options": "i"}
+    if collection == "module" and "module_name" in filters:
+        match_filter["title"] = {"$regex": filters["module_name"], "$options": "i"}
+    return match_filter
+
+def _projections_for(intent: QueryIntent, collection: str) -> Dict[str, int]:
+    """Derive a find() projection from intent or defaults, constrained to allow-list."""
+    fields = intent.projections or PipelineGenerator()._get_default_projections(collection)
+    allowed = ALLOWED_FIELDS.get(collection, set())
+    proj: Dict[str, int] = {"_id": 1}
+    for f in fields:
+        if f in allowed:
+            proj[f] = 1
+    return proj
+
+def _required_relations_for(intent: QueryIntent) -> List[str]:
+    collection = intent.primary_entity
+    required: Set[str] = set()
+    relation_alias_by_token = {
+        'workItem': {'project': 'project', 'assignee': 'assignee'},
+        'project': {'cycle': 'cycles', 'module': 'modules', 'assignee': 'members', 'page': 'pages', 'project': None},
+        'cycle': {'project': 'project'},
+        'module': {'project': 'project'},
+        'page': {'project': 'project'},
+        'members': {'project': 'project'},
+        'projectState': {'project': 'project'},
+    }.get(collection, {})
+    # Filters
+    if intent.filters:
+        if 'project_name' in intent.filters:
+            if 'project.name' not in EMBEDDED_FIELDS.get(collection, set()):
+                if relation_alias_by_token.get('project') in REL.get(collection, {}):
+                    required.add(relation_alias_by_token['project'])
+        if 'cycle_title' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
+            required.add(relation_alias_by_token['cycle'])
+        if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
+            required.add(relation_alias_by_token['assignee'])
+        if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
+            required.add(relation_alias_by_token['module'])
+    # Group by
+    for token in (intent.group_by or []):
+        rel_alias = relation_alias_by_token.get(token)
+        if rel_alias and rel_alias in REL.get(collection, {}):
+            required.add(rel_alias)
+    return sorted(required)
+
+def _should_use_find(intent: QueryIntent) -> bool:
+    if intent.group_by:
+        return False
+    if 'count' in (intent.aggregations or []) or intent.wants_count:
+        return False
+    # Avoid find if joins are needed
+    if _required_relations_for(intent):
+        return False
+    return True
+
+def _build_pipeline(intent: QueryIntent, collection: str) -> List[Dict[str, Any]]:
+    pg = PipelineGenerator()
+    stages = pg.generate_pipeline(intent)
+    # Ensure limit at end for aggregates if not present
+    if intent.limit:
+        has_limit = any("$limit" in s for s in stages)
+        if not has_limit:
+            stages.append({"$limit": intent.limit})
+    return _prune_pipeline(stages)
+
+def compile_intent(intent: QueryIntent) -> CompiledQuery:
+    collection = intent.primary_entity
+    if _should_use_find(intent):
+        mongo_filter = _filters_to_match(intent.filters, collection)
+        projection = _projections_for(intent, collection)
+        return CompiledQuery(
+            collection=collection,
+            kind="find",
+            filter=mongo_filter or {},
+            projection=projection or None,
+            sort=intent.sort_order or None,
+            limit=intent.limit or 20,
+        )
+    pipeline = _build_pipeline(intent, collection)
+    return CompiledQuery(collection=collection, kind="aggregate", pipeline=pipeline, limit=intent.limit or 20)
+
+    # (Removed duplicate methods erroneously placed here)
+
 class Planner:
     """Main query planner that orchestrates the entire process"""
 
@@ -678,19 +823,60 @@ class Planner:
                 intent = self.rule_parser.parse(query)
                 intent_source = "rules"
 
-            # Generate the pipeline
-            pipeline = self.generator.generate_pipeline(intent)
+            # Compile intent to find/aggregate
+            compiled = compile_intent(intent)
 
-            # Execute the query
-            result = await mongodb_tools.execute_tool("aggregate", {
-                "database": DATABASE_NAME,
-                "collection": intent.primary_entity,
-                "pipeline": pipeline
-            })
+            # Optional: lightweight explain/validation (best-effort)
+            def _explain_ok_stub() -> bool:
+                try:
+                    # In MCP context, explain might not be available; be permissive
+                    return True
+                except Exception:
+                    return True
+
+            _ = _explain_ok_stub()
+
+            # Execute the query via MCP
+            pipeline = []
+            if compiled.kind == "find":
+                try:
+                    result = await mongodb_tools.execute_tool("find", {
+                        "database": DATABASE_NAME,
+                        "collection": compiled.collection,
+                        "filter": compiled.filter or {},
+                        "projection": compiled.projection or {},
+                        "sort": compiled.sort or {},
+                        "limit": compiled.limit or 20,
+                    })
+                except Exception:
+                    # Fallback to aggregate if find tool not available
+                    fallback_pipeline: List[Dict[str, Any]] = []
+                    if compiled.filter:
+                        fallback_pipeline.append({"$match": compiled.filter})
+                    if compiled.sort:
+                        fallback_pipeline.append({"$sort": compiled.sort})
+                    if compiled.projection:
+                        fallback_pipeline.append({"$project": compiled.projection})
+                    if compiled.limit:
+                        fallback_pipeline.append({"$limit": compiled.limit})
+                    result = await mongodb_tools.execute_tool("aggregate", {
+                        "database": DATABASE_NAME,
+                        "collection": compiled.collection,
+                        "pipeline": fallback_pipeline
+                    })
+                    pipeline = fallback_pipeline
+            else:
+                result = await mongodb_tools.execute_tool("aggregate", {
+                    "database": DATABASE_NAME,
+                    "collection": compiled.collection,
+                    "pipeline": compiled.pipeline or []
+                })
+                pipeline = compiled.pipeline or []
 
             return {
                 "success": True,
                 "intent": intent.__dict__,
+                "compiled": compiled.__dict__,
                 "pipeline": pipeline,
                 "result": result,
                 "planner": intent_source

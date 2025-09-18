@@ -31,7 +31,7 @@ async def intelligent_query(query: str) -> str:
     Args:
         query: Natural language prompt, e.g. "Show urgent work items in project 'CRM' grouped by cycle".
 
-    Returns: A formatted string with understood intent, generated pipeline, and results.
+    Returns: A formatted string with understood intent, compiled query, and results.
     """
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
@@ -57,18 +57,30 @@ async def intelligent_query(query: str) -> str:
                 response += f"• Aggregations: {', '.join(intent['aggregations'])}\n"
             response += "\n"
 
-            # Show the generated pipeline (first few stages)
-            pipeline = result["pipeline"]
-            if pipeline:
-                response += f"🔧 GENERATED PIPELINE:\n"
-                for i, stage in enumerate(pipeline):
-                    stage_name = list(stage.keys())[0]
-                    # Format the stage content nicely
-                    stage_content = json.dumps(stage[stage_name], indent=2)
-                    # Truncate very long content for readability but show complete structure
-                    if len(stage_content) > 200:
-                        stage_content = stage_content + "..."
-                    response += f"• {stage_name}: {stage_content}\n"
+            # Show compiled query info
+            compiled = result.get("compiled")
+            if compiled:
+                response += f"🔧 COMPILED QUERY:\n"
+                response += f"• Kind: {compiled.get('kind')}\n"
+                response += f"• Collection: {compiled.get('collection')}\n"
+                if compiled.get('kind') == 'find':
+                    if compiled.get('filter'):
+                        response += f"• Filter: {json.dumps(compiled.get('filter'), indent=2)}\n"
+                    if compiled.get('projection'):
+                        response += f"• Projection: {json.dumps(compiled.get('projection'), indent=2)}\n"
+                    if compiled.get('sort'):
+                        response += f"• Sort: {json.dumps(compiled.get('sort'), indent=2)}\n"
+                    response += f"• Limit: {compiled.get('limit')}\n"
+                else:
+                    pipeline = result.get("pipeline")
+                    if pipeline:
+                        response += f"• Stages: {len(pipeline)}\n"
+                        for i, stage in enumerate(pipeline):
+                            stage_name = list(stage.keys())[0]
+                            stage_content = json.dumps(stage[stage_name], indent=2)
+                            if len(stage_content) > 200:
+                                stage_content = stage_content + "..."
+                            response += f"  - {stage_name}: {stage_content}\n"
                 response += "\n"
 
             # Show results (compact preview)
