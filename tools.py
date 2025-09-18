@@ -72,8 +72,24 @@ async def intelligent_query(query: str) -> str:
                     response += f"• {stage_name}: {stage_content}\n"
                 response += "\n"
 
-            # Show results
-            response += f"📊 RESULTS:\n{result['result']}"
+            # Show results (compact preview)
+            rows = result.get("result")
+            try:
+                # Attempt to parse stringified JSON results
+                if isinstance(rows, str):
+                    parsed = json.loads(rows)
+                else:
+                    parsed = rows
+            except Exception:
+                parsed = rows
+
+            if isinstance(parsed, list):
+                first_n = parsed[:10]
+                preview = json.dumps(first_n, indent=2)
+                more = f"\n… and {max(len(parsed) - 10, 0)} more" if len(parsed) > 10 else ""
+                response += f"📊 RESULTS (first {min(10, len(parsed))}):\n{preview}{more}"
+            else:
+                response += f"📊 RESULTS:\n{parsed}"
 
             return response
         else:
