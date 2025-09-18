@@ -7,128 +7,128 @@ from typing import Dict, List, Any, Set
 
 # ---- Relation Registry (single source of truth for hops)
 REL: Dict[str, Dict[str, dict]] = {
-    # PROJECT is the hub
+    "workItem": {
+        # workItem has embedded project {_id, name}; lookup only if you need more fields
+        "project": {
+            "target": "project",
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "projectDoc",
+            "many": False
+        },
+        # workItem.assignee is an array of subdocs (with _id). Join to members by _id.
+        "assignee": {
+            "target": "members",
+            "localField": "assignee._id",
+            "foreignField": "_id",
+            "as": "assignees",
+            "many": True
+        },
+    },
+
     "project": {
+        # One project → many cycles/modules/members/pages/projectStates
         "cycles": {
             "target": "cycle",
-            "join": {"cycle.project._id": "project._id"},
-            "defaults": {"status": "ACTIVE"}  # common filter you can auto-apply
+            "localField": "_id",
+            "foreignField": "project._id",
+            "as": "cycles",
+            "many": True
         },
-        "workItems": {
-            "target": "workItem",
-            "join": {"workItem.project._id": "project._id"}
+        "modules": {
+            "target": "module",
+            "localField": "_id",
+            "foreignField": "project._id",
+            "as": "modules",
+            "many": True
         },
         "members": {
             "target": "members",
-            "join": {"members.project._id": "project._id"}
+            "localField": "_id",
+            "foreignField": "project._id",
+            "as": "members",
+            "many": True
         },
         "pages": {
             "target": "page",
-            "join": {"page.project._id": "project._id"}
+            "localField": "_id",
+            "foreignField": "project._id",
+            "as": "pages",
+            "many": True
         },
-        "modules": {
-            "target": "module",
-            "join": {"module.project._id": "project._id"}
-        },
-        "states": {
+        "projectStates": {
             "target": "projectState",
-            "join": {"projectState.projectId": "project._id"}
+            "localField": "_id",
+            "foreignField": "projectId",
+            "as": "projectStates",
+            "many": True
         },
     },
 
-    # CYCLE
     "cycle": {
-        "pages": {       # pages link cycles via array
-            "target": "page",
-            "expr": "cycle._id in page.linkedCycle"
-        },
-        "workItems": {
-            "target": "workItem",
-            "join": {"workItem.cycleId": "cycle._id"}
-        },
         "project": {
             "target": "project",
-            # target collection field on left, local/source field on right
-            "join": {"project._id": "cycle.project._id"}
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "project",
+            "many": False
         }
     },
 
-    # WORK ITEM
-    "workItem": {
-        "project": {
-            "target": "project",
-            # target collection field on left, local/source field on right
-            "join": {"project._id": "workItem.project._id"}
-        },
-        "stateMaster": {  # map by state._id OR by name fallback
-            "target": "projectState",
-            "expr": "workItem.state._id in projectState.subStates._id OR name-eq"
-        },
-        "cycle": {
-            "target": "cycle",
-            "join": {"cycle._id": "workItem.cycleId"}
-        },
-        "module": {
-            "target": "module",
-            "join": {"module._id": "workItem.moduleId"}
-        },
-        "assignee": {
-            "target": "members",
-            "join": {"members._id": "workItem.assignee._id"}
-        },
-        "createdBy": {
-            "target": "members",
-            "join": {"members._id": "workItem.createdBy._id"}
-        }
-    },
-
-    # MEMBERS
-    "members": {
-        "project": {
-            "target": "project",
-            "join": {"project._id": "members.project._id"}
-        }
-    },
-
-    # PAGE
-    "page": {
-        "project": {
-            "target": "project",
-            "join": {"project._id": "page.project._id"}
-        },
-        "author": {
-            "target": "members",
-            "join": {"members._id": "page.createdBy._id"}  # adjust if your members key differs
-        },
-        "cycles": {
-            "target": "cycle",
-            "expr": "cycle._id in page.linkedCycle"
-        },
-        "modules": {
-            "target": "module",
-            "expr": "module._id in page.linkedModule"
-        }
-    },
-
-    # MODULE
     "module": {
         "project": {
             "target": "project",
-            "join": {"project._id": "module.project._id"}
-        },
-        "workItems": {
-            "target": "workItem",
-            "join": {"workItem.moduleId": "module._id"}
-        },
-        "pages": {
-            "target": "page",
-            "expr": "module._id in page.linkedModule"
-        },
-        "assignee": {
-            "target": "members",
-            "join": {"members._id": "module.assignee._id"}
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "project",
+            "many": False
         }
     },
+
+    "members": {
+        "project": {
+            "target": "project",
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "project",
+            "many": False
+        }
+    },
+
+    "page": {
+        "project": {
+            "target": "project",
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "projectDoc",
+            "many": False
+        },
+        # If linkedCycle / linkedModule store ObjectId arrays, you can enable these:
+        # "linkedCycle": {
+        #     "target": "cycle",
+        #     "localField": "linkedCycle",
+        #     "foreignField": "_id",
+        #     "as": "linkedCycleDocs",
+        #     "many": True
+        # },
+        # "linkedModule": {
+        #     "target": "module",
+        #     "localField": "linkedModule",
+        #     "foreignField": "_id",
+        #     "as": "linkedModuleDocs",
+        #     "many": True
+        # },
+    },
+
+    "projectState": {
+        "project": {
+            "target": "project",
+            "localField": "projectId",
+            "foreignField": "_id",
+            "as": "project",
+            "many": False
+        }
+    }
 }
 
 # ---- Collections (one source of truth)
@@ -136,38 +136,52 @@ Collection = str  # Simplified for tool usage
 
 # ---- Allow-listed fields (restrict what the LLM can query/sort/project)
 ALLOWED_FIELDS: Dict[str, Set[str]] = {
+    "workItem": {
+        "_id", "displayBugNo", "title", "description",
+        "status", "priority",
+        "state.name", "stateMaster.name",
+        "project._id", "project.name",
+        "createdBy._id", "createdBy.name",
+        "createdTimeStamp", "updatedTimeStamp",
+        "assignee", "label"
+    },
     "project": {
-        "_id", "name", "projectDisplayId", "status", "isActive", "isArchived", "createdTimeStamp"
+        "_id", "projectDisplayId", "name", "description",
+        "imageUrl", "icon", "access", "isActive", "status",
+        "favourite", "isArchived", "createdTimeStamp", "updatedTimeStamp",
+        "business._id", "business.name"
     },
     "cycle": {
-        "_id", "title", "status", "startDate", "endDate", "project._id"
-    },
-    "workItem": {
-        "_id", "displayBugNo", "title", "status", "priority",
-        "project._id", "project.name",
-        "state._id", "state.name", "stateMaster.name",
-        "createdTimeStamp",
-        "createdBy._id",
-        # if/when you persist these, just leave them here:
-        "moduleId", "cycleId", "assignee", "assignee._id"
-    },
-    "members": {
-        "_id", "name", "email", "role", "joiningDate", "project._id"
-    },
-    "page": {
-        "_id", "title", "visibility", "project._id",
-        "linkedCycle", "linkedModule",           # arrays of IDs
-        "createdBy._id", "createdAt"
-    },
-    "projectState": {
-        "_id", "projectId", "name",
-        "subStates._id", "subStates.name", "subStates.order"
+        "_id", "title", "description", "status",
+        "startDate", "endDate",
+        "project._id",
+        "isDefault", "isFavourite",
+        "createdTimeStamp", "updatedTimeStamp",
+        "business._id"
     },
     "module": {
         "_id", "title", "description", "isFavourite",
-        "project._id", "business._id", "assignee",
-        "createdTimeStamp"
+        "project._id", "business._id",
+        "createdTimeStamp", "assignee"
     },
+    "members": {
+        "_id", "name", "email", "role", "joiningDate",
+        "type", "project._id",
+        "memberId", "staff._id", "staff.name"
+    },
+    "page": {
+        "_id", "title", "content", "visibility",
+        "project._id", "project.name",
+        "createdBy._id", "createdBy.name",
+        "linkedCycle", "linkedModule",
+        "locked", "isFavourite",
+        "createdAt", "updatedAt",
+        "business._id", "business.name"
+    },
+    "projectState": {
+        "_id", "projectId", "name", "icon",
+        "subStates.name", "subStates.order"
+    }
 }
 
 # ---- Optional field aliases (normalize synonyms / UI names)
@@ -210,16 +224,42 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
         ]
         return any(c in path for c in candidates)
 
+    # Helper to strip collection prefix from a dotted path
+    def _strip_prefix(path: str, prefix: str) -> str:
+        parts = path.split(".")
+        if parts[0] == prefix:
+            return ".".join(parts[1:])
+        return path
+
+    alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target") or from_collection
     lookup_stage: Dict[str, Any] = {
         "$lookup": {
             "from": from_collection,
             "let": {},
             "pipeline": [],
-            "as": relationship.get("target", from_collection)
+            "as": alias_name
         }
     }
 
-    if "join" in relationship:
+    # New style: localField / foreignField
+    if "localField" in relationship and "foreignField" in relationship:
+        local_field_raw = relationship["localField"]
+        foreign_field_raw = relationship["foreignField"]
+        # Keep local path relative to current document
+        local_field_path = _strip_prefix(local_field_raw, current_collection)
+        # Foreign path should be relative to remote collection
+        foreign_field_path = _strip_prefix(foreign_field_raw, from_collection)
+
+        var_name = f"local_{local_field_path.replace('.', '_')}"
+        lookup_stage["$lookup"]["let"][var_name] = f"${local_field_path}"
+
+        if _is_array_like(local_field_path):
+            match_condition = {"$expr": {"$in": [f"${foreign_field_path}", f"$${var_name}"]}}
+        else:
+            match_condition = {"$expr": {"$eq": [f"$${var_name}", f"${foreign_field_path}"]}}
+        lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
+
+    elif "join" in relationship:
         # Simple join relationship using field mappings
         join_conditions = relationship["join"]
         for foreign_field, local_field in join_conditions.items():
