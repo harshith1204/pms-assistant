@@ -39,7 +39,35 @@ class RelationshipPath:
     filters: Dict[str, Any]  # Filters that can be applied at each step
 
 class NaturalLanguageParser:
-    pass
+    def parse(self, query: str) -> "QueryIntent":
+        """Minimal heuristic fallback when LLM intent parsing fails.
+
+        Defaults to listing workItems, attempts to detect simple group-by and count prompts.
+        """
+        ql = (query or "").lower()
+        # Detect group-by tokens in simple phrasing
+        group_tokens: List[str] = []
+        for token in ["assignee", "project", "cycle", "status", "priority", "module"]:
+            if f"group by {token}" in ql or f"grouped by {token}" in ql:
+                group_tokens.append(token)
+
+        # Detect count requests
+        wants_count = ("count" in ql) or ("how many" in ql)
+        aggregations: List[str] = ["group"] if group_tokens else (["count"] if wants_count else [])
+
+        return QueryIntent(
+            primary_entity="workItem",
+            target_entities=[],
+            filters={},
+            aggregations=aggregations,
+            group_by=group_tokens,
+            projections=[],
+            sort_order=None,
+            limit=20,
+            # For grouped results, default to no details unless explicitly asked; here we assume details for list
+            wants_details=(not aggregations) or (aggregations == ["group"]),
+            wants_count=(aggregations == ["count"]),
+        )
 
 class LLMIntentParser:
     """LLM-backed intent parser that produces a structured plan compatible with QueryIntent.
@@ -152,10 +180,9 @@ class LLMIntentParser:
             return None
 
     def _sanitize_intent(self, data: Dict[str, Any]) -> QueryIntent:
-        # Primary entity
-        primary = data.get("primary_entity") or "project"
-        if primary not in self.entities:
-            primary = "project"
+        # Primary entity (prefer workItem; flip to workItem if cross-entity grouping is requested)
+        requested_primary = (data.get("primary_entity") or "").strip()
+        primary = requested_primary if requested_primary in self.entities else "workItem"
 
         # Allowed relations for primary
         allowed_rels = set(self.entity_relations.get(primary, []))
@@ -180,6 +207,15 @@ class LLMIntentParser:
         allowed_group = {"cycle", "project", "assignee", "status", "priority", "module"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
+        # If user grouped by cross-entity tokens, force workItem as base (entity lock)
+        cross_tokens = {"assignee", "project", "cycle", "module"}
+        if any(g in cross_tokens for g in group_by):
+            primary = "workItem"
+
+        # Ensure grouping when group_by present
+        if group_by and "group" not in aggregations:
+            aggregations.insert(0, "group")
+
         # Projections limited to allow-listed fields for primary
         allowed_projection_set = set(self.allowed_fields.get(primary, []))
         projections = [p for p in (data.get("projections") or []) if p in allowed_projection_set][:10]
@@ -203,12 +239,18 @@ class LLMIntentParser:
             limit = 20
 
         # Detail vs count flags
-        wants_details = bool(data.get("wants_details", False))
-        wants_count = bool(data.get("wants_count", False))
+        wants_details_raw = data.get("wants_details")
+        wants_count_raw = data.get("wants_count")
+        wants_details = bool(wants_details_raw) if wants_details_raw is not None else False
+        wants_count = bool(wants_count_raw) if wants_count_raw is not None else False
+
+        # If group_by present, details default to False unless explicitly requested
+        if group_by and wants_details_raw is None:
+            wants_details = False
+
+        # Never have both; count wins if user explicitly asked
         if wants_details and wants_count:
-            wants_count = False
-            if "count" in aggregations:
-                aggregations = [a for a in aggregations if a != "count"]
+            wants_details = False
 
         return QueryIntent(
             primary_entity=primary,
@@ -244,28 +286,28 @@ class PipelineGenerator:
 
         # Ensure lookups needed by secondary filters or grouping are included
         required_relations: Set[str] = set(intent.target_entities)
+        # Filters → relations
         if intent.filters:
-            # If we will filter by joined fields, we must join those relations
             if 'project_name' in intent.filters and 'project' in REL.get(collection, {}):
                 required_relations.add('project')
             if 'cycle_title' in intent.filters and 'cycle' in REL.get(collection, {}):
                 required_relations.add('cycle')
             if 'assignee_name' in intent.filters and 'assignee' in REL.get(collection, {}):
                 required_relations.add('assignee')
-
-        # Include relations used by grouping keys
-        if intent.group_by:
-            if 'cycle' in intent.group_by and 'cycle' in REL.get(collection, {}):
-                required_relations.add('cycle')
-            if 'project' in intent.group_by and 'project' in REL.get(collection, {}):
-                required_relations.add('project')
-            if 'assignee' in intent.group_by and 'assignee' in REL.get(collection, {}):
-                required_relations.add('assignee')
-            if 'module' in intent.group_by and 'module' in REL.get(collection, {}):
+            if 'module_name' in intent.filters and 'module' in REL.get(collection, {}):
                 required_relations.add('module')
 
+        # Group-by → relations
+        for token in (intent.group_by or []):
+            if token in REL.get(collection, {}):
+                required_relations.add(token)
+            token_to_rel = {"project": "project", "cycle": "cycle", "assignee": "assignee", "module": "module"}
+            rel = token_to_rel.get(token)
+            if rel and rel in REL.get(collection, {}):
+                required_relations.add(rel)
+
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
-        for target_entity in required_relations:
+        for target_entity in sorted(required_relations):
             # Allow multi-hop relation names like "project.stateMaster" from queries
             hops = target_entity.split(".")
             current_collection = collection
@@ -276,12 +318,12 @@ class PipelineGenerator:
                 lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
                 if lookup:
                     pipeline.append(lookup)
-                    if "join" in relationship or "expr" in relationship:
+                    # If the relation is array-like, always unwind for deterministic paths
+                    is_many = bool(relationship.get("isArray") or relationship.get("many", False) or ("expr" in relationship and " in " in str(relationship.get("expr", ""))) or hop.endswith("s"))
+                    if is_many:
+                        unwind_path = relationship.get("alias") or relationship.get("target") or hop
                         pipeline.append({
-                            "$unwind": {
-                                "path": f"${relationship['target']}",
-                                "preserveNullAndEmptyArrays": True
-                            }
+                            "$unwind": {"path": f"${unwind_path}", "preserveNullAndEmptyArrays": True}
                         })
                 current_collection = relationship["target"]
 
@@ -320,14 +362,28 @@ class PipelineGenerator:
                         }
                     }
                 pipeline.append(group_stage)
-                # Sort by count desc for readability
-                pipeline.append({"$sort": {"count": -1}})
+                # Sorting for grouped results: default to count desc, allow sorting by grouped keys
+                if intent.sort_order:
+                    sort_key, sort_dir = next(iter(intent.sort_order.items()))
+                    if sort_key in intent.group_by:
+                        # Sort by the grouped key inside _id
+                        if len(id_fields) == 1:
+                            pipeline.append({"$sort": {"_id": sort_dir}})
+                        else:
+                            pipeline.append({"$sort": {f"_id.{sort_key}": sort_dir}})
+                    else:
+                        pipeline.append({"$sort": {"count": -1}})
+                else:
+                    pipeline.append({"$sort": {"count": -1}})
                 # Present a tidy shape
                 project_shape: Dict[str, Any] = {"count": 1}
                 if intent.wants_details:
                     project_shape["items"] = 1
                 project_shape["group"] = "$_id"
                 pipeline.append({"$project": project_shape})
+                # Respect limit on grouped results
+                if intent.limit:
+                    pipeline.append({"$limit": intent.limit})
 
         # Add aggregations like count (skip count when details are requested)
         if intent.aggregations and not intent.wants_details and not intent.group_by:
@@ -336,46 +392,53 @@ class PipelineGenerator:
                     pipeline.append({"$count": "total"})
                     return pipeline  # Count is terminal
 
-        # Add sorting (handle custom priority order) — skip if already grouped
-        if intent.sort_order and not intent.group_by:
-            if 'priority' in intent.sort_order:
-                # Map PRIORITY enum to rank for sorting: URGENT > HIGH > MEDIUM > LOW > NONE
-                pipeline.append({
-                    "$addFields": {
-                        "_priorityRank": {
-                            "$switch": {
-                                "branches": [
-                                    {"case": {"$eq": ["$priority", "URGENT"]}, "then": 5},
-                                    {"case": {"$eq": ["$priority", "HIGH"]}, "then": 4},
-                                    {"case": {"$eq": ["$priority", "MEDIUM"]}, "then": 3},
-                                    {"case": {"$eq": ["$priority", "LOW"]}, "then": 2},
-                                    {"case": {"$eq": ["$priority", "NONE"]}, "then": 1}
-                                ],
-                                "default": 0
-                            }
-                        }
-                    }
-                })
-                # Use computed rank for sorting direction provided
-                direction = intent.sort_order.get('priority', -1)
-                pipeline.append({"$sort": {"_priorityRank": direction}})
-            else:
-                pipeline.append({"$sort": intent.sort_order})
-
         # Determine projections for details (skip when grouping since we reshape after $group)
         effective_projections: List[str] = intent.projections
         if intent.wants_details and not intent.group_by and not effective_projections:
             effective_projections = self._get_default_projections(intent.primary_entity)
+
+        # Add sorting (handle custom priority order) — skip if already grouped
+        added_priority_rank = False
+        if intent.sort_order and not intent.group_by:
+            if 'priority' in intent.sort_order:
+                # Only compute rank if priority is part of projections to avoid surprising invisible sorts
+                if (effective_projections and 'priority' in effective_projections) or (not effective_projections):
+                    added_priority_rank = True
+                    pipeline.append({
+                        "$addFields": {
+                            "_priorityRank": {
+                                "$switch": {
+                                    "branches": [
+                                        {"case": {"$eq": ["$priority", "URGENT"]}, "then": 5},
+                                        {"case": {"$eq": ["$priority", "HIGH"]}, "then": 4},
+                                        {"case": {"$eq": ["$priority", "MEDIUM"]}, "then": 3},
+                                        {"case": {"$eq": ["$priority", "LOW"]}, "then": 2},
+                                        {"case": {"$eq": ["$priority", "NONE"]}, "then": 1}
+                                    ],
+                                    "default": 0
+                                }
+                            }
+                        }
+                    })
+                    # Use computed rank for sorting direction provided
+                    direction = intent.sort_order.get('priority', -1)
+                    pipeline.append({"$sort": {"_priorityRank": direction}})
+                else:
+                    pipeline.append({"$sort": intent.sort_order})
+            else:
+                pipeline.append({"$sort": intent.sort_order})
 
         # Add projections after sorting so computed fields can be hidden
         if effective_projections and not intent.group_by:
             projection = self._generate_projection(effective_projections, intent.target_entities, intent.primary_entity)
             # Ensure we exclude helper fields from output
             pipeline.append({"$project": projection})
+        # Always remove priority rank helper if it was added
+        if added_priority_rank:
             pipeline.append({"$unset": "_priorityRank"})
 
-        # Add limit
-        if intent.limit:
+        # Add limit (only for non-grouped queries; grouped handled above)
+        if intent.limit and not intent.group_by:
             pipeline.append({"$limit": intent.limit})
 
         return pipeline
@@ -491,7 +554,11 @@ class PipelineGenerator:
             # Keep only fields that are explicitly allow-listed for primary entity
             if field in allowed:
                 validated.append(field)
-        # If none survived validation, just return _id (already always projected)
+
+        # After computing validated, if it's empty, fall back to a minimal safe set
+        if not validated:
+            minimal = ["title", "status", "priority", "createdTimeStamp"]
+            validated = [f for f in minimal if f in allowed]
         return validated
 
     def _resolve_group_field(self, primary_entity: str, token: str) -> Optional[str]:
@@ -522,6 +589,7 @@ class QueryPlanner:
     def __init__(self):
         self.generator = PipelineGenerator()
         self.llm_parser = LLMIntentParser()
+        self.rule_parser = NaturalLanguageParser()
 
     async def plan_and_execute(self, query: str) -> Dict[str, Any]:
         """Plan and execute a natural language query"""
@@ -533,7 +601,9 @@ class QueryPlanner:
             intent_source = "llm"
             intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
             if not intent:
-                raise ValueError("Failed to parse query intent via LLM parser")
+                # Fallback to rule-based parser
+                intent = self.rule_parser.parse(query)
+                intent_source = "rules"
 
             # Generate the pipeline
             pipeline = self.generator.generate_pipeline(intent)
