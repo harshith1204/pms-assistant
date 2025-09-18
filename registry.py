@@ -365,3 +365,147 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
         lookup_stage["$lookup"]["pipeline"].append({"$match": relationship["defaults"]})
 
     return lookup_stage
+
+# ---- Lightweight Entity SCHEMA for IR planner (aliases + FKs + analyzers)
+
+# Canonical entity names used by the IR layer
+SCHEMA: Dict[str, Dict[str, Any]] = {
+    "Project": {
+        "collection": "project",
+        "aliases": ["project", "proj", "projects"],
+        "text_fields": ["name", "description"],
+        "id_field": "_id",
+        "fk": {},
+    },
+    "WorkItem": {
+        "collection": "workItem",
+        "aliases": ["work item", "workitem", "bug", "bugs", "ticket", "issue", "issues"],
+        "text_fields": ["title", "description", "displayBugNo"],
+        "id_field": "_id",
+        # Support joining by either project.name or project._id
+        "fk": {"project.name": ("Project", "name"), "project._id": ("Project", "_id")},
+    },
+    "Page": {
+        "collection": "page",
+        "aliases": ["page", "pages", "doc", "docs", "note", "notes"],
+        "text_fields": ["title", "content"],
+        "id_field": "_id",
+        "fk": {"project.name": ("Project", "name"), "project._id": ("Project", "_id")},
+    },
+    "Module": {
+        "collection": "module",
+        "aliases": ["module", "modules", "component", "components"],
+        "text_fields": ["title", "description"],
+        "id_field": "_id",
+        "fk": {"project._id": ("Project", "_id")},
+    },
+    "Members": {
+        "collection": "members",
+        "aliases": ["member", "members", "assignee", "assignees", "user", "users", "staff"],
+        "text_fields": ["name", "email"],
+        "id_field": "_id",
+        "fk": {"project._id": ("Project", "_id"), "project.name": ("Project", "name")},
+    },
+    "Cycle": {
+        "collection": "cycle",
+        "aliases": ["cycle", "cycles", "sprint", "sprints", "iteration", "iterations"],
+        "text_fields": ["title", "description"],
+        "id_field": "_id",
+        "fk": {"project._id": ("Project", "_id")},
+    },
+}
+
+
+def _alias_map() -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for canonical, cfg in SCHEMA.items():
+        mapping[canonical.lower()] = canonical
+        for a in cfg.get("aliases", []):
+            mapping[str(a).lower()] = canonical
+    return mapping
+
+
+def resolve_entity(token: str) -> str:
+    """Resolve a noun token to a canonical entity (e.g., 'bugs' → 'WorkItem').
+    Defaults to 'WorkItem' when unknown.
+    """
+    if not token:
+        return "WorkItem"
+    return _alias_map().get(token.strip().lower(), "WorkItem")
+
+
+def resolve_entity_from_text(text: str) -> str:
+    """Heuristic: choose the entity whose alias appears in the text most prominently.
+    Priority order favors WorkItem > Page > Project > Members > Module > Cycle.
+    """
+    t = (text or "").lower()
+    priority = ["WorkItem", "Page", "Project", "Members", "Module", "Cycle"]
+    alias_map = _alias_map()
+    # Invert alias map: canonical -> aliases
+    by_canonical: Dict[str, List[str]] = {k: [] for k in SCHEMA.keys()}
+    for alias, canon in alias_map.items():
+        by_canonical.setdefault(canon, []).append(alias)
+
+    def contains_any(words: List[str]) -> bool:
+        return any((f" {w} " in f" {t} ") or (w in t) for w in words)
+
+    for canon in priority:
+        aliases = by_canonical.get(canon, [])
+        if contains_any(aliases):
+            return canon
+    # Fallback
+    return "WorkItem"
+
+
+def resolve_field(entity: str, token: str) -> str:
+    """Resolve common UI or NL tokens to concrete field paths per entity.
+    Returns token unchanged if not recognized.
+    """
+    normalized = (token or "").strip()
+    e = entity
+    mapping: Dict[str, Dict[str, str]] = {
+        "Project": {
+            "id": "_id",
+            "name": "name",
+            "displayid": "projectDisplayId",
+            "status": "status",
+        },
+        "WorkItem": {
+            "bug": "displayBugNo",
+            "bug id": "displayBugNo",
+            "title": "title",
+            "status": "status",
+            "priority": "priority",
+            "project": "project.name",
+            "project id": "project._id",
+            "created": "createdTimeStamp",
+            "updated": "updatedTimeStamp",
+        },
+        "Page": {
+            "title": "title",
+            "content": "content",
+            "project": "project.name",
+            "created": "createdAt",
+        },
+        "Members": {
+            "name": "name",
+            "email": "email",
+            "role": "role",
+            "project": "project._id",
+        },
+        "Module": {"title": "title", "favourite": "isFavourite", "project": "project._id"},
+        "Cycle": {
+            "title": "title",
+            "status": "status",
+            "start": "startDate",
+            "end": "endDate",
+            "project": "project._id",
+        },
+    }
+    key = normalized.lower()
+    return mapping.get(e, {}).get(key, normalized)
+
+
+def foreign_keys(entity: str) -> Dict[str, Any]:
+    """Return IR-level foreign key hints for an entity."""
+    return SCHEMA.get(entity, {}).get("fk", {})
