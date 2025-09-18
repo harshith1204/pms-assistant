@@ -602,7 +602,7 @@ class PipelineGenerator:
             'workItem': {
                 'cycle': 'cycle.title',
                 'project': 'project.name',
-                'assignee': 'members.name',  # joined alias for assignee relation
+                'assignee': 'assignees.name',  # joined alias for assignee relation (REL alias)
                 'status': 'status',
                 'priority': 'priority',
                 'module': 'module.title',
