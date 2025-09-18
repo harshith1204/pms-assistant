@@ -204,7 +204,7 @@ class LLMIntentParser:
             if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
                 target_entities.append(rel)
 
-        # Filters: keep only known keys and drop placeholders
+        # Filters: keep only known keys and drop placeholders; drop enums if not aligned with query
         raw_filters = data.get("filters") or {}
         known_filter_keys = {
             "status", "priority", "project_status", "cycle_status", "page_visibility",
@@ -218,6 +218,17 @@ class LLMIntentParser:
                     if "?" in v or not v.isupper():
                         continue
                 filters[k] = v
+
+        # If the original query is a count-only question, prune likely hallucinated unrelated enum filters
+        oq = (original_query or "").lower()
+        if "how many" in oq:
+            enum_keys = ["priority", "project_status", "cycle_status", "page_visibility"]
+            for ek in enum_keys:
+                # Only keep enum filters if the enum token appears in the query text
+                if ek in filters:
+                    token = str(filters[ek]).lower()
+                    if token not in oq:
+                        filters.pop(ek)
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
@@ -269,15 +280,25 @@ class LLMIntentParser:
         wants_count = bool(wants_count_raw) if wants_count_raw is not None else False
         wants_count = wants_count or ("how many" in oq)
 
-        # If group_by present, details default to False unless explicitly requested
-        if group_by and wants_details_raw is None:
-            wants_details = False
-
-        # Never have both; count wins if user explicitly asked
-        if wants_details and wants_count:
-            wants_details = False
-        if wants_count and not group_by:
+        # If user asked a count-style question, force count-only intent
+        if wants_count:
+            group_by = []
             aggregations = ["count"]
+            wants_details = False
+            # Drop target entities to avoid unnecessary lookups for pure counts
+            target_entities = []
+            # Sorting is irrelevant for counts
+            sort_order = None
+        else:
+            # If group_by present, details default to False unless explicitly requested
+            if group_by and wants_details_raw is None:
+                wants_details = False
+
+            # Never have both; count wins if user explicitly asked
+            if wants_details and wants_count:
+                wants_details = False
+            if wants_count and not group_by:
+                aggregations = ["count"]
 
         return QueryIntent(
             primary_entity=primary,
@@ -307,15 +328,12 @@ class PipelineGenerator:
 
         # Build sanitized filters once
         primary_filters = self._extract_primary_filters(intent.filters, collection) if intent.filters else {}
-        secondary_filters = self._extract_secondary_filters(intent.filters) if intent.filters else {}
+        secondary_filters = self._extract_secondary_filters(intent.filters, collection) if intent.filters else {}
 
-        # COUNT-ONLY: no group_by, no details → do not add lookups
+        # COUNT-ONLY: if there are no filters, return immediately; otherwise continue to include joins/secondary filters
         if (("count" in intent.aggregations) or intent.wants_count) and not intent.group_by and not intent.wants_details:
-            if primary_filters:
-                return [{"$match": primary_filters}, {"$count": "total"}]
-            if not secondary_filters:
+            if not primary_filters and not secondary_filters:
                 return [{"$count": "total"}]
-            # fall through only if secondary filters exist (rare for "how many …")
 
         # Add filters for the primary collection
         if primary_filters:
@@ -323,25 +341,54 @@ class PipelineGenerator:
 
         # Ensure lookups needed by secondary filters or grouping are included
         required_relations: Set[str] = set()
-        # Filters → relations
+
+        # Determine relation tokens per primary collection
+        relation_alias_by_token = {
+            'workItem': {
+                'project': 'project',
+                'assignee': 'assignee',
+            },
+            'project': {
+                'cycle': 'cycles',
+                'module': 'modules',
+                'assignee': 'members',
+                'page': 'pages',
+                'project': None,
+            },
+            'cycle': {
+                'project': 'project',
+            },
+            'module': {
+                'project': 'project',
+            },
+            'page': {
+                'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
+            },
+            'members': {
+                'project': 'project',
+            },
+            'projectState': {
+                'project': 'project',
+            },
+        }.get(collection, {})
+
+        # Filters → relations (map filter tokens to relation alias for this primary)
         if intent.filters:
-            if 'project_name' in intent.filters and 'project' in REL.get(collection, {}):
-                required_relations.add('project')
-            if 'cycle_title' in intent.filters and 'cycle' in REL.get(collection, {}):
-                required_relations.add('cycle')
-            if 'assignee_name' in intent.filters and 'assignee' in REL.get(collection, {}):
-                required_relations.add('assignee')
-            if 'module_name' in intent.filters and 'module' in REL.get(collection, {}):
-                required_relations.add('module')
+            if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
+                required_relations.add(relation_alias_by_token['project'])
+            if 'cycle_title' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
+                required_relations.add(relation_alias_by_token['cycle'])
+            if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
+                required_relations.add(relation_alias_by_token['assignee'])
+            if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
+                required_relations.add(relation_alias_by_token['module'])
 
         # Group-by → relations
         for token in (intent.group_by or []):
-            if token in REL.get(collection, {}):
-                required_relations.add(token)
-            token_to_rel = {"project": "project", "cycle": "cycle", "assignee": "assignee", "module": "module"}
-            rel = token_to_rel.get(token)
-            if rel and rel in REL.get(collection, {}):
-                required_relations.add(rel)
+            # Map grouping token to relation alias for this primary
+            rel_alias = relation_alias_by_token.get(token)
+            if rel_alias and rel_alias in REL.get(collection, {}):
+                required_relations.add(rel_alias)
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in sorted(required_relations):
@@ -421,11 +468,10 @@ class PipelineGenerator:
                     pipeline.append({"$limit": intent.limit})
 
         # Add aggregations like count (skip count when details are requested)
-        if intent.aggregations and not intent.wants_details and not intent.group_by:
-            for agg in intent.aggregations:
-                if agg == 'count':
-                    pipeline.append({"$count": "total"})
-                    return pipeline  # Count is terminal
+        # Count aggregation (treat wants_count as implicit 'count') — skip when grouped or when details requested
+        if (intent.wants_count or ('count' in (intent.aggregations or []))) and not intent.wants_details and not intent.group_by:
+            pipeline.append({"$count": "total"})
+            return pipeline  # Count is terminal
 
         # Determine projections for details (skip when grouping since we reshape after $group)
         effective_projections: List[str] = intent.projections
@@ -502,8 +548,8 @@ class PipelineGenerator:
 
         return primary_filters
 
-    def _extract_secondary_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract filters that apply to joined collections"""
+    def _extract_secondary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
+        """Extract filters that apply to joined collections, guarded by available relations."""
         s: Dict[str, Any] = {}
 
         # Project name: allow both embedded project.name and joined alias projectDoc.name
@@ -513,16 +559,16 @@ class PipelineGenerator:
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
 
-        # Assignee name via joined alias 'assignees'
-        if 'assignee_name' in filters:
+        # Assignee name via joined alias 'assignees' (only if relation exists)
+        if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
             s['assignees.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
 
-        # Cycle title filter (applies to joined cycle)
-        if 'cycle_title' in filters:
+        # Cycle title filter (only if relation exists for this primary collection)
+        if 'cycle_title' in filters and 'cycle' in REL.get(collection, {}):
             s['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
 
-        # Module name filter (applies to joined module)
-        if 'module_name' in filters:
+        # Module name filter (only if relation exists for this primary collection)
+        if 'module_name' in filters and 'module' in REL.get(collection, {}):
             s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
 
         return s
@@ -600,12 +646,11 @@ class PipelineGenerator:
         """Map a grouping token to a concrete field path in the current pipeline."""
         mapping = {
             'workItem': {
-                'cycle': 'cycle.title',
+                # Only relations that exist in REL for workItem
                 'project': 'project.name',
-                'assignee': 'members.name',  # joined alias for assignee relation
+                'assignee': 'assignees.name',  # joined alias for assignee relation
                 'status': 'status',
                 'priority': 'priority',
-                'module': 'module.title',
             },
             'project': {
                 'status': 'status',
