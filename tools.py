@@ -27,7 +27,6 @@ async def intelligent_query(query: str) -> str:
     - Parses the query, selects the primary collection, joins required relations, applies filters, projections, sorting
     - Generates and executes an aggregation pipeline via the Mongo MCP server
 
-    Tip: If you already have a precise pipeline, use run_aggregation instead.
 
     Args:
         query: Natural language prompt, e.g. "Show urgent work items in project 'CRM' grouped by cycle".
@@ -102,54 +101,7 @@ async def intelligent_query(query: str) -> str:
     except Exception as e:
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
-@tool
-async def run_aggregation(
-    collection: str,
-    pipeline_json: Union[str, List[Dict[str, Any]]],
-    database: Optional[str] = None,
-) -> Any:
-    """Execute a MongoDB aggregation pipeline against a collection.
-
-    When to use:
-    - You have an explicit pipeline to run (including cross-collection $lookup stages)
-    - You want to iterate on a pipeline that intelligent_query cannot infer
-
-    Args:
-        collection: Target collection name (e.g., "workItem", "project").
-        pipeline_json: Aggregation pipeline as a JSON string or a native list of stages.
-        database: Optional database name. Defaults to 'ProjectManagement'.
-
-    Examples:
-        - Run a prebuilt pipeline string:
-          collection="workItem", pipeline_json='[{"$match": {"priority": "HIGH"}}]'
-        - Run a native pipeline list:
-          collection="project", pipeline_json=[{"$limit": 5}]
-    """
-    try:
-        pipeline: List[Dict[str, Any]]
-        if isinstance(pipeline_json, str):
-            pipeline = json.loads(pipeline_json)
-        else:
-            pipeline = pipeline_json
-
-        if not isinstance(pipeline, list):
-            raise ValueError("pipeline must be a list of stages")
-
-        result = await mongodb_tools.execute_tool(
-            "aggregate",
-            {
-                "database": database or DATABASE_NAME,
-                "collection": collection,
-                "pipeline": pipeline,
-            },
-        )
-        return result
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 # Define the tools list (no schema tool)
 tools = [
     intelligent_query,
-    run_aggregation,
 ]

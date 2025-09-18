@@ -596,7 +596,7 @@ class PipelineGenerator:
         defaults_map: Dict[str, List[str]] = {
             "workItem": [
                 "displayBugNo", "title", "status", "priority",
-                "state.name", "stateMaster.name", "assignee",
+                "stateMaster.name", "assignee",
                 "project.name", "createdTimeStamp"
             ],
             "project": [

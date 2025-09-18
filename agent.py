@@ -23,8 +23,6 @@ DEFAULT_SYSTEM_PROMPT = (
     "\n\nTOOL SELECTION GUIDANCE:"
     "\n• Natural language queries: Prefer intelligent_query. It plans cross-collection joins using the"
     " relationship registry and executes the optimal MongoDB aggregation pipeline."
-    "\n• Explicit aggregations: When a precise pipeline is provided or needed, call run_aggregation with"
-    " {collection, pipeline}. Use the default database 'ProjectManagement' unless specified."
     "\n• Data safety: Use only allow-listed fields and relations from the registry. Avoid projecting or"
     " filtering on fields outside the allow-list."
     "\n\nCOLLECTION NAMES: project, workItem, cycle, members, page, module, projectState."
