@@ -131,6 +131,23 @@ REL: Dict[str, Dict[str, dict]] = {
     }
 }
 
+# ---- Index and embedded-field hints
+INDEX_HINTS: Dict[str, List[List[str]]] = {
+    "workItem": [["project._id"], ["status"], ["createdTimeStamp"]],
+    "cycle":    [["status"], ["startDate"], ["endDate"], ["project._id"]],
+    "members":  [["project._id"], ["project.name"]],
+    "module":   [["project._id"]],
+    "project":  [["_id"], ["projectDisplayId"], ["name"]],
+}
+
+# Fields whose presence lets us avoid a $lookup for the same relation
+EMBEDDED_FIELDS: Dict[str, Set[str]] = {
+    "members": {"project.name"},
+    "workItem": {"project._id", "project.name"},
+    "cycle": {"project._id"},
+    "module": {"project._id"},
+}
+
 # ---- Collections (one source of truth)
 Collection = str  # Simplified for tool usage
 
@@ -345,16 +362,7 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
                     match_condition = {"$expr": {"$eq": [f"$${var_name}", f"${remote_field}"]}}
                 lookup_stage["$lookup"]["pipeline"].append({"$match": match_condition})
 
-        # Special-case: optional fallback noted in expr string
-        if "name-eq" in expr_str.lower():
-            # Heuristic: attempt to match by name fields as a fallback
-            # local: try stateMaster.name, remote: try name or subStates.name
-            or_conditions = []
-            # local stateMaster.name
-            lookup_stage["$lookup"]["let"]["local_state_name"] = "$stateMaster.name"
-            or_conditions.append({"$expr": {"$eq": ["$name", "$$local_state_name"]}})
-            or_conditions.append({"$expr": {"$in": ["$$local_state_name", "$subStates.name"]}})
-            lookup_stage["$lookup"]["pipeline"].append({"$match": {"$or": or_conditions}})
+        # Note: name-based fallback joins removed to avoid ad-hoc guesses
 
     # Add additional filters if provided
     if additional_filters:
