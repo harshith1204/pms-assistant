@@ -292,6 +292,166 @@ class LLMIntentParser:
             wants_count=wants_count,
         )
 
+class LangChainTextToMQL:
+    """LangChain-driven NL → MQL generator tailored to our schema.
+
+    Produces a ready-to-run aggregation pipeline plus explicit join hints.
+    We keep joins out of the model output and synthesize $lookup stages from
+    the central registry for safety and consistency.
+    """
+
+    def __init__(self, model_name: Optional[str] = None):
+        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "qwen3:0.6b-fp16")
+        self.llm = ChatOllama(
+            model=self.model_name,
+            reasoning=False,
+            temperature=0.1,
+            num_ctx=4096,
+            num_predict=1024,
+            top_p=0.9,
+            top_k=40,
+        )
+
+        # Precompute concise schema context
+        self.entities: List[str] = list(REL.keys())
+        self.allowed_fields: Dict[str, List[str]] = {
+            entity: sorted(list(ALLOWED_FIELDS.get(entity, set()))) for entity in self.entities
+        }
+        self.allowed_relations: Dict[str, List[str]] = {
+            entity: list(REL.get(entity, {}).keys()) for entity in self.entities
+        }
+
+    async def generate(self, query: str) -> Optional[Dict[str, Any]]:
+        """Return dict with keys: collection, joins, pipeline, limit.
+
+        The LLM is instructed to output STRICT JSON without code fences:
+        {
+          "collection": "workItem|project|cycle|members|page|module|projectState",
+          "joins": ["relationName", ...],
+          "pipeline": [ {"$match": {...}}, {"$group": {...}}, ... ],
+          "limit": 20
+        }
+        Joins must be chosen from our registry per the chosen collection. The
+        pipeline MUST NOT include $lookup/$unwind; we will add them.
+        """
+        system = (
+            "You convert natural-language questions into MongoDB Aggregation (MQL) for a Project Management DB. "
+            "Only use the provided collection names, relations and allow-listed fields. "
+            "Output STRICT JSON with keys collection, joins, pipeline, limit. "
+            "Do NOT include $lookup or $unwind in the pipeline; we will join for you based on 'joins'. "
+            "Prefer aggregation pipelines even for simple filters (use $match/$project/$sort/$limit/$group/$count).\n\n"
+            "Collections: " + ", ".join(self.entities) + "\n" +
+            "Relations per collection (joins field must use these names):\n" +
+            "\n".join(f"- {e}: {', '.join(self.allowed_relations.get(e, []))}" for e in self.entities) + "\n\n" +
+            "Allow-listed fields per collection (for $match/$project/$sort only; other fields are invalid):\n" +
+            "\n".join(f"- {e}: {', '.join(self.allowed_fields.get(e, []))}" for e in self.entities) + "\n\n" +
+            "Rules:\n"
+            "- joins: pick minimal relations needed.\n"
+            "- pipeline: list of valid aggregation stages excluding $lookup and $unwind.\n"
+            "- Use case-insensitive regex for free-text name filters: { '$regex': 'CRM', '$options': 'i' }.\n"
+            "- If counting and no grouping is required, end with { '$count': 'total' }.\n"
+            "- Always include a reasonable limit (<=100) unless using $count. Default 20.\n"
+        )
+
+        schema = {
+            "collection": "string; one of: " + ", ".join(self.entities),
+            "joins": "string[]; relation names for chosen collection (no $lookup in pipeline)",
+            "pipeline": "Stage[]; only $match,$project,$sort,$limit,$group,$count,$addFields,$unset",
+            "limit": "integer <= 100; default 20"
+        }
+
+        user = (
+            "Return JSON ONLY. No prose. Do not wrap in code fences.\n" +
+            f"Schema: {json.dumps(schema)}\n\n" +
+            f"User Query: {query}"
+        )
+
+        try:
+            ai = await self.llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+            content = (ai.content or "").strip()
+            # Accept direct JSON; strip accidental fences
+            if content.startswith("```"):
+                content = content.strip("`\n").split("\n", 1)[-1]
+                if content.startswith("json\n"):
+                    content = content[5:]
+            data = json.loads(content)
+        except Exception:
+            return None
+
+        try:
+            return self._sanitize_text2mql(data)
+        except Exception:
+            return None
+
+    def _sanitize_text2mql(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        # Collection
+        collection_raw = (data.get("collection") or "").strip()
+        collection = collection_raw if collection_raw in self.entities else "workItem"
+
+        # Joins
+        allowed_for_collection = set(self.allowed_relations.get(collection, []))
+        joins: List[str] = []
+        for rel in (data.get("joins") or []):
+            if isinstance(rel, str) and rel in allowed_for_collection:
+                joins.append(rel)
+
+        # Pipeline
+        pipeline = data.get("pipeline") or []
+        if not isinstance(pipeline, list):
+            pipeline = []
+        pipeline = [p for p in pipeline if isinstance(p, dict) and p]
+        pipeline = self._sanitize_pipeline_stages(collection, pipeline)
+
+        # Limit
+        limit_val = data.get("limit")
+        try:
+            limit = int(limit_val) if limit_val is not None else 20
+            if limit <= 0:
+                limit = 20
+            limit = min(limit, 100)
+        except Exception:
+            limit = 20
+
+        return {"collection": collection, "joins": joins, "pipeline": pipeline, "limit": limit}
+
+    def _sanitize_pipeline_stages(self, collection: str, stages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        allowed_stage_ops = {
+            "$match", "$project", "$sort", "$limit", "$group", "$count", "$addFields", "$unset"
+        }
+        sanitized: List[Dict[str, Any]] = []
+        for stage in stages:
+            op = next(iter(stage.keys()))
+            if op not in allowed_stage_ops:
+                continue
+            # Field-level filtering for $project and $sort. $match kept as-is but we may prune unknown fields.
+            if op == "$project":
+                allowed = ALLOWED_FIELDS.get(collection, set())
+                body = stage[op]
+                if isinstance(body, dict):
+                    filtered: Dict[str, Any] = {}
+                    for k, v in body.items():
+                        if k == "_id" or k in allowed:
+                            filtered[k] = v
+                    stage = {op: filtered}
+            elif op == "$sort":
+                allowed = ALLOWED_FIELDS.get(collection, set())
+                body = stage[op]
+                if isinstance(body, dict):
+                    filtered: Dict[str, Any] = {}
+                    for k, v in body.items():
+                        if k in allowed and v in (1, -1):
+                            filtered[k] = v
+                    stage = {op: filtered}
+            elif op == "$limit":
+                try:
+                    lv = int(stage[op])
+                    lv = max(1, min(100, lv))
+                    stage = {op: lv}
+                except Exception:
+                    stage = {op: 20}
+            sanitized.append(stage)
+        return sanitized
+
 class PipelineGenerator:
     """Generates MongoDB aggregation pipelines based on query intent and relationships"""
 
@@ -625,6 +785,7 @@ class QueryPlanner:
         self.generator = PipelineGenerator()
         self.llm_parser = LLMIntentParser()
         self.rule_parser = NaturalLanguageParser()
+        self.text2mql = LangChainTextToMQL()
 
     async def plan_and_execute(self, query: str) -> Dict[str, Any]:
         """Plan and execute a natural language query"""
@@ -632,16 +793,60 @@ class QueryPlanner:
             # Ensure MongoDB connection
             await mongodb_tools.connect()
 
-            # Parse intent via LLM (single source of truth)
-            intent_source = "llm"
-            intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
-            if not intent:
-                # Fallback to rule-based parser
-                intent = self.rule_parser.parse(query)
-                intent_source = "rules"
+            # First try: LangChain Text-to-MQL generator
+            intent_source = "text2mql"
+            text2mql_plan = await self.text2mql.generate(query)
+            pipeline: List[Dict[str, Any]]
+            if text2mql_plan:
+                primary_collection = text2mql_plan["collection"]
+                joins: List[str] = text2mql_plan.get("joins", [])
+                body_pipeline: List[Dict[str, Any]] = text2mql_plan.get("pipeline", [])
+                limit = text2mql_plan.get("limit", 20)
 
-            # Generate the pipeline
-            pipeline = self.generator.generate_pipeline(intent)
+                pipeline = []
+                # Add $lookup stages for declared joins from registry
+                for rel_name in joins:
+                    rels = REL.get(primary_collection, {})
+                    if rel_name not in rels:
+                        continue
+                    relationship = rels[rel_name]
+                    lookup = build_lookup_stage(relationship["target"], relationship, primary_collection)
+                    if lookup:
+                        pipeline.append(lookup)
+                        is_many = bool(relationship.get("isArray") or relationship.get("many", False))
+                        if is_many:
+                            unwind_path = relationship.get("as") or relationship.get("alias") or relationship.get("target")
+                            pipeline.append({"$unwind": {"path": f"${unwind_path}", "preserveNullAndEmptyArrays": True}})
+
+                # Append model-proposed stages
+                pipeline.extend(body_pipeline)
+
+                # Ensure a limit is present for non-count pipelines
+                has_count_terminal = bool(pipeline and isinstance(pipeline[-1], dict) and "$count" in pipeline[-1])
+                if not has_count_terminal and limit and not any("$limit" in s for s in pipeline):
+                    pipeline.append({"$limit": limit})
+
+                # Build a minimal intent for observability
+                intent = QueryIntent(
+                    primary_entity=primary_collection,
+                    target_entities=joins,
+                    filters={},
+                    aggregations=["count"] if has_count_terminal else [],
+                    group_by=[],
+                    projections=[],
+                    sort_order=None,
+                    limit=limit,
+                    wants_details=not has_count_terminal,
+                    wants_count=has_count_terminal,
+                )
+            else:
+                # Fallback: intent → pipeline
+                intent_source = "llm"
+                intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
+                if not intent:
+                    intent = self.rule_parser.parse(query)
+                    intent_source = "rules"
+                pipeline = self.generator.generate_pipeline(intent)
 
             # Execute the query
             result = await mongodb_tools.execute_tool("aggregate", {
