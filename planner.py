@@ -618,7 +618,7 @@ class PipelineGenerator:
         entity_map = mapping.get(primary_entity, {})
         return entity_map.get(token)
 
-class QueryPlanner:
+class Planner:
     """Main query planner that orchestrates the entire process"""
 
     def __init__(self):
@@ -666,7 +666,7 @@ class QueryPlanner:
             }
 
 # Global instance
-query_planner = QueryPlanner()
+query_planner = Planner()
 
 async def plan_and_execute_query(query: str) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""

@@ -9,7 +9,7 @@ from glob import glob
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
 try:
-    from query_planner import plan_and_execute_query
+    from planner import plan_and_execute_query
 except ImportError:
     plan_and_execute_query = None
 
