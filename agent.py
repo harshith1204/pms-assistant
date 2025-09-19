@@ -72,8 +72,8 @@ llm = ChatOllama(
     top_k=40,  # Focus on high-probability tokens
 )
 
-# Bind tools to the LLM for tool calling
-llm_with_tools = llm.bind_tools(tools_list)
+# Note: We intentionally avoid binding tools to the LLM.
+# Tools will be invoked explicitly by routing logic below.
 
 class ToolCallingCallbackHandler(AsyncCallbackHandler):
     """Callback handler for tool calling streaming"""
@@ -131,13 +131,65 @@ class ToolCallingCallbackHandler(AsyncCallbackHandler):
             })
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling"""
+    """MongoDB Agent that maintains conversation context and explicitly calls tools when needed"""
 
     def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
-        self.llm_with_tools = llm_with_tools
+        self.llm = llm
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
+
+    async def _decide_route(self, query: str, conversation_context: List[BaseMessage]) -> Dict[str, Any]:
+        """Use the LLM to decide whether to answer directly (chat) or call the tool.
+
+        Returns a dict like: {"route": "tool"|"chat", "needs_context": bool, "tool_query": str}
+        """
+        routing_system = (
+            "You are a router for a Project Management System assistant. "
+            "Decide whether the user's request requires querying the PMS database via the intelligent_query tool, "
+            "or can be answered conversationally without tools. "
+            "If the tool call depends on earlier conversation context (pronouns, omitted entities), set needs_context=true and produce a concise tool_query that is self-contained. "
+            "Otherwise, set needs_context=false and leave tool_query as an empty string or copy of the user query. "
+            "Respond ONLY with strict JSON: {\"route\": \"tool|chat\", \"needs_context\": true|false, \"tool_query\": \"...\"}."
+        )
+
+        messages: List[BaseMessage] = [SystemMessage(content=routing_system)]
+        # Include minimal context (last few messages) to detect dependencies
+        messages.extend(conversation_context[-6:] if len(conversation_context) > 6 else conversation_context)
+        messages.append(HumanMessage(content=f"User query: {query}\nReturn JSON only."))
+
+        try:
+            response: AIMessage = await self.llm.ainvoke(messages)
+            content = response.content or ""
+            data = json.loads(content)
+            # Basic validation
+            if not isinstance(data, dict) or "route" not in data:
+                raise ValueError("Router returned invalid structure")
+            data.setdefault("needs_context", False)
+            data.setdefault("tool_query", "")
+            return data
+        except Exception:
+            # Heuristic fallback: route to tool for data-seeking queries
+            lowered = query.lower()
+            tool_triggers = [
+                "show", "list", "count", "how many", "get", "find", "fetch", "overview",
+                "work item", "workitems", "task", "project", "cycle", "member", "module"
+            ]
+            use_tool = any(t in lowered for t in tool_triggers)
+            return {"route": "tool" if use_tool else "chat", "needs_context": False, "tool_query": ""}
+
+    async def _build_precise_tool_query(self, user_query: str, conversation_context: List[BaseMessage]) -> str:
+        """When the tool call depends on context, ask LLM to craft a concise, self-contained query string."""
+        system_msg = (
+            "You transform a user's request plus prior conversation into a SINGLE concise, self-contained natural language query "
+            "suited for a PMS intelligent query tool. Use explicit entity names (projects, cycles, work items, members, modules), "
+            "resolve pronouns, and omit chit-chat. Return ONLY the query text."
+        )
+        messages: List[BaseMessage] = [SystemMessage(content=system_msg)]
+        messages.extend(conversation_context[-8:] if len(conversation_context) > 8 else conversation_context)
+        messages.append(HumanMessage(content=f"Build a precise tool query for: {user_query}\nReturn only the query, no extra text."))
+        response: AIMessage = await self.llm.ainvoke(messages)
+        return (response.content or "").strip()
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
@@ -151,161 +203,117 @@ class MongoDBAgent:
         self.connected = False
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
-        """Run the agent with a query and optional conversation context"""
+        """Run the agent: maintain conversation context, optionally call tool, otherwise reply directly."""
         if not self.connected:
             await self.connect()
 
         try:
-            # Use default conversation ID if none provided
             if not conversation_id:
                 conversation_id = f"conv_{int(time.time())}"
 
-            # Get conversation history
             conversation_context = conversation_memory.get_recent_context(conversation_id)
 
-            # Build messages with optional system instruction
+            # Persist the human message first
+            human_message = HumanMessage(content=query)
+            conversation_memory.add_message(conversation_id, human_message)
+
+            # Decide route
+            route = await self._decide_route(query, conversation_context)
+            if route.get("route") == "tool":
+                needs_context = bool(route.get("needs_context", False))
+                tool_query: str
+                if needs_context:
+                    tool_query = await self._build_precise_tool_query(query, conversation_context)
+                else:
+                    # Directly pass the user's query to the tool
+                    tool_query = query
+
+                tool = next((t for t in tools_list if t.name == "intelligent_query"), None)
+                if not tool:
+                    assistant_msg = AIMessage(content="Tool 'intelligent_query' not available.")
+                    conversation_memory.add_message(conversation_id, assistant_msg)
+                    return assistant_msg.content
+
+                try:
+                    result = await tool.ainvoke({"query": tool_query})
+                except Exception as tool_exc:
+                    result = f"Tool execution error: {tool_exc}"
+
+                assistant_msg = AIMessage(content=str(result))
+                conversation_memory.add_message(conversation_id, assistant_msg)
+                return assistant_msg.content
+
+            # Route: chat → answer conversationally using system prompt and context
             messages: List[BaseMessage] = []
             if self.system_prompt:
                 messages.append(SystemMessage(content=self.system_prompt))
             messages.extend(conversation_context)
-
-            # Add current user message
-            human_message = HumanMessage(content=query)
             messages.append(human_message)
-
-            # Persist the human message
-            conversation_memory.add_message(conversation_id, human_message)
-
-            steps = 0
-            last_response: Optional[AIMessage] = None
-
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(messages)
-                last_response = response
-
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
-
-                # If no tools requested, we are done
-                if not getattr(response, "tool_calls", None):
-                    return response.content
-
-                # Execute requested tools sequentially
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        # If tool not found, surface an error message and stop
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
-                            tool_call_id=tool_call["id"],
-                        )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
-
-                    try:
-                        result = await tool.ainvoke(tool_call["args"])
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
-
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
-
-                steps += 1
-
-            # Step cap reached; return best available answer
-            if last_response is not None:
-                return last_response.content
-            return "Reached maximum reasoning steps without a final answer."
+            response: AIMessage = await self.llm.ainvoke(messages)
+            conversation_memory.add_message(conversation_id, response)
+            return response.content
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """Run the agent with streaming support and conversation context"""
+        """Run the agent with streaming; for tool calls, emit a single chunk after completion."""
         if not self.connected:
             await self.connect()
 
         try:
-            # Use default conversation ID if none provided
             if not conversation_id:
                 conversation_id = f"conv_{int(time.time())}"
 
-            # Get conversation history
             conversation_context = conversation_memory.get_recent_context(conversation_id)
 
-            # Build messages with optional system instruction
+            # Persist the human message first
+            human_message = HumanMessage(content=query)
+            conversation_memory.add_message(conversation_id, human_message)
+
+            callback_handler = ToolCallingCallbackHandler(websocket)
+
+            # Decide route
+            route = await self._decide_route(query, conversation_context)
+            if route.get("route") == "tool":
+                needs_context = bool(route.get("needs_context", False))
+                if needs_context:
+                    tool_query = await self._build_precise_tool_query(query, conversation_context)
+                else:
+                    tool_query = query
+
+                tool = next((t for t in tools_list if t.name == "intelligent_query"), None)
+                if not tool:
+                    msg = "Tool 'intelligent_query' not available."
+                    conversation_memory.add_message(conversation_id, AIMessage(content=msg))
+                    yield msg
+                    return
+
+                await callback_handler.on_tool_start({"name": "intelligent_query"}, json.dumps({"query": tool_query}))
+                try:
+                    result = await tool.ainvoke({"query": tool_query})
+                except Exception as tool_exc:
+                    result = f"Tool execution error: {tool_exc}"
+                await callback_handler.on_tool_end(str(result))
+
+                assistant_msg = AIMessage(content=str(result))
+                conversation_memory.add_message(conversation_id, assistant_msg)
+                yield assistant_msg.content
+                return
+
+            # Route: chat → stream a single response (token callbacks handled internally if supported)
             messages: List[BaseMessage] = []
             if self.system_prompt:
                 messages.append(SystemMessage(content=self.system_prompt))
             messages.extend(conversation_context)
-
-            # Add current user message
-            human_message = HumanMessage(content=query)
             messages.append(human_message)
 
-            callback_handler = ToolCallingCallbackHandler(websocket)
-
-            # Persist the human message
-            conversation_memory.add_message(conversation_id, human_message)
-
-            steps = 0
-            last_response: Optional[AIMessage] = None
-
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(
-                    messages,
-                    config={"callbacks": [callback_handler]},
-                )
-                last_response = response
-
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
-
-                if not getattr(response, "tool_calls", None):
-                    yield response.content
-                    return
-
-                # Execute requested tools sequentially with streaming callbacks
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
-                            tool_call_id=tool_call["id"],
-                        )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
-
-                    await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
-                    try:
-                        result = await tool.ainvoke(tool_call["args"])
-                        await callback_handler.on_tool_end(str(result))
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
-                        await callback_handler.on_tool_end(str(result))
-
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
-
-                steps += 1
-
-            # Step cap reached; send best available response
-            if last_response is not None:
-                yield last_response.content
-            else:
-                yield "Reached maximum reasoning steps without a final answer."
+            response: AIMessage = await self.llm.ainvoke(
+                messages,
+                config={"callbacks": [callback_handler]} if callback_handler else None,
+            )
+            conversation_memory.add_message(conversation_id, response)
+            yield response.content
             return
 
         except Exception as e:
