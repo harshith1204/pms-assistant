@@ -33,6 +33,7 @@ smithery_config = {
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from typing import Dict, Any
+import asyncio
 
 class MongoDBTools:
     """MongoDB MCP Tools wrapper using langchain-mcp-adapters"""
@@ -41,14 +42,21 @@ class MongoDBTools:
         self.client = MultiServerMCPClient(smithery_config)
         self.tools = []
         self.connected = False
+        self._connect_lock = asyncio.Lock()
+        self._tool_map: Dict[str, Any] = {}
 
     async def connect(self):
         """Initialize connection to MongoDB MCP server using langchain-mcp-adapters"""
         try:
-            # Get tools from the MCP server (this will establish connections as needed)
-            self.tools = await self.client.get_tools()
-            self.connected = True
-            print(f"Connected to MongoDB MCP. Available tools: {[tool.name for tool in self.tools]}")
+            async with self._connect_lock:
+                # If already connected and tools are loaded, avoid reconnecting
+                if self.connected and self.tools:
+                    return
+                # Get tools from the MCP server (this will establish connections as needed)
+                self.tools = await self.client.get_tools()
+                self._tool_map = {tool.name: tool for tool in self.tools}
+                self.connected = True
+                print(f"Connected to MongoDB MCP. Available tools: {[tool.name for tool in self.tools]}")
 
         except Exception as e:
             print(f"Failed to connect to MongoDB MCP server: {e}")
@@ -59,14 +67,16 @@ class MongoDBTools:
         # MultiServerMCPClient handles connection cleanup automatically
         self.connected = False
         self.tools = []
+        self._tool_map = {}
 
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Execute a MongoDB MCP tool"""
         if not self.connected:
-            raise ValueError("Not connected to MCP server")
+            # Attempt to lazily (re)connect for resilience
+            await self.connect()
 
         # Find the tool
-        tool = next((t for t in self.tools if t.name == tool_name), None)
+        tool = self._tool_map.get(tool_name)
         if not tool:
             raise ValueError(f"Tool {tool_name} not available")
 
