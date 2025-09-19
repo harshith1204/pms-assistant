@@ -118,7 +118,7 @@ class LLMIntentParser:
     - primary_entity
     - target_entities (relations to join)
     - filters (normalized keys: status, priority, project_status, cycle_status, page_visibility,
-      project_name, cycle_title, assignee_name, module_name)
+      project_name, cycle_name, assignee_name, module_name)
     - aggregations: ["count"|"group"|"summary"]
     - group_by tokens: ["cycle","project","assignee","status","priority","module"]
     - projections (subset of allow-listed fields for the primary entity)
@@ -176,11 +176,11 @@ class LLMIntentParser:
             "Allow-listed fields per entity (projections must be subset of primary's list):\n" +
             "\n".join(f"- {e}: {', '.join(self.allowed_fields.get(e, []))}" for e in self.entities) + "\n\n" +
             "Normalize keys as follows: state, priority, project_status, cycle_status, page_visibility, "
-            "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
+            "project_name, cycle_name, assignee_name, module_name. Use uppercase enum values if obvious.\n"
             "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, state, priority, module.\n"
             "sort_order keys allowed: createdTimeStamp, priority, state.\n"
             "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown.\n\n"
-            "Entity inclusion policy: Only include secondary name filters (project_name, cycle_title, module_name, assignee_name) "
+            "Entity inclusion policy: Only include secondary name filters (project_name, cycle_name, module_name, assignee_name) "
             "when the user explicitly mentions that entity in the query. Do NOT guess based on a name alone. "
             "Do NOT map the same natural-language name to multiple entities at once. If ambiguous, prefer assignee.\n"
             "Target entities minimization: Include only relations required to satisfy filters or group_by. "
@@ -214,7 +214,7 @@ class LLMIntentParser:
                 "cycle_status": "ACTIVE|UPCOMING|COMPLETED?",
                 "page_visibility": "PUBLIC|PRIVATE|ARCHIVED?",
                 "project_name": "string? (free text, used as case-insensitive regex)",
-                "cycle_title": "string?",
+                "cycle_name": "string?",
                 "assignee_name": "string?",
                 "module_name": "string?"
             },
@@ -233,7 +233,7 @@ class LLMIntentParser:
             "- Only use allowed entities, relations, and fields.\n"
             "- If both details and count are implied, set wants_details true and wants_count false.\n"
             "- Keep target_entities minimal but sufficient to support filters and group_by.\n"
-            "- Only include project_name/cycle_title/module_name if the query explicitly mentions project/cycle/module.\n"
+            "- Only include project_name/cycle_name/module_name if the query explicitly mentions project/cycle/module.\n"
             "- Never assign the same name to multiple entity filters; if unclear, prefer assignee_name.\n"
             "- Do NOT include any explanations or prose. Output JSON ONLY.\n\n"
             f"Schema (for reference, keys only): {json.dumps(schema)}\n\n"
@@ -308,7 +308,7 @@ class LLMIntentParser:
             raw_filters["state"] = raw_filters.pop("status")
         known_filter_keys = {
             "state", "priority", "project_status", "cycle_status", "page_visibility",
-            "project_name", "cycle_title", "assignee_name", "module_name",
+            "project_name", "cycle_name", "assignee_name", "module_name",
             # extended keys
             "member_role",
         }
@@ -341,6 +341,10 @@ class LLMIntentParser:
                         # if not recognized, skip state filter
                         continue
                     filters["state"] = canon
+                    continue
+                # legacy normalize (no longer expected but kept for safety)
+                if k == "cycle_title":
+                    filters["cycle_name"] = vs
                     continue
                 # enforce uppercase for enum-like others
                 if k in {"project_status", "cycle_status", "page_visibility"} and isinstance(vs, str):
@@ -416,8 +420,8 @@ class LLMIntentParser:
         # Only keep project/cycle/module name filters if the entity is explicitly mentioned
         if "project_name" in filters and not mentions_project:
             filters.pop("project_name", None)
-        if "cycle_title" in filters and not mentions_cycle:
-            filters.pop("cycle_title", None)
+        if "cycle_name" in filters and not mentions_cycle:
+            filters.pop("cycle_name", None)
         if "module_name" in filters and not mentions_module:
             filters.pop("module_name", None)
 
@@ -426,7 +430,7 @@ class LLMIntentParser:
         # to infer the most likely entity (members/project/cycle/module). Keep assignee preference on ties.
         try:
             proposed_name_values: Dict[str, str] = {}
-            for key in ("assignee_name", "project_name", "cycle_title", "module_name"):
+            for key in ("assignee_name", "project_name", "cycle_name", "module_name"):
                 val = raw_filters.get(key)
                 if isinstance(val, str) and not self._is_placeholder(val):
                     proposed_name_values[key] = val
@@ -437,7 +441,7 @@ class LLMIntentParser:
                 chosen_key = await self._disambiguate_name_entity(proposed_name_values)
                 if chosen_key:
                     # Reset to only the chosen name filter
-                    for k in ["assignee_name", "project_name", "cycle_title", "module_name"]:
+                    for k in ["assignee_name", "project_name", "cycle_name", "module_name"]:
                         if k != chosen_key and k in filters:
                             filters.pop(k, None)
                     # If chosen not present (because we earlier dropped), re-add it
@@ -581,8 +585,8 @@ class LLMIntentParser:
         candidates = {
             "assignee_name": ("members", "name"),
             "project_name": ("project", "name"),
-            "cycle_title": ("cycle", "title"),
-            "module_name": ("module", "title"),
+            "cycle_name": ("cycle", "name"),
+            "module_name": ("module", "name"),
         }
         counts: Dict[str, int] = {}
         for key, (collection, field) in candidates.items():
@@ -607,7 +611,7 @@ class LLMIntentParser:
             return None
 
         # Sort keys by count desc then by preference order
-        preference = {"assignee_name": 0, "project_name": 1, "cycle_title": 2, "module_name": 3}
+        preference = {"assignee_name": 0, "project_name": 1, "cycle_name": 2, "module_name": 3}
         chosen = sorted(positive.items(), key=lambda kv: (-kv[1], preference.get(kv[0], 99)))[0][0]
         return chosen
 
@@ -666,9 +670,10 @@ class PipelineGenerator:
         # Determine relation tokens per primary collection
         relation_alias_by_token = {
             'workItem': {
-                'project': 'project',
-                'assignee': 'assignee',
-                'module': None,  # no direct relation
+                # All are embedded on workItem; no lookup needed for filters/grouping
+                'project': None,
+                'assignee': None,
+                'module': None,
                 'cycle': None,
             },
             'project': {
@@ -705,14 +710,16 @@ class PipelineGenerator:
 
         # Filters → relations (map filter tokens to relation alias for this primary)
         if intent.filters:
-            if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
-                required_relations.add(relation_alias_by_token['project'])
-            if 'cycle_title' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
-                required_relations.add(relation_alias_by_token['cycle'])
-            if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
-                required_relations.add(relation_alias_by_token['assignee'])
-            if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
-                required_relations.add(relation_alias_by_token['module'])
+            # For workItem, project/assignee/cycle/modules are embedded; no lookups needed for name filters
+            if collection != 'workItem':
+                if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token['project'])
+                if 'cycle_name' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token['cycle'])
+                if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token['assignee'])
+                if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token['module'])
             if 'member_role' in intent.filters:
                 # Require member join depending on collection
                 if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
@@ -721,7 +728,7 @@ class PipelineGenerator:
                     required_relations.add('members')
 
             # Multi-hop fallbacks for cycle/module via project when direct relations are absent
-            if 'cycle_title' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
+            if 'cycle_name' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
                 if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
                     required_relations.add('project')
                     required_relations.add('project.cycles')
@@ -748,38 +755,31 @@ class PipelineGenerator:
 
         # If grouping by cycle/module on workItem, ensure multi-hop joins are included
         if collection == 'workItem' and intent.group_by:
-            if 'cycle' in intent.group_by and 'project.cycles' not in required_relations:
-                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
-                    required_relations.add('project')
-                    required_relations.add('project.cycles')
-            if 'module' in intent.group_by and 'project.modules' not in required_relations:
-                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
-                    required_relations.add('project')
-                    required_relations.add('project.modules')
+            # workItem embeds cycle/modules; no multi-hop needed
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
-        for target_entity in sorted(required_relations):
-            # Allow multi-hop relation names like "project.cycles"
-            hops = target_entity.split(".")
-            current_collection = collection
-            local_prefix = None
-            for hop in hops:
-                if hop not in REL.get(current_collection, {}):
-                    break
-                relationship = REL[current_collection][hop]
-                lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
-                if lookup:
-                    pipeline.append(lookup)
-                    # If array relation, unwind the alias used in $lookup
-                    is_many = bool(relationship.get("isArray") or relationship.get("many", False))
-                    alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
-                    if is_many:
-                        pipeline.append({
-                            "$unwind": {"path": f"${alias_name}", "preserveNullAndEmptyArrays": True}
-                        })
-                    # Set local prefix to the alias for chaining next hop
-                    local_prefix = alias_name
-                current_collection = relationship["target"]
+            for target_entity in sorted(required_relations):
+                # Allow multi-hop relation names like "project.cycles"
+                hops = target_entity.split(".")
+                current_collection = collection
+                local_prefix = None
+                for hop in hops:
+                    if hop not in REL.get(current_collection, {}):
+                        break
+                    relationship = REL[current_collection][hop]
+                    lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
+                    if lookup:
+                        pipeline.append(lookup)
+                        # If array relation, unwind the alias used in $lookup
+                        is_many = bool(relationship.get("isArray") or relationship.get("many", False))
+                        alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
+                        if is_many:
+                            pipeline.append({
+                                "$unwind": {"path": f"${alias_name}", "preserveNullAndEmptyArrays": True}
+                            })
+                        # Set local prefix to the alias for chaining next hop
+                        local_prefix = alias_name
+                    current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)
         if secondary_filters:
@@ -878,8 +878,8 @@ class PipelineGenerator:
                 else:
                     pipeline.append({"$sort": intent.sort_order})
             elif 'state' in intent.sort_order and collection == 'workItem':
-                # Sort by state via stateMaster.name (string). No rank assumed.
-                pipeline.append({"$sort": {"stateMaster.name": intent.sort_order.get('state', 1)}})
+                # Sort by state via embedded state.name.
+                pipeline.append({"$sort": {"state.name": intent.sort_order.get('state', 1)}})
             else:
                 pipeline.append({"$sort": intent.sort_order})
 
@@ -922,6 +922,9 @@ class PipelineGenerator:
                 primary_filters['status'] = filters['status']
             if 'priority' in filters:
                 primary_filters['priority'] = filters['priority']
+            if 'state' in filters:
+                # Map logical state filter to embedded field
+                primary_filters['state.name'] = filters['state']
 
         elif collection == "project":
             if 'project_status' in filters:
@@ -960,24 +963,23 @@ class PipelineGenerator:
             if collection == 'project' and 'members' in REL.get('project', {}):
                 s['members.role'] = {'$regex': f"^{filters['member_role']}$", '$options': 'i'}
 
-        # Cycle title filter: support direct cycle relation or project.cycles alias
-        if 'cycle_title' in filters:
-            if 'cycle' in REL.get(collection, {}):
-                s['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+        # Cycle name filter: prefer embedded cycle.name; support joined aliases
+        if 'cycle_name' in filters:
+            if collection == 'workItem':
+                s['cycle.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
+            elif 'cycle' in REL.get(collection, {}):
+                s['cycle.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
             elif 'cycles' in REL.get(collection, {}):
-                s['cycles.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
-            else:
-                # If we joined via project.cycles, the alias would be 'cycles' from the inner lookup
-                s['cycles.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+                s['cycles.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
 
-        # Module name filter: support direct module relation or project.modules alias
+        # Module name filter: prefer embedded modules.name; support joined aliases
         if 'module_name' in filters:
-            if 'module' in REL.get(collection, {}):
-                s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+            if collection == 'workItem':
+                s['modules.name'] = {'$regex': filters['module_name'], '$options': 'i'}
+            elif 'module' in REL.get(collection, {}):
+                s['module.name'] = {'$regex': filters['module_name'], '$options': 'i'}
             elif 'modules' in REL.get(collection, {}):
-                s['modules.title'] = {'$regex': filters['module_name'], '$options': 'i'}
-            else:
-                s['modules.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+                s['modules.name'] = {'$regex': filters['module_name'], '$options': 'i'}
 
         return s
 
@@ -1011,8 +1013,9 @@ class PipelineGenerator:
         defaults_map: Dict[str, List[str]] = {
             "workItem": [
                 "displayBugNo", "title", "priority",
-                "stateMaster.name", "assignee",
-                "project.name", "createdTimeStamp"
+                "state.name", "assignee",
+                "project.name", "cycle.name", "modules.name",
+                "createdTimeStamp"
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
@@ -1057,10 +1060,10 @@ class PipelineGenerator:
             'workItem': {
                 # Only relations that exist in REL for workItem
                 'project': 'project.name',
-                'assignee': 'assignee.name',  # joined alias for assignee relation
-                'cycle': 'cycles.title',  # when joined via project.cycles multi-hop
-                'module': 'modules.title',  # when joined via project.modules multi-hop
-                'state': 'stateMaster.name',
+                'assignee': 'assignee.name',
+                'cycle': 'cycle.name',
+                'module': 'modules.name',
+                'state': 'state.name',
                 'priority': 'priority',
             },
             'project': {
