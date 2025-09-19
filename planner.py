@@ -45,6 +45,20 @@ class NaturalLanguageParser:
         Defaults to listing workItems, attempts to detect simple group-by and count prompts.
         """
         ql = (query or "").lower()
+        # Detect explicit entity mentions for simple primary selection
+        primary: str = "workItem"
+        if ("cycle" in ql) or ("cycles" in ql):
+            primary = "cycle"
+        elif ("project" in ql) or ("projects" in ql):
+            primary = "project"
+        elif ("module" in ql) or ("modules" in ql):
+            primary = "module"
+        elif ("page" in ql) or ("pages" in ql):
+            primary = "page"
+        elif ("member" in ql) or ("members" in ql):
+            primary = "members"
+        elif ("project state" in ql) or ("project states" in ql):
+            primary = "projectState"
         # Detect group-by tokens in simple phrasing
         group_tokens: List[str] = []
         for token in ["assignee", "project", "cycle", "status", "priority", "module"]:
@@ -56,7 +70,7 @@ class NaturalLanguageParser:
         aggregations: List[str] = ["group"] if group_tokens else (["count"] if wants_count else [])
 
         return QueryIntent(
-            primary_entity="workItem",
+            primary_entity=primary,
             target_entities=[],
             filters={},
             aggregations=aggregations,
@@ -208,6 +222,31 @@ class LLMIntentParser:
         requested_primary = (data.get("primary_entity") or "").strip()
         primary = requested_primary if requested_primary in self.entities else "workItem"
 
+        # Heuristic override: detect explicit entity in count-style or simple queries
+        oq_hint = (original_query or "").lower()
+        raw_group_by = data.get("group_by") or []
+        wants_count_pre = ("count" in (data.get("aggregations") or [])) or ("how many" in oq_hint)
+
+        # Map common nouns to entities
+        explicit_primary = None
+        if ("cycle" in oq_hint) or ("cycles" in oq_hint):
+            explicit_primary = "cycle"
+        elif ("project state" in oq_hint) or ("project states" in oq_hint):
+            explicit_primary = "projectState"
+        elif ("project" in oq_hint) or ("projects" in oq_hint):
+            explicit_primary = "project"
+        elif ("module" in oq_hint) or ("modules" in oq_hint):
+            explicit_primary = "module"
+        elif ("page" in oq_hint) or ("pages" in oq_hint):
+            explicit_primary = "page"
+        elif ("member" in oq_hint) or ("members" in oq_hint):
+            explicit_primary = "members"
+        elif any(w in oq_hint for w in ["work item", "work items", "bug", "bugs", "task", "tasks", "issue", "issues"]):
+            explicit_primary = "workItem"
+
+        if explicit_primary and (wants_count_pre or not raw_group_by):
+            primary = explicit_primary
+
         # Allowed relations for primary
         allowed_rels = set(self.entity_relations.get(primary, []))
         target_entities: List[str] = []
@@ -320,6 +359,32 @@ class LLMIntentParser:
         wants_details = bool(wants_details_raw) if wants_details_raw is not None else False
         wants_count = bool(wants_count_raw) if wants_count_raw is not None else False
         wants_count = wants_count or ("how many" in oq)
+
+        # Drop status/visibility filters that do not belong to the chosen primary entity
+        primary_allowed_status_filters = {
+            "workItem": {"status", "priority"},
+            "project": {"project_status"},
+            "cycle": {"cycle_status"},
+            "page": {"page_visibility"},
+            "module": set(),
+            "members": set(),
+            "projectState": set(),
+        }.get(primary, set())
+        for k in list(filters.keys()):
+            if k in {"status", "priority", "project_status", "cycle_status", "page_visibility"} and k not in primary_allowed_status_filters:
+                filters.pop(k, None)
+
+        # If it's a broad count question and the user did not specify a status/priority/visibility,
+        # drop those filters to avoid unintended narrowing by LLM guesses.
+        if wants_count:
+            status_terms = [
+                "active", "upcoming", "completed", "not started", "started", "overdue",
+                "public", "private", "archived", "urgent", "high", "medium", "low", "none"
+            ]
+            mentions_status_like = any(term in oq for term in status_terms)
+            if not mentions_status_like:
+                for k in ["status", "priority", "project_status", "cycle_status", "page_visibility"]:
+                    filters.pop(k, None)
 
         # If user asked a count-style question, force count-only intent
         if wants_count:
