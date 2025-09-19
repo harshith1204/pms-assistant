@@ -688,9 +688,12 @@ class PipelineGenerator:
             },
             'module': {
                 'project': 'project',
+                'assignee': 'assignee',
             },
             'page': {
                 'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
+                'cycle': 'linkedCycle',
+                'module': 'linkedModule',
             },
             'members': {
                 'project': 'project',
@@ -726,13 +729,15 @@ class PipelineGenerator:
                     required_relations.add('assignee')
                 if collection == 'project' and 'members' in REL.get('project', {}):
                     required_relations.add('members')
+                if collection == 'module' and 'assignee' in REL.get('module', {}):
+                    required_relations.add('assignee')
 
             # Multi-hop fallbacks for cycle/module via project when direct relations are absent
-            if 'cycle_name' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
+            if 'cycle_name' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {}) and 'linkedCycle' not in REL.get(collection, {})):
                 if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
                     required_relations.add('project')
                     required_relations.add('project.cycles')
-            if 'module_name' in intent.filters and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {})):
+            if 'module_name' in intent.filters and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {}) and 'linkedModule' not in REL.get(collection, {})):
                 if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
                     required_relations.add('project')
                     required_relations.add('project.modules')
@@ -753,33 +758,29 @@ class PipelineGenerator:
                     required_relations.add('project')
                     required_relations.add('project.modules')
 
-        # If grouping by cycle/module on workItem, ensure multi-hop joins are included
-        if collection == 'workItem' and intent.group_by:
-            # workItem embeds cycle/modules; no multi-hop needed
-
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
-            for target_entity in sorted(required_relations):
-                # Allow multi-hop relation names like "project.cycles"
-                hops = target_entity.split(".")
-                current_collection = collection
-                local_prefix = None
-                for hop in hops:
-                    if hop not in REL.get(current_collection, {}):
-                        break
-                    relationship = REL[current_collection][hop]
-                    lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
-                    if lookup:
-                        pipeline.append(lookup)
-                        # If array relation, unwind the alias used in $lookup
-                        is_many = bool(relationship.get("isArray") or relationship.get("many", False))
-                        alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
-                        if is_many:
-                            pipeline.append({
-                                "$unwind": {"path": f"${alias_name}", "preserveNullAndEmptyArrays": True}
-                            })
-                        # Set local prefix to the alias for chaining next hop
-                        local_prefix = alias_name
-                    current_collection = relationship["target"]
+        for target_entity in sorted(required_relations):
+            # Allow multi-hop relation names like "project.cycles"
+            hops = target_entity.split(".")
+            current_collection = collection
+            local_prefix = None
+            for hop in hops:
+                if hop not in REL.get(current_collection, {}):
+                    break
+                relationship = REL[current_collection][hop]
+                lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
+                if lookup:
+                    pipeline.append(lookup)
+                    # If array relation, unwind the alias used in $lookup
+                    is_many = bool(relationship.get("isArray") or relationship.get("many", False))
+                    alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
+                    if is_many:
+                        pipeline.append({
+                            "$unwind": {"path": f"${alias_name}", "preserveNullAndEmptyArrays": True}
+                        })
+                    # Set local prefix to the alias for chaining next hop
+                    local_prefix = alias_name
+                current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)
         if secondary_filters:
@@ -953,15 +954,28 @@ class PipelineGenerator:
 
         # Assignee name via joined alias 'assignees' (only if relation exists)
         if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
-            s['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            # Prefer embedded assignee names when present; joined alias may be 'assignees'
+            s['$or'] = s.get('$or', []) + [
+                {'assignee.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
+                {'assignees.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
+            ]
         # Member role filter when relation exists
         if 'member_role' in filters:
-            # For workItem: through assignee join we have assignees.role
+            # For workItem: embedded assignee or joined members
             if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
-                s['assignee.role'] = {'$regex': f"^{filters['member_role']}$", '$options': 'i'}
+                s['$or'] = s.get('$or', []) + [
+                    {'assignee.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
+                    {'assignees.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
+                ]
             # For project: through members join
             if collection == 'project' and 'members' in REL.get('project', {}):
                 s['members.role'] = {'$regex': f"^{filters['member_role']}$", '$options': 'i'}
+            # For module: embedded assignee or joined members
+            if collection == 'module' and 'assignee' in REL.get('module', {}):
+                s['$or'] = s.get('$or', []) + [
+                    {'assignee.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
+                    {'assignees.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
+                ]
 
         # Cycle name filter: prefer embedded cycle.name; support joined aliases
         if 'cycle_name' in filters:
@@ -971,6 +985,8 @@ class PipelineGenerator:
                 s['cycle.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
             elif 'cycles' in REL.get(collection, {}):
                 s['cycles.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
+            elif collection == 'page' and 'linkedCycle' in REL.get('page', {}):
+                s['linkedCycleDocs.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
 
         # Module name filter: prefer embedded modules.name; support joined aliases
         if 'module_name' in filters:
@@ -980,6 +996,8 @@ class PipelineGenerator:
                 s['module.name'] = {'$regex': filters['module_name'], '$options': 'i'}
             elif 'modules' in REL.get(collection, {}):
                 s['modules.name'] = {'$regex': filters['module_name'], '$options': 'i'}
+            elif collection == 'page' and 'linkedModule' in REL.get('page', {}):
+                s['linkedModuleDocs.name'] = {'$regex': filters['module_name'], '$options': 'i'}
 
         return s
 
@@ -1072,6 +1090,11 @@ class PipelineGenerator:
             'cycle': {
                 'project': 'project.name',
                 'status': 'status',  # cycle status unchanged
+            },
+            'page': {
+                'project': 'projectDoc.name',
+                'cycle': 'linkedCycleDocs.name',
+                'module': 'linkedModuleDocs.name',
             },
         }
         entity_map = mapping.get(primary_entity, {})
