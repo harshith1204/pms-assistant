@@ -138,7 +138,12 @@ class LLMIntentParser:
             "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
             "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module.\n"
             "sort_order keys allowed: createdTimeStamp, priority, status.\n"
-            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown."
+            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown.\n\n"
+            "Entity inclusion policy: Only include secondary name filters (project_name, cycle_title, module_name, assignee_name) "
+            "when the user explicitly mentions that entity in the query. Do NOT guess based on a name alone. "
+            "Do NOT map the same natural-language name to multiple entities at once. If ambiguous, prefer assignee.\n"
+            "Target entities minimization: Include only relations required to satisfy filters or group_by. "
+            "Do NOT add project/cycle/module lookups unless their filters or group_by are present."
         )
 
         schema = {
@@ -170,6 +175,8 @@ class LLMIntentParser:
             "- Only use allowed entities, relations, and fields.\n"
             "- If both details and count are implied, set wants_details true and wants_count false.\n"
             "- Keep target_entities minimal but sufficient to support filters and group_by.\n"
+            "- Only include project_name/cycle_title/module_name if the query explicitly mentions project/cycle/module.\n"
+            "- Never assign the same name to multiple entity filters; if unclear, prefer assignee_name.\n"
             "- Do NOT include any explanations or prose. Output JSON ONLY.\n\n"
             f"Schema (for reference, keys only): {json.dumps(schema)}\n\n"
             f"User Query: {query}"
