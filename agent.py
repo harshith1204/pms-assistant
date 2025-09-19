@@ -1,18 +1,13 @@
-from langchain_ollama import ChatOllama
-
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
-from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, SystemMessage
 import json
 import asyncio
 from typing import Dict, Any, List, AsyncGenerator, Optional
 from pydantic import BaseModel
-import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
+from tools import intelligent_query as intelligent_query_tool
 
-tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -63,85 +58,54 @@ class ConversationMemory:
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
 
-# Initialize the LLM with optimized settings for tool calling
-llm = ChatOllama(
-    model="qwen3:0.6b-fp16",
-    temperature=0.3,
-    num_ctx=4096,  # Increased context for better understanding
-    num_predict=1024,  # Allow longer responses for detailed insights
-    num_thread=8,  # Use multiple threads for speed
-    streaming=True,  # Enable streaming for real-time responses
-    verbose=False,
-    top_p=0.9,  # Better response diversity
-    top_k=40,  # Focus on high-probability tokens
-)
-
-# Bind tools to the LLM for tool calling
-llm_with_tools = llm.bind_tools(tools_list)
-
-class ToolCallingCallbackHandler(AsyncCallbackHandler):
-    """Callback handler for tool calling streaming"""
-
-    def __init__(self, websocket=None):
-        self.websocket = websocket
-        self.start_time = None
-
-    async def on_llm_start(self, *args, **kwargs):
-        """Called when LLM starts generating"""
-        self.start_time = time.time()
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "llm_start",
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def on_llm_new_token(self, token: str, **kwargs):
-        """Stream each token as it's generated"""
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "token",
-                "content": token,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def on_llm_end(self, *args, **kwargs):
-        """Called when LLM finishes generating"""
-        elapsed_time = time.time() - self.start_time if self.start_time else 0
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "llm_end",
-                "elapsed_time": elapsed_time,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
-        """Called when a tool starts executing"""
-        tool_name = serialized.get("name", "Unknown Tool")
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "tool_start",
-                "tool_name": tool_name,
-                "input": input_str,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def on_tool_end(self, output: str, **kwargs):
-        """Called when a tool finishes executing"""
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "tool_end",
-                "output": output,
-                "timestamp": datetime.now().isoformat()
-            })
-
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling"""
+    """Simple context-aware agent that forwards queries to the MongoDB tool.
+
+    Behavior:
+    - Maintains conversation context per conversation_id.
+    - By default, forwards the user's query directly to the `intelligent_query` tool.
+    - If the query depends on prior context (pronouns/ellipses with no entity nouns),
+      it synthesizes a precise follow-up by referencing the last relevant user message.
+    """
 
     def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
-        self.llm_with_tools = llm_with_tools
         self.connected = False
-        self.max_steps = max_steps
         self.system_prompt = system_prompt
+        # max_steps retained for interface compatibility; unused in simple agent
+        self.max_steps = max_steps
+
+    def _depends_on_context(self, query: str) -> bool:
+        """Heuristic: returns True if the query likely depends on previous context."""
+        if not query:
+            return False
+        ql = query.strip().lower()
+        pronouns = [
+            "it", "this", "that", "those", "these", "them", "the same",
+            "based on above", "as before", "like earlier", "as earlier",
+            "those ones", "that one"
+        ]
+        has_pronoun = any(p in ql for p in pronouns)
+        entity_keywords = [
+            "workitem", "work item", "project", "cycle", "module",
+            "member", "members", "page", "projectstate", "project state",
+            "bug", "task", "issue"
+        ]
+        mentions_entity = any(k in ql for k in entity_keywords)
+        # Depend on context if pronouns present and no explicit entity terms
+        return has_pronoun and not mentions_entity
+
+    def _build_contextual_query(self, query: str, conversation_id: str) -> str:
+        """Construct a precise follow-up by referencing the last user message with entity context."""
+        history = conversation_memory.get_conversation_history(conversation_id)
+        # Find the last HumanMessage before the current one
+        last_context: Optional[str] = None
+        for msg in reversed(history[:-1] if history else []):
+            if isinstance(msg, HumanMessage) and isinstance(msg.content, str) and msg.content.strip():
+                last_context = msg.content.strip()
+                break
+        if last_context:
+            return f"Follow-up to previous: {last_context}\nNow: {query}"
+        return query
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
@@ -155,165 +119,88 @@ class MongoDBAgent:
         self.connected = False
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
-        """Run the agent with a query and optional conversation context"""
+        """Run the simple agent: forward the query (with minimal context if needed) to the tool."""
         if not self.connected:
             await self.connect()
 
         try:
-            # Use default conversation ID if none provided
             if not conversation_id:
                 conversation_id = f"conv_{int(time.time())}"
 
-            # Get conversation history
-            conversation_context = conversation_memory.get_recent_context(conversation_id)
-
-            # Build messages with optional system instruction
-            messages: List[BaseMessage] = []
-            if self.system_prompt:
-                messages.append(SystemMessage(content=self.system_prompt))
-            messages.extend(conversation_context)
-
-            # Add current user message
+            # Persist the human message first
             human_message = HumanMessage(content=query)
-            messages.append(human_message)
-
-            # Persist the human message
             conversation_memory.add_message(conversation_id, human_message)
 
-            steps = 0
-            last_response: Optional[AIMessage] = None
+            final_query = query
+            if self._depends_on_context(query):
+                final_query = self._build_contextual_query(query, conversation_id)
 
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(messages)
-                last_response = response
+            # Execute the intelligent query tool directly
+            result = await intelligent_query_tool.ainvoke({"query": final_query})
 
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
-
-                # If no tools requested, we are done
-                if not getattr(response, "tool_calls", None):
-                    return response.content
-
-                # Execute requested tools sequentially
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        # If tool not found, surface an error message and stop
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
-                            tool_call_id=tool_call["id"],
-                        )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
-
-                    try:
-                        result = await tool.ainvoke(tool_call["args"])
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
-
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
-
-                steps += 1
-
-            # Step cap reached; return best available answer
-            if last_response is not None:
-                return last_response.content
-            return "Reached maximum reasoning steps without a final answer."
+            # Persist assistant response
+            ai_message = AIMessage(content=str(result))
+            conversation_memory.add_message(conversation_id, ai_message)
+            return str(result)
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """Run the agent with streaming support and conversation context"""
+        """Run the simple agent with optional streaming via websocket events.
+
+        Emits a single content chunk (no token-level streaming) and optional tool_start/tool_end events.
+        """
         if not self.connected:
             await self.connect()
 
         try:
-            # Use default conversation ID if none provided
             if not conversation_id:
                 conversation_id = f"conv_{int(time.time())}"
 
-            # Get conversation history
-            conversation_context = conversation_memory.get_recent_context(conversation_id)
-
-            # Build messages with optional system instruction
-            messages: List[BaseMessage] = []
-            if self.system_prompt:
-                messages.append(SystemMessage(content=self.system_prompt))
-            messages.extend(conversation_context)
-
-            # Add current user message
-            human_message = HumanMessage(content=query)
-            messages.append(human_message)
-
-            callback_handler = ToolCallingCallbackHandler(websocket)
-
             # Persist the human message
+            human_message = HumanMessage(content=query)
             conversation_memory.add_message(conversation_id, human_message)
 
-            steps = 0
-            last_response: Optional[AIMessage] = None
+            final_query = query
+            if self._depends_on_context(query):
+                final_query = self._build_contextual_query(query, conversation_id)
 
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(
-                    messages,
-                    config={"callbacks": [callback_handler]},
-                )
-                last_response = response
+            # Send tool_start
+            if websocket:
+                await websocket.send_json({
+                    "type": "tool_start",
+                    "tool_name": "intelligent_query",
+                    "input": json.dumps({"query": final_query}),
+                    "timestamp": datetime.now().isoformat()
+                })
 
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
+            # Execute tool
+            result = await intelligent_query_tool.ainvoke({"query": final_query})
 
-                if not getattr(response, "tool_calls", None):
-                    yield response.content
-                    return
+            # Send tool_end
+            if websocket:
+                await websocket.send_json({
+                    "type": "tool_end",
+                    "output": str(result),
+                    "timestamp": datetime.now().isoformat()
+                })
 
-                # Execute requested tools sequentially with streaming callbacks
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
-                            tool_call_id=tool_call["id"],
-                        )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
-
-                    await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
-                    try:
-                        result = await tool.ainvoke(tool_call["args"])
-                        await callback_handler.on_tool_end(str(result))
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
-                        await callback_handler.on_tool_end(str(result))
-
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
-
-                steps += 1
-
-            # Step cap reached; send best available response
-            if last_response is not None:
-                yield last_response.content
-            else:
-                yield "Reached maximum reasoning steps without a final answer."
+            # Persist assistant message and yield
+            ai_message = AIMessage(content=str(result))
+            conversation_memory.add_message(conversation_id, ai_message)
+            yield str(result)
             return
 
         except Exception as e:
-            yield f"Error running streaming agent: {str(e)}"
+            err = f"Error running streaming agent: {str(e)}"
+            if websocket:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": err,
+                    "timestamp": datetime.now().isoformat()
+                })
+            yield err
 
 # ProjectManagement Insights Examples
 async def main():
