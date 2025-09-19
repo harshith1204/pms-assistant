@@ -16,6 +16,64 @@ from constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
 
+# --- Synonym dictionaries to make user queries more forgiving ---
+# Maps natural-language synonyms to canonical collection/entity names
+ENTITY_SYNONYMS: Dict[str, List[str]] = {
+    "workItem": [
+        "work item", "work items", "issue", "issues", "bug", "bugs",
+        "ticket", "tickets", "task", "tasks", "story", "stories"
+    ],
+    "project": ["project", "projects"],
+    "cycle": ["cycle", "cycles", "sprint", "sprints", "iteration", "iterations", "milestone", "milestones"],
+    "module": ["module", "modules", "component", "components", "feature", "features"],
+    "page": ["page", "pages", "doc", "docs", "document", "documents", "note", "notes", "wiki", "wikis"],
+    "members": ["member", "members", "user", "users", "assignee", "assignees", "developer", "developers", "engineer", "engineers", "owner", "owners", "teammate", "teammates"],
+    "projectState": ["project state", "project states", "workflow", "workflows", "state machine", "states"]
+}
+
+# Maps field synonyms to canonical planner filter keys
+FIELD_SYNONYMS: Dict[str, str] = {
+    # state/status
+    "status": "state",
+    "workflow state": "state",
+    # priority/severity
+    "severity": "priority",
+    # names
+    "project": "project_name",
+    "project name": "project_name",
+    "cycle": "cycle_name",
+    "cycle name": "cycle_name",
+    "module": "module_name",
+    "module name": "module_name",
+    "assignee": "assignee_name",
+    "assignee name": "assignee_name",
+    "owner": "assignee_name",
+}
+
+# Phrases that imply each operation
+COUNT_PHRASES: List[str] = [
+    "how many", "count", "number of", "total", "totals", "what is the count"
+]
+GROUP_PHRASES: List[str] = [
+    "group by", "grouped by", "breakdown by", "split by", "per ", "by "
+]
+
+def _text_has_any(text: str, phrases: List[str]) -> bool:
+    q = text.lower()
+    return any(p in q for p in phrases)
+
+def _detect_primary_from_synonyms(query: str) -> Optional[str]:
+    q = query.lower()
+    for canonical, synonyms in ENTITY_SYNONYMS.items():
+        for s in synonyms:
+            if f" {s} " in f" {q} ":
+                return canonical
+    return None
+
+def _normalize_field_key(raw_key: str) -> str:
+    k = raw_key.strip().lower()
+    return FIELD_SYNONYMS.get(k, raw_key)
+
 @dataclass
 class QueryIntent:
     """Represents the parsed intent of a user query"""
@@ -46,29 +104,33 @@ class NaturalLanguageParser:
         Defaults to listing workItems, attempts to detect simple group-by and count prompts.
         """
         ql = (query or "").lower()
-        # Detect explicit entity mentions for simple primary selection
-        primary: str = "workItem"
-        if ("cycle" in ql) or ("cycles" in ql):
-            primary = "cycle"
-        elif ("project" in ql) or ("projects" in ql):
-            primary = "project"
-        elif ("module" in ql) or ("modules" in ql):
-            primary = "module"
-        elif ("page" in ql) or ("pages" in ql):
-            primary = "page"
-        elif ("member" in ql) or ("members" in ql):
-            primary = "members"
-        elif ("project state" in ql) or ("project states" in ql):
-            primary = "projectState"
+        # Detect explicit entity mentions for simple primary selection (with synonyms)
+        primary_detected = _detect_primary_from_synonyms(ql)
+        primary: str = primary_detected or "workItem"
         # Detect group-by tokens in simple phrasing
         group_tokens: List[str] = []
-        for token in ["assignee", "project", "cycle", "state", "status", "priority", "module"]:
-            if f"group by {token}" in ql or f"grouped by {token}" in ql or f"breakdown by {token}" in ql:
+        raw_group_candidates = ["assignee", "owner", "project", "cycle", "state", "status", "priority", "severity", "module"]
+        for token in raw_group_candidates:
+            if (
+                f"group by {token}" in ql or f"grouped by {token}" in ql or f"breakdown by {token}" in ql or
+                (ql.startswith(f"by {token}") or f" by {token}" in ql)
+            ):
                 group_tokens.append(token)
+        # Canonicalize group tokens
+        canonical_group: List[str] = []
+        for t in group_tokens:
+            if t == "status":
+                canonical_group.append("state")
+            elif t == "severity":
+                canonical_group.append("priority")
+            elif t == "owner":
+                canonical_group.append("assignee")
+            else:
+                canonical_group.append(t)
 
         # Detect count requests
-        wants_count = ("count" in ql) or ("how many" in ql)
-        aggregations: List[str] = ["group"] if group_tokens else (["count"] if wants_count else [])
+        wants_count = _text_has_any(ql, COUNT_PHRASES)
+        aggregations: List[str] = ["group"] if canonical_group else (["count"] if wants_count else [])
 
         # Simple synonyms → filters
         filters: Dict[str, Any] = {}
@@ -102,7 +164,7 @@ class NaturalLanguageParser:
             target_entities=[],
             filters=filters,
             aggregations=aggregations,
-            group_by=group_tokens,
+            group_by=canonical_group,
             projections=[],
             sort_order=None,
             limit=20,
@@ -166,42 +228,22 @@ class LLMIntentParser:
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
         system = (
-            "You are an expert MongoDB query planner for a Project Management System. "
-            "Given a natural-language question, output a STRICT JSON object describing the intent. "
-            "Use only the provided entity names, relations, and allow-listed fields. "
-            "Do not generate raw pipelines; produce a plan that a downstream generator will realize.\n\n"
-            "Collections (entities): " + ", ".join(self.entities) + "\n" +
-            "Relations per entity (use only these as target_entities):\n" +
-            "\n".join(f"- {e}: {', '.join(self.entity_relations.get(e, []))}" for e in self.entities) + "\n\n" +
-            "Allow-listed fields per entity (projections must be subset of primary's list):\n" +
-            "\n".join(f"- {e}: {', '.join(self.allowed_fields.get(e, []))}" for e in self.entities) + "\n\n" +
-            "Normalize keys as follows: state, priority, project_status, cycle_status, page_visibility, "
-            "project_name, cycle_name, assignee_name, module_name. Use uppercase enum values if obvious.\n"
-            "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, state, priority, module.\n"
-            "sort_order keys allowed: createdTimeStamp, priority, state.\n"
-            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown.\n\n"
-            "Entity inclusion policy: Only include secondary name filters (project_name, cycle_name, module_name, assignee_name) "
-            "when the user explicitly mentions that entity in the query. Do NOT guess based on a name alone. "
-            "Do NOT map the same natural-language name to multiple entities at once. If ambiguous, prefer assignee.\n"
-            "Target entities minimization: Include only relations required to satisfy filters or group_by. "
-            "Do NOT add project/cycle/module lookups unless their filters or group_by are present.\n"
-            "Default entity selection: When counting or querying 'work items' without specific context, use 'workItem' as primary entity. "
-            "Only use 'project' as primary when the query is specifically about projects themselves.\n"
-            "Count vs Details: Use aggregations: ['count'] for questions asking 'how many', 'what is the total', 'count', etc. "
-            "Use empty aggregations: [] for questions asking to 'show', 'list', 'display' items.\n"
-            "IMPORTANT: For simple count queries like 'how many X are there', do NOT add target_entities, group_by, or complex aggregations. "
-            "Keep it simple: just set primary_entity to the correct collection and aggregations: ['count'].\n\n"
-            "Examples:\n"
-            "- 'how many work items are assigned to alice' -> {primary_entity: workItem, filters: {assignee_name: 'alice'}, aggregations: ['count'], wants_count: true}\n"
-            "- 'how many work items are there' -> {primary_entity: workItem, aggregations: ['count'], wants_count: true}\n"
-            "- 'how many upcoming cycles are there' -> {primary_entity: cycle, filters: {cycle_status: 'UPCOMING'}, aggregations: ['count'], wants_count: true}\n"
-            "- 'how many active projects are there' -> {primary_entity: project, filters: {project_status: 'STARTED'}, aggregations: ['count'], wants_count: true}\n"
-            "- 'how many cycles are there' -> {primary_entity: cycle, aggregations: ['count'], wants_count: true}\n"
-            "- 'count the work items' -> {primary_entity: workItem, aggregations: ['count'], wants_count: true}\n"
-            "- 'show me all work items' -> {primary_entity: workItem, aggregations: [], wants_details: true}\n"
-            "- 'how many projects are there' -> {primary_entity: project, aggregations: ['count'], wants_count: true}\n"
-            "- 'show projects named CRM' -> {primary_entity: project, filters: {project_name: 'CRM'}, wants_details: true}\n"
-            "- 'group work items by priority' -> {primary_entity: workItem, aggregations: ['group'], group_by: ['priority'], wants_details: false}"
+            "You are an expert planner that converts a user's PM query into a SIMPLE JSON intent. "
+            "Your job: decide the target entity, the operation (count | list | group), minimal filters, and optional sort/limit. "
+            "Do NOT return a pipeline; ONLY a compact intent JSON.\n\n"
+            "Entities (use exactly these canonical names): " + ", ".join(self.entities) + "\n"
+            "Allowed group-by tokens: cycle, project, assignee, state, priority, module.\n"
+            "Filters use these keys only: state, priority, project_status, cycle_status, page_visibility, project_name, cycle_name, assignee_name, module_name.\n"
+            "Operations:\n"
+            "- Count: if the user asks 'how many', 'count', 'number of', 'total'. Keep it minimal: no group_by, no target_entities.\n"
+            "- List (details): if the user asks to show/list/display items. aggregations: [] and wants_details: true.\n"
+            "- Group: if the user says 'group by'/'breakdown by' <token>. aggregations: ['group'], group_by: [tokens].\n\n"
+            "Synonyms to understand (map to canonical):\n"
+            "- Entities: work items = issues/bugs/tickets/tasks/stories; cycles = sprints/iterations/milestones; members = users/assignees/owners; modules = features/components.\n"
+            "- Fields: status -> state, severity -> priority, owner -> assignee_name.\n\n"
+            "Keep target_entities minimal: include relations only if needed for filters or group_by.\n"
+            "Default entity: use workItem unless the question is clearly about projects/cycles/pages/modules/members/projectState.\n"
+            "Always output ALL top-level keys in the JSON (include empty values when unknown)."
         )
 
         schema = {
@@ -267,24 +309,11 @@ class LLMIntentParser:
         # Heuristic override: detect explicit entity in count-style or simple queries
         oq_hint = (original_query or "").lower()
         raw_group_by = data.get("group_by") or []
-        wants_count_pre = ("count" in (data.get("aggregations") or [])) or ("how many" in oq_hint)
+        wants_count_pre = ("count" in (data.get("aggregations") or [])) or _text_has_any(oq_hint, COUNT_PHRASES)
 
         # Map common nouns to entities - stronger override for count queries
         explicit_primary = None
-        if ("cycle" in oq_hint) or ("cycles" in oq_hint):
-            explicit_primary = "cycle"
-        elif ("project state" in oq_hint) or ("project states" in oq_hint):
-            explicit_primary = "projectState"
-        elif ("project" in oq_hint) or ("projects" in oq_hint):
-            explicit_primary = "project"
-        elif ("module" in oq_hint) or ("modules" in oq_hint):
-            explicit_primary = "module"
-        elif ("page" in oq_hint) or ("pages" in oq_hint):
-            explicit_primary = "page"
-        elif ("member" in oq_hint) or ("members" in oq_hint):
-            explicit_primary = "members"
-        elif any(w in oq_hint for w in ["work item", "work items", "bug", "bugs", "task", "tasks", "issue", "issues"]):
-            explicit_primary = "workItem"
+        explicit_primary = _detect_primary_from_synonyms(oq_hint)
 
         # For count queries, always override LLM's primary entity if we detect an explicit entity
         # This prevents the LLM from incorrectly setting workItem as primary for "how many cycles"
@@ -330,12 +359,14 @@ class LLMIntentParser:
             "verified": "Verified",
         }
         for k, v in raw_filters.items():
-            if k in known_filter_keys and isinstance(v, (str, int)) and not self._is_placeholder(v):
+            # normalize user/LLM-proposed field key to canonical
+            k_norm = _normalize_field_key(k)
+            if k_norm in known_filter_keys and isinstance(v, (str, int)) and not self._is_placeholder(v):
                 if isinstance(v, str):
                     vs = v.strip()
                 else:
                     vs = v
-                if k == "state" and isinstance(vs, str):
+                if k_norm == "state" and isinstance(vs, str):
                     canon = state_canonical.get(vs.lower())
                     if not canon:
                         # if not recognized, skip state filter
@@ -343,21 +374,25 @@ class LLMIntentParser:
                     filters["state"] = canon
                     continue
                 # legacy normalize (no longer expected but kept for safety)
-                if k == "cycle_title":
+                if k_norm == "cycle_title":
                     filters["cycle_name"] = vs
                     continue
                 # enforce uppercase for enum-like others
-                if k in {"project_status", "cycle_status", "page_visibility"} and isinstance(vs, str):
+                if k_norm in {"project_status", "cycle_status", "page_visibility"} and isinstance(vs, str):
                     if "?" in vs or not vs.isupper():
                         continue
-                filters[k] = vs
+                filters[k_norm] = vs
 
         # Enforce entity mention policy for name filters; prefer assignee on ambiguity
         oq_sanitize = (original_query or "").lower()
-        mentions_project = "project" in oq_sanitize
-        mentions_cycle = "cycle" in oq_sanitize
-        mentions_module = ("module" in oq_sanitize) or ("modules" in oq_sanitize)
-        mentions_assignee = ("assignee" in oq_sanitize) or ("assigned to" in oq_sanitize) or ("assigned" in oq_sanitize and " to " in oq_sanitize)
+        def _mentions(entity_key: str) -> bool:
+            synonyms = ENTITY_SYNONYMS.get(entity_key, [])
+            return any(f" {s} " in f" {oq_sanitize} " for s in synonyms)
+        mentions_project = _mentions("project")
+        mentions_cycle = _mentions("cycle")
+        mentions_module = _mentions("module")
+        # Assignee/owner synonyms
+        mentions_assignee = _mentions("members") or ("assigned to" in oq_sanitize) or ("assigned" in oq_sanitize and " to " in oq_sanitize) or ("owner" in oq_sanitize)
 
         # Auto-detect status/priority filters and special intents based on query keywords
         if primary == "cycle" and "upcoming" in oq_sanitize and "cycle_status" not in filters:
@@ -499,7 +534,7 @@ class LLMIntentParser:
         wants_count_raw = data.get("wants_count")
         wants_details = bool(wants_details_raw) if wants_details_raw is not None else False
         wants_count = bool(wants_count_raw) if wants_count_raw is not None else False
-        wants_count = wants_count or ("how many" in oq)
+        wants_count = wants_count or _text_has_any(oq, COUNT_PHRASES)
 
         # Drop status/visibility filters that do not belong to the chosen primary entity
         primary_allowed_status_filters = {
