@@ -149,7 +149,9 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "_id", "projectDisplayId", "name", "description",
         "imageUrl", "icon", "access", "isActive", "status",
         "favourite", "isArchived", "createdTimeStamp", "updatedTimeStamp",
-        "business._id", "business.name"
+        "business._id", "business.name",
+        # creator info (for queries like "who created the project")
+        "createdBy._id", "createdBy.name"
     },
     "cycle": {
         "_id", "title", "description", "status",
@@ -208,7 +210,7 @@ def validate_fields(collection: str, fields: List[str]) -> List[str]:
     allowed = ALLOWED_FIELDS[collection]
     return [field for field in fields if resolve_field_alias(collection, field) in allowed]
 
-def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], current_collection: str, additional_filters: Dict[str, Any] = None) -> Dict[str, Any]:
+def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], current_collection: str, additional_filters: Dict[str, Any] = None, local_field_prefix: str = None) -> Dict[str, Any]:
     """Build MongoDB $lookup stage based on relationship definition.
 
     Enhancements:
@@ -247,6 +249,9 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
         foreign_field_raw = relationship["foreignField"]
         # Keep local path relative to current document
         local_field_path = _strip_prefix(local_field_raw, current_collection)
+        if local_field_prefix:
+            # When doing multi-hop, reference the field from prior lookup alias
+            local_field_path = f"{local_field_prefix}.{local_field_path}"
         # Foreign path should be relative to remote collection
         foreign_field_path = _strip_prefix(foreign_field_raw, from_collection)
 
@@ -274,6 +279,8 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
                     local_field_path = ".".join(local_parts[1:])
                 else:
                     local_field_path = ".".join(local_parts)
+                if local_field_prefix:
+                    local_field_path = f"{local_field_prefix}.{local_field_path}"
 
                 var_name = f"local_{local_field_path.replace('.', '_')}"
                 lookup_stage["$lookup"]["let"][var_name] = f"${local_field_path}"
@@ -334,6 +341,8 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
                     local_field_path = strip_prefix(left, current_collection)
                 else:
                     local_field_path = left
+                if local_field_prefix:
+                    local_field_path = f"{local_field_prefix}.{local_field_path}"
                 var_name = f"local_{local_field_path.replace('.', '_')}"
                 lookup_stage["$lookup"]["let"][var_name] = f"${local_field_path}"
                 remote_field = strip_prefix(right, from_collection)
