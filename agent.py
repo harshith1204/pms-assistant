@@ -183,44 +183,51 @@ class MongoDBAgent:
             steps = 0
             last_response: Optional[AIMessage] = None
 
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(messages)
-                last_response = response
+            # STRICT passthrough to intelligent_query with the exact user text, avoiding rephrasing
+            from tools import intelligent_query as _iq
+            try:
+                iq_output = await _iq.ainvoke({"query": query})
+                return iq_output
+            except Exception as strict_exc:
+                # Fallback to original multi-step loop if strict call fails
+                while steps < self.max_steps:
+                    response = await self.llm_with_tools.ainvoke(messages)
+                    last_response = response
 
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
+                    # Persist assistant message
+                    conversation_memory.add_message(conversation_id, response)
 
-                # If no tools requested, we are done
-                if not getattr(response, "tool_calls", None):
-                    return response.content
+                    # If no tools requested, we are done
+                    if not getattr(response, "tool_calls", None):
+                        return response.content
 
-                # Execute requested tools sequentially
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        # If tool not found, surface an error message and stop
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
+                    # Execute requested tools sequentially
+                    messages.append(response)
+                    for tool_call in response.tool_calls:
+                        tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                        if not tool:
+                            # If tool not found, surface an error message and stop
+                            error_msg = ToolMessage(
+                                content=f"Tool '{tool_call['name']}' not found.",
+                                tool_call_id=tool_call["id"],
+                            )
+                            messages.append(error_msg)
+                            conversation_memory.add_message(conversation_id, error_msg)
+                            continue
+
+                        try:
+                            result = await tool.ainvoke(tool_call["args"])
+                        except Exception as tool_exc:
+                            result = f"Tool execution error: {tool_exc}"
+
+                        tool_message = ToolMessage(
+                            content=str(result),
                             tool_call_id=tool_call["id"],
                         )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
+                        messages.append(tool_message)
+                        conversation_memory.add_message(conversation_id, tool_message)
 
-                    try:
-                        result = await tool.ainvoke(tool_call["args"])
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
-
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
-
-                steps += 1
+                    steps += 1
 
             # Step cap reached; return best available answer
             if last_response is not None:
@@ -261,49 +268,56 @@ class MongoDBAgent:
             steps = 0
             last_response: Optional[AIMessage] = None
 
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(
-                    messages,
-                    config={"callbacks": [callback_handler]},
-                )
-                last_response = response
+            # STRICT passthrough to intelligent_query first
+            from tools import intelligent_query as _iq
+            try:
+                iq_output = await _iq.ainvoke({"query": query})
+                yield str(iq_output)
+                return
+            except Exception as strict_exc:
+                while steps < self.max_steps:
+                    response = await self.llm_with_tools.ainvoke(
+                        messages,
+                        config={"callbacks": [callback_handler]},
+                    )
+                    last_response = response
 
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
+                    # Persist assistant message
+                    conversation_memory.add_message(conversation_id, response)
 
-                if not getattr(response, "tool_calls", None):
-                    yield response.content
-                    return
+                    if not getattr(response, "tool_calls", None):
+                        yield response.content
+                        return
 
-                # Execute requested tools sequentially with streaming callbacks
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
+                    # Execute requested tools sequentially with streaming callbacks
+                    messages.append(response)
+                    for tool_call in response.tool_calls:
+                        tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                        if not tool:
+                            error_msg = ToolMessage(
+                                content=f"Tool '{tool_call['name']}' not found.",
+                                tool_call_id=tool_call["id"],
+                            )
+                            messages.append(error_msg)
+                            conversation_memory.add_message(conversation_id, error_msg)
+                            continue
+
+                        await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                        try:
+                            result = await tool.ainvoke(tool_call["args"])
+                            await callback_handler.on_tool_end(str(result))
+                        except Exception as tool_exc:
+                            result = f"Tool execution error: {tool_exc}"
+                            await callback_handler.on_tool_end(str(result))
+
+                        tool_message = ToolMessage(
+                            content=str(result),
                             tool_call_id=tool_call["id"],
                         )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
+                        messages.append(tool_message)
+                        conversation_memory.add_message(conversation_id, tool_message)
 
-                    await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
-                    try:
-                        result = await tool.ainvoke(tool_call["args"])
-                        await callback_handler.on_tool_end(str(result))
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
-                        await callback_handler.on_tool_end(str(result))
-
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
-
-                steps += 1
+                    steps += 1
 
             # Step cap reached; send best available response
             if last_response is not None:
