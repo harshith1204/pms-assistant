@@ -161,16 +161,20 @@ class LLMIntentParser:
             "Default entity selection: When counting or querying 'work items' without specific context, use 'workItem' as primary entity. "
             "Only use 'project' as primary when the query is specifically about projects themselves.\n"
             "Count vs Details: Use aggregations: ['count'] for questions asking 'how many', 'what is the total', 'count', etc. "
-            "Use empty aggregations: [] for questions asking to 'show', 'list', 'display' items.\n\n"
+            "Use empty aggregations: [] for questions asking to 'show', 'list', 'display' items.\n"
+            "IMPORTANT: For simple count queries like 'how many X are there', do NOT add target_entities, group_by, or complex aggregations. "
+            "Keep it simple: just set primary_entity to the correct collection and aggregations: ['count'].\n\n"
             "Examples:\n"
-            "- 'how many work items are assigned to alice' -> {primary: workItem, filters: {assignee_name: 'alice'}, aggregations: ['count']}\n"
-            "- 'how many work items are there' -> {primary: workItem, aggregations: ['count']}\n"
-            "- 'what is the total number of work items' -> {primary: workItem, aggregations: ['count']}\n"
-            "- 'count the work items' -> {primary: workItem, aggregations: ['count']}\n"
-            "- 'show me all work items' -> {primary: workItem, aggregations: []}\n"
-            "- 'how many projects are there' -> {primary: project, aggregations: ['count']}\n"
-            "- 'show projects named CRM' -> {primary: project, filters: {project_name: 'CRM'}}\n"
-            "- 'group work items by priority' -> {primary: workItem, aggregations: ['group'], group_by: ['priority'], wants_details: false}"
+            "- 'how many work items are assigned to alice' -> {primary_entity: workItem, filters: {assignee_name: 'alice'}, aggregations: ['count'], wants_count: true}\n"
+            "- 'how many work items are there' -> {primary_entity: workItem, aggregations: ['count'], wants_count: true}\n"
+            "- 'how many upcoming cycles are there' -> {primary_entity: cycle, filters: {cycle_status: 'UPCOMING'}, aggregations: ['count'], wants_count: true}\n"
+            "- 'how many active projects are there' -> {primary_entity: project, filters: {project_status: 'STARTED'}, aggregations: ['count'], wants_count: true}\n"
+            "- 'how many cycles are there' -> {primary_entity: cycle, aggregations: ['count'], wants_count: true}\n"
+            "- 'count the work items' -> {primary_entity: workItem, aggregations: ['count'], wants_count: true}\n"
+            "- 'show me all work items' -> {primary_entity: workItem, aggregations: [], wants_details: true}\n"
+            "- 'how many projects are there' -> {primary_entity: project, aggregations: ['count'], wants_count: true}\n"
+            "- 'show projects named CRM' -> {primary_entity: project, filters: {project_name: 'CRM'}, wants_details: true}\n"
+            "- 'group work items by priority' -> {primary_entity: workItem, aggregations: ['group'], group_by: ['priority'], wants_details: false}"
         )
 
         schema = {
@@ -238,7 +242,7 @@ class LLMIntentParser:
         raw_group_by = data.get("group_by") or []
         wants_count_pre = ("count" in (data.get("aggregations") or [])) or ("how many" in oq_hint)
 
-        # Map common nouns to entities
+        # Map common nouns to entities - stronger override for count queries
         explicit_primary = None
         if ("cycle" in oq_hint) or ("cycles" in oq_hint):
             explicit_primary = "cycle"
@@ -255,7 +259,12 @@ class LLMIntentParser:
         elif any(w in oq_hint for w in ["work item", "work items", "bug", "bugs", "task", "tasks", "issue", "issues"]):
             explicit_primary = "workItem"
 
-        if explicit_primary and (wants_count_pre or not raw_group_by):
+        # For count queries, always override LLM's primary entity if we detect an explicit entity
+        # This prevents the LLM from incorrectly setting workItem as primary for "how many cycles"
+        if explicit_primary and wants_count_pre:
+            primary = explicit_primary
+        elif explicit_primary and not raw_group_by:
+            # Also override for non-grouped queries with explicit entity
             primary = explicit_primary
 
         # Allowed relations for primary
@@ -286,6 +295,14 @@ class LLMIntentParser:
         mentions_cycle = "cycle" in oq_sanitize
         mentions_module = ("module" in oq_sanitize) or ("modules" in oq_sanitize)
         mentions_assignee = ("assignee" in oq_sanitize) or ("assigned to" in oq_sanitize) or ("assigned" in oq_sanitize and " to " in oq_sanitize)
+
+        # Auto-detect status filters for specific entities based on query keywords
+        if primary == "cycle" and "upcoming" in oq_sanitize and "cycle_status" not in filters:
+            filters["cycle_status"] = "UPCOMING"
+        elif primary == "cycle" and "active" in oq_sanitize and "cycle_status" not in filters:
+            filters["cycle_status"] = "ACTIVE"
+        elif primary == "project" and "active" in oq_sanitize and "project_status" not in filters:
+            filters["project_status"] = "STARTED"
 
         # Only keep project/cycle/module name filters if the entity is explicitly mentioned
         if "project_name" in filters and not mentions_project:
@@ -406,6 +423,8 @@ class LLMIntentParser:
             target_entities = []
             # Sorting is irrelevant for counts
             sort_order = None
+            # Clear projections for count queries
+            projections = []
         else:
             # If group_by present, details default to False unless explicitly requested
             if group_by and wants_details_raw is None:
@@ -503,11 +522,17 @@ class PipelineGenerator:
 
         # COUNT-ONLY: no group_by, no details → do not add lookups
         if (("count" in intent.aggregations) or intent.wants_count) and not intent.group_by and not intent.wants_details:
+            # Combine all filters for optimal count query
+            all_filters = {}
             if primary_filters:
-                return [{"$match": primary_filters}, {"$count": "total"}]
-            if not secondary_filters:
+                all_filters.update(primary_filters)
+            if secondary_filters:
+                all_filters.update(secondary_filters)
+
+            if all_filters:
+                return [{"$match": all_filters}, {"$count": "total"}]
+            else:
                 return [{"$count": "total"}]
-            # fall through only if secondary filters exist (rare for "how many …")
 
         # Add filters for the primary collection
         if primary_filters:
