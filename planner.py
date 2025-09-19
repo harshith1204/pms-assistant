@@ -45,6 +45,20 @@ class NaturalLanguageParser:
         Defaults to listing workItems, attempts to detect simple group-by and count prompts.
         """
         ql = (query or "").lower()
+        # Detect explicit entity mentions for simple primary selection
+        primary: str = "workItem"
+        if ("cycle" in ql) or ("cycles" in ql):
+            primary = "cycle"
+        elif ("project" in ql) or ("projects" in ql):
+            primary = "project"
+        elif ("module" in ql) or ("modules" in ql):
+            primary = "module"
+        elif ("page" in ql) or ("pages" in ql):
+            primary = "page"
+        elif ("member" in ql) or ("members" in ql):
+            primary = "members"
+        elif ("project state" in ql) or ("project states" in ql):
+            primary = "projectState"
         # Detect group-by tokens in simple phrasing
         group_tokens: List[str] = []
         for token in ["assignee", "project", "cycle", "status", "priority", "module"]:
@@ -56,7 +70,7 @@ class NaturalLanguageParser:
         aggregations: List[str] = ["group"] if group_tokens else (["count"] if wants_count else [])
 
         return QueryIntent(
-            primary_entity="workItem",
+            primary_entity=primary,
             target_entities=[],
             filters={},
             aggregations=aggregations,
@@ -208,6 +222,31 @@ class LLMIntentParser:
         requested_primary = (data.get("primary_entity") or "").strip()
         primary = requested_primary if requested_primary in self.entities else "workItem"
 
+        # Heuristic override: detect explicit entity in count-style or simple queries
+        oq_hint = (original_query or "").lower()
+        raw_group_by = data.get("group_by") or []
+        wants_count_pre = ("count" in (data.get("aggregations") or [])) or ("how many" in oq_hint)
+
+        # Map common nouns to entities
+        explicit_primary = None
+        if ("cycle" in oq_hint) or ("cycles" in oq_hint):
+            explicit_primary = "cycle"
+        elif ("project state" in oq_hint) or ("project states" in oq_hint):
+            explicit_primary = "projectState"
+        elif ("project" in oq_hint) or ("projects" in oq_hint):
+            explicit_primary = "project"
+        elif ("module" in oq_hint) or ("modules" in oq_hint):
+            explicit_primary = "module"
+        elif ("page" in oq_hint) or ("pages" in oq_hint):
+            explicit_primary = "page"
+        elif ("member" in oq_hint) or ("members" in oq_hint):
+            explicit_primary = "members"
+        elif any(w in oq_hint for w in ["work item", "work items", "bug", "bugs", "task", "tasks", "issue", "issues"]):
+            explicit_primary = "workItem"
+
+        if explicit_primary and (wants_count_pre or not raw_group_by):
+            primary = explicit_primary
+
         # Allowed relations for primary
         allowed_rels = set(self.entity_relations.get(primary, []))
         target_entities: List[str] = []
@@ -320,6 +359,32 @@ class LLMIntentParser:
         wants_details = bool(wants_details_raw) if wants_details_raw is not None else False
         wants_count = bool(wants_count_raw) if wants_count_raw is not None else False
         wants_count = wants_count or ("how many" in oq)
+
+        # Drop status/visibility filters that do not belong to the chosen primary entity
+        primary_allowed_status_filters = {
+            "workItem": {"status", "priority"},
+            "project": {"project_status"},
+            "cycle": {"cycle_status"},
+            "page": {"page_visibility"},
+            "module": set(),
+            "members": set(),
+            "projectState": set(),
+        }.get(primary, set())
+        for k in list(filters.keys()):
+            if k in {"status", "priority", "project_status", "cycle_status", "page_visibility"} and k not in primary_allowed_status_filters:
+                filters.pop(k, None)
+
+        # If it's a broad count question and the user did not specify a status/priority/visibility,
+        # drop those filters to avoid unintended narrowing by LLM guesses.
+        if wants_count:
+            status_terms = [
+                "active", "upcoming", "completed", "not started", "started", "overdue",
+                "public", "private", "archived", "urgent", "high", "medium", "low", "none"
+            ]
+            mentions_status_like = any(term in oq for term in status_terms)
+            if not mentions_status_like:
+                for k in ["status", "priority", "project_status", "cycle_status", "page_visibility"]:
+                    filters.pop(k, None)
 
         # If user asked a count-style question, force count-only intent
         if wants_count:
@@ -470,6 +535,14 @@ class PipelineGenerator:
             },
         }.get(collection, {})
 
+        # Include explicit target entities requested by the intent (supports multi-hop like "project.cycles")
+        for rel in (intent.target_entities or []):
+            if not isinstance(rel, str) or not rel:
+                continue
+            first_hop = rel.split(".")[0]
+            if first_hop in REL.get(collection, {}):
+                required_relations.add(rel)
+
         # Filters → relations (map filter tokens to relation alias for this primary)
         if intent.filters:
             if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
@@ -481,12 +554,31 @@ class PipelineGenerator:
             if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['module'])
 
+            # Multi-hop fallbacks for cycle/module via project when direct relations are absent
+            if 'cycle_title' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.cycles')
+            if 'module_name' in intent.filters and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.modules')
+
         # Group-by → relations
         for token in (intent.group_by or []):
             # Map grouping token to relation alias for this primary
             rel_alias = relation_alias_by_token.get(token)
             if rel_alias and rel_alias in REL.get(collection, {}):
                 required_relations.add(rel_alias)
+            # Multi-hop fallback for grouping keys that require project hop (e.g., cycle/module on workItem)
+            if token == 'cycle' and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.cycles')
+            if token == 'module' and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.modules')
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in sorted(required_relations):
@@ -662,13 +754,24 @@ class PipelineGenerator:
         if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
             s['assignees.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
 
-        # Cycle title filter (only if relation exists for this primary collection)
-        if 'cycle_title' in filters and 'cycle' in REL.get(collection, {}):
-            s['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+        # Cycle title filter: support direct cycle relation or project.cycles alias
+        if 'cycle_title' in filters:
+            if 'cycle' in REL.get(collection, {}):
+                s['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+            elif 'cycles' in REL.get(collection, {}):
+                s['cycles.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+            else:
+                # If we joined via project.cycles, the alias would be 'cycles' from the inner lookup
+                s['cycles.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
 
-        # Module name filter (only if relation exists for this primary collection)
-        if 'module_name' in filters and 'module' in REL.get(collection, {}):
-            s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+        # Module name filter: support direct module relation or project.modules alias
+        if 'module_name' in filters:
+            if 'module' in REL.get(collection, {}):
+                s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+            elif 'modules' in REL.get(collection, {}):
+                s['modules.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+            else:
+                s['modules.title'] = {'$regex': filters['module_name'], '$options': 'i'}
 
         return s
 
