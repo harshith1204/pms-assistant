@@ -24,6 +24,22 @@ REL: Dict[str, Dict[str, dict]] = {
             "as": "assignees",
             "many": True
         },
+        # workItem has embedded cycle {_id, name}; join only if deeper cycle fields are needed
+        "cycle": {
+            "target": "cycle",
+            "localField": "cycle._id",
+            "foreignField": "_id",
+            "as": "cycleDoc",
+            "many": False
+        },
+        # workItem has embedded modules {_id, name} (single module reference despite plural key)
+        "modules": {
+            "target": "module",
+            "localField": "modules._id",
+            "foreignField": "_id",
+            "as": "moduleDoc",
+            "many": False
+        },
     },
 
     "project": {
@@ -138,12 +154,15 @@ Collection = str  # Simplified for tool usage
 ALLOWED_FIELDS: Dict[str, Set[str]] = {
     "workItem": {
         "_id", "displayBugNo", "title", "description",
-        "priority",
-        "stateMaster.name",
+        "priority", "status",
+        # Embedded state/cycle/module per production schema
+        "state.name",
         "project._id", "project.name",
+        "cycle._id", "cycle.name",
+        "modules._id", "modules.name",
         "createdBy._id", "createdBy.name",
         "createdTimeStamp", "updatedTimeStamp",
-        "assignee", "label"
+        "assignee", "assignee._id", "assignee.name", "label"
     },
     "project": {
         "_id", "projectDisplayId", "name", "description",
@@ -154,7 +173,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "createdBy._id", "createdBy.name"
     },
     "cycle": {
-        "_id", "title", "description", "status",
+        "_id", "title", "name", "description", "status",
         "startDate", "endDate",
         "project._id",
         "isDefault", "isFavourite",
@@ -162,7 +181,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "business._id"
     },
     "module": {
-        "_id", "title", "description", "isFavourite",
+        "_id", "title", "name", "description", "isFavourite",
         "project._id", "business._id",
         "createdTimeStamp", "assignee"
     },
@@ -189,7 +208,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
 # ---- Optional field aliases (normalize synonyms / UI names)
 ALIASES: Dict[str, Dict[str, str]] = {
     "project": {"id": "_id", "displayId": "projectDisplayId"},
-    "workItem": {"bug": "displayBugNo", "stateName": "stateMaster.name"},
+    "workItem": {"bug": "displayBugNo", "stateName": "state.name"},
     "members": {"memberId": "_id"},
     "module": {},
     "page": {},
@@ -357,10 +376,10 @@ def build_lookup_stage(from_collection: str, relationship: Dict[str, Any], curre
         # Special-case: optional fallback noted in expr string
         if "name-eq" in expr_str.lower():
             # Heuristic: attempt to match by name fields as a fallback
-            # local: try stateMaster.name, remote: try name or subStates.name
+            # local: try state.name, remote: try name or subStates.name
             or_conditions = []
-            # local stateMaster.name
-            lookup_stage["$lookup"]["let"]["local_state_name"] = "$stateMaster.name"
+            # local state.name
+            lookup_stage["$lookup"]["let"]["local_state_name"] = "$state.name"
             or_conditions.append({"$expr": {"$eq": ["$name", "$$local_state_name"]}})
             or_conditions.append({"$expr": {"$in": ["$$local_state_name", "$subStates.name"]}})
             lookup_stage["$lookup"]["pipeline"].append({"$match": {"$or": or_conditions}})
