@@ -16,22 +16,12 @@ except ImportError:
 
 @tool
 async def intelligent_query(query: str) -> str:
-    """Plan and run cross-collection MongoDB queries from natural language.
-
-    When to use:
-    - Complex, multi-hop questions across collections (projects, work items, cycles, members, pages, modules, states)
-    - You need automatic join planning using the registry-defined relations and allow-listed fields
-    - You want details or counts without hand-writing a pipeline
-
-    What it does:
-    - Parses the query, selects the primary collection, joins required relations, applies filters, projections, sorting
-    - Generates and executes an aggregation pipeline via the Mongo MCP server
-
+    """Execute natural language queries against the Project Management database.
 
     Args:
-        query: Natural language prompt, e.g. "Show urgent work items in project 'CRM' grouped by cycle".
+        query: Natural language query about projects, work items, cycles, members, pages, modules, or project states.
 
-    Returns: A formatted string with understood intent, generated pipeline, and results.
+    Returns: Query results formatted for easy reading.
     """
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
