@@ -226,6 +226,21 @@ class LLMIntentParser:
                         continue
                 filters[k] = v
 
+        # Enforce entity mention policy for name filters; prefer assignee on ambiguity
+        oq_sanitize = (original_query or "").lower()
+        mentions_project = "project" in oq_sanitize
+        mentions_cycle = "cycle" in oq_sanitize
+        mentions_module = ("module" in oq_sanitize) or ("modules" in oq_sanitize)
+        mentions_assignee = ("assignee" in oq_sanitize) or ("assigned to" in oq_sanitize) or ("assigned" in oq_sanitize and " to " in oq_sanitize)
+
+        # Only keep project/cycle/module name filters if the entity is explicitly mentioned
+        if "project_name" in filters and not mentions_project:
+            filters.pop("project_name", None)
+        if "cycle_title" in filters and not mentions_cycle:
+            filters.pop("cycle_title", None)
+        if "module_name" in filters and not mentions_module:
+            filters.pop("module_name", None)
+
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
