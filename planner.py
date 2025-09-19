@@ -138,7 +138,12 @@ class LLMIntentParser:
             "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
             "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module.\n"
             "sort_order keys allowed: createdTimeStamp, priority, status.\n"
-            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown."
+            "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown.\n\n"
+            "Entity inclusion policy: Only include secondary name filters (project_name, cycle_title, module_name, assignee_name) "
+            "when the user explicitly mentions that entity in the query. Do NOT guess based on a name alone. "
+            "Do NOT map the same natural-language name to multiple entities at once. If ambiguous, prefer assignee.\n"
+            "Target entities minimization: Include only relations required to satisfy filters or group_by. "
+            "Do NOT add project/cycle/module lookups unless their filters or group_by are present."
         )
 
         schema = {
@@ -170,6 +175,8 @@ class LLMIntentParser:
             "- Only use allowed entities, relations, and fields.\n"
             "- If both details and count are implied, set wants_details true and wants_count false.\n"
             "- Keep target_entities minimal but sufficient to support filters and group_by.\n"
+            "- Only include project_name/cycle_title/module_name if the query explicitly mentions project/cycle/module.\n"
+            "- Never assign the same name to multiple entity filters; if unclear, prefer assignee_name.\n"
             "- Do NOT include any explanations or prose. Output JSON ONLY.\n\n"
             f"Schema (for reference, keys only): {json.dumps(schema)}\n\n"
             f"User Query: {query}"
@@ -218,6 +225,34 @@ class LLMIntentParser:
                     if "?" in v or not v.isupper():
                         continue
                 filters[k] = v
+
+        # Heuristic: prune over-broad secondary name filters unless the query explicitly mentions them.
+        # This avoids pulling project/cycle/module lookups for simple assignee-only prompts.
+        oq = (original_query or "").lower()
+        mentions = {
+            "project": any(w in oq for w in ["project", "projects", "proj ", " proj", "proj."]),
+            "assignee": any(w in oq for w in ["assignee", "assigned", "owner", "owned by", "assigned to"]),
+            "cycle": any(w in oq for w in ["cycle", "sprint", "iteration"]),
+            "module": any(w in oq for w in ["module", "component"]),
+        }
+        secondary_keys = {
+            "project_name": "project",
+            "cycle_title": "cycle",
+            "assignee_name": "assignee",
+            "module_name": "module",
+        }
+        # Decide which secondary filters to keep based on explicit mention
+        if any(k in filters for k in secondary_keys.keys()):
+            kept: Dict[str, Any] = {}
+            for key, token in secondary_keys.items():
+                if key in filters and mentions.get(token, False):
+                    kept[key] = filters[key]
+            # Fallback: if none explicitly mentioned, prefer assignee_name if present (common case)
+            if not kept and "assignee_name" in filters:
+                kept["assignee_name"] = filters["assignee_name"]
+            # Rebuild filters: keep primary-entity filters plus the kept secondary ones
+            primary_like = {k: v for k, v in filters.items() if k not in secondary_keys}
+            filters = {**primary_like, **kept}
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
