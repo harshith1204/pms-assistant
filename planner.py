@@ -143,7 +143,11 @@ class LLMIntentParser:
             "when the user explicitly mentions that entity in the query. Do NOT guess based on a name alone. "
             "Do NOT map the same natural-language name to multiple entities at once. If ambiguous, prefer assignee.\n"
             "Target entities minimization: Include only relations required to satisfy filters or group_by. "
-            "Do NOT add project/cycle/module lookups unless their filters or group_by are present."
+            "Do NOT add project/cycle/module lookups unless their filters or group_by are present.\n\n"
+            "Examples:\n"
+            "- 'how many work items are assigned to alice' -> {primary: workItem, filters: {assignee_name: 'alice'}, aggregations: ['count']}\n"
+            "- 'show projects named CRM' -> {primary: project, filters: {project_name: 'CRM'}}\n"
+            "- 'group work items by priority' -> {primary: workItem, aggregations: ['group'], group_by: ['priority'], wants_details: false}"
         )
 
         schema = {
@@ -195,11 +199,11 @@ class LLMIntentParser:
             return None
 
         try:
-            return self._sanitize_intent(data, query)
+            return await self._sanitize_intent(data, query)
         except Exception:
             return None
 
-    def _sanitize_intent(self, data: Dict[str, Any], original_query: str = "") -> QueryIntent:
+    async def _sanitize_intent(self, data: Dict[str, Any], original_query: str = "") -> QueryIntent:
         # Primary entity (prefer workItem; flip to workItem if cross-entity grouping is requested)
         requested_primary = (data.get("primary_entity") or "").strip()
         primary = requested_primary if requested_primary in self.entities else "workItem"
@@ -225,6 +229,47 @@ class LLMIntentParser:
                     if "?" in v or not v.isupper():
                         continue
                 filters[k] = v
+
+        # Enforce entity mention policy for name filters; prefer assignee on ambiguity
+        oq_sanitize = (original_query or "").lower()
+        mentions_project = "project" in oq_sanitize
+        mentions_cycle = "cycle" in oq_sanitize
+        mentions_module = ("module" in oq_sanitize) or ("modules" in oq_sanitize)
+        mentions_assignee = ("assignee" in oq_sanitize) or ("assigned to" in oq_sanitize) or ("assigned" in oq_sanitize and " to " in oq_sanitize)
+
+        # Only keep project/cycle/module name filters if the entity is explicitly mentioned
+        if "project_name" in filters and not mentions_project:
+            filters.pop("project_name", None)
+        if "cycle_title" in filters and not mentions_cycle:
+            filters.pop("cycle_title", None)
+        if "module_name" in filters and not mentions_module:
+            filters.pop("module_name", None)
+
+        # Hybrid DB-backed disambiguation for free-text names when no entity is explicitly mentioned.
+        # If the LLM proposed any name filters but we removed them due to missing mentions, use DB counts
+        # to infer the most likely entity (members/project/cycle/module). Keep assignee preference on ties.
+        try:
+            proposed_name_values: Dict[str, str] = {}
+            for key in ("assignee_name", "project_name", "cycle_title", "module_name"):
+                val = raw_filters.get(key)
+                if isinstance(val, str) and not self._is_placeholder(val):
+                    proposed_name_values[key] = val
+
+            no_explicit_mentions = not (mentions_assignee or mentions_project or mentions_cycle or mentions_module)
+            # Trigger disambiguation if we have at least one proposed name and no explicit entity mentions
+            if proposed_name_values and no_explicit_mentions:
+                chosen_key = await self._disambiguate_name_entity(proposed_name_values)
+                if chosen_key:
+                    # Reset to only the chosen name filter
+                    for k in ["assignee_name", "project_name", "cycle_title", "module_name"]:
+                        if k != chosen_key and k in filters:
+                            filters.pop(k, None)
+                    # If chosen not present (because we earlier dropped), re-add it
+                    if chosen_key not in filters and chosen_key in proposed_name_values:
+                        filters[chosen_key] = proposed_name_values[chosen_key]
+        except Exception:
+            # Best-effort; ignore disambiguation failures
+            pass
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
@@ -308,6 +353,60 @@ class LLMIntentParser:
             wants_details=wants_details,
             wants_count=wants_count,
         )
+
+    async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
+        """Use DB counts across collections to decide which name filter is most plausible.
+
+        Preference order on ties: assignee -> project -> cycle -> module.
+        Returns the chosen filter key or None if inconclusive.
+        """
+        # Build candidate lookups: mapping filter key -> (collection, field)
+        candidates = {
+            "assignee_name": ("members", "name"),
+            "project_name": ("project", "name"),
+            "cycle_title": ("cycle", "title"),
+            "module_name": ("module", "title"),
+        }
+        counts: Dict[str, int] = {}
+        for key, (collection, field) in candidates.items():
+            if key not in proposed:
+                continue
+            value = proposed[key]
+            try:
+                cnt = await self._aggregate_count(collection, {field: {"$regex": value, "$options": "i"}})
+            except Exception:
+                cnt = 0
+            counts[key] = cnt
+
+        if not counts:
+            return None
+
+        # Pick the key with the highest positive count
+        positive = {k: v for k, v in counts.items() if v and v > 0}
+        if not positive:
+            # No evidence; prefer assignee if proposed
+            if "assignee_name" in proposed:
+                return "assignee_name"
+            return None
+
+        # Sort keys by count desc then by preference order
+        preference = {"assignee_name": 0, "project_name": 1, "cycle_title": 2, "module_name": 3}
+        chosen = sorted(positive.items(), key=lambda kv: (-kv[1], preference.get(kv[0], 99)))[0][0]
+        return chosen
+
+    async def _aggregate_count(self, collection: str, match_filter: Dict[str, Any]) -> int:
+        """Run a count via aggregation to avoid needing a dedicated count tool."""
+        try:
+            result = await mongodb_tools.execute_tool("aggregate", {
+                "database": DATABASE_NAME,
+                "collection": collection,
+                "pipeline": [{"$match": match_filter}, {"$count": "total"}]
+            })
+            if isinstance(result, list) and result and isinstance(result[0], dict) and "total" in result[0]:
+                return int(result[0]["total"])  # type: ignore
+        except Exception:
+            pass
+        return 0
 
 class PipelineGenerator:
     """Generates MongoDB aggregation pipelines based on query intent and relationships"""
