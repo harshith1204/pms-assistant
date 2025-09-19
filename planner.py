@@ -470,6 +470,14 @@ class PipelineGenerator:
             },
         }.get(collection, {})
 
+        # Include explicit target entities requested by the intent (supports multi-hop like "project.cycles")
+        for rel in (intent.target_entities or []):
+            if not isinstance(rel, str) or not rel:
+                continue
+            first_hop = rel.split(".")[0]
+            if first_hop in REL.get(collection, {}):
+                required_relations.add(rel)
+
         # Filters → relations (map filter tokens to relation alias for this primary)
         if intent.filters:
             if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
@@ -481,12 +489,31 @@ class PipelineGenerator:
             if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['module'])
 
+            # Multi-hop fallbacks for cycle/module via project when direct relations are absent
+            if 'cycle_title' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.cycles')
+            if 'module_name' in intent.filters and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.modules')
+
         # Group-by → relations
         for token in (intent.group_by or []):
             # Map grouping token to relation alias for this primary
             rel_alias = relation_alias_by_token.get(token)
             if rel_alias and rel_alias in REL.get(collection, {}):
                 required_relations.add(rel_alias)
+            # Multi-hop fallback for grouping keys that require project hop (e.g., cycle/module on workItem)
+            if token == 'cycle' and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.cycles')
+            if token == 'module' and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {})):
+                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.modules')
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in sorted(required_relations):
@@ -662,13 +689,24 @@ class PipelineGenerator:
         if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
             s['assignees.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
 
-        # Cycle title filter (only if relation exists for this primary collection)
-        if 'cycle_title' in filters and 'cycle' in REL.get(collection, {}):
-            s['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+        # Cycle title filter: support direct cycle relation or project.cycles alias
+        if 'cycle_title' in filters:
+            if 'cycle' in REL.get(collection, {}):
+                s['cycle.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+            elif 'cycles' in REL.get(collection, {}):
+                s['cycles.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
+            else:
+                # If we joined via project.cycles, the alias would be 'cycles' from the inner lookup
+                s['cycles.title'] = {'$regex': filters['cycle_title'], '$options': 'i'}
 
-        # Module name filter (only if relation exists for this primary collection)
-        if 'module_name' in filters and 'module' in REL.get(collection, {}):
-            s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+        # Module name filter: support direct module relation or project.modules alias
+        if 'module_name' in filters:
+            if 'module' in REL.get(collection, {}):
+                s['module.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+            elif 'modules' in REL.get(collection, {}):
+                s['modules.title'] = {'$regex': filters['module_name'], '$options': 'i'}
+            else:
+                s['modules.title'] = {'$regex': filters['module_name'], '$options': 'i'}
 
         return s
 
