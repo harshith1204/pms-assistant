@@ -12,6 +12,7 @@ import time
 import re
 
 from constants import DATABASE_NAME
+from planner import plan_and_execute_query
 
 def _should_use_planner(message_text: str) -> bool:
     q = (message_text or "").lower()
@@ -149,8 +150,23 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
             # Route to planner or LLM based on heuristics/flag
             if force_planner or _should_use_planner(message):
-                # Use deterministic planner
-                op_id = str(uuid.uuid4())
+                # Use deterministic planner: plan + execute and stream a compact result
+                try:
+                    plan_result = await plan_and_execute_query(message)
+                    await websocket.send_json({
+                        "type": "planner_result",
+                        "success": plan_result.get("success", False),
+                        "intent": plan_result.get("intent"),
+                        "pipeline": plan_result.get("pipeline"),
+                        "result": plan_result.get("result"),
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "planner_error",
+                        "message": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    })
             else:
                 # Use regular LLM with tool calling
                 async for response_chunk in mongodb_agent.run_streaming(
