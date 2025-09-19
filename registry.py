@@ -98,6 +98,13 @@ REL: Dict[str, Dict[str, dict]] = {
             "foreignField": "_id",
             "as": "project",
             "many": False
+        },
+        "assignee": {
+            "target": "members",
+            "localField": "assignee._id",
+            "foreignField": "_id",
+            "as": "assignees",
+            "many": True
         }
     },
 
@@ -119,21 +126,20 @@ REL: Dict[str, Dict[str, dict]] = {
             "as": "projectDoc",
             "many": False
         },
-        # If linkedCycle / linkedModule store ObjectId arrays, you can enable these:
-        # "linkedCycle": {
-        #     "target": "cycle",
-        #     "localField": "linkedCycle",
-        #     "foreignField": "_id",
-        #     "as": "linkedCycleDocs",
-        #     "many": True
-        # },
-        # "linkedModule": {
-        #     "target": "module",
-        #     "localField": "linkedModule",
-        #     "foreignField": "_id",
-        #     "as": "linkedModuleDocs",
-        #     "many": True
-        # },
+        "linkedCycle": {
+            "target": "cycle",
+            "localField": "linkedCycle",
+            "foreignField": "_id",
+            "as": "linkedCycleDocs",
+            "many": True
+        },
+        "linkedModule": {
+            "target": "module",
+            "localField": "linkedModule",
+            "foreignField": "_id",
+            "as": "linkedModuleDocs",
+            "many": True
+        },
     },
 
     "projectState": {
