@@ -147,20 +147,19 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Route to planner or LLM based on heuristics/flag
-            if force_planner or _should_use_planner(message):
-                # Use deterministic planner
-                op_id = str(uuid.uuid4())
-            else:
-                # Use regular LLM with tool calling
-                async for response_chunk in mongodb_agent.run_streaming(
-                    query=message,
-                    websocket=websocket,
-                    conversation_id=conversation_id
-                ):
-                    # The streaming is handled internally by the callback handler
-                    # Just iterate through the generator to complete the streaming
-                    pass
+            # Always route to simplified agent; it decides whether to use prior context
+            async for content in mongodb_agent.run_streaming(
+                query=message,
+                websocket=websocket,
+                conversation_id=conversation_id
+            ):
+                # Forward assistant content to client
+                await websocket.send_json({
+                    "type": "assistant_message",
+                    "content": content,
+                    "conversation_id": conversation_id,
+                    "timestamp": datetime.now().isoformat()
+                })
 
             # Send completion message
             await websocket.send_json({
