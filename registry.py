@@ -138,7 +138,7 @@ Collection = str  # Simplified for tool usage
 ALLOWED_FIELDS: Dict[str, Set[str]] = {
     "workItem": {
         "_id", "displayBugNo", "title", "description",
-        "status", "priority",
+        "priority",
         "stateMaster.name",
         "project._id", "project.name",
         "createdBy._id", "createdBy.name",

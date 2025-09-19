@@ -62,7 +62,7 @@ class NaturalLanguageParser:
             primary = "projectState"
         # Detect group-by tokens in simple phrasing
         group_tokens: List[str] = []
-        for token in ["assignee", "project", "cycle", "status", "priority", "module"]:
+        for token in ["assignee", "project", "cycle", "state", "status", "priority", "module"]:
             if f"group by {token}" in ql or f"grouped by {token}" in ql or f"breakdown by {token}" in ql:
                 group_tokens.append(token)
 
@@ -81,8 +81,19 @@ class NaturalLanguageParser:
             if any(w in ql for w in ["active", "running", "ongoing", "in progress"]):
                 filters["project_status"] = "STARTED"
         if primary == "workItem":
+            # map simple state synonyms
             if "open" in ql:
-                filters["status"] = "TODO"
+                filters["state"] = "Open"
+            if any(w in ql for w in ["completed", "closed", "done", "finished"]):
+                filters["state"] = "Completed"
+            if any(w in ql for w in ["backlog", "todo"]):
+                filters["state"] = "Backlog"
+            if any(w in ql for w in ["re-raised", "re raised", "reraised", "reopened", "re-opened", "re opened"]):
+                filters["state"] = "Re-Raised"
+            if any(w in ql for w in ["in progress", "in-progress", "progressing", "wip"]):
+                filters["state"] = "In-Progress"
+            if any(w in ql for w in ["verified", "qa passed", "accepted"]):
+                filters["state"] = "Verified"
             if "urgent" in ql:
                 filters["priority"] = "URGENT"
 
@@ -164,10 +175,10 @@ class LLMIntentParser:
             "\n".join(f"- {e}: {', '.join(self.entity_relations.get(e, []))}" for e in self.entities) + "\n\n" +
             "Allow-listed fields per entity (projections must be subset of primary's list):\n" +
             "\n".join(f"- {e}: {', '.join(self.allowed_fields.get(e, []))}" for e in self.entities) + "\n\n" +
-            "Normalize keys as follows: status, priority, project_status, cycle_status, page_visibility, "
+            "Normalize keys as follows: state, priority, project_status, cycle_status, page_visibility, "
             "project_name, cycle_title, assignee_name, module_name. Use uppercase enum values if obvious.\n"
-            "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, status, priority, module.\n"
-            "sort_order keys allowed: createdTimeStamp, priority, status.\n"
+            "Aggregations allowed: count, group, summary. Group-by tokens allowed: cycle, project, assignee, state, priority, module.\n"
+            "sort_order keys allowed: createdTimeStamp, priority, state.\n"
             "Always include ALL top-level keys in the JSON output with appropriate empty values if unknown.\n\n"
             "Entity inclusion policy: Only include secondary name filters (project_name, cycle_title, module_name, assignee_name) "
             "when the user explicitly mentions that entity in the query. Do NOT guess based on a name alone. "
@@ -197,7 +208,7 @@ class LLMIntentParser:
             "primary_entity": "string; one of " + ", ".join(self.entities),
             "target_entities": "string[]; relations to join for primary, from the allowed list above",
             "filters": {
-                "status": "TODO|COMPLETED?",
+                "state": "Open|Completed|Backlog|Re-Raised|In-Progress|Verified?",
                 "priority": "URGENT|HIGH|MEDIUM|LOW|NONE?",
                 "project_status": "NOT_STARTED|STARTED|COMPLETED|OVERDUE?",
                 "cycle_status": "ACTIVE|UPCOMING|COMPLETED?",
@@ -208,7 +219,7 @@ class LLMIntentParser:
                 "module_name": "string?"
             },
             "aggregations": "string[]; subset of [count, group, summary]",
-            "group_by": "string[]; subset of [cycle, project, assignee, status, priority, module]",
+            "group_by": "string[]; subset of [cycle, project, assignee, state, status, priority, module]",
             "projections": "string[]; subset of allow-listed fields for primary_entity",
             "sort_order": "object?; single key among allowed sort keys mapping to 1 or -1",
             "limit": "integer <= 100; default 20",
@@ -292,20 +303,50 @@ class LLMIntentParser:
 
         # Filters: keep only known keys and drop placeholders
         raw_filters = data.get("filters") or {}
+        # Map legacy 'status' to 'state' for workItem if present
+        if primary == "workItem" and isinstance(raw_filters, dict) and "status" in raw_filters and "state" not in raw_filters:
+            raw_filters["state"] = raw_filters.pop("status")
         known_filter_keys = {
-            "status", "priority", "project_status", "cycle_status", "page_visibility",
+            "state", "priority", "project_status", "cycle_status", "page_visibility",
             "project_name", "cycle_title", "assignee_name", "module_name",
             # extended keys
             "member_role",
         }
         filters: Dict[str, Any] = {}
+        # Canonicalize workItem state values
+        state_canonical: Dict[str, str] = {
+            "open": "Open",
+            "completed": "Completed",
+            "backlog": "Backlog",
+            "re-raised": "Re-Raised",
+            "re raised": "Re-Raised",
+            "reraised": "Re-Raised",
+            "reopened": "Re-Raised",
+            "re-opened": "Re-Raised",
+            "re opened": "Re-Raised",
+            "in-progress": "In-Progress",
+            "in progress": "In-Progress",
+            "wip": "In-Progress",
+            "verified": "Verified",
+        }
         for k, v in raw_filters.items():
             if k in known_filter_keys and isinstance(v, (str, int)) and not self._is_placeholder(v):
-                # keep exact enums only for enum fields
-                if k in {"status", "project_status", "cycle_status", "page_visibility"} and isinstance(v, str):
-                    if "?" in v or not v.isupper():
+                if isinstance(v, str):
+                    vs = v.strip()
+                else:
+                    vs = v
+                if k == "state" and isinstance(vs, str):
+                    canon = state_canonical.get(vs.lower())
+                    if not canon:
+                        # if not recognized, skip state filter
                         continue
-                filters[k] = v
+                    filters["state"] = canon
+                    continue
+                # enforce uppercase for enum-like others
+                if k in {"project_status", "cycle_status", "page_visibility"} and isinstance(vs, str):
+                    if "?" in vs or not vs.isupper():
+                        continue
+                filters[k] = vs
 
         # Enforce entity mention policy for name filters; prefer assignee on ambiguity
         oq_sanitize = (original_query or "").lower()
@@ -322,12 +363,21 @@ class LLMIntentParser:
         elif primary == "project" and any(w in oq_sanitize for w in ["active", "running", "ongoing", "in progress"]) and "project_status" not in filters:
             filters["project_status"] = "STARTED"
 
-        # Open/closed tasks synonyms for work items
+        # Open/closed/state synonyms for work items
         if primary == "workItem":
-            if ("open" in oq_sanitize) and ("status" not in filters):
-                filters["status"] = "TODO"
-            if ("closed" in oq_sanitize or "completed" in oq_sanitize) and ("status" not in filters):
-                filters["status"] = "COMPLETED"
+            # Only set state if not already present from filters
+            if ("open" in oq_sanitize) and ("state" not in filters):
+                filters["state"] = "Open"
+            if ("closed" in oq_sanitize or "completed" in oq_sanitize) and ("state" not in filters):
+                filters["state"] = "Completed"
+            if ("backlog" in oq_sanitize or "todo" in oq_sanitize) and ("state" not in filters):
+                filters["state"] = "Backlog"
+            if any(w in oq_sanitize for w in ["re-raised", "re raised", "reraised", "reopened", "re-opened", "re opened"]) and ("state" not in filters):
+                filters["state"] = "Re-Raised"
+            if any(w in oq_sanitize for w in ["in progress", "in-progress", "wip"]) and ("state" not in filters):
+                filters["state"] = "In-Progress"
+            if ("verified" in oq_sanitize) and ("state" not in filters):
+                filters["state"] = "Verified"
             if ("urgent" in oq_sanitize) and ("priority" not in filters):
                 filters["priority"] = "URGENT"
             # priority adjectives
@@ -402,7 +452,7 @@ class LLMIntentParser:
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "status", "priority", "module"}
+        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
@@ -426,7 +476,7 @@ class LLMIntentParser:
         so = data.get("sort_order") or {}
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
-            if key in {"createdTimeStamp", "priority", "status"} and val in (1, -1):
+            if key in {"createdTimeStamp", "priority", "state", "status"} and val in (1, -1):
                 sort_order = {key: val}
 
         # Limit
@@ -449,7 +499,7 @@ class LLMIntentParser:
 
         # Drop status/visibility filters that do not belong to the chosen primary entity
         primary_allowed_status_filters = {
-            "workItem": {"status", "priority"},
+            "workItem": {"state", "priority"},
             "project": {"project_status"},
             "cycle": {"cycle_status"},
             "page": {"page_visibility"},
@@ -458,8 +508,21 @@ class LLMIntentParser:
             "projectState": set(),
         }.get(primary, set())
         for k in list(filters.keys()):
-            if k in {"status", "priority", "project_status", "cycle_status", "page_visibility"} and k not in primary_allowed_status_filters:
+            if k in {"state", "status", "priority", "project_status", "cycle_status", "page_visibility"} and k not in primary_allowed_status_filters:
                 filters.pop(k, None)
+
+        # Enforce state/priority demand: if both present for workItem, keep only those explicitly mentioned
+        if primary == "workItem" and "state" in filters and "priority" in filters:
+            mentions_state_terms = any(t in oq for t in ["state", "open", "completed", "backlog", "re-raised", "re raised", "in-progress", "in progress", "verified", "wip"])
+            mentions_priority_terms = any(t in oq for t in ["priority", "urgent", "high", "medium", "low", "none"])
+            if mentions_state_terms and not mentions_priority_terms:
+                filters.pop("priority", None)
+            elif mentions_priority_terms and not mentions_state_terms:
+                filters.pop("state", None)
+            elif not mentions_state_terms and not mentions_priority_terms:
+                # if neither explicitly mentioned, drop both to avoid over-filtering
+                filters.pop("state", None)
+                filters.pop("priority", None)
 
         # If it's a broad count question and the user did not specify a status/priority/visibility,
         # drop those filters to avoid unintended narrowing by LLM guesses.
@@ -470,7 +533,7 @@ class LLMIntentParser:
             ]
             mentions_status_like = any(term in oq for term in status_terms)
             if not mentions_status_like:
-                for k in ["status", "priority", "project_status", "cycle_status", "page_visibility"]:
+                for k in ["state", "status", "priority", "project_status", "cycle_status", "page_visibility"]:
                     filters.pop(k, None)
 
         # If user asked a count-style question, force count-only intent
@@ -814,6 +877,9 @@ class PipelineGenerator:
                     pipeline.append({"$sort": {"_priorityRank": direction}})
                 else:
                     pipeline.append({"$sort": intent.sort_order})
+            elif 'state' in intent.sort_order and collection == 'workItem':
+                # Sort by state via stateMaster.name (string). No rank assumed.
+                pipeline.append({"$sort": {"stateMaster.name": intent.sort_order.get('state', 1)}})
             else:
                 pipeline.append({"$sort": intent.sort_order})
 
@@ -944,7 +1010,7 @@ class PipelineGenerator:
         """
         defaults_map: Dict[str, List[str]] = {
             "workItem": [
-                "displayBugNo", "title", "status", "priority",
+                "displayBugNo", "title", "priority",
                 "stateMaster.name", "assignee",
                 "project.name", "createdTimeStamp"
             ],
@@ -981,7 +1047,7 @@ class PipelineGenerator:
 
         # After computing validated, if it's empty, fall back to a minimal safe set
         if not validated:
-            minimal = ["title", "status", "priority", "createdTimeStamp"]
+            minimal = ["title", "priority", "createdTimeStamp"]
             validated = [f for f in minimal if f in allowed]
         return validated
 
@@ -994,15 +1060,15 @@ class PipelineGenerator:
                 'assignee': 'assignee.name',  # joined alias for assignee relation
                 'cycle': 'cycles.title',  # when joined via project.cycles multi-hop
                 'module': 'modules.title',  # when joined via project.modules multi-hop
-                'status': 'status',
+                'state': 'stateMaster.name',
                 'priority': 'priority',
             },
             'project': {
-                'status': 'status',
+                'status': 'status',  # project status unchanged
             },
             'cycle': {
                 'project': 'project.name',
-                'status': 'status',
+                'status': 'status',  # cycle status unchanged
             },
         }
         entity_map = mapping.get(primary_entity, {})
