@@ -359,6 +359,29 @@ class LLMIntentParser:
         mentions_module = ("module" in oq_sanitize) or ("modules" in oq_sanitize)
         mentions_assignee = ("assignee" in oq_sanitize) or ("assigned to" in oq_sanitize) or ("assigned" in oq_sanitize and " to " in oq_sanitize)
 
+        # Extract assignee name from common phrasings like "assigned to <name>" or "assignee <name>"
+        # Populate into filters['assignee_name'] when present. Prefer this over project/module/cycle names.
+        if primary == "workItem":
+            assignee_name: Optional[str] = None
+            # Patterns: assigned to <name>, assignee is <name>, assignee: <name>
+            patterns = [
+                r"assigned\s+to\s+([a-z0-9_.\-\s]+)",
+                r"assignee\s+(?:is\s+)?([a-z0-9_.\-\s]+)",
+            ]
+            for pat in patterns:
+                m = re.search(pat, oq_sanitize)
+                if m:
+                    assignee_name = m.group(1).strip()
+                    break
+            # If not matched, but query ends with a likely name after 'assigned', try fallback
+            if not assignee_name and ("assigned" in oq_sanitize and oq_sanitize.strip().endswith(" assigned")):
+                # no-op fallback
+                pass
+            if assignee_name and assignee_name not in {"", "me", "someone"}:
+                # clean excessive trailing words commonly appearing
+                assignee_name = re.sub(r"\b(for|on|in|at)\b.*$", "", assignee_name).strip()
+                filters["assignee_name"] = assignee_name
+
         # Auto-detect status/priority filters and special intents based on query keywords
         if primary == "cycle" and "upcoming" in oq_sanitize and "cycle_status" not in filters:
             filters["cycle_status"] = "UPCOMING"
@@ -424,6 +447,11 @@ class LLMIntentParser:
             filters.pop("cycle_name", None)
         if "module_name" in filters and not mentions_module:
             filters.pop("module_name", None)
+
+        # If both assignee_name and project_name are present but the query mentions assignment,
+        # prefer assignee_name and drop project_name to avoid misclassification like names matching project titles.
+        if "assignee_name" in filters and "project_name" in filters and ("assigned to" in oq_sanitize or "assignee" in oq_sanitize):
+            filters.pop("project_name", None)
 
         # Hybrid DB-backed disambiguation for free-text names when no entity is explicitly mentioned.
         # If the LLM proposed any name filters but we removed them due to missing mentions, use DB counts
@@ -951,9 +979,12 @@ class PipelineGenerator:
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
 
-        # Assignee name via joined alias 'assignees' (only if relation exists)
-        if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
-            s['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+        # Assignee name: for workItem the assignee is embedded, so no relation guard needed.
+        if 'assignee_name' in filters:
+            if collection == 'workItem':
+                s['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            elif 'assignee' in REL.get(collection, {}):
+                s['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
         # Member role filter when relation exists
         if 'member_role' in filters:
             # For workItem: through assignee join we have assignees.role
