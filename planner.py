@@ -219,6 +219,34 @@ class LLMIntentParser:
                         continue
                 filters[k] = v
 
+        # Heuristic: prune over-broad secondary name filters unless the query explicitly mentions them.
+        # This avoids pulling project/cycle/module lookups for simple assignee-only prompts.
+        oq = (original_query or "").lower()
+        mentions = {
+            "project": any(w in oq for w in ["project", "projects", "proj ", " proj", "proj."]),
+            "assignee": any(w in oq for w in ["assignee", "assigned", "owner", "owned by", "assigned to"]),
+            "cycle": any(w in oq for w in ["cycle", "sprint", "iteration"]),
+            "module": any(w in oq for w in ["module", "component"]),
+        }
+        secondary_keys = {
+            "project_name": "project",
+            "cycle_title": "cycle",
+            "assignee_name": "assignee",
+            "module_name": "module",
+        }
+        # Decide which secondary filters to keep based on explicit mention
+        if any(k in filters for k in secondary_keys.keys()):
+            kept: Dict[str, Any] = {}
+            for key, token in secondary_keys.items():
+                if key in filters and mentions.get(token, False):
+                    kept[key] = filters[key]
+            # Fallback: if none explicitly mentioned, prefer assignee_name if present (common case)
+            if not kept and "assignee_name" in filters:
+                kept["assignee_name"] = filters["assignee_name"]
+            # Rebuild filters: keep primary-entity filters plus the kept secondary ones
+            primary_like = {k: v for k, v in filters.items() if k not in secondary_keys}
+            filters = {**primary_like, **kept}
+
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
