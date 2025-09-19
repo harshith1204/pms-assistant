@@ -63,17 +63,33 @@ class NaturalLanguageParser:
         # Detect group-by tokens in simple phrasing
         group_tokens: List[str] = []
         for token in ["assignee", "project", "cycle", "status", "priority", "module"]:
-            if f"group by {token}" in ql or f"grouped by {token}" in ql:
+            if f"group by {token}" in ql or f"grouped by {token}" in ql or f"breakdown by {token}" in ql:
                 group_tokens.append(token)
 
         # Detect count requests
         wants_count = ("count" in ql) or ("how many" in ql)
         aggregations: List[str] = ["group"] if group_tokens else (["count"] if wants_count else [])
 
+        # Simple synonyms → filters
+        filters: Dict[str, Any] = {}
+        if primary == "cycle":
+            if "upcoming" in ql:
+                filters["cycle_status"] = "UPCOMING"
+            if any(w in ql for w in ["active", "running", "ongoing", "current"]):
+                filters["cycle_status"] = "ACTIVE"
+        if primary == "project":
+            if any(w in ql for w in ["active", "running", "ongoing", "in progress"]):
+                filters["project_status"] = "STARTED"
+        if primary == "workItem":
+            if "open" in ql:
+                filters["status"] = "TODO"
+            if "urgent" in ql:
+                filters["priority"] = "URGENT"
+
         return QueryIntent(
             primary_entity=primary,
             target_entities=[],
-            filters={},
+            filters=filters,
             aggregations=aggregations,
             group_by=group_tokens,
             projections=[],
@@ -278,7 +294,9 @@ class LLMIntentParser:
         raw_filters = data.get("filters") or {}
         known_filter_keys = {
             "status", "priority", "project_status", "cycle_status", "page_visibility",
-            "project_name", "cycle_title", "assignee_name", "module_name"
+            "project_name", "cycle_title", "assignee_name", "module_name",
+            # extended keys
+            "member_role",
         }
         filters: Dict[str, Any] = {}
         for k, v in raw_filters.items():
@@ -296,13 +314,54 @@ class LLMIntentParser:
         mentions_module = ("module" in oq_sanitize) or ("modules" in oq_sanitize)
         mentions_assignee = ("assignee" in oq_sanitize) or ("assigned to" in oq_sanitize) or ("assigned" in oq_sanitize and " to " in oq_sanitize)
 
-        # Auto-detect status filters for specific entities based on query keywords
+        # Auto-detect status/priority filters and special intents based on query keywords
         if primary == "cycle" and "upcoming" in oq_sanitize and "cycle_status" not in filters:
             filters["cycle_status"] = "UPCOMING"
-        elif primary == "cycle" and "active" in oq_sanitize and "cycle_status" not in filters:
+        elif primary == "cycle" and any(w in oq_sanitize for w in ["active", "running", "ongoing", "current"]) and "cycle_status" not in filters:
             filters["cycle_status"] = "ACTIVE"
-        elif primary == "project" and "active" in oq_sanitize and "project_status" not in filters:
+        elif primary == "project" and any(w in oq_sanitize for w in ["active", "running", "ongoing", "in progress"]) and "project_status" not in filters:
             filters["project_status"] = "STARTED"
+
+        # Open/closed tasks synonyms for work items
+        if primary == "workItem":
+            if ("open" in oq_sanitize) and ("status" not in filters):
+                filters["status"] = "TODO"
+            if ("closed" in oq_sanitize or "completed" in oq_sanitize) and ("status" not in filters):
+                filters["status"] = "COMPLETED"
+            if ("urgent" in oq_sanitize) and ("priority" not in filters):
+                filters["priority"] = "URGENT"
+            # priority adjectives
+            if ("high priority" in oq_sanitize) and ("priority" not in filters):
+                filters["priority"] = "HIGH"
+            if ("medium priority" in oq_sanitize) and ("priority" not in filters):
+                filters["priority"] = "MEDIUM"
+            if ("low priority" in oq_sanitize) and ("priority" not in filters):
+                filters["priority"] = "LOW"
+
+        # Member role detection (e.g., 'lead')
+        if ("lead" in oq_sanitize) and ("member_role" not in filters):
+            filters["member_role"] = "LEAD"
+
+        # Recent/latest sorting intent
+        if any(w in oq_sanitize for w in ["recent", "latest", "newly added", "recently added", "recent project"]):
+            so_pre = {"createdTimeStamp": -1}
+            if data.get("sort_order") is None:
+                data["sort_order"] = so_pre
+            # If asking about a single most recent, cap results unless count requested
+            if not wants_count_pre:
+                try:
+                    limit_val = int(data.get("limit") or 0)
+                except Exception:
+                    limit_val = 0
+                if not limit_val or limit_val > 1:
+                    data["limit"] = 1
+
+        # "who created" intent → project creator projection
+        if ("who" in oq_sanitize and "created" in oq_sanitize and primary == "project"):
+            # Seed projections to surface creator
+            data.setdefault("projections", [])
+            if "createdBy.name" not in data["projections"]:
+                data["projections"].append("createdBy.name")
 
         # Only keep project/cycle/module name filters if the entity is explicitly mentioned
         if "project_name" in filters and not mentions_project:
@@ -546,6 +605,8 @@ class PipelineGenerator:
             'workItem': {
                 'project': 'project',
                 'assignee': 'assignee',
+                'module': None,  # no direct relation
+                'cycle': None,
             },
             'project': {
                 'cycle': 'cycles',
@@ -589,6 +650,12 @@ class PipelineGenerator:
                 required_relations.add(relation_alias_by_token['assignee'])
             if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
                 required_relations.add(relation_alias_by_token['module'])
+            if 'member_role' in intent.filters:
+                # Require member join depending on collection
+                if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
+                    required_relations.add('assignee')
+                if collection == 'project' and 'members' in REL.get('project', {}):
+                    required_relations.add('members')
 
             # Multi-hop fallbacks for cycle/module via project when direct relations are absent
             if 'cycle_title' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
@@ -616,25 +683,39 @@ class PipelineGenerator:
                     required_relations.add('project')
                     required_relations.add('project.modules')
 
+        # If grouping by cycle/module on workItem, ensure multi-hop joins are included
+        if collection == 'workItem' and intent.group_by:
+            if 'cycle' in intent.group_by and 'project.cycles' not in required_relations:
+                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.cycles')
+            if 'module' in intent.group_by and 'project.modules' not in required_relations:
+                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
+                    required_relations.add('project')
+                    required_relations.add('project.modules')
+
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in sorted(required_relations):
-            # Allow multi-hop relation names like "project.stateMaster" from queries
+            # Allow multi-hop relation names like "project.cycles"
             hops = target_entity.split(".")
             current_collection = collection
+            local_prefix = None
             for hop in hops:
                 if hop not in REL.get(current_collection, {}):
                     break
                 relationship = REL[current_collection][hop]
-                lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
+                lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
                 if lookup:
                     pipeline.append(lookup)
                     # If array relation, unwind the alias used in $lookup
                     is_many = bool(relationship.get("isArray") or relationship.get("many", False))
+                    alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
                     if is_many:
-                        unwind_path = relationship.get("as") or relationship.get("alias") or relationship.get("target")
                         pipeline.append({
-                            "$unwind": {"path": f"${unwind_path}", "preserveNullAndEmptyArrays": True}
+                            "$unwind": {"path": f"${alias_name}", "preserveNullAndEmptyArrays": True}
                         })
+                    # Set local prefix to the alias for chaining next hop
+                    local_prefix = alias_name
                 current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)
@@ -736,9 +817,24 @@ class PipelineGenerator:
             else:
                 pipeline.append({"$sort": intent.sort_order})
 
+        # Compute projected aliases for joined relations so projections include them when needed
+        projected_aliases: Set[str] = set()
+        if required_relations:
+            for rel_path in sorted(required_relations):
+                hops = rel_path.split(".")
+                current_collection = collection
+                for hop in hops:
+                    if hop not in REL.get(current_collection, {}):
+                        break
+                    relationship = REL[current_collection][hop]
+                    alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
+                    if alias_name:
+                        projected_aliases.add(alias_name)
+                    current_collection = relationship["target"]
+
         # Add projections after sorting so computed fields can be hidden
         if effective_projections and not intent.group_by:
-            projection = self._generate_projection(effective_projections, intent.target_entities, intent.primary_entity)
+            projection = self._generate_projection(effective_projections, sorted(list(projected_aliases)), intent.primary_entity)
             # Ensure we exclude helper fields from output
             pipeline.append({"$project": projection})
         # Always remove priority rank helper if it was added
@@ -789,6 +885,14 @@ class PipelineGenerator:
         # Assignee name via joined alias 'assignees' (only if relation exists)
         if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
             s['assignees.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+        # Member role filter when relation exists
+        if 'member_role' in filters:
+            # For workItem: through assignee join we have assignees.role
+            if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
+                s['assignees.role'] = {'$regex': f"^{filters['member_role']}$", '$options': 'i'}
+            # For project: through members join
+            if collection == 'project' and 'members' in REL.get('project', {}):
+                s['members.role'] = {'$regex': f"^{filters['member_role']}$", '$options': 'i'}
 
         # Cycle title filter: support direct cycle relation or project.cycles alias
         if 'cycle_title' in filters:
@@ -845,7 +949,8 @@ class PipelineGenerator:
                 "project.name", "createdTimeStamp"
             ],
             "project": [
-                "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp"
+                "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
+                "createdBy.name"
             ],
             "cycle": [
                 "title", "status", "startDate", "endDate"
@@ -887,6 +992,8 @@ class PipelineGenerator:
                 # Only relations that exist in REL for workItem
                 'project': 'project.name',
                 'assignee': 'assignees.name',  # joined alias for assignee relation
+                'cycle': 'cycles.title',  # when joined via project.cycles multi-hop
+                'module': 'modules.title',  # when joined via project.modules multi-hop
                 'status': 'status',
                 'priority': 'priority',
             },
