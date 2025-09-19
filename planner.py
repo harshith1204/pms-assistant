@@ -497,6 +497,10 @@ class PipelineGenerator:
         # Start with the primary collection
         collection = intent.primary_entity
 
+        # Track added lookups/unwinds to avoid duplicates when multi-hop or overlapping requests occur
+        added_lookups: Set[str] = set()
+        added_unwinds: Set[str] = set()
+
         # Build sanitized filters once
         primary_filters = self._extract_primary_filters(intent.filters, collection) if intent.filters else {}
         secondary_filters = self._extract_secondary_filters(intent.filters, collection) if intent.filters else {}
@@ -600,16 +604,23 @@ class PipelineGenerator:
                 if hop not in REL.get(current_collection, {}):
                     break
                 relationship = REL[current_collection][hop]
+                alias = relationship.get("as") or relationship.get("alias") or relationship.get("target")
+                if alias in added_lookups:
+                    current_collection = relationship["target"]
+                    continue
                 lookup = build_lookup_stage(relationship["target"], relationship, current_collection)
                 if lookup:
                     pipeline.append(lookup)
+                    added_lookups.add(alias)
                     # If array relation, unwind the alias used in $lookup
                     is_many = bool(relationship.get("isArray") or relationship.get("many", False))
                     if is_many:
                         unwind_path = relationship.get("as") or relationship.get("alias") or relationship.get("target")
-                        pipeline.append({
-                            "$unwind": {"path": f"${unwind_path}", "preserveNullAndEmptyArrays": True}
-                        })
+                        if unwind_path not in added_unwinds:
+                            pipeline.append({
+                                "$unwind": {"path": f"${unwind_path}", "preserveNullAndEmptyArrays": True}
+                            })
+                            added_unwinds.add(unwind_path)
                 current_collection = relationship["target"]
 
         # Add secondary filters (on joined collections)
@@ -636,14 +647,13 @@ class PipelineGenerator:
                     }
                 }
                 if intent.wants_details:
-                    group_stage["$group"]["items"] = {
-                        "$push": {
-                            "_id": "$_id",
-                            "displayBugNo": "$displayBugNo",
-                            "title": "$title",
-                            "priority": "$priority",
-                        }
-                    }
+                    item_fields = self._group_item_fields(intent.primary_entity)
+                    if item_fields:
+                        push_doc: Dict[str, Any] = {"_id": "$_id"}
+                        for field_path in item_fields:
+                            key = self._sanitize_output_key(field_path)
+                            push_doc[key] = f"${field_path}"
+                        group_stage["$group"]["items"] = {"$push": push_doc}
                 pipeline.append(group_stage)
                 # Sorting for grouped results: default to count desc, allow sorting by grouped keys
                 if intent.sort_order:
@@ -713,7 +723,9 @@ class PipelineGenerator:
 
         # Add projections after sorting so computed fields can be hidden
         if effective_projections and not intent.group_by:
-            projection = self._generate_projection(effective_projections, intent.target_entities, intent.primary_entity)
+            # Include both explicitly requested and implicitly required relations in projection
+            target_entities_for_projection = sorted(set(intent.target_entities or []) | set(required_relations))
+            projection = self._generate_projection(effective_projections, target_entities_for_projection, intent.primary_entity)
             # Ensure we exclude helper fields from output
             pipeline.append({"$project": projection})
         # Always remove priority rank helper if it was added
@@ -802,10 +814,19 @@ class PipelineGenerator:
             if field in ALLOWED_FIELDS.get(primary_entity, {}):
                 projection[field] = 1
 
-        # Add target entity fields
-        for entity in target_entities:
-            if entity in REL.get(primary_entity, {}):
-                projection[entity] = 1
+        # Add target entity fields (supports multi-hop via dot syntax)
+        for relation_spec in (target_entities or []):
+            if not isinstance(relation_spec, str) or not relation_spec:
+                continue
+            hops = relation_spec.split(".")
+            current_collection = primary_entity
+            for hop in hops:
+                if hop not in REL.get(current_collection, {}):
+                    break
+                relationship = REL[current_collection][hop]
+                alias = relationship.get("as") or relationship.get("alias") or relationship.get("target")
+                projection[alias] = 1
+                current_collection = relationship["target"]
 
         return projection
 
@@ -864,9 +885,14 @@ class PipelineGenerator:
                 'assignee': 'assignees.name',  # joined alias for assignee relation
                 'status': 'status',
                 'priority': 'priority',
+                # Multi-hop fallbacks added via project hop
+                'cycle': 'cycles.title',
+                'module': 'modules.title',
             },
             'project': {
                 'status': 'status',
+                'assignee': 'members.name',
+                'module': 'modules.title',
             },
             'cycle': {
                 'project': 'project.name',
@@ -875,6 +901,30 @@ class PipelineGenerator:
         }
         entity_map = mapping.get(primary_entity, {})
         return entity_map.get(token)
+
+    def _group_item_fields(self, primary_entity: str) -> List[str]:
+        """Return a small set of fields to include in grouped item details, per entity.
+        Only include fields that are allow-listed for the entity.
+        """
+        candidate_map: Dict[str, List[str]] = {
+            "workItem": ["displayBugNo", "title", "priority", "status"],
+            "project": ["projectDisplayId", "name", "status"],
+            "cycle": ["title", "status", "startDate", "endDate"],
+            "members": ["name", "email", "role"],
+            "page": ["title", "visibility"],
+            "module": ["title", "description"],
+            "projectState": ["name"],
+        }
+        candidates = candidate_map.get(primary_entity, ["_id"])  # minimal fallback
+        allowed = ALLOWED_FIELDS.get(primary_entity, set())
+        return [f for f in candidates if f in allowed]
+
+    def _sanitize_output_key(self, field_path: str) -> str:
+        """Sanitize field path for output keys in grouped items (avoid dots in keys)."""
+        try:
+            return field_path.split(".")[-1] if "." in field_path else field_path
+        except Exception:
+            return field_path
 
 class Planner:
     """Main query planner that orchestrates the entire process"""
