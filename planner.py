@@ -166,6 +166,34 @@ class LLMIntentParser:
             return self._normalize_boolean_value(value)
         return None
 
+    def _infer_sort_order_from_query(self, query_text: str) -> Optional[Dict[str, int]]:
+        """Infer time-based sorting preferences from free-form query text.
+
+        Recognizes phrases like 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
+        and 'oldest', 'earliest' → createdTimeStamp asc (1). Also handles
+        'ascending/descending' when mentioned alongside time/date/created keywords.
+        """
+        if not query_text:
+            return None
+
+        text = query_text.lower()
+
+        # Direct recency/age cues
+        if re.search(r"\b(recent|latest|newest|most\s+recent|newer\s+first)\b", text):
+            return {"createdTimeStamp": -1}
+        if re.search(r"\b(oldest|earliest|older\s+first)\b", text):
+            return {"createdTimeStamp": 1}
+
+        # Asc/Desc cues when paired with time/date/created terms
+        mentions_time = re.search(r"\b(time|date|created|creation|timestamp|recent)\b", text) is not None
+        if mentions_time:
+            if re.search(r"\b(desc|descending|new\s*->\s*old|new\s+to\s+old)\b", text):
+                return {"createdTimeStamp": -1}
+            if re.search(r"\b(asc|ascending|old\s*->\s*new|old\s+to\s+new)\b", text):
+                return {"createdTimeStamp": 1}
+
+        return None
+
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
         system = (
@@ -411,6 +439,12 @@ class LLMIntentParser:
             # For non-count queries, ensure consistency
             if group_by and wants_details_raw is None:
                 wants_details = False
+
+        # If no explicit sort provided and no grouping/count, infer time-based sort from phrasing
+        if not sort_order and not group_by and not wants_count:
+            inferred_sort = self._infer_sort_order_from_query(original_query or "")
+            if inferred_sort:
+                sort_order = inferred_sort
 
         return QueryIntent(
             primary_entity=primary,
