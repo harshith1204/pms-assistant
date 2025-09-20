@@ -9,7 +9,6 @@ export function ChatLayout() {
         {/* Header */}
         <header className="h-14 border-b bg-card flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            <h1 className="font-semibold text-foreground">Agent Chat</h1>
           </div>
           <ModelSelector />
         </header>
