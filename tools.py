@@ -143,11 +143,12 @@ def filter_meaningful_content(data: Any) -> Any:
 
 
 @tool
-async def intelligent_query(query: str) -> str:
+async def intelligent_query(query: str, show_all: bool = False) -> str:
     """Execute natural language queries against the Project Management database.
 
     Args:
         query: Natural language query about projects, work items, cycles, members, pages, modules, or project states.
+        show_all: If True, show all results instead of a summary (may be verbose for large datasets).
 
     Returns: Query results formatted for easy reading.
     """
@@ -231,9 +232,8 @@ async def intelligent_query(query: str) -> str:
                 # Not a list, filter as before
                 filtered = filter_meaningful_content(parsed)
 
-            print(f"DEBUG: Filtered results: {filtered}")
 
-            def format_llm_friendly(data, max_items=5):
+            def format_llm_friendly(data, max_items=20):
                 """Format data in a more LLM-friendly way to avoid hallucinations."""
                 if isinstance(data, list):
                     # Handle count-only results
@@ -252,25 +252,30 @@ async def intelligent_query(query: str) -> str:
                         if group_keys:
                             response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
 
-                            # Sort by count (highest first) and show top categories
+                            # Sort by count (highest first) and show more groups
                             sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
 
-                            for item in sorted_data[:8]:  # Show top 8 groups
+                            # Show all groups if max_items is None, otherwise limit
+                            display_limit = len(sorted_data) if max_items is None else 15
+                            for item in sorted_data[:display_limit]:
                                 group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
                                 group_label = ', '.join(group_values)
                                 count = item.get('count', 0)
                                 response += f"• {group_label}: {count} items\n"
 
-                            if len(data) > 8:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[8:])
-                                response += f"• ... and {len(data) - 8} other categories: {remaining} items\n"
+                            if max_items is not None and len(data) > 15:
+                                remaining = sum(item.get('count', 0) for item in sorted_data[15:])
+                                response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
+                            elif max_items is None and len(data) > display_limit:
+                                remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
+                                response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
                         else:
                             response += f"Found {total_items} items\n"
-
+                        print(response)
                         return response
 
                     # Handle list of documents - show summary instead of raw JSON
-                    if len(data) > max_items:
+                    if max_items is not None and len(data) > max_items:
                         response = f"📊 RESULTS SUMMARY:\n"
                         response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
 
@@ -289,19 +294,19 @@ async def intelligent_query(query: str) -> str:
 
                         # Show sample items in a readable format
                         response += "Sample items:\n"
-                        for i, item in enumerate(data[:3], 1):  # Show only 3 samples
+                        for i, item in enumerate(data[:5], 1):  # Show 5 samples instead of 3
                             if isinstance(item, dict):
                                 title = item.get('title', 'No title')[:50] + "..." if len(item.get('title', '')) > 50 else item.get('title', 'No title')
                                 priority = item.get('priority', 'No priority')
                                 display_no = item.get('displayBugNo', f'Item {i}')
                                 response += f"• {display_no}: {title} ({priority})\n"
 
-                        if len(data) > 3:
-                            response += f"• ... and {len(data) - 3} more items\n"
-
+                        if len(data) > 5:
+                            response += f"• ... and {len(data) - 5} more items\n"
+                        print(response)
                         return response
                     else:
-                        # Small list - show in formatted way
+                        # Show all items or small list - show in formatted way
                         response = "📊 RESULTS:\n"
                         for i, item in enumerate(data, 1):
                             if isinstance(item, dict):
@@ -309,7 +314,7 @@ async def intelligent_query(query: str) -> str:
                                 priority = item.get('priority', 'No priority')
                                 display_no = item.get('displayBugNo', f'Item {i}')
                                 response += f"• {display_no}: {title} ({priority})\n"
-
+                        print(response)
                         return response
 
                 # Single document or other data
@@ -327,15 +332,17 @@ async def intelligent_query(query: str) -> str:
                             response += f"• {key}: {value}\n"
                         else:
                             response += f"• {key}: [{len(value)} items]\n"
+                    print(response)
                     return response
                 else:
                     # Fallback to JSON for other data types
                     return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
 
             # Format in LLM-friendly way
-            formatted_result = format_llm_friendly(filtered)
+            max_items = None if show_all else 20
+            formatted_result = format_llm_friendly(filtered, max_items=max_items)
             response += formatted_result
-            
+            print(response)
             return response
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
