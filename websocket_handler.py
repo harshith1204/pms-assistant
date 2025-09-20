@@ -7,7 +7,7 @@ from datetime import datetime
 import uuid
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_ollama import ChatOllama
+# from langchain_ollama import ChatOllama
 import time
 import re
 

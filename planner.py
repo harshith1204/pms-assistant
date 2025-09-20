@@ -10,11 +10,19 @@ import re
 from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
-
+from langchain_groq import ChatGroq
 from registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from constants import mongodb_tools, DATABASE_NAME
-from langchain_ollama import ChatOllama
+# from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
+from dotenv import load_dotenv
+load_dotenv()
+groq_api_key = os.getenv("GROQ_API_KEY")
+if not groq_api_key:
+    raise ValueError(
+        "FATAL: GROQ_API_KEY environment variable not set.\n"
+        "Please create a .env file and add your Groq API key to it."
+    )
 
 @dataclass
 class QueryIntent:
@@ -61,13 +69,10 @@ class LLMIntentParser:
     def __init__(self, model_name: Optional[str] = None):
         self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "qwen3:0.6b-fp16")
         # Keep the model reasonably deterministic for planning
-        self.llm = ChatOllama(
-            model=self.model_name,
-            temperature=0.1,
-            num_ctx=4096,
-            num_predict=768,
-            top_p=0.9,
-            top_k=40,
+        self.llm = ChatGroq(
+            api_key=groq_api_key,
+            model="llama-3.1-8b-instant",
+            streaming=False
         )
 
         # Precompute compact schema context to keep prompts short
