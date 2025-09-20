@@ -232,6 +232,13 @@ class LLMIntentParser:
             "- createdBy_name: (creator names)\n"
             "- label: (work item labels)\n\n"
 
+            "## TIME-BASED SORTING (CRITICAL)\n"
+            "Infer sort_order from phrasing when the user implies recency or age.\n"
+            "- 'recent', 'latest', 'newest', 'most recent' → {\"createdTimeStamp\": -1}\n"
+            "- 'oldest', 'earliest', 'older first' → {\"createdTimeStamp\": 1}\n"
+            "- If 'ascending/descending' is mentioned with created/time/date/timestamp, map to 1/-1 respectively on 'createdTimeStamp'.\n"
+            "Only include sort_order when relevant; otherwise set it to null.\n\n"
+
             "## NAME EXTRACTION RULES - CRITICAL\n"
             "ALWAYS extract ONLY the core entity name, NEVER include descriptive phrases:\n"
             "- Query: 'work items within PMS project' → project_name: 'PMS' (NOT 'PMS project')\n"
@@ -277,6 +284,9 @@ class LLMIntentParser:
             "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
             "- 'show work items with bug label' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": []}\n"
             "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n\n"
+            "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
+            "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
+            "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -405,8 +415,31 @@ class LLMIntentParser:
         so = data.get("sort_order") or {}
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
-            if key in {"createdTimeStamp", "priority", "state", "status"} and val in (1, -1):
-                sort_order = {key: val}
+            # Accept synonyms and normalize
+            key_map = {
+                "created": "createdTimeStamp",
+                "createdAt": "createdTimeStamp",
+                "created_time": "createdTimeStamp",
+                "time": "createdTimeStamp",
+                "date": "createdTimeStamp",
+                "timestamp": "createdTimeStamp",
+            }
+            norm_key = key_map.get(key, key)
+
+            def _norm_dir(v: Any) -> Optional[int]:
+                if v in (1, -1):
+                    return int(v)
+                if isinstance(v, str):
+                    s = v.strip().lower()
+                    if s in {"asc", "ascending", "old->new", "old to new", "old_to_new"}:
+                        return 1
+                    if s in {"desc", "descending", "new->old", "new to old", "new_to_old"}:
+                        return -1
+                return None
+
+            norm_dir = _norm_dir(val)
+            if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
+                sort_order = {norm_key: norm_dir}
 
         # Limit
         limit_val = data.get("limit")
