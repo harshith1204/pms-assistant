@@ -5,6 +5,7 @@ import os
 import json
 import re
 from glob import glob
+from datetime import datetime
 
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
@@ -12,6 +13,133 @@ try:
     from planner import plan_and_execute_query
 except ImportError:
     plan_and_execute_query = None
+
+
+def normalize_mongodb_types(obj: Any) -> Any:
+    """Convert MongoDB extended JSON types to regular Python types."""
+    if obj is None:
+        return None
+
+    if isinstance(obj, dict):
+        # Handle MongoDB-specific types
+        if '$binary' in obj:
+            # Convert binary to string representation (we'll filter it out anyway)
+            return f"<binary:{obj['$binary']['base64'][:8]}...>"
+        elif '$date' in obj:
+            # Convert MongoDB date to string representation
+            return obj['$date']
+        elif '$oid' in obj:
+            # Convert ObjectId to string
+            return obj['$oid']
+        else:
+            # Recursively process nested objects
+            return {key: normalize_mongodb_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        # Process lists recursively
+        return [normalize_mongodb_types(item) for item in obj]
+    else:
+        # Return primitive types as-is
+        return obj
+
+
+def filter_meaningful_content(data: Any) -> Any:
+    """Filter MongoDB documents to keep only meaningful content fields.
+
+    Removes unnecessary fields like _id, timestamps, and other metadata
+    while preserving actual content like text, names, descriptions, etc.
+
+    Args:
+        data: Raw MongoDB document(s) - can be dict, list, or other types
+
+    Returns:
+        Filtered data with only meaningful content fields
+    """
+    # First, normalize MongoDB extended JSON to regular Python types
+    normalized_data = normalize_mongodb_types(data)
+
+    # Handle edge cases
+    if normalized_data is None:
+        return None
+
+    # Define fields that contain meaningful content (not metadata)
+    CONTENT_FIELDS = {
+        # Text content
+        'title', 'description', 'name', 'content', 'email', 'role',
+        'priority', 'status', 'state', 'displayBugNo', 'projectDisplayId',
+        # Business logic fields
+        'label', 'type', 'access', 'visibility', 'icon', 'imageUrl',
+        'business', 'staff', 'createdBy', 'assignee', 'project', 'cycle', 'module',
+        'members', 'pages', 'projectStates', 'subStates', 'linkedCycle', 'linkedModule',
+        # Date fields (but not timestamps)
+        'startDate', 'endDate', 'joiningDate', 'createdAt', 'updatedAt',
+        # Count/aggregation results
+        'total', 'count', 'group', 'items'
+    }
+
+    # Fields to always exclude (metadata)
+    EXCLUDE_FIELDS = {
+        '_id', 'createdTimeStamp', 'updatedTimeStamp',
+        '_priorityRank'  # Helper field added by pipeline
+    }
+
+    def is_meaningful_field(key: str, value: Any) -> bool:
+        """Check if a field contains meaningful content."""
+        # Always exclude metadata fields
+        if key in EXCLUDE_FIELDS:
+            return False
+
+        # Keep content fields
+        if key in CONTENT_FIELDS:
+            return True
+
+        # For unknown fields, check if they have meaningful values
+        if isinstance(value, str) and value.strip():
+            # Non-empty strings are meaningful
+            return True
+        elif isinstance(value, (int, float)) and not key.endswith(('Id', '_id')):
+            # Numbers that aren't IDs are meaningful
+            return True
+        elif isinstance(value, bool):
+            # Boolean values are meaningful
+            return True
+        elif isinstance(value, dict):
+            # Recursively check nested objects
+            return any(is_meaningful_field(k, v) for k, v in value.items())
+        elif isinstance(value, list) and value:
+            # Check if list contains meaningful content
+            return any(isinstance(item, (str, int, float, bool)) and
+                      (isinstance(item, str) and item.strip() or True)
+                      for item in value if isinstance(item, (str, int, float, bool, dict)))
+
+        return False
+
+    def clean_document(doc: Any) -> Any:
+        """Clean a single document or value."""
+        if isinstance(doc, dict):
+            # Filter dictionary
+            cleaned = {}
+            for key, value in doc.items():
+                if is_meaningful_field(key, value):
+                    if isinstance(value, (dict, list)):
+                        cleaned_value = clean_document(value)
+                        if cleaned_value:  # Only add if there's meaningful content
+                            cleaned[key] = cleaned_value
+                    else:
+                        cleaned[key] = value
+            return cleaned if cleaned else {}
+        elif isinstance(doc, list):
+            # Filter list of documents
+            cleaned = []
+            for item in doc:
+                cleaned_item = clean_document(item)
+                if cleaned_item:  # Only add if there's meaningful content
+                    cleaned.append(cleaned_item)
+            return cleaned
+        else:
+            # Return primitive values as-is
+            return doc
+
+    return clean_document(normalized_data)
 
 
 @tool
@@ -72,18 +200,142 @@ async def intelligent_query(query: str) -> str:
             except Exception:
                 parsed = rows
 
-            if isinstance(parsed, list):
-                # If it's a single count document, render a friendly summary
-                if len(parsed) == 1 and isinstance(parsed[0], dict) and "total" in parsed[0]:
-                    response += f"📊 RESULTS:\nTotal: {parsed[0]['total']}"
-                    return response
-                first_n = parsed[:10]
-                preview = json.dumps(first_n, indent=2)
-                more = f"\n… and {max(len(parsed) - 10, 0)} more" if len(parsed) > 10 else ""
-                response += f"📊 RESULTS (first {min(10, len(parsed))}):\n{preview}{more}"
-            else:
-                response += f"📊 RESULTS:\n{parsed}"
+            # Handle the specific MongoDB response format
+            if isinstance(parsed, list) and len(parsed) > 0:
+                # Check if first element is a string (like "Found X documents...")
+                if isinstance(parsed[0], str) and parsed[0].startswith("Found"):
+                    # This is the MongoDB response format: [message, doc1_json, doc2_json, ...]
+                    # Parse the JSON strings and filter them
+                    documents = []
+                    for item in parsed[1:]:  # Skip the first message
+                        if isinstance(item, str):
+                            try:
+                                doc = json.loads(item)
+                                filtered_doc = filter_meaningful_content(doc)
+                                if filtered_doc:  # Only add if there's meaningful content
+                                    documents.append(filtered_doc)
+                            except Exception:
+                                # Skip invalid JSON
+                                continue
+                        else:
+                            # Already parsed, filter directly
+                            filtered_doc = filter_meaningful_content(item)
+                            if filtered_doc:
+                                documents.append(filtered_doc)
 
+                    filtered = documents
+                else:
+                    # Regular list, filter as before
+                    filtered = filter_meaningful_content(parsed)
+            else:
+                # Not a list, filter as before
+                filtered = filter_meaningful_content(parsed)
+
+            print(f"DEBUG: Filtered results: {filtered}")
+
+            def format_llm_friendly(data, max_items=5):
+                """Format data in a more LLM-friendly way to avoid hallucinations."""
+                if isinstance(data, list):
+                    # Handle count-only results
+                    if len(data) == 1 and isinstance(data[0], dict) and "total" in data[0]:
+                        return f"📊 RESULTS:\nTotal: {data[0]['total']}"
+
+                    # Handle grouped/aggregated results
+                    if len(data) > 0 and isinstance(data[0], dict) and "count" in data[0]:
+                        response = "📊 RESULTS SUMMARY:\n"
+                        total_items = sum(item.get('count', 0) for item in data)
+
+                        # Determine what type of grouping this is
+                        first_item = data[0]
+                        group_keys = [k for k in first_item.keys() if k not in ['count', 'items']]
+
+                        if group_keys:
+                            response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
+
+                            # Sort by count (highest first) and show top categories
+                            sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
+
+                            for item in sorted_data[:8]:  # Show top 8 groups
+                                group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
+                                group_label = ', '.join(group_values)
+                                count = item.get('count', 0)
+                                response += f"• {group_label}: {count} items\n"
+
+                            if len(data) > 8:
+                                remaining = sum(item.get('count', 0) for item in sorted_data[8:])
+                                response += f"• ... and {len(data) - 8} other categories: {remaining} items\n"
+                        else:
+                            response += f"Found {total_items} items\n"
+
+                        return response
+
+                    # Handle list of documents - show summary instead of raw JSON
+                    if len(data) > max_items:
+                        response = f"📊 RESULTS SUMMARY:\n"
+                        response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
+
+                        # Group by priority if available
+                        priority_counts = {}
+                        for item in data[:max_items]:
+                            if isinstance(item, dict) and 'priority' in item:
+                                priority = item['priority']
+                                priority_counts[priority] = priority_counts.get(priority, 0) + 1
+
+                        if priority_counts:
+                            response += "Priority breakdown:\n"
+                            for priority, count in sorted(priority_counts.items()):
+                                response += f"• {priority}: {count} items\n"
+                            response += "\n"
+
+                        # Show sample items in a readable format
+                        response += "Sample items:\n"
+                        for i, item in enumerate(data[:3], 1):  # Show only 3 samples
+                            if isinstance(item, dict):
+                                title = item.get('title', 'No title')[:50] + "..." if len(item.get('title', '')) > 50 else item.get('title', 'No title')
+                                priority = item.get('priority', 'No priority')
+                                display_no = item.get('displayBugNo', f'Item {i}')
+                                response += f"• {display_no}: {title} ({priority})\n"
+
+                        if len(data) > 3:
+                            response += f"• ... and {len(data) - 3} more items\n"
+
+                        return response
+                    else:
+                        # Small list - show in formatted way
+                        response = "📊 RESULTS:\n"
+                        for i, item in enumerate(data, 1):
+                            if isinstance(item, dict):
+                                title = item.get('title', 'No title')[:30] + "..." if len(item.get('title', '')) > 30 else item.get('title', 'No title')
+                                priority = item.get('priority', 'No priority')
+                                display_no = item.get('displayBugNo', f'Item {i}')
+                                response += f"• {display_no}: {title} ({priority})\n"
+
+                        return response
+
+                # Single document or other data
+                if isinstance(data, dict):
+                    # Format single document in a readable way
+                    response = "📊 RESULT:\n"
+                    for key, value in data.items():
+                        if isinstance(value, (str, int, float, bool)):
+                            response += f"• {key}: {value}\n"
+                        elif isinstance(value, dict):
+                            response += f"• {key}:\n"
+                            for sub_key, sub_value in value.items():
+                                response += f"  - {sub_key}: {sub_value}\n"
+                        elif isinstance(value, list) and len(value) <= 3:
+                            response += f"• {key}: {value}\n"
+                        else:
+                            response += f"• {key}: [{len(value)} items]\n"
+                    return response
+                else:
+                    # Fallback to JSON for other data types
+                    return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
+
+            # Format in LLM-friendly way
+            formatted_result = format_llm_friendly(filtered)
+            response += formatted_result
+            
             return response
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
