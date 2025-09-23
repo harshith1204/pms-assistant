@@ -13,6 +13,13 @@ from datetime import datetime
 from phoenix.trace import using_project
 from phoenix.trace.schemas import SpanKind, SpanStatusCode
 from phoenix.trace.exporter import HttpExporter
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
+# File exporter not available - no separate package exists
+FileSpanExporter = None  # Set to None for graceful fallback
 
 # Local imports
 from agent import MongoDBAgent, ConversationMemory
@@ -21,30 +28,96 @@ from constants import DATABASE_NAME
 from langchain_core.messages import HumanMessage, AIMessage
 
 
-class MockSpan:
-    """Mock span for testing purposes"""
+class PhoenixSpan:
+    """Real Phoenix span implementation using OpenTelemetry"""
 
-    def __init__(self, name: str, span_kind: str, attributes: Dict[str, Any]):
+    def __init__(self, name: str, span_kind: str = "INTERNAL", attributes: Dict[str, Any] = None):
         self.name = name
         self.span_kind = span_kind
-        self.attributes = attributes
-        self.status = None
+        self.attributes = attributes or {}
+        self.span = None
+        self.start_time = time.time()
+
+        # Create a tracer
+        tracer = trace.get_tracer(__name__)
+
+        # Start the span with context
+        self.span = tracer.start_span(
+            name=name,
+            kind=getattr(trace.SpanKind, span_kind.upper(), trace.SpanKind.INTERNAL),
+            attributes=attributes
+        )
 
     def set_attribute(self, key: str, value: Any):
         """Set an attribute on the span"""
+        if self.span:
+            self.span.set_attribute(key, value)
         self.attributes[key] = value
 
     def set_status(self, status: str, message: str = ""):
         """Set the status of the span"""
+        if self.span:
+            status_code = StatusCode.ERROR if status == "ERROR" else StatusCode.OK
+            self.span.set_status(Status(status_code, message))
         self.status = {"status": status, "message": message}
 
     def add_event(self, name: str, attributes: Dict[str, Any]):
         """Add an event to the span"""
-        pass
+        if self.span:
+            self.span.add_event(name, attributes)
 
     def end(self):
         """End the span"""
-        pass
+        if self.span:
+            # Add duration as an attribute
+            duration = time.time() - self.start_time
+            self.span.set_attribute("duration_ms", duration * 1000)
+            self.span.end()
+
+    async def __aenter__(self):
+        """Async context manager entry"""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        self.end()
+
+
+class PhoenixSpanWrapper:
+    """Wrapper for OpenTelemetry spans to maintain compatibility with existing code"""
+
+    def __init__(self, span, name: str, span_kind: str, attributes: Dict[str, Any]):
+        self.span = span
+        self.name = name
+        self.span_kind = span_kind
+        self.attributes = attributes or {}
+        self.start_time = time.time()
+
+    def set_attribute(self, key: str, value: Any):
+        """Set an attribute on the span"""
+        if self.span:
+            self.span.set_attribute(key, value)
+        self.attributes[key] = value
+
+    def set_status(self, status: str, message: str = ""):
+        """Set the status of the span"""
+        if self.span:
+            status_code = StatusCode.ERROR if status == "ERROR" else StatusCode.OK
+            self.span.set_status(Status(status_code, message))
+        self.status = {"status": status, "message": message}
+
+    def add_event(self, name: str, attributes: Dict[str, Any]):
+        """Add an event to the span"""
+        if self.span:
+            self.span.add_event(name, attributes)
+
+    def end(self):
+        """End the span"""
+        if self.span:
+            # Add duration as an attribute
+            duration = time.time() - self.start_time
+            self.span.set_attribute("duration_ms", duration * 1000)
+            self.span.end()
 
     async def __aenter__(self):
         """Async context manager entry"""
@@ -66,14 +139,13 @@ class TracedMongoDBAgent(MongoDBAgent):
     async def trace_operation(self, operation_name: str, **attributes):
         """Context manager for tracing operations"""
         span = None
-        start_time = time.time()
 
         try:
             # Start span
             if self.tracer:
                 span = self.tracer.start_trace(
                     name=operation_name,
-                    span_kind=SpanKind.INTERNAL,
+                    span_kind="INTERNAL",
                     attributes=attributes
                 )
 
@@ -81,15 +153,9 @@ class TracedMongoDBAgent(MongoDBAgent):
 
         except Exception as e:
             if span:
-                span.set_status(SpanStatusCode.ERROR, str(e))
+                span.set_status("ERROR", str(e))
                 span.add_event("exception", {"exception.message": str(e)})
             raise
-
-        finally:
-            if span:
-                duration = time.time() - start_time
-                span.set_attribute("duration_ms", duration * 1000)
-                span.end()
 
     async def process_query(self, query: str, conversation_id: str = None) -> Dict[str, Any]:
         """Process a query with comprehensive tracing"""
@@ -143,7 +209,7 @@ class TracedMongoDBAgent(MongoDBAgent):
 
             except Exception as e:
                 if span:
-                    span.set_status(SpanStatusCode.ERROR, str(e))
+                    span.set_status("ERROR", str(e))
                 raise
 
     async def _generate_response(self, query: str, tool_result: Dict[str, Any], messages: List) -> str:
@@ -162,7 +228,7 @@ class TracedMongoDBAgent(MongoDBAgent):
 
             except Exception as e:
                 if span:
-                    span.set_status(SpanStatusCode.ERROR, str(e))
+                    span.set_status("ERROR", str(e))
                 raise
 
 
@@ -183,25 +249,64 @@ class PhoenixTracingManager:
         self.project_name = project_name
         self.tracer = None
         self.exporter = None
+        self.tracer_provider = None
 
     async def initialize(self):
         """Initialize Phoenix tracing"""
         try:
-            # Initialize HTTP exporter for Phoenix
-            self.exporter = HttpExporter(endpoint="http://localhost:6006/v1/traces")
+            # Set up OpenTelemetry tracer provider
+            self.tracer_provider = TracerProvider()
+            trace.set_tracer_provider(self.tracer_provider)
 
-            # In a real implementation, you'd configure the tracer properly
-            print("Phoenix tracing initialized")
-            print("Note: Start Phoenix server with: phoenix serve")
+            # Add console exporter for development
+            try:
+                console_exporter = ConsoleSpanExporter()
+                span_processor = BatchSpanProcessor(console_exporter)
+                self.tracer_provider.add_span_processor(span_processor)
+                print("✅ Console exporter configured")
+            except Exception as e:
+                print(f"⚠️  Console exporter not available: {e}")
+
+            # Add file exporter if available
+            if FileSpanExporter:
+                try:
+                    file_exporter = FileSpanExporter("./logs/traces.json")
+                    file_processor = BatchSpanProcessor(file_exporter)
+                    self.tracer_provider.add_span_processor(file_processor)
+                    print("✅ File exporter configured")
+                except Exception as e:
+                    print(f"⚠️  File exporter failed: {e}")
+
+            # Add Phoenix HTTP exporter if server is running
+            try:
+                phoenix_exporter = HttpExporter(endpoint="http://localhost:6006/v1/traces")
+                phoenix_processor = BatchSpanProcessor(phoenix_exporter)
+                self.tracer_provider.add_span_processor(phoenix_processor)
+                print("✅ Phoenix HTTP exporter configured")
+            except Exception as e:
+                print(f"⚠️  Phoenix server not available, using console export only: {e}")
+
+            # Get the tracer
+            self.tracer = trace.get_tracer(__name__)
+            print("✅ Phoenix tracing initialized successfully")
 
         except Exception as e:
-            print(f"Failed to initialize Phoenix tracing: {e}")
+            print(f"❌ Failed to initialize Phoenix tracing: {e}")
+            import traceback
+            traceback.print_exc()
 
     def start_trace(self, name: str, span_kind: str = "INTERNAL", attributes: Dict[str, Any] = None):
         """Start a new trace span"""
-        # For now, return a mock span object
-        # In a real implementation, this would use Phoenix's tracing API
-        return MockSpan(name, span_kind, attributes or {})
+        if not self.tracer:
+            return PhoenixSpan(name, span_kind, attributes or {})
+
+        # Create span with OpenTelemetry
+        span = self.tracer.start_span(
+            name=name,
+            kind=getattr(trace.SpanKind, span_kind.upper(), trace.SpanKind.INTERNAL),
+            attributes=attributes
+        )
+        return PhoenixSpanWrapper(span, name, span_kind, attributes or {})
 
     async def trace_agent_interaction(self, query: str, response: str, metadata: Dict[str, Any] = None):
         """Trace a complete agent interaction"""
@@ -252,7 +357,7 @@ async def trace_query(query: str, conversation_id: str = None) -> Dict[str, Any]
 
         except Exception as e:
             if span:
-                span.set_status(SpanStatusCode.ERROR, str(e))
+                span.set_status("ERROR", str(e))
             raise
 
 

@@ -19,7 +19,8 @@ from phoenix import Client
 from phoenix.trace import using_project
 from phoenix.trace.exporter import HttpExporter
 from phoenix.trace.schemas import SpanKind, SpanStatusCode
-from phoenix.evals import RelevanceEvaluator
+from phoenix.evals import RelevanceEvaluator, QAEvaluator, ToxicityEvaluator
+from phoenix.evals.models import OpenAIModel
 
 # Local imports
 from agent import MongoDBAgent
@@ -31,65 +32,259 @@ class PMSEvaluator:
 
     def __init__(self, mongodb_agent: MongoDBAgent):
         self.mongodb_agent = mongodb_agent
+        self.relevance_evaluator = None
+        self.qa_evaluator = None
+        self.toxicity_evaluator = None
+
+    async def initialize_evaluators(self):
+        """Initialize Phoenix evaluators"""
+        try:
+            # Initialize Phoenix evaluators
+            self.relevance_evaluator = RelevanceEvaluator()
+            self.qa_evaluator = QAEvaluator()
+            self.toxicity_evaluator = ToxicityEvaluator()
+
+            print("✅ Phoenix evaluators initialized")
+        except Exception as e:
+            print(f"⚠️  Could not initialize some Phoenix evaluators: {e}")
+            print("💡 Continuing with custom evaluators")
 
     async def evaluate_response_relevance(self, query: str, response: str) -> float:
         """Evaluate if the response is relevant to the query"""
         try:
-            # Use Phoenix's RelevanceEvaluator
-            evaluator = RelevanceEvaluator()
-            result = await evaluator.async_evaluate(
-                query=query,
-                response=response
-            )
-            return result.score
+            if self.relevance_evaluator:
+                # Use Phoenix's RelevanceEvaluator
+                result = await self.relevance_evaluator.async_evaluate(
+                    query=query,
+                    response=response
+                )
+                return result.score
+            else:
+                # Fallback custom implementation
+                return await self._custom_relevance_evaluation(query, response)
         except Exception as e:
             print(f"Error in relevance evaluation: {e}")
-            return 0.5  # Default neutral score
+            return await self._custom_relevance_evaluation(query, response)
 
-    async def evaluate_factual_accuracy(self, query: str, response: str) -> float:
-        """Evaluate factual accuracy of the response"""
+    async def _custom_relevance_evaluation(self, query: str, response: str) -> float:
+        """Custom relevance evaluation as fallback"""
         try:
-            # For PMS, we can check if the response contains expected entities
-            # This is a simplified version - in production you'd want more sophisticated checks
+            # Simple keyword overlap method
+            query_terms = set(self._extract_keywords(query))
+            response_terms = set(self._extract_keywords(response))
 
-            # Extract key terms from query
-            query_terms = set(query.lower().split())
-            response_terms = set(response.lower().split())
-
-            # Calculate overlap
             if not query_terms:
                 return 0.5
 
             overlap = len(query_terms.intersection(response_terms))
-            return min(overlap / len(query_terms), 1.0)
+            return min(overlap / len(query_terms) * 1.2, 1.0)  # Slight boost for matches
+        except Exception:
+            return 0.5
+
+    async def evaluate_factual_accuracy(self, query: str, response: str) -> float:
+        """Evaluate factual accuracy of the response"""
+        try:
+            if self.qa_evaluator:
+                # Use Phoenix's QAEvaluator for factual accuracy
+                result = await self.qa_evaluator.async_evaluate(
+                    query=query,
+                    response=response
+                )
+                return result.score
+            else:
+                # Fallback custom implementation
+                return await self._custom_factual_accuracy_evaluation(query, response)
         except Exception as e:
             print(f"Error in factual accuracy evaluation: {e}")
+            return await self._custom_factual_accuracy_evaluation(query, response)
+
+    async def _custom_factual_accuracy_evaluation(self, query: str, response: str) -> float:
+        """Custom factual accuracy evaluation as fallback"""
+        try:
+            # Check for PMS-specific factual accuracy
+            query_lower = query.lower()
+            response_lower = response.lower()
+
+            # Check for entity consistency
+            expected_entities = self._extract_pms_entities(query_lower)
+            found_entities = self._extract_pms_entities(response_lower)
+
+            entity_match_score = 0.0
+            if expected_entities:
+                matched_entities = expected_entities.intersection(found_entities)
+                entity_match_score = len(matched_entities) / len(expected_entities)
+
+            # Check for numerical consistency (dates, counts, etc.)
+            numerical_consistency = self._check_numerical_consistency(query_lower, response_lower)
+
+            # Check for status/state consistency
+            status_consistency = self._check_status_consistency(query_lower, response_lower)
+
+            # Combine scores
+            return (entity_match_score * 0.5 + numerical_consistency * 0.3 + status_consistency * 0.2)
+        except Exception:
             return 0.5
 
     async def evaluate_response_completeness(self, query: str, response: str) -> float:
         """Evaluate if the response is complete and comprehensive"""
         try:
-            # Check response length relative to query complexity
-            query_complexity = len(query.split())
-            response_length = len(response.split())
-
-            # Simple heuristic: longer responses for complex queries are better
-            if query_complexity < 5:
-                return 1.0 if response_length > 5 else 0.8
-            elif query_complexity < 15:
-                return 1.0 if response_length > 10 else 0.7
-            else:
-                return 1.0 if response_length > 20 else 0.6
+            # Custom completeness evaluation
+            return await self._custom_completeness_evaluation(query, response)
         except Exception as e:
             print(f"Error in completeness evaluation: {e}")
+            return await self._custom_completeness_evaluation(query, response)
+
+    async def _custom_completeness_evaluation(self, query: str, response: str) -> float:
+        """Custom completeness evaluation"""
+        try:
+            # Check response length relative to query complexity
+            query_complexity = len(self._extract_keywords(query))
+            response_length = len(self._extract_keywords(response))
+
+            # Base score on length ratio
+            if query_complexity == 0:
+                return 0.5
+
+            length_ratio = min(response_length / query_complexity, 2.0)
+            length_score = min(length_ratio / 2.0, 1.0)
+
+            # Check for comprehensive information
+            completeness_indicators = [
+                self._has_meaningful_content(response),
+                self._has_specific_details(response),
+                self._has_contextual_information(query, response)
+            ]
+
+            completeness_score = sum(completeness_indicators) / len(completeness_indicators)
+
+            # Combine scores
+            return (length_score * 0.6 + completeness_score * 0.4)
+        except Exception:
             return 0.5
+
+    async def evaluate_toxicity(self, response: str) -> float:
+        """Evaluate if the response contains toxic content"""
+        try:
+            if self.toxicity_evaluator:
+                result = await self.toxicity_evaluator.async_evaluate(response=response)
+                return 1.0 - result.score  # Invert toxicity score (lower toxicity = higher score)
+            else:
+                return await self._custom_toxicity_evaluation(response)
+        except Exception as e:
+            print(f"Error in toxicity evaluation: {e}")
+            return await self._custom_toxicity_evaluation(response)
+
+    async def _custom_toxicity_evaluation(self, response: str) -> float:
+        """Custom toxicity evaluation as fallback"""
+        try:
+            # Simple toxicity indicators
+            toxic_words = ['error', 'fail', 'invalid', 'not found', 'cannot', 'unable']
+            response_lower = response.lower()
+
+            toxic_count = sum(1 for word in toxic_words if word in response_lower)
+            toxicity_ratio = min(toxic_count / len(response.split()), 1.0)
+
+            return max(1.0 - toxicity_ratio, 0.1)  # At least 0.1 score
+        except Exception:
+            return 0.8
+
+    def _extract_keywords(self, text: str) -> List[str]:
+        """Extract meaningful keywords from text"""
+        import re
+        # Remove punctuation and split
+        words = re.findall(r'\b\w+\b', text.lower())
+        # Filter out common stop words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can'}
+        return [word for word in words if word not in stop_words and len(word) > 2]
+
+    def _extract_pms_entities(self, text: str) -> set:
+        """Extract PMS-specific entities from text"""
+        entities = set()
+        text_lower = text.lower()
+
+        # Project entities
+        if any(word in text_lower for word in ['project', 'projects', 'simpo', 'isthara', 'mcu']):
+            entities.add('project')
+
+        # Member/User entities
+        if any(word in text_lower for word in ['member', 'members', 'user', 'users', 'assignee', 'creator', 'vasiq', 'vikas', 'anand', 'prince']):
+            entities.add('member')
+
+        # Work item entities
+        if any(word in text_lower for word in ['work item', 'workitem', 'task', 'tasks', 'bug', 'bugs', 'ticket']):
+            entities.add('workitem')
+
+        # Cycle entities
+        if any(word in text_lower for word in ['cycle', 'cycles', 'sprint', 'sprints', 'iteration']):
+            entities.add('cycle')
+
+        # Status/State entities
+        if any(word in text_lower for word in ['status', 'state', 'active', 'completed', 'backlog', 'not started', 'in progress']):
+            entities.add('status')
+
+        return entities
+
+    def _check_numerical_consistency(self, query: str, response: str) -> float:
+        """Check numerical consistency between query and response"""
+        # Simple implementation - check for numbers
+        import re
+        query_numbers = re.findall(r'\d+', query)
+        response_numbers = re.findall(r'\d+', response)
+
+        if not query_numbers:
+            return 1.0  # No numbers to check
+
+        matches = sum(1 for num in query_numbers if num in response_numbers)
+        return matches / len(query_numbers)
+
+    def _check_status_consistency(self, query: str, response: str) -> float:
+        """Check status/state consistency"""
+        status_words = ['active', 'completed', 'in progress', 'not started', 'backlog', 'done', 'closed']
+        query_lower = query.lower()
+        response_lower = response.lower()
+
+        query_statuses = [word for word in status_words if word in query_lower]
+        response_statuses = [word for word in status_words if word in response_lower]
+
+        if not query_statuses:
+            return 1.0  # No statuses to check
+
+        matches = sum(1 for status in query_statuses if status in response_statuses)
+        return matches / len(query_statuses)
+
+    def _has_meaningful_content(self, response: str) -> bool:
+        """Check if response has meaningful content"""
+        return len(response.strip()) > 20
+
+    def _has_specific_details(self, response: str) -> bool:
+        """Check if response contains specific details"""
+        # Look for specific patterns like names, dates, IDs, etc.
+        import re
+        specific_patterns = [
+            r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b',  # Names like "John Doe"
+            r'\d{4}-\d{2}-\d{2}',  # Dates like "2024-01-01"
+            r'[A-Z]{2,}-\d+',  # IDs like "PROJ-123"
+            r'\b\d+\s+(items?|tasks?|bugs?)\b'  # Counts like "5 items"
+        ]
+
+        return any(re.search(pattern, response, re.IGNORECASE) for pattern in specific_patterns)
+
+    def _has_contextual_information(self, query: str, response: str) -> bool:
+        """Check if response provides contextual information"""
+        query_terms = set(self._extract_keywords(query))
+        response_terms = set(self._extract_keywords(response))
+
+        # Check if response adds new information beyond just echoing the query
+        new_info = response_terms - query_terms
+        return len(new_info) > len(query_terms) * 0.3  # At least 30% new information
 
     async def evaluate_pms_specific(self, query: str, response: str) -> Dict[str, float]:
         """PMS-specific evaluation metrics"""
         return {
             "relevance": await self.evaluate_response_relevance(query, response),
             "factual_accuracy": await self.evaluate_factual_accuracy(query, response),
-            "completeness": await self.evaluate_response_completeness(query, response)
+            "completeness": await self.evaluate_response_completeness(query, response),
+            "toxicity": await self.evaluate_toxicity(response)
         }
 
 
@@ -161,6 +356,7 @@ class EvaluationPipeline:
 
         # Initialize evaluator
         self.evaluator = PMSEvaluator(self.mongodb_agent)
+        await self.evaluator.initialize_evaluators()
 
         # Initialize tracer
         self.tracer = PhoenixTracer()

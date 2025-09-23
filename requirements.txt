@@ -38,3 +38,8 @@ numpy
 phoenix
 arize-phoenix
 arize-phoenix-evals
+
+# OpenTelemetry for tracing
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
