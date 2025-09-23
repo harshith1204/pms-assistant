@@ -12,6 +12,13 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 
+# Tracing imports (Phoenix via OpenTelemetry exporter)
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from phoenix.trace.exporter import HttpExporter
+
 # Import tools list
 try:
     tools_list = tools.tools
@@ -76,6 +83,47 @@ llm = ChatOllama(
 # Bind tools to the LLM for tool calling
 llm_with_tools = llm.bind_tools(tools_list)
 
+
+class PhoenixSpanManager:
+    """Manages Phoenix spans and tracer for the agent."""
+
+    def __init__(self):
+        self.tracer_provider = None
+        self.tracer = None
+        self._initialized = False
+
+    async def initialize(self):
+        """Initialize OpenTelemetry tracer provider with Phoenix exporter."""
+        if self._initialized:
+            return
+
+        try:
+            self.tracer_provider = TracerProvider()
+            trace.set_tracer_provider(self.tracer_provider)
+
+            # Console exporter for local dev visibility
+            console_exporter = ConsoleSpanExporter()
+            console_processor = BatchSpanProcessor(console_exporter)
+            self.tracer_provider.add_span_processor(console_processor)
+
+            # Phoenix HTTP exporter (GUI at http://localhost:6006)
+            try:
+                phoenix_exporter = HttpExporter(endpoint="http://localhost:6006/v1/traces")
+                phoenix_processor = BatchSpanProcessor(phoenix_exporter)
+                self.tracer_provider.add_span_processor(phoenix_processor)
+                print("✅ Phoenix HTTP exporter configured")
+            except Exception as e:
+                print(f"⚠️  Phoenix exporter not available: {e}")
+
+            self.tracer = trace.get_tracer(__name__)
+            self._initialized = True
+            print("✅ Tracing initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize tracing: {e}")
+
+
+phoenix_span_manager = PhoenixSpanManager()
+
 class ToolCallingCallbackHandler(AsyncCallbackHandler):
     """Callback handler for tool calling streaming"""
 
@@ -139,12 +187,53 @@ class MongoDBAgent:
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
+        self.tracing_enabled = False
+
+    async def initialize_tracing(self):
+        """Enable Phoenix tracing for this agent."""
+        await phoenix_span_manager.initialize()
+        self.tracing_enabled = True
+
+    def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
+        if not self.tracing_enabled or phoenix_span_manager.tracer is None:
+            return None
+        try:
+            span = phoenix_span_manager.tracer.start_span(
+                name=name,
+                kind=trace.SpanKind.INTERNAL,
+                attributes=attributes or {},
+            )
+            return span
+        except Exception as e:
+            print(f"Tracing error starting span '{name}': {e}")
+            return None
+
+    def _end_span(self, span, status: str = "OK", message: str = ""):
+        if not span:
+            return
+        try:
+            if status == "ERROR":
+                span.set_status(Status(StatusCode.ERROR, message))
+            span.end()
+        except Exception as e:
+            print(f"Tracing error ending span: {e}")
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
-        await mongodb_tools.connect()
-        self.connected = True
-        print("MongoDB Agent connected successfully!")
+        span = self._start_span("mongodb_connect")
+        try:
+            await mongodb_tools.connect()
+            self.connected = True
+            if span:
+                span.set_attribute("connection_success", True)
+            print("MongoDB Agent connected successfully!")
+        except Exception as e:
+            if span:
+                span.set_attribute("connection_success", False)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise
+        finally:
+            self._end_span(span)
 
     async def disconnect(self):
         """Disconnect from MongoDB MCP server"""
@@ -153,6 +242,7 @@ class MongoDBAgent:
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
         """Run the agent with a query and optional conversation context"""
+        run_span = self._start_span("agent_run", {"query_preview": query[:80]})
         if not self.connected:
             await self.connect()
 
@@ -181,7 +271,9 @@ class MongoDBAgent:
             last_response: Optional[AIMessage] = None
 
             while steps < self.max_steps:
+                llm_span = self._start_span("llm_invoke", {"message_count": len(messages)})
                 response = await self.llm_with_tools.ainvoke(messages)
+                self._end_span(llm_span)
                 last_response = response
 
                 # Persist assistant message
@@ -194,6 +286,7 @@ class MongoDBAgent:
                 # Execute requested tools sequentially
                 messages.append(response)
                 for tool_call in response.tool_calls:
+                    tool_span = self._start_span("tool_execute", {"tool_name": tool_call["name"]})
                     tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
                     if not tool:
                         # If tool not found, surface an error message and stop
@@ -207,8 +300,12 @@ class MongoDBAgent:
 
                     try:
                         result = await tool.ainvoke(tool_call["args"])
+                        if tool_span:
+                            tool_span.set_attribute("tool_success", True)
                     except Exception as tool_exc:
                         result = f"Tool execution error: {tool_exc}"
+                        if tool_span:
+                            tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
 
                     tool_message = ToolMessage(
                         content=str(result),
@@ -217,6 +314,7 @@ class MongoDBAgent:
                     messages.append(tool_message)
                     conversation_memory.add_message(conversation_id, tool_message)
 
+                    self._end_span(tool_span)
                 steps += 1
 
             # Step cap reached; return best available answer
@@ -225,10 +323,15 @@ class MongoDBAgent:
             return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
+            if run_span:
+                run_span.set_status(Status(StatusCode.ERROR, str(e)))
             return f"Error running agent: {str(e)}"
+        finally:
+            self._end_span(run_span)
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Run the agent with streaming support and conversation context"""
+        run_span = self._start_span("agent_run_streaming", {"query_preview": query[:80]})
         if not self.connected:
             await self.connect()
 
@@ -259,10 +362,12 @@ class MongoDBAgent:
             last_response: Optional[AIMessage] = None
 
             while steps < self.max_steps:
+                llm_span = self._start_span("llm_invoke", {"message_count": len(messages)})
                 response = await self.llm_with_tools.ainvoke(
                     messages,
                     config={"callbacks": [callback_handler]},
                 )
+                self._end_span(llm_span)
                 last_response = response
 
                 # Persist assistant message
@@ -275,6 +380,7 @@ class MongoDBAgent:
                 # Execute requested tools sequentially with streaming callbacks
                 messages.append(response)
                 for tool_call in response.tool_calls:
+                    tool_span = self._start_span("tool_execute", {"tool_name": tool_call["name"]})
                     tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
                     if not tool:
                         error_msg = ToolMessage(
@@ -288,9 +394,13 @@ class MongoDBAgent:
                     await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                     try:
                         result = await tool.ainvoke(tool_call["args"])
+                        if tool_span:
+                            tool_span.set_attribute("tool_success", True)
                         await callback_handler.on_tool_end(str(result))
                     except Exception as tool_exc:
                         result = f"Tool execution error: {tool_exc}"
+                        if tool_span:
+                            tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
                         await callback_handler.on_tool_end(str(result))
 
                     tool_message = ToolMessage(
@@ -300,6 +410,7 @@ class MongoDBAgent:
                     messages.append(tool_message)
                     conversation_memory.add_message(conversation_id, tool_message)
 
+                    self._end_span(tool_span)
                 steps += 1
 
             # Step cap reached; send best available response
@@ -310,7 +421,11 @@ class MongoDBAgent:
             return
 
         except Exception as e:
+            if run_span:
+                run_span.set_status(Status(StatusCode.ERROR, str(e)))
             yield f"Error running streaming agent: {str(e)}"
+        finally:
+            self._end_span(run_span)
 
 # ProjectManagement Insights Examples
 async def main():

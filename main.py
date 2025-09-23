@@ -6,8 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 
-from agent import MongoDBAgent
-from traces.traced_agent import TracedMongoDBAgent
+from agent import MongoDBAgent, phoenix_span_manager
 from traces.setup import EvaluationPipeline
 from traces.upload_dataset import PhoenixDatasetUploader
 from websocket_handler import handle_chat_websocket, ws_manager
@@ -44,11 +43,12 @@ async def lifespan(app: FastAPI):
     global mongodb_agent
 
     # Startup
-    print("Starting Traced MongoDB Agent with Phoenix...")
-    mongodb_agent = TracedMongoDBAgent()
+    print("Starting MongoDB Agent with Phoenix tracing...")
+    await phoenix_span_manager.initialize()
+    mongodb_agent = MongoDBAgent()
     await mongodb_agent.initialize_tracing()
     await mongodb_agent.connect()
-    print("Traced MongoDB Agent connected successfully!")
+    print("MongoDB Agent connected successfully!")
 
     yield
 
@@ -91,8 +91,9 @@ async def websocket_chat(websocket: WebSocket):
 
     # Initialize agent if not already done (for testing/development)
     if not mongodb_agent:
-        print("Initializing Traced MongoDB Agent for WebSocket...")
-        mongodb_agent = TracedMongoDBAgent()
+        print("Initializing MongoDB Agent for WebSocket...")
+        await phoenix_span_manager.initialize()
+        mongodb_agent = MongoDBAgent()
         await mongodb_agent.initialize_tracing()
         await mongodb_agent.connect()
 
