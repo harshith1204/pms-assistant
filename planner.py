@@ -801,7 +801,12 @@ class PipelineGenerator:
         s: Dict[str, Any] = {}
 
         # Project name: allow both embedded project.name and joined alias projectDoc.name
-        if 'project_name' in filters:
+        if 'project_name' in filters and collection == 'project':
+            s['$or'] = [
+                {'name': {'$regex': filters['project_name'], '$options': 'i'}},
+                {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
+            ]
+        elif 'project_name' in filters:
             s['$or'] = [
                 {'project.name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
