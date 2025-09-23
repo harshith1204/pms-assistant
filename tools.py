@@ -7,6 +7,17 @@ import re
 from glob import glob
 from datetime import datetime
 
+# Qdrant and RAG dependencies
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+except ImportError:
+    QdrantClient = None
+    SentenceTransformer = None
+    np = None
+
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
 try:
@@ -350,7 +361,186 @@ async def intelligent_query(query: str, show_all: bool = False) -> str:
     except Exception as e:
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
+# RAG Tool for page and work item content
+class RAGTool:
+    """RAG tool for querying page and work item content from Qdrant"""
+
+    def __init__(self):
+        self.qdrant_client = None
+        self.embedding_model = None
+        self.connected = False
+
+    async def connect(self):
+        """Initialize connection to Qdrant and embedding model"""
+        if self.connected:
+            return
+
+        if not QdrantClient or not SentenceTransformer:
+            raise ImportError("Qdrant client or sentence transformer not available. Please install qdrant-client and sentence-transformers.")
+
+        try:
+            self.qdrant_client = QdrantClient(url=constants.QDRANT_URL)
+            self.embedding_model = SentenceTransformer(constants.EMBEDDING_MODEL)
+            self.connected = True
+            print(f"Connected to Qdrant at {constants.QDRANT_URL}")
+        except Exception as e:
+            print(f"Failed to connect to Qdrant: {e}")
+            raise
+
+    async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search for relevant content in Qdrant based on the query"""
+        if not self.connected:
+            await self.connect()
+
+        try:
+            # Generate embedding for the query
+            query_embedding = self.embedding_model.encode(query).tolist()
+
+            # Build filter if content_type is specified
+            search_filter = None
+            if content_type:
+                search_filter = Filter(
+                    must=[
+                        FieldCondition(
+                            key="content_type",
+                            match=MatchValue(value=content_type)
+                        )
+                    ]
+                )
+
+            # Search in Qdrant
+            search_results = self.qdrant_client.search(
+                collection_name=constants.QDRANT_COLLECTION_NAME,
+                query_vector=query_embedding,
+                query_filter=search_filter,
+                limit=limit,
+                with_payload=True
+            )
+
+            # Format results
+            results = []
+            for result in search_results:
+                payload = result.payload or {}
+                results.append({
+                    "id": result.id,
+                    "score": result.score,
+                    "title": payload.get("title", "Untitled"),
+                    "content": payload.get("content", ""),
+                    "content_type": payload.get("content_type", "unknown"),
+                    "metadata": payload.get("metadata", {})
+                })
+
+            return results
+
+        except Exception as e:
+            print(f"Error searching Qdrant: {e}")
+            return []
+
+    async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
+        """Get relevant context for answering questions about page and work item content"""
+        if not content_types:
+            content_types = ["page", "work_item"]
+
+        all_results = []
+        for content_type in content_types:
+            results = await self.search_content(query, content_type=content_type, limit=3)
+            all_results.extend(results)
+
+        # Sort by relevance score
+        all_results.sort(key=lambda x: x["score"], reverse=True)
+
+        # Format context
+        context_parts = []
+        for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
+            context_parts.append(
+                f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                f"Content: {result['content'][:500]}{'...' if len(result['content']) > 500 else ''}\n"
+                f"Relevance Score: {result['score']:.3f}\n"
+            )
+
+        return "\n".join(context_parts) if context_parts else "No relevant content found."
+
+
+@tool
+async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
+    """Search for page and work item content using RAG (Retrieval-Augmented Generation).
+
+    This tool searches through stored page and work item content in Qdrant vector database
+    to find relevant information for answering questions about specific content.
+
+    Args:
+        query: Natural language question or search terms about page or work item content.
+        content_type: Type of content to search ('page', 'work_item', or None for both).
+        limit: Maximum number of results to return (default: 5).
+
+    Returns: Formatted search results with relevant content snippets and relevance scores.
+    """
+    try:
+        rag_tool = RAGTool()
+        results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
+
+        if not results:
+            return f"❌ No relevant content found for query: '{query}'"
+
+        # Format response
+        response = f"🔍 RAG SEARCH RESULTS for '{query}':\n\n"
+        response += f"Found {len(results)} relevant content pieces:\n\n"
+
+        for i, result in enumerate(results, 1):
+            response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+            response += f"Relevance Score: {result['score']:.3f}\n"
+            response += f"Content Preview: {result['content'][:300]}{'...' if len(result['content']) > 300 else ''}\n"
+
+            if result['metadata']:
+                response += f"Metadata: {json.dumps(result['metadata'], indent=2)}\n"
+
+            response += "\n" + "="*50 + "\n"
+
+        return response
+
+    except ImportError:
+        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+    except Exception as e:
+        return f"❌ RAG SEARCH ERROR:\nQuery: '{query}'\nError: {str(e)}"
+
+
+@tool
+async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
+    """Answer questions about page and work item content using RAG.
+
+    This tool retrieves relevant context from the Qdrant vector database
+    and provides context for answering questions about specific content.
+
+    Args:
+        question: Natural language question about page or work item content.
+        content_types: List of content types to search ('page', 'work_item', or None for both).
+
+    Returns: Relevant context and content snippets for answering the question.
+    """
+    try:
+        rag_tool = RAGTool()
+        context = await rag_tool.get_content_context(question, content_types)
+
+        if not context or "No relevant content found" in context:
+            return f"❌ No relevant context found for question: '{question}'"
+
+        response = f"📖 CONTEXT FOR QUESTION: '{question}'\n\n"
+        response += "Relevant content found:\n\n"
+        response += context
+        response += "\n" + "="*50 + "\n"
+        response += "Use this context to answer the question about page and work item content."
+
+        return response
+
+    except ImportError:
+        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+    except Exception as e:
+        return f"❌ RAG QUESTION ERROR:\nQuestion: '{question}'\nError: {str(e)}"
+
+
 # Define the tools list (no schema tool)
 tools = [
     intelligent_query,
+    rag_content_search,
+    rag_answer_question,
 ]

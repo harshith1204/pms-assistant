@@ -28,3 +28,8 @@ pytest
 pymongo
 pytest-asyncio
 websockets  # For WebSocket testing
+
+# Qdrant and RAG dependencies
+qdrant-client
+sentence-transformers
+numpy
