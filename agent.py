@@ -12,7 +12,12 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 
-tools_list = tools.tools
+# Import tools list
+try:
+    tools_list = tools.tools
+except AttributeError:
+    # Fallback: define empty tools list if import fails
+    tools_list = []
 from constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (

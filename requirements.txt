@@ -33,3 +33,8 @@ websockets  # For WebSocket testing
 qdrant-client
 sentence-transformers
 numpy
+
+# Phoenix for LLM evaluation and tracing
+phoenix
+arize-phoenix
+arize-phoenix-evals
