@@ -7,6 +7,9 @@ from contextlib import asynccontextmanager
 import uvicorn
 
 from agent import MongoDBAgent
+from traces.traced_agent import TracedMongoDBAgent
+from traces.setup import EvaluationPipeline
+from traces.upload_dataset import PhoenixDatasetUploader
 from websocket_handler import handle_chat_websocket, ws_manager
 
 # Pydantic models for API requests/responses
@@ -41,10 +44,11 @@ async def lifespan(app: FastAPI):
     global mongodb_agent
 
     # Startup
-    print("Starting MongoDB Agent...")
-    mongodb_agent = MongoDBAgent()
+    print("Starting Traced MongoDB Agent with Phoenix...")
+    mongodb_agent = TracedMongoDBAgent()
+    await mongodb_agent.initialize_tracing()
     await mongodb_agent.connect()
-    print("MongoDB Agent connected successfully!")
+    print("Traced MongoDB Agent connected successfully!")
 
     yield
 
@@ -87,11 +91,38 @@ async def websocket_chat(websocket: WebSocket):
 
     # Initialize agent if not already done (for testing/development)
     if not mongodb_agent:
-        print("Initializing MongoDB Agent for WebSocket...")
-        mongodb_agent = MongoDBAgent()
+        print("Initializing Traced MongoDB Agent for WebSocket...")
+        mongodb_agent = TracedMongoDBAgent()
+        await mongodb_agent.initialize_tracing()
         await mongodb_agent.connect()
 
     await handle_chat_websocket(websocket, mongodb_agent)
+
+
+@app.post("/eval/run")
+async def run_evaluation(sample_size: int | None = None):
+    """Run the evaluation pipeline and return the report."""
+    pipeline = EvaluationPipeline()
+    await pipeline.initialize()
+    results = await pipeline.run_evaluation(sample_size=sample_size)
+    report = await pipeline.generate_evaluation_report(results)
+    return {"report": report}
+
+
+@app.post("/phoenix/dataset/upload")
+async def upload_phoenix_dataset():
+    """Build and save the Phoenix evaluation dataset JSON locally."""
+    uploader = PhoenixDatasetUploader()
+    dataset = uploader.load_test_dataset()
+    if not dataset:
+        raise HTTPException(status_code=400, detail="No dataset loaded")
+    dataset_info = uploader.create_phoenix_dataset(dataset)
+    if not dataset_info.get("success"):
+        raise HTTPException(status_code=500, detail="Failed to create Phoenix dataset")
+    success = uploader.upload_to_phoenix(dataset_info)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save dataset JSON")
+    return {"success": True, "entries": len(dataset)}
 
 if __name__ == "__main__":
     uvicorn.run(

@@ -242,6 +242,25 @@ class TracedMongoDBAgent(MongoDBAgent):
                     span.set_attribute("error", str(e))
                 raise
 
+    async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None):
+        """Run the agent with streaming and tracing wrappers."""
+        async with self.trace_operation("agent_run_streaming", query=query, conversation_id=conversation_id) as span:
+            try:
+                # Ensure tracing is initialized if called directly
+                if not self.tracing_enabled:
+                    await self.initialize_tracing()
+
+                # Defer to base implementation for streaming callbacks
+                async for chunk in super().run_streaming(query=query, websocket=websocket, conversation_id=conversation_id):
+                    if span and chunk:
+                        # Record that we streamed some output (bounded for safety)
+                        span.set_attribute("streaming_chunk_len", len(str(chunk)) if chunk else 0)
+                    yield chunk
+            except Exception as e:
+                if span:
+                    span.set_attribute("error", str(e))
+                raise
+
 
 # Global instances
 phoenix_span_manager = PhoenixSpanManager()
