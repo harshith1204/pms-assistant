@@ -24,7 +24,7 @@ from phoenix.trace.trace_dataset import TraceDataset
 import pandas as pd
 import threading
 import time
-from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor
+from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
 
 # OpenInference semantic conventions (optional)
 try:
@@ -135,14 +135,30 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Phoenix HttpExporter to send spans (with events/attributes) to Phoenix UI
+            # Phoenix HttpExporter via adapter to handle batch lists from OTel
             try:
-                http_exporter = HttpExporter()
-                http_processor = BatchSpanProcessor(http_exporter)
+                class PhoenixHttpAdapterExporter(SpanExporter):
+                    def __init__(self):
+                        self._exporter = HttpExporter()
+
+                    def export(self, spans):
+                        try:
+                            # spans is typically a list[ReadableSpan]
+                            for span in spans or []:
+                                self._exporter.export(span)
+                            return SpanExportResult.SUCCESS
+                        except Exception:
+                            return SpanExportResult.FAILURE
+
+                    def shutdown(self):
+                        return
+
+                http_adapter = PhoenixHttpAdapterExporter()
+                http_processor = BatchSpanProcessor(http_adapter)
                 self.tracer_provider.add_span_processor(http_processor)
-                print("✅ Phoenix HttpExporter configured")
+                print("✅ Phoenix HttpExporter (adapter) configured")
             except Exception as e:
-                print(f"⚠️  Failed to configure Phoenix HttpExporter: {e}")
+                print(f"⚠️  Failed to configure Phoenix HttpExporter adapter: {e}")
 
             # Phoenix span processor (batch export to Phoenix dataset as fallback)
             phoenix_processor = PhoenixSpanProcessor()
@@ -233,7 +249,7 @@ class PhoenixSpanCollector:
                 for event in span.events:
                     events_list.append({
                         'name': event.name,
-                        'timestamp': event.timestamp,
+                        'timestamp': format_timestamp(event.timestamp),
                         'attributes': dict(event.attributes)
                     })
                 span_dict['events'] = json.dumps(events_list)
