@@ -3,7 +3,7 @@ from pymongo import MongoClient
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 from dotenv import load_dotenv
-from tools import rag_content_search
+# from tools import rag_content_search
 
 # Load environment variables
 load_dotenv()
@@ -23,9 +23,9 @@ try:
     print("✅ MongoDB connected successfully!")
 
     # Access your specific collections
-    db = mongo_client["pms"]
+    db = mongo_client["ProjectManagement"]
     page_collection = db["page"]
-    workitem_collection = db["workitem"]
+    workitem_collection = db["workItem"]
 
 except Exception as e:
     print("❌ MongoDB connection failed:", e)
@@ -68,14 +68,10 @@ except Exception as e:
 import asyncio
 
 if __name__ == "__main__":
-    async def main():
-        print("🔍 Testing rag_content_search...")
-        result1 = await rag_content_search("Find the work item about cycle UI breaking.", content_type="workitem")
-        print(result1)
-
-        # print("\n📖 Testing rag_answer_question...")
-        # result2 = await rag_answer_question("What is stored in pages?")
-        # print(result2)
-
-    asyncio.run(main())
+    # Test basic connection
+    try:
+        collections = qdrant_client.get_collections()
+        print(f"✅ Qdrant connected successfully! Collections: {[col.name for col in collections.collections]}")
+    except Exception as e:
+        print(f"❌ Qdrant connection failed: {e}")
 
