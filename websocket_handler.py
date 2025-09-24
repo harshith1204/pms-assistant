@@ -13,6 +13,7 @@ import re
 
 from constants import DATABASE_NAME
 from planner import plan_and_execute_query
+from opentelemetry import trace
 
 def _should_use_planner(message_text: str) -> bool:
     q = (message_text or "").lower()
@@ -148,35 +149,51 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Route to planner or LLM based on heuristics/flag
-            if force_planner or _should_use_planner(message):
-                # Use deterministic planner: plan + execute and stream a compact result
-                try:
-                    plan_result = await plan_and_execute_query(message)
-                    await websocket.send_json({
-                        "type": "planner_result",
-                        "success": plan_result.get("success", False),
-                        "intent": plan_result.get("intent"),
-                        "pipeline": plan_result.get("pipeline"),
-                        "result": plan_result.get("result"),
-                        "timestamp": datetime.now().isoformat()
-                    })
-                except Exception as e:
-                    await websocket.send_json({
-                        "type": "planner_error",
-                        "message": str(e),
-                        "timestamp": datetime.now().isoformat()
-                    })
-            else:
-                # Use regular LLM with tool calling
-                async for response_chunk in mongodb_agent.run_streaming(
-                    query=message,
-                    websocket=websocket,
-                    conversation_id=conversation_id
-                ):
-                    # The streaming is handled internally by the callback handler
-                    # Just iterate through the generator to complete the streaming
-                    pass
+            # Create a root span per user message and keep all work nested
+            tracer = trace.get_tracer(__name__)
+            with tracer.start_as_current_span(
+                "user_request",
+                kind=trace.SpanKind.INTERNAL,
+                attributes={
+                    "conversation_id": conversation_id,
+                    "client_id": client_id,
+                    "message_preview": (message or "")[:120],
+                },
+            ):
+                # Route to planner or LLM based on heuristics/flag
+                if force_planner or _should_use_planner(message):
+                    try:
+                        with tracer.start_as_current_span(
+                            "planner_execute", kind=trace.SpanKind.INTERNAL
+                        ):
+                            plan_result = await plan_and_execute_query(message)
+                        await websocket.send_json({
+                            "type": "planner_result",
+                            "success": plan_result.get("success", False),
+                            "intent": plan_result.get("intent"),
+                            "pipeline": plan_result.get("pipeline"),
+                            "result": plan_result.get("result"),
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "planner_error",
+                            "message": str(e),
+                            "timestamp": datetime.now().isoformat()
+                        })
+                else:
+                    # Use regular LLM with tool calling
+                    with tracer.start_as_current_span(
+                        "agent_stream", kind=trace.SpanKind.INTERNAL
+                    ):
+                        async for _ in mongodb_agent.run_streaming(
+                            query=message,
+                            websocket=websocket,
+                            conversation_id=conversation_id
+                        ):
+                            # The streaming is handled internally by the callback handler
+                            # Just iterate through the generator to complete the streaming
+                            pass
 
             # Send completion message
             await websocket.send_json({
