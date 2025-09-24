@@ -2,6 +2,14 @@
 DATABASE_NAME = "ProjectManagement"
 MONGODB_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
 
+# Qdrant configuration (hybrid search)
+# Prefer environment variables; fall back to defaults/placeholders
+import os
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
+QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME", "pms_collection")
+DEFAULT_EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
+
 # MCP Server Configuration for ProjectManagement
 mongodb_server_config = {
     "mcpServers": {
