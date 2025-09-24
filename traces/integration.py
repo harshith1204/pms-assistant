@@ -295,6 +295,19 @@ class PhoenixTracingManager:
             import traceback
             traceback.print_exc()
 
+    def cleanup(self):
+        """Shutdown tracing and release resources."""
+        try:
+            # TracerProvider in OTel Python supports shutdown()
+            if self.tracer_provider:
+                try:
+                    self.tracer_provider.shutdown()
+                except Exception as e:
+                    print(f"⚠️  Error during tracer provider shutdown: {e}")
+        finally:
+            self.tracer = None
+            self.tracer_provider = None
+
     def start_trace(self, name: str, span_kind: str = "INTERNAL", attributes: Dict[str, Any] = None):
         """Start a new trace span"""
         if not self.tracer:
