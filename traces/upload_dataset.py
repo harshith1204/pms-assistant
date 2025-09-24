@@ -20,7 +20,7 @@ from phoenix.trace import using_project
 # Add parent directory to path for local imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import EVALUATION_DATASET_CONFIG
+from .config import EVALUATION_DATASET_CONFIG
 
 
 class PhoenixDatasetUploader:
