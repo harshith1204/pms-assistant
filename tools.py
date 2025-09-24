@@ -1,8 +1,8 @@
 from langchain_core.tools import tool
 from typing import Optional, Dict, List, Any, Union
+import json
 import constants
 import os
-import json
 import re
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
@@ -15,6 +15,12 @@ try:
     from query_planner import plan_and_execute_query
 except ImportError:
     plan_and_execute_query = None
+
+# Qdrant inserter
+try:
+    from qdrant.insertdocs import upsert_documents
+except Exception:
+    upsert_documents = None
 
 
 @tool
@@ -98,3 +104,31 @@ async def intelligent_query(query: str) -> str:
 tools = [
     intelligent_query,
 ]
+
+
+@tool
+def qdrant_upsert(items_json: str) -> str:
+    """Upsert documents into Qdrant with auto-creation of hybrid collection.
+
+    Args:
+        items_json: JSON string of a list of items. Each item must contain:
+            - id: unique id (str/int)
+            - vector: List[float] dense embedding
+            - payload: dict payload to store alongside
+            - optional sparse: {index(int): weight(float)} for hybrid search
+
+    Returns a status string with the number of items upserted.
+    """
+    if upsert_documents is None:
+        return "❌ Qdrant upsert not available (missing qdrant client or module)."
+    try:
+        items: List[Dict[str, Any]] = json.loads(items_json)
+        if not isinstance(items, list):
+            return "❌ items_json must be a JSON array."
+        upsert_documents(items)
+        return f"✅ Upserted {len(items)} item(s) into Qdrant."
+    except Exception as e:
+        return f"❌ Qdrant upsert error: {str(e)}"
+
+# Expose the tool
+tools.append(qdrant_upsert)

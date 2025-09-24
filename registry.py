@@ -4,6 +4,25 @@ PMS Registry - Central definitions for relationships, fields, and aliases
 """
 
 from typing import Dict, List, Any, Set
+from dataclasses import dataclass
+
+@dataclass
+class VectorConfig:
+    """Configuration for vector and hybrid search for collections we index in Qdrant.
+
+    """
+    collection_name: str
+    text_fields: List[str]
+    vector_size: int
+    use_hnsw: bool = True
+    enable_sparse: bool = True
+
+# Vectorization targets per collection (minimal for now)
+VECTOR_REGISTRY: Dict[str, VectorConfig] = {
+    # For hybrid search, we will vectorize these fields if present
+    "page": VectorConfig(collection_name="pms_collection", text_fields=["title"], vector_size=768),
+    "workItem": VectorConfig(collection_name="pms_collection", text_fields=["title"], vector_size=768),
+}
 
 # ---- Relation Registry (single source of truth for hops)
 REL: Dict[str, Dict[str, dict]] = {

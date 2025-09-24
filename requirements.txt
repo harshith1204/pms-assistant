@@ -28,3 +28,4 @@ pytest
 pymongo
 pytest-asyncio
 websockets  # For WebSocket testing
+qdrant-client>=1.9.0
