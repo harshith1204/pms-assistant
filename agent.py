@@ -11,11 +11,11 @@ import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
+import os
+from langchain_groq import ChatGroq
 # Import tools list
 try:
     tools_list = tools.tools
-import os
-from langchain_groq import ChatGroq
 except AttributeError:
     # Fallback: define empty tools list if import fails
     tools_list = []
