@@ -171,6 +171,34 @@ class LLMIntentParser:
             return self._normalize_boolean_value(value)
         return None
 
+    def _infer_sort_order_from_query(self, query_text: str) -> Optional[Dict[str, int]]:
+        """Infer time-based sorting preferences from free-form query text.
+
+        Recognizes phrases like 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
+        and 'oldest', 'earliest' → createdTimeStamp asc (1). Also handles
+        'ascending/descending' when mentioned alongside time/date/created keywords.
+        """
+        if not query_text:
+            return None
+
+        text = query_text.lower()
+
+        # Direct recency/age cues
+        if re.search(r"\b(recent|latest|newest|most\s+recent|newer\s+first)\b", text):
+            return {"createdTimeStamp": -1}
+        if re.search(r"\b(oldest|earliest|older\s+first)\b", text):
+            return {"createdTimeStamp": 1}
+
+        # Asc/Desc cues when paired with time/date/created terms
+        mentions_time = re.search(r"\b(time|date|created|creation|timestamp|recent)\b", text) is not None
+        if mentions_time:
+            if re.search(r"\b(desc|descending|new\s*->\s*old|new\s+to\s+old)\b", text):
+                return {"createdTimeStamp": -1}
+            if re.search(r"\b(asc|ascending|old\s*->\s*new|old\s+to\s+new)\b", text):
+                return {"createdTimeStamp": 1}
+
+        return None
+
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
         system = (
@@ -208,6 +236,13 @@ class LLMIntentParser:
             "- project_name, cycle_name, assignee_name, module_name\n"
             "- createdBy_name: (creator names)\n"
             "- label: (work item labels)\n\n"
+
+            "## TIME-BASED SORTING (CRITICAL)\n"
+            "Infer sort_order from phrasing when the user implies recency or age.\n"
+            "- 'recent', 'latest', 'newest', 'most recent' → {\"createdTimeStamp\": -1}\n"
+            "- 'oldest', 'earliest', 'older first' → {\"createdTimeStamp\": 1}\n"
+            "- If 'ascending/descending' is mentioned with created/time/date/timestamp, map to 1/-1 respectively on 'createdTimeStamp'.\n"
+            "Only include sort_order when relevant; otherwise set it to null.\n\n"
 
             "## NAME EXTRACTION RULES - CRITICAL\n"
             "ALWAYS extract ONLY the core entity name, NEVER include descriptive phrases:\n"
@@ -254,6 +289,9 @@ class LLMIntentParser:
             "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
             "- 'show work items with bug label' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": []}\n"
             "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n\n"
+            "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
+            "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
+            "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -382,8 +420,31 @@ class LLMIntentParser:
         so = data.get("sort_order") or {}
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
-            if key in {"createdTimeStamp", "priority", "state", "status"} and val in (1, -1):
-                sort_order = {key: val}
+            # Accept synonyms and normalize
+            key_map = {
+                "created": "createdTimeStamp",
+                "createdAt": "createdTimeStamp",
+                "created_time": "createdTimeStamp",
+                "time": "createdTimeStamp",
+                "date": "createdTimeStamp",
+                "timestamp": "createdTimeStamp",
+            }
+            norm_key = key_map.get(key, key)
+
+            def _norm_dir(v: Any) -> Optional[int]:
+                if v in (1, -1):
+                    return int(v)
+                if isinstance(v, str):
+                    s = v.strip().lower()
+                    if s in {"asc", "ascending", "old->new", "old to new", "old_to_new"}:
+                        return 1
+                    if s in {"desc", "descending", "new->old", "new to old", "new_to_old"}:
+                        return -1
+                return None
+
+            norm_dir = _norm_dir(val)
+            if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
+                sort_order = {norm_key: norm_dir}
 
         # Limit
         limit_val = data.get("limit")
@@ -416,6 +477,12 @@ class LLMIntentParser:
             # For non-count queries, ensure consistency
             if group_by and wants_details_raw is None:
                 wants_details = False
+
+        # If no explicit sort provided and no grouping/count, infer time-based sort from phrasing
+        if not sort_order and not group_by and not wants_count:
+            inferred_sort = self._infer_sort_order_from_query(original_query or "")
+            if inferred_sort:
+                sort_order = inferred_sort
 
         return QueryIntent(
             primary_entity=primary,

@@ -11,9 +11,14 @@ import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
-tools_list = tools.tools
+# Import tools list
+try:
+    tools_list = tools.tools
 import os
 from langchain_groq import ChatGroq
+except AttributeError:
+    # Fallback: define empty tools list if import fails
+    tools_list = []
 from constants import DATABASE_NAME, mongodb_tools
 from dotenv import load_dotenv
 load_dotenv()

@@ -7,6 +7,17 @@ import re
 from glob import glob
 from datetime import datetime
 
+# Qdrant and RAG dependencies
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+except ImportError:
+    QdrantClient = None
+    SentenceTransformer = None
+    np = None
+
 mongodb_tools = constants.mongodb_tools
 DATABASE_NAME = constants.DATABASE_NAME
 try:
@@ -143,11 +154,12 @@ def filter_meaningful_content(data: Any) -> Any:
 
 
 @tool
-async def intelligent_query(query: str) -> str:
+async def intelligent_query(query: str, show_all: bool = False) -> str:
     """Execute natural language queries against the Project Management database.
 
     Args:
         query: Natural language query about projects, work items, cycles, members, pages, modules, or project states.
+        show_all: If True, show all results instead of a summary (may be verbose for large datasets).
 
     Returns: Query results formatted for easy reading.
     """
@@ -231,9 +243,8 @@ async def intelligent_query(query: str) -> str:
                 # Not a list, filter as before
                 filtered = filter_meaningful_content(parsed)
 
-            print(f"DEBUG: Filtered results: {filtered}")
 
-            def format_llm_friendly(data, max_items=5):
+            def format_llm_friendly(data, max_items=20):
                 """Format data in a more LLM-friendly way to avoid hallucinations."""
                 if isinstance(data, list):
                     # Handle count-only results
@@ -252,25 +263,30 @@ async def intelligent_query(query: str) -> str:
                         if group_keys:
                             response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
 
-                            # Sort by count (highest first) and show top categories
+                            # Sort by count (highest first) and show more groups
                             sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
 
-                            for item in sorted_data[:8]:  # Show top 8 groups
+                            # Show all groups if max_items is None, otherwise limit
+                            display_limit = len(sorted_data) if max_items is None else 15
+                            for item in sorted_data[:display_limit]:
                                 group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
                                 group_label = ', '.join(group_values)
                                 count = item.get('count', 0)
                                 response += f"• {group_label}: {count} items\n"
 
-                            if len(data) > 8:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[8:])
-                                response += f"• ... and {len(data) - 8} other categories: {remaining} items\n"
+                            if max_items is not None and len(data) > 15:
+                                remaining = sum(item.get('count', 0) for item in sorted_data[15:])
+                                response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
+                            elif max_items is None and len(data) > display_limit:
+                                remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
+                                response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
                         else:
                             response += f"Found {total_items} items\n"
-
+                        print(response)
                         return response
 
                     # Handle list of documents - show summary instead of raw JSON
-                    if len(data) > max_items:
+                    if max_items is not None and len(data) > max_items:
                         response = f"📊 RESULTS SUMMARY:\n"
                         response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
 
@@ -289,19 +305,19 @@ async def intelligent_query(query: str) -> str:
 
                         # Show sample items in a readable format
                         response += "Sample items:\n"
-                        for i, item in enumerate(data[:3], 1):  # Show only 3 samples
+                        for i, item in enumerate(data[:5], 1):  # Show 5 samples instead of 3
                             if isinstance(item, dict):
                                 title = item.get('title', 'No title')[:50] + "..." if len(item.get('title', '')) > 50 else item.get('title', 'No title')
                                 priority = item.get('priority', 'No priority')
                                 display_no = item.get('displayBugNo', f'Item {i}')
                                 response += f"• {display_no}: {title} ({priority})\n"
 
-                        if len(data) > 3:
-                            response += f"• ... and {len(data) - 3} more items\n"
-
+                        if len(data) > 5:
+                            response += f"• ... and {len(data) - 5} more items\n"
+                        print(response)
                         return response
                     else:
-                        # Small list - show in formatted way
+                        # Show all items or small list - show in formatted way
                         response = "📊 RESULTS:\n"
                         for i, item in enumerate(data, 1):
                             if isinstance(item, dict):
@@ -309,7 +325,7 @@ async def intelligent_query(query: str) -> str:
                                 priority = item.get('priority', 'No priority')
                                 display_no = item.get('displayBugNo', f'Item {i}')
                                 response += f"• {display_no}: {title} ({priority})\n"
-
+                        print(response)
                         return response
 
                 # Single document or other data
@@ -327,15 +343,17 @@ async def intelligent_query(query: str) -> str:
                             response += f"• {key}: {value}\n"
                         else:
                             response += f"• {key}: [{len(value)} items]\n"
+                    print(response)
                     return response
                 else:
                     # Fallback to JSON for other data types
                     return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
 
             # Format in LLM-friendly way
-            formatted_result = format_llm_friendly(filtered)
+            max_items = None if show_all else 20
+            formatted_result = format_llm_friendly(filtered, max_items=max_items)
             response += formatted_result
-            
+            print(response)
             return response
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
@@ -343,7 +361,186 @@ async def intelligent_query(query: str) -> str:
     except Exception as e:
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
+# RAG Tool for page and work item content
+class RAGTool:
+    """RAG tool for querying page and work item content from Qdrant"""
+
+    def __init__(self):
+        self.qdrant_client = None
+        self.embedding_model = None
+        self.connected = False
+
+    async def connect(self):
+        """Initialize connection to Qdrant and embedding model"""
+        if self.connected:
+            return
+
+        if not QdrantClient or not SentenceTransformer:
+            raise ImportError("Qdrant client or sentence transformer not available. Please install qdrant-client and sentence-transformers.")
+
+        try:
+            self.qdrant_client = QdrantClient(url=constants.QDRANT_URL)
+            self.embedding_model = SentenceTransformer(constants.EMBEDDING_MODEL)
+            self.connected = True
+            print(f"Connected to Qdrant at {constants.QDRANT_URL}")
+        except Exception as e:
+            print(f"Failed to connect to Qdrant: {e}")
+            raise
+
+    async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search for relevant content in Qdrant based on the query"""
+        if not self.connected:
+            await self.connect()
+
+        try:
+            # Generate embedding for the query
+            query_embedding = self.embedding_model.encode(query).tolist()
+
+            # Build filter if content_type is specified
+            search_filter = None
+            if content_type:
+                search_filter = Filter(
+                    must=[
+                        FieldCondition(
+                            key="content_type",
+                            match=MatchValue(value=content_type)
+                        )
+                    ]
+                )
+
+            # Search in Qdrant
+            search_results = self.qdrant_client.search(
+                collection_name=constants.QDRANT_COLLECTION_NAME,
+                query_vector=query_embedding,
+                query_filter=search_filter,
+                limit=limit,
+                with_payload=True
+            )
+
+            # Format results
+            results = []
+            for result in search_results:
+                payload = result.payload or {}
+                results.append({
+                    "id": result.id,
+                    "score": result.score,
+                    "title": payload.get("title", "Untitled"),
+                    "content": payload.get("content", ""),
+                    "content_type": payload.get("content_type", "unknown"),
+                    "metadata": payload.get("metadata", {})
+                })
+
+            return results
+
+        except Exception as e:
+            print(f"Error searching Qdrant: {e}")
+            return []
+
+    async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
+        """Get relevant context for answering questions about page and work item content"""
+        if not content_types:
+            content_types = ["page", "work_item"]
+
+        all_results = []
+        for content_type in content_types:
+            results = await self.search_content(query, content_type=content_type, limit=3)
+            all_results.extend(results)
+
+        # Sort by relevance score
+        all_results.sort(key=lambda x: x["score"], reverse=True)
+
+        # Format context
+        context_parts = []
+        for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
+            context_parts.append(
+                f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                f"Content: {result['content'][:500]}{'...' if len(result['content']) > 500 else ''}\n"
+                f"Relevance Score: {result['score']:.3f}\n"
+            )
+
+        return "\n".join(context_parts) if context_parts else "No relevant content found."
+
+
+@tool
+async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
+    """Search for page and work item content using RAG (Retrieval-Augmented Generation).
+
+    This tool searches through stored page and work item content in Qdrant vector database
+    to find relevant information for answering questions about specific content.
+
+    Args:
+        query: Natural language question or search terms about page or work item content.
+        content_type: Type of content to search ('page', 'work_item', or None for both).
+        limit: Maximum number of results to return (default: 5).
+
+    Returns: Formatted search results with relevant content snippets and relevance scores.
+    """
+    try:
+        rag_tool = RAGTool()
+        results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
+
+        if not results:
+            return f"❌ No relevant content found for query: '{query}'"
+
+        # Format response
+        response = f"🔍 RAG SEARCH RESULTS for '{query}':\n\n"
+        response += f"Found {len(results)} relevant content pieces:\n\n"
+
+        for i, result in enumerate(results, 1):
+            response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+            response += f"Relevance Score: {result['score']:.3f}\n"
+            response += f"Content Preview: {result['content'][:300]}{'...' if len(result['content']) > 300 else ''}\n"
+
+            if result['metadata']:
+                response += f"Metadata: {json.dumps(result['metadata'], indent=2)}\n"
+
+            response += "\n" + "="*50 + "\n"
+
+        return response
+
+    except ImportError:
+        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+    except Exception as e:
+        return f"❌ RAG SEARCH ERROR:\nQuery: '{query}'\nError: {str(e)}"
+
+
+@tool
+async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
+    """Answer questions about page and work item content using RAG.
+
+    This tool retrieves relevant context from the Qdrant vector database
+    and provides context for answering questions about specific content.
+
+    Args:
+        question: Natural language question about page or work item content.
+        content_types: List of content types to search ('page', 'work_item', or None for both).
+
+    Returns: Relevant context and content snippets for answering the question.
+    """
+    try:
+        rag_tool = RAGTool()
+        context = await rag_tool.get_content_context(question, content_types)
+
+        if not context or "No relevant content found" in context:
+            return f"❌ No relevant context found for question: '{question}'"
+
+        response = f"📖 CONTEXT FOR QUESTION: '{question}'\n\n"
+        response += "Relevant content found:\n\n"
+        response += context
+        response += "\n" + "="*50 + "\n"
+        response += "Use this context to answer the question about page and work item content."
+
+        return response
+
+    except ImportError:
+        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+    except Exception as e:
+        return f"❌ RAG QUESTION ERROR:\nQuestion: '{question}'\nError: {str(e)}"
+
+
 # Define the tools list (no schema tool)
 tools = [
     intelligent_query,
+    rag_content_search,
+    rag_answer_question,
 ]
