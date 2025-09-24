@@ -26,6 +26,28 @@ import threading
 import time
 from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor
 
+# OpenInference semantic conventions (optional)
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:  # Fallback when OpenInference isn't installed
+    class _OI:
+        INPUT_VALUE = "input.value"
+        OUTPUT_VALUE = "output.value"
+        LLM_MODEL_NAME = "llm.model_name"
+        LLM_TEMPERATURE = "llm.temperature"
+        LLM_TOP_P = "llm.top_p"
+        LLM_TOP_K = "llm.top_k"
+        LLM_PROMPT = "llm.prompt"
+        LLM_SYSTEM = "llm.system_prompt"
+        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
+        TOOL_NAME = "tool.name"
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
+
+    OI = _OI()
+
 # Import tools list
 try:
     tools_list = tools.tools
@@ -113,7 +135,16 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Phoenix span processor (our working solution)
+            # Phoenix HttpExporter to send spans (with events/attributes) to Phoenix UI
+            try:
+                http_exporter = HttpExporter()
+                http_processor = BatchSpanProcessor(http_exporter)
+                self.tracer_provider.add_span_processor(http_processor)
+                print("✅ Phoenix HttpExporter configured")
+            except Exception as e:
+                print(f"⚠️  Failed to configure Phoenix HttpExporter: {e}")
+
+            # Phoenix span processor (batch export to Phoenix dataset as fallback)
             phoenix_processor = PhoenixSpanProcessor()
             self.tracer_provider.add_span_processor(phoenix_processor)
 
@@ -387,6 +418,13 @@ class MongoDBAgent:
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
+        # Ensure tracing is initialized so spans include attributes/events
+        if not self.tracing_enabled:
+            try:
+                await self.initialize_tracing()
+            except Exception as _e:
+                # Proceed without tracing if initialization fails
+                pass
         span = self._start_span("mongodb_connect")
         try:
             await mongodb_tools.connect()
@@ -420,12 +458,21 @@ class MongoDBAgent:
                 span_cm = tracer.start_as_current_span(
                     "agent_run",
                     kind=trace.SpanKind.INTERNAL,
-                    attributes={"query_preview": query[:80]},
+                    attributes={
+                        "query_preview": query[:80],
+                        "query_length": len(query or ""),
+                        "database.name": DATABASE_NAME,
+                    },
                 )
             else:
                 span_cm = None
 
             with (span_cm if span_cm is not None else contextlib.nullcontext()) as run_span:
+                if run_span:
+                    try:
+                        run_span.add_event("agent_start")
+                    except Exception:
+                        pass
                 # Use default conversation ID if none provided
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
@@ -459,8 +506,28 @@ class MongoDBAgent:
                     else:
                         llm_cm = None
 
-                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()):
+                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
+                        # Record model invocation parameters
+                        if llm_span:
+                            try:
+                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
+                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
+                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                if self.system_prompt:
+                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                # Add prompt summary event
+                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
+                            except Exception:
+                                pass
                         response = await self.llm_with_tools.ainvoke(messages)
+                        if llm_span and getattr(response, "content", None):
+                            try:
+                                preview = str(response.content)[:500]
+                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                            except Exception:
+                                pass
                     last_response = response
 
                     # Persist assistant message
@@ -494,13 +561,30 @@ class MongoDBAgent:
                                 continue
 
                             try:
+                                if tool_span:
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
+                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.add_event("tool_start", {"tool": tool.name})
+                                    except Exception:
+                                        pass
                                 result = await tool.ainvoke(tool_call["args"])
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.add_event("tool_end", {"tool": tool.name})
+                                    except Exception:
+                                        pass
                             except Exception as tool_exc:
                                 result = f"Tool execution error: {tool_exc}"
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                    try:
+                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                    except Exception:
+                                        pass
 
                             tool_message = ToolMessage(
                                 content=str(result),
@@ -512,7 +596,19 @@ class MongoDBAgent:
 
                 # Step cap reached; return best available answer
                 if last_response is not None:
+                    if run_span:
+                        try:
+                            preview = str(last_response.content)[:500]
+                            run_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                            run_span.add_event("agent_end", {"steps": steps})
+                        except Exception:
+                            pass
                     return last_response.content
+                if run_span:
+                    try:
+                        run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps"})
+                    except Exception:
+                        pass
                 return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
@@ -529,7 +625,11 @@ class MongoDBAgent:
                 span_cm = tracer.start_as_current_span(
                     "agent_run_streaming",
                     kind=trace.SpanKind.INTERNAL,
-                    attributes={"query_preview": query[:80]},
+                    attributes={
+                        "query_preview": query[:80],
+                        "query_length": len(query or ""),
+                        "database.name": DATABASE_NAME,
+                    },
                 )
             else:
                 span_cm = None
@@ -570,11 +670,29 @@ class MongoDBAgent:
                     else:
                         llm_cm = None
 
-                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()):
+                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
+                        if llm_span:
+                            try:
+                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
+                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
+                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                if self.system_prompt:
+                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
+                            except Exception:
+                                pass
                         response = await self.llm_with_tools.ainvoke(
                             messages,
                             config={"callbacks": [callback_handler]},
                         )
+                        if llm_span and getattr(response, "content", None):
+                            try:
+                                preview = str(response.content)[:500]
+                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                            except Exception:
+                                pass
                     last_response = response
 
                     # Persist assistant message
@@ -609,14 +727,31 @@ class MongoDBAgent:
 
                             await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                             try:
-                                result = await tool.ainvoke(tool_call["args"])
+                                if tool_span:
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
+                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.add_event("tool_start", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                                result = await tool.ainvoke(tool_call["args"]) 
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.add_event("tool_end", {"tool": tool.name})
+                                    except Exception:
+                                        pass
                                 await callback_handler.on_tool_end(str(result))
                             except Exception as tool_exc:
                                 result = f"Tool execution error: {tool_exc}"
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                    try:
+                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                    except Exception:
+                                        pass
                                 await callback_handler.on_tool_end(str(result))
 
                             tool_message = ToolMessage(
