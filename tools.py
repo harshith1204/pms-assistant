@@ -379,7 +379,8 @@ class RAGTool:
             raise ImportError("Qdrant client or sentence transformer not available. Please install qdrant-client and sentence-transformers.")
 
         try:
-            self.qdrant_client = QdrantClient(url=constants.QDRANT_URL)
+            self.qdrant_client = QdrantClient(url=constants.QDRANT_URL,api_key=constants.QDRANT_API_KEY)
+
             self.embedding_model = SentenceTransformer(constants.EMBEDDING_MODEL)
             self.connected = True
             print(f"Connected to Qdrant at {constants.QDRANT_URL}")
@@ -395,7 +396,8 @@ class RAGTool:
         try:
             # Generate embedding for the query
             query_embedding = self.embedding_model.encode(query).tolist()
-
+            # h
+            print("Query embedding generated")
             # Build filter if content_type is specified
             search_filter = None
             if content_type:
@@ -419,6 +421,7 @@ class RAGTool:
 
             # Format results
             results = []
+            # print(f"total results",search_results)
             for result in search_results:
                 payload = result.payload or {}
                 results.append({
@@ -427,7 +430,7 @@ class RAGTool:
                     "title": payload.get("title", "Untitled"),
                     "content": payload.get("content", ""),
                     "content_type": payload.get("content_type", "unknown"),
-                    "metadata": payload.get("metadata", {})
+                    # "metadata": payload.get("metadata", {})
                 })
 
             return results
@@ -451,6 +454,7 @@ class RAGTool:
 
         # Format context
         context_parts = []
+        # print(all_results)
         for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
             context_parts.append(
                 f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
@@ -491,8 +495,8 @@ async def rag_content_search(query: str, content_type: str = None, limit: int = 
             response += f"Relevance Score: {result['score']:.3f}\n"
             response += f"Content Preview: {result['content'][:300]}{'...' if len(result['content']) > 300 else ''}\n"
 
-            if result['metadata']:
-                response += f"Metadata: {json.dumps(result['metadata'], indent=2)}\n"
+            # if result['metadata']:
+            #     response += f"Metadata: {json.dumps(result['metadata'], indent=2)}\n"
 
             response += "\n" + "="*50 + "\n"
 
@@ -544,3 +548,29 @@ tools = [
     rag_content_search,
     rag_answer_question,
 ]
+
+# import asyncio
+
+# if __name__ == "__main__":
+#     async def main():
+#         # Test the tools    
+#         while True:
+#             question = input("Enter your question: ")
+#             if question.lower() in ['exit', 'quit']:
+#                 break
+
+#             print("\n🎯 Testing intelligent_query...")
+
+#             print("🔍 Testing rag_content_search...")
+#             result1 = await rag_content_search.ainvoke({
+#                 "query": question,   # rag_content_search expects `query`
+#             })
+#             print(result1)
+
+#             print("\n📖 Testing rag_answer_question...")
+#             result2 = await rag_answer_question.ainvoke({
+#                 "question": question,   # rag_answer_question expects `question`
+#             })
+#             print(result2)
+
+#     asyncio.run(main())

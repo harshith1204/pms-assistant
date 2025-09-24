@@ -3,9 +3,11 @@ DATABASE_NAME = "ProjectManagement"
 MONGODB_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
 
 # Qdrant configuration
-QDRANT_URL = "http://localhost:6333"  # Default Qdrant URL
-QDRANT_COLLECTION_NAME = "pms_content"  # Collection for page and work item content
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Sentence transformer model for embeddings
+QDRANT_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfubjbSDBCTZaH321Eya7qis_tP6sHMAZ3Gki6Y"
+QDRANT_URL = "https://dc88ad91-1e1e-48b4-bf73-0e5c1db1cffd.europe-west3-0.gcp.cloud.qdrant.io"  # Default Qdrant URL
+QDRANT_COLLECTION_NAME = "pms_collection"  # Collection for page and work item content
+EMBEDDING_MODEL = "google/embeddinggemma-300m"  # Sentence transformer model for embeddings
+
 
 # MCP Server Configuration for ProjectManagement
 mongodb_server_config = {
