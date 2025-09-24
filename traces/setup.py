@@ -24,7 +24,7 @@ from phoenix.evals.models import OpenAIModel
 
 # Local imports
 from agent import MongoDBAgent
-from constants import DATABASE_NAME
+from mongo.constants import DATABASE_NAME
 
 
 class PMSEvaluator:
