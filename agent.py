@@ -12,6 +12,19 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 
+# Tracing imports (Phoenix via OpenTelemetry exporter)
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from phoenix.trace.exporter import HttpExporter
+from phoenix import Client
+from phoenix.trace.trace_dataset import TraceDataset
+import pandas as pd
+import threading
+import time
+from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor
+
 # Import tools list
 try:
     tools_list = tools.tools
@@ -76,8 +89,192 @@ llm = ChatOllama(
 # Bind tools to the LLM for tool calling
 llm_with_tools = llm.bind_tools(tools_list)
 
-class ToolCallingCallbackHandler(AsyncCallbackHandler):
-    """Callback handler for tool calling streaming"""
+
+class PhoenixSpanManager:
+    """Manages Phoenix spans and tracer for the agent."""
+
+    def __init__(self):
+        self.tracer_provider = None
+        self.tracer = None
+        self._initialized = False
+
+    async def initialize(self):
+        """Initialize OpenTelemetry tracer provider with Phoenix exporter."""
+        if self._initialized:
+            return
+
+        try:
+            self.tracer_provider = TracerProvider()
+            trace.set_tracer_provider(self.tracer_provider)
+
+            # Console exporter for local dev visibility
+            console_exporter = ConsoleSpanExporter()
+            console_processor = BatchSpanProcessor(console_exporter)
+            self.tracer_provider.add_span_processor(console_processor)
+
+            # Phoenix span processor (our working solution)
+            phoenix_processor = PhoenixSpanProcessor()
+            self.tracer_provider.add_span_processor(phoenix_processor)
+
+            # Start Phoenix span collector
+            phoenix_span_collector.start_periodic_export()
+            print("✅ Phoenix span processor and collector configured")
+
+            self.tracer = trace.get_tracer(__name__)
+            self._initialized = True
+            print("✅ Tracing initialized with Phoenix export")
+        except Exception as e:
+            print(f"❌ Failed to initialize tracing: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+class PhoenixSpanCollector:
+    """Collects and exports spans to Phoenix"""
+
+    def __init__(self):
+        self.collected_spans = []
+        self.phoenix_client = Client()
+        self.export_thread = None
+        self.running = False
+
+    def collect_span(self, span):
+        """Collect a span for export to Phoenix"""
+        self.collected_spans.append(span)
+
+        # If we have many spans, export them
+        if len(self.collected_spans) >= 10:
+            self.export_to_phoenix()
+
+    def export_to_phoenix(self):
+        """Export collected spans to Phoenix"""
+        if not self.collected_spans:
+            return
+
+        try:
+            # Convert spans to DataFrame format
+            spans_data = []
+            for span in self.collected_spans:
+                # Extract span information with proper timestamp conversion
+                def format_timestamp(timestamp):
+                    """Convert OpenTelemetry timestamp to ISO format"""
+                    if hasattr(timestamp, 'isoformat'):
+                        return timestamp.isoformat()
+                    elif isinstance(timestamp, (int, float)):
+                        # Convert nanoseconds to datetime
+                        from datetime import datetime
+                        return datetime.fromtimestamp(timestamp / 1e9).isoformat()
+                    else:
+                        return str(timestamp)
+
+                def clean_hex_id(hex_id):
+                    """Remove 0x prefix from hex IDs"""
+                    if isinstance(hex_id, str) and hex_id.startswith('0x'):
+                        return hex_id[2:]
+                    return str(hex_id)
+
+                span_dict = {
+                    'name': span.name,
+                    'span_kind': str(span.kind),
+                    'trace_id': clean_hex_id(span.context.trace_id),
+                    'span_id': clean_hex_id(span.context.span_id),
+                    'parent_id': clean_hex_id(span.parent.span_id) if span.parent else None,
+                    'start_time': format_timestamp(span.start_time),
+                    'end_time': format_timestamp(span.end_time),
+                    'status_code': span.status.status_code.name,
+                    'status_message': span.status.description or '',
+                    'attributes': json.dumps(dict(span.attributes)),
+                    'context.trace_id': clean_hex_id(span.context.trace_id),
+                    'context.span_id': clean_hex_id(span.context.span_id),
+                    'context.trace_state': str(span.context.trace_state)
+                }
+
+                # Add events
+                events_list = []
+                for event in span.events:
+                    events_list.append({
+                        'name': event.name,
+                        'timestamp': event.timestamp,
+                        'attributes': dict(event.attributes)
+                    })
+                span_dict['events'] = json.dumps(events_list)
+
+                spans_data.append(span_dict)
+
+            # Create DataFrame and export
+            if spans_data:
+                df = pd.DataFrame(spans_data)
+                trace_dataset = TraceDataset(dataframe=df, name='agent-traces')
+                self.phoenix_client.log_traces(trace_dataset, project_name='default')
+                print(f"✅ Exported {len(spans_data)} spans to Phoenix")
+
+            # Clear collected spans
+            self.collected_spans.clear()
+
+        except Exception as e:
+            print(f"❌ Error exporting spans to Phoenix: {e}")
+
+    def start_periodic_export(self):
+        """Start periodic export of collected spans"""
+        if self.export_thread and self.export_thread.is_alive():
+            return
+
+        self.running = True
+        self.export_thread = threading.Thread(target=self._periodic_export_worker, daemon=True)
+        self.export_thread.start()
+
+    def stop_periodic_export(self):
+        """Stop periodic export"""
+        self.running = False
+        if self.export_thread:
+            self.export_thread.join(timeout=5)
+        self.export_to_phoenix()  # Export any remaining spans
+
+    def _periodic_export_worker(self):
+        """Worker thread for periodic span export"""
+        while self.running:
+            time.sleep(5)  # Export every 5 seconds
+            self.export_to_phoenix()
+
+
+class PhoenixSpanProcessor(SpanProcessor):
+    """Custom span processor that sends spans to Phoenix collector"""
+
+    def on_start(self, span, parent_context=None):
+        """Called when a span starts"""
+        pass
+
+    def on_end(self, span):
+        """Called when a span ends - send to Phoenix"""
+        try:
+            phoenix_span_collector.collect_span(span)
+        except Exception as e:
+            # Don't let span processing errors break the application
+            print(f"Warning: Failed to collect span for Phoenix: {e}")
+
+    def shutdown(self, timeout_millis=30000):
+        """Shutdown the processor"""
+        try:
+            phoenix_span_collector.export_to_phoenix()
+        except Exception as e:
+            print(f"Warning: Failed to export spans during shutdown: {e}")
+
+    def force_flush(self, timeout_millis=30000):
+        """Force flush any pending spans"""
+        try:
+            phoenix_span_collector.export_to_phoenix()
+        except Exception as e:
+            print(f"Warning: Failed to flush spans: {e}")
+
+
+# Global span collector
+phoenix_span_collector = PhoenixSpanCollector()
+
+# Global Phoenix span manager instance
+phoenix_span_manager = PhoenixSpanManager()
+
+class PhoenixSpanManager:
+    """Manages Phoenix tracing configuration"""
 
     def __init__(self, websocket=None):
         self.websocket = websocket
@@ -131,6 +328,15 @@ class ToolCallingCallbackHandler(AsyncCallbackHandler):
                 "timestamp": datetime.now().isoformat()
             })
 
+    def cleanup(self):
+        """Clean up Phoenix span collector"""
+        try:
+            # Clean up the global span collector
+            phoenix_span_collector.stop_periodic_export()
+            print("✅ Phoenix span collector stopped")
+        except Exception as e:
+            print(f"Warning: Error stopping Phoenix span collector: {e}")
+
 class MongoDBAgent:
     """MongoDB Agent using Tool Calling"""
 
@@ -139,20 +345,64 @@ class MongoDBAgent:
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
+        self.tracing_enabled = False
+
+    async def initialize_tracing(self):
+        """Enable Phoenix tracing for this agent."""
+        await phoenix_span_manager.initialize()
+        self.tracing_enabled = True
+
+    def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
+        if not self.tracing_enabled or phoenix_span_manager.tracer is None:
+            return None
+        try:
+            span = phoenix_span_manager.tracer.start_span(
+                name=name,
+                kind=trace.SpanKind.INTERNAL,
+                attributes=attributes or {},
+            )
+            return span
+        except Exception as e:
+            print(f"Tracing error starting span '{name}': {e}")
+            return None
+
+    def _end_span(self, span, status: str = "OK", message: str = ""):
+        if not span:
+            return
+        try:
+            if status == "ERROR":
+                span.set_status(Status(StatusCode.ERROR, message))
+            span.end()
+        except Exception as e:
+            print(f"Tracing error ending span: {e}")
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
-        await mongodb_tools.connect()
-        self.connected = True
-        print("MongoDB Agent connected successfully!")
+        span = self._start_span("mongodb_connect")
+        try:
+            await mongodb_tools.connect()
+            self.connected = True
+            if span:
+                span.set_attribute("connection_success", True)
+            print("MongoDB Agent connected successfully!")
+        except Exception as e:
+            if span:
+                span.set_attribute("connection_success", False)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise
+        finally:
+            self._end_span(span)
 
     async def disconnect(self):
         """Disconnect from MongoDB MCP server"""
         await mongodb_tools.disconnect()
         self.connected = False
+        # Clean up Phoenix tracing
+        phoenix_span_manager.cleanup()
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
         """Run the agent with a query and optional conversation context"""
+        run_span = self._start_span("agent_run", {"query_preview": query[:80]})
         if not self.connected:
             await self.connect()
 
@@ -181,7 +431,9 @@ class MongoDBAgent:
             last_response: Optional[AIMessage] = None
 
             while steps < self.max_steps:
+                llm_span = self._start_span("llm_invoke", {"message_count": len(messages)})
                 response = await self.llm_with_tools.ainvoke(messages)
+                self._end_span(llm_span)
                 last_response = response
 
                 # Persist assistant message
@@ -194,6 +446,7 @@ class MongoDBAgent:
                 # Execute requested tools sequentially
                 messages.append(response)
                 for tool_call in response.tool_calls:
+                    tool_span = self._start_span("tool_execute", {"tool_name": tool_call["name"]})
                     tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
                     if not tool:
                         # If tool not found, surface an error message and stop
@@ -207,8 +460,12 @@ class MongoDBAgent:
 
                     try:
                         result = await tool.ainvoke(tool_call["args"])
+                        if tool_span:
+                            tool_span.set_attribute("tool_success", True)
                     except Exception as tool_exc:
                         result = f"Tool execution error: {tool_exc}"
+                        if tool_span:
+                            tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
 
                     tool_message = ToolMessage(
                         content=str(result),
@@ -217,6 +474,7 @@ class MongoDBAgent:
                     messages.append(tool_message)
                     conversation_memory.add_message(conversation_id, tool_message)
 
+                    self._end_span(tool_span)
                 steps += 1
 
             # Step cap reached; return best available answer
@@ -225,10 +483,15 @@ class MongoDBAgent:
             return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
+            if run_span:
+                run_span.set_status(Status(StatusCode.ERROR, str(e)))
             return f"Error running agent: {str(e)}"
+        finally:
+            self._end_span(run_span)
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Run the agent with streaming support and conversation context"""
+        run_span = self._start_span("agent_run_streaming", {"query_preview": query[:80]})
         if not self.connected:
             await self.connect()
 
@@ -259,10 +522,12 @@ class MongoDBAgent:
             last_response: Optional[AIMessage] = None
 
             while steps < self.max_steps:
+                llm_span = self._start_span("llm_invoke", {"message_count": len(messages)})
                 response = await self.llm_with_tools.ainvoke(
                     messages,
                     config={"callbacks": [callback_handler]},
                 )
+                self._end_span(llm_span)
                 last_response = response
 
                 # Persist assistant message
@@ -275,6 +540,7 @@ class MongoDBAgent:
                 # Execute requested tools sequentially with streaming callbacks
                 messages.append(response)
                 for tool_call in response.tool_calls:
+                    tool_span = self._start_span("tool_execute", {"tool_name": tool_call["name"]})
                     tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
                     if not tool:
                         error_msg = ToolMessage(
@@ -288,9 +554,13 @@ class MongoDBAgent:
                     await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                     try:
                         result = await tool.ainvoke(tool_call["args"])
+                        if tool_span:
+                            tool_span.set_attribute("tool_success", True)
                         await callback_handler.on_tool_end(str(result))
                     except Exception as tool_exc:
                         result = f"Tool execution error: {tool_exc}"
+                        if tool_span:
+                            tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
                         await callback_handler.on_tool_end(str(result))
 
                     tool_message = ToolMessage(
@@ -300,6 +570,7 @@ class MongoDBAgent:
                     messages.append(tool_message)
                     conversation_memory.add_message(conversation_id, tool_message)
 
+                    self._end_span(tool_span)
                 steps += 1
 
             # Step cap reached; send best available response
@@ -310,7 +581,11 @@ class MongoDBAgent:
             return
 
         except Exception as e:
+            if run_span:
+                run_span.set_status(Status(StatusCode.ERROR, str(e)))
             yield f"Error running streaming agent: {str(e)}"
+        finally:
+            self._end_span(run_span)
 
 # ProjectManagement Insights Examples
 async def main():
