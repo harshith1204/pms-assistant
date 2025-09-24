@@ -513,7 +513,7 @@ class MongoDBAgent:
             human_message = HumanMessage(content=query)
             messages.append(human_message)
 
-            callback_handler = ToolCallingCallbackHandler(websocket)
+            callback_handler = PhoenixSpanManager(websocket)
 
             # Persist the human message
             conversation_memory.add_message(conversation_id, human_message)
