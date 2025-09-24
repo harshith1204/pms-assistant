@@ -5,7 +5,7 @@ import uuid
 from itertools import islice
 from bson.binary import Binary
 from bson.objectid import ObjectId
-from qdrant_client.http.models import PointStruct, PayloadSchemaType
+from qdrant_client.http.models import PointStruct, PayloadSchemaType, Distance, VectorParams
 from sentence_transformers import SentenceTransformer
 
 # Add the parent directory to sys.path so we can import from qdrant
@@ -30,6 +30,47 @@ login(hf_token)
 embedder = SentenceTransformer("google/embeddinggemma-300m")
 
 # ------------------ Helpers ------------------
+
+def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
+    """Ensure Qdrant collection exists with dense vectors and text indexes for hybrid search.
+
+    - Creates collection if missing with cosine distance and specified vector size
+    - Ensures payload indexes for keyword and text fields used by our tools
+    """
+    try:
+        existing = [col.name for col in qdrant_client.get_collections().collections]
+        if collection_name not in existing:
+            print(f"ℹ️ Creating Qdrant collection '{collection_name}' with vector_size={vector_size}...")
+            # Create basic dense vector collection; sparse/text search uses payload text indexes
+            qdrant_client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            )
+            print(f"✅ Collection '{collection_name}' created")
+
+        # Ensure keyword and text payload indexes exist (idempotent)
+        try:
+            qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="content_type",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+        except Exception as e:
+            if "already exists" not in str(e):
+                print(f"⚠️ Failed to ensure index on 'content_type': {e}")
+
+        for text_field in ["title", "full_text"]:
+            try:
+                qdrant_client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=text_field,
+                    field_schema=PayloadSchemaType.TEXT,
+                )
+            except Exception as e:
+                if "already exists" not in str(e):
+                    print(f"⚠️ Failed to ensure text index on '{text_field}': {e}")
+    except Exception as e:
+        print(f"❌ Error ensuring collection '{collection_name}': {e}")
 
 def normalize_mongo_id(mongo_id) -> str:
     """Convert Mongo _id (ObjectId or Binary UUID) into a safe string."""
@@ -81,6 +122,9 @@ def index_pages_to_qdrant():
     try:
         print("🔄 Indexing pages from MongoDB to Qdrant...")
 
+        # Ensure collection and indexes for hybrid search
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
         # Ensure payload index exists
         try:
             qdrant_client.create_payload_index(
@@ -114,6 +158,8 @@ def index_pages_to_qdrant():
                     "mongo_id": mongo_id,
                     "title": title,
                     "content": blocks,
+                    # Provide a concatenated text field for full-text search
+                    "full_text": f"{title} {combined_text}".strip(),
                     "content_type": "page"
                 }
             )
@@ -134,6 +180,9 @@ def index_pages_to_qdrant():
 def index_workitems_to_qdrant():
     try:
         print("🔄 Indexing work items from MongoDB to Qdrant...")
+
+        # Ensure collection and indexes for hybrid search
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
 
         # Ensure payload index exists
         try:
@@ -167,6 +216,7 @@ def index_workitems_to_qdrant():
                     "mongo_id": mongo_id,
                     "title": doc.get("title", ""),
                     "content": doc.get("description", ""),
+                    "full_text": combined_text,
                     "content_type": "work_item"
                 }
             )
@@ -185,6 +235,8 @@ def index_workitems_to_qdrant():
         return {"status": "error", "message": str(e)}
 
 # ------------------ Usage ------------------
-# if __name__ == "__main__":
-#     index_pages_to_qdrant()
-#     index_workitems_to_qdrant()
+if __name__ == "__main__":
+    print("🚀 Starting Qdrant indexing...")
+    index_pages_to_qdrant()
+    index_workitems_to_qdrant()
+    print("✅ Qdrant indexing complete!")
