@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import uuid
 from itertools import islice
@@ -6,7 +7,10 @@ from bson.binary import Binary
 from bson.objectid import ObjectId
 from qdrant_client.http.models import PointStruct, PayloadSchemaType
 from sentence_transformers import SentenceTransformer
-from dbconnection import (
+
+# Add the parent directory to sys.path so we can import from qdrant
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from qdrant.dbconnection import (
     page_collection,
     workitem_collection,
     qdrant_client,

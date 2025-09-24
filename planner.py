@@ -11,8 +11,8 @@ from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
 
-from registry import REL, ALLOWED_FIELDS, build_lookup_stage
-from constants import mongodb_tools, DATABASE_NAME
+from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
+from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
 

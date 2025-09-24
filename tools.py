@@ -1,6 +1,6 @@
 from langchain_core.tools import tool
 from typing import Optional, Dict, List, Any, Union
-import constants
+import mongo.constants
 import os
 import json
 import re
@@ -18,8 +18,8 @@ except ImportError:
     SentenceTransformer = None
     np = None
 
-mongodb_tools = constants.mongodb_tools
-DATABASE_NAME = constants.DATABASE_NAME
+mongodb_tools = mongo.constants.mongodb_tools
+DATABASE_NAME = mongo.constants.DATABASE_NAME
 try:
     from planner import plan_and_execute_query
 except ImportError:
@@ -154,7 +154,7 @@ def filter_meaningful_content(data: Any) -> Any:
 
 
 @tool
-async def intelligent_query(query: str, show_all: bool = False) -> str:
+async def mongo_query(query: str, show_all: bool = False) -> str:
     """Execute natural language queries against the Project Management database.
 
     Args:
@@ -379,11 +379,11 @@ class RAGTool:
             raise ImportError("Qdrant client or sentence transformer not available. Please install qdrant-client and sentence-transformers.")
 
         try:
-            self.qdrant_client = QdrantClient(url=constants.QDRANT_URL,api_key=constants.QDRANT_API_KEY)
+            self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL,api_key=mongo.constants.QDRANT_API_KEY)
 
-            self.embedding_model = SentenceTransformer(constants.EMBEDDING_MODEL)
+            self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
             self.connected = True
-            print(f"Connected to Qdrant at {constants.QDRANT_URL}")
+            print(f"Connected to Qdrant at {mongo.constants.QDRANT_URL}")
         except Exception as e:
             print(f"Failed to connect to Qdrant: {e}")
             raise
@@ -412,7 +412,7 @@ class RAGTool:
 
             # Search in Qdrant
             search_results = self.qdrant_client.search(
-                collection_name=constants.QDRANT_COLLECTION_NAME,
+                collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
                 query_vector=query_embedding,
                 query_filter=search_filter,
                 limit=limit,
@@ -544,7 +544,7 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
 
 # Define the tools list (no schema tool)
 tools = [
-    intelligent_query,
+    mongo_query,
     rag_content_search,
     rag_answer_question,
 ]
