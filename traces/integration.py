@@ -23,8 +23,8 @@ FileSpanExporter = None  # Set to None for graceful fallback
 
 # Local imports
 from agent import MongoDBAgent, ConversationMemory
-from tools import tools_list, intelligent_query
-from constants import DATABASE_NAME
+from tools import tools_list, mongo_query
+from mongo.constants import DATABASE_NAME
 from langchain_core.messages import HumanMessage, AIMessage
 
 
@@ -167,8 +167,8 @@ class TracedMongoDBAgent(MongoDBAgent):
 
                 # Select appropriate tool
                 async with self.trace_operation("select_tool", message_count=len(messages)) as _:
-                    # Use intelligent_query for all PMS-related queries
-                    selected_tool = intelligent_query
+                    # Use mongo_query for all PMS-related queries
+                    selected_tool = mongo_query
 
                 # Execute tool with tracing
                 async with self.trace_operation("execute_tool", tool_name=selected_tool.name) as tool_span:

@@ -31,11 +31,11 @@ try:
 except AttributeError:
     # Fallback: define empty tools list if import fails
     tools_list = []
-from constants import DATABASE_NAME, mongodb_tools
+from mongo.constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states."
-    "\n\nAvailable tool: intelligent_query - Use this for any questions requiring data from the database."
+    "\n\nAvailable tool: mongo_query - Use this for any questions requiring data from the database."
 )
 
 class ConversationMemory:

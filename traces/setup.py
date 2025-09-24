@@ -448,10 +448,10 @@ class EvaluationPipeline:
     async def get_agent_response(self, query: str) -> str:
         """Get response from the MongoDB agent"""
         try:
-            # Use the intelligent_query tool directly
-            from tools import intelligent_query
+            # Use the mongo_query tool directly
+            from tools import mongo_query
 
-            result = await intelligent_query.async_call(self.mongodb_agent, query)
+            result = await mongo_query.async_call(self.mongodb_agent, query)
             return result.get('result', 'No result available')
 
         except Exception as e:
