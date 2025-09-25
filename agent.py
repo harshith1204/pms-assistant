@@ -21,6 +21,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from phoenix import Client
 from phoenix.trace.trace_dataset import TraceDataset
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 import pandas as pd
 import threading
 import time
@@ -174,12 +175,21 @@ class PhoenixSpanManager:
             except Exception as e:
                 print(f"⚠️  Failed to configure MongoDB span processor: {e}")
 
+            # Also export to Phoenix UI via OTLP HTTP so GUI shows new spans
+            try:
+                otlp_http_exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
+                otlp_processor = BatchSpanProcessor(otlp_http_exporter)
+                self.tracer_provider.add_span_processor(otlp_processor)
+                print("✅ OTLP HTTP exporter configured for Phoenix UI (/v1/traces)")
+            except Exception as e:
+                print(f"⚠️  Failed to configure OTLP HTTP exporter: {e}")
+
             # Disable custom collector-based export to avoid duplicates
             # (We keep the class around, but do not register the processor or start the collector.)
 
             self.tracer = trace.get_tracer(__name__)
             self._initialized = True
-            print("✅ Tracing initialized with MongoDB export")
+            print("✅ Tracing initialized with MongoDB + Phoenix UI export")
         except Exception as e:
             print(f"❌ Failed to initialize tracing: {e}")
             import traceback
