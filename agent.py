@@ -33,6 +33,7 @@ except Exception:  # Fallback when OpenInference isn't installed
     class _OI:
         INPUT_VALUE = "input.value"
         OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
         LLM_MODEL_NAME = "llm.model_name"
         LLM_TEMPERATURE = "llm.temperature"
         LLM_TOP_P = "llm.top_p"
@@ -55,6 +56,7 @@ except Exception:  # Fallback when OpenInference isn't installed
     class _OI:
         INPUT_VALUE = "input.value"
         OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
         LLM_MODEL_NAME = "llm.model_name"
         LLM_TEMPERATURE = "llm.temperature"
         LLM_TOP_P = "llm.top_p"
@@ -248,7 +250,8 @@ class PhoenixSpanCollector:
                     'end_time': format_timestamp(span.end_time),
                     'status_code': span.status.status_code.name,
                     'status_message': span.status.description or '',
-                    'attributes': json.dumps(dict(span.attributes)),
+                    # Keep attributes as structured data (dict) for Phoenix UI parsing
+                    'attributes': dict(span.attributes),
                     'context.trace_id': format_trace_id(span.context.trace_id),
                     'context.span_id': format_span_id(span.context.span_id),
                     'context.trace_state': str(span.context.trace_state)
@@ -290,7 +293,8 @@ class PhoenixSpanCollector:
                         'timestamp': format_timestamp(event.timestamp),
                         'attributes': dict(event.attributes)
                     })
-                span_dict['events'] = json.dumps(events_list)
+                # Keep events as structured list for Phoenix UI
+                span_dict['events'] = events_list
 
                 spans_data.append(span_dict)
 
@@ -568,6 +572,14 @@ class MongoDBAgent:
                                 llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                # Tag span kind for OpenInference UI
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'llm')
+                                # Record the current user input as LLM input
+                                try:
+                                    llm_input_preview = str(human_message.content)[:1000]
+                                except Exception:
+                                    llm_input_preview = ""
+                                llm_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), llm_input_preview)
                                 if self.system_prompt:
                                     llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 # Add prompt summary event
@@ -619,6 +631,10 @@ class MongoDBAgent:
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
                                         tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        # Tag span kind for OpenInference UI
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
+                                        # Also set generic input.value for Phoenix UI
+                                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -627,6 +643,7 @@ class MongoDBAgent:
                                     tool_span.set_attribute("tool_success", True)
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
                                         tool_span.add_event("tool_end", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -731,6 +748,7 @@ class MongoDBAgent:
                                 llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'llm')
                                 if self.system_prompt:
                                     llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
@@ -785,6 +803,7 @@ class MongoDBAgent:
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
                                         tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
