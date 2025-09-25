@@ -12,8 +12,79 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 
+<<<<<<< HEAD
 tools_list = tools.tools
 from constants import DATABASE_NAME, mongodb_tools
+=======
+# Tracing imports (Phoenix via OpenTelemetry exporter)
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from phoenix import Client
+from phoenix.trace.trace_dataset import TraceDataset
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+import pandas as pd
+import threading
+import time
+from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
+from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
+
+# OpenInference semantic conventions (optional)
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:  # Fallback when OpenInference isn't installed
+    class _OI:
+        INPUT_VALUE = "input.value"
+        OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
+        LLM_MODEL_NAME = "llm.model_name"
+        LLM_TEMPERATURE = "llm.temperature"
+        LLM_TOP_P = "llm.top_p"
+        LLM_TOP_K = "llm.top_k"
+        LLM_PROMPT = "llm.prompt"
+        LLM_SYSTEM = "llm.system_prompt"
+        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
+        TOOL_NAME = "tool.name"
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
+
+    OI = _OI()
+
+# OpenInference semantic conventions (optional)
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:  # Fallback when OpenInference isn't installed
+    class _OI:
+        INPUT_VALUE = "input.value"
+        OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
+        LLM_MODEL_NAME = "llm.model_name"
+        LLM_TEMPERATURE = "llm.temperature"
+        LLM_TOP_P = "llm.top_p"
+        LLM_TOP_K = "llm.top_k"
+        LLM_PROMPT = "llm.prompt"
+        LLM_SYSTEM = "llm.system_prompt"
+        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
+        TOOL_NAME = "tool.name"
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
+
+    OI = _OI()
+
+# Import tools list
+try:
+    tools_list = tools.tools
+except AttributeError:
+    # Fallback: define empty tools list if import fails
+    tools_list = []
+from mongo.constants import DATABASE_NAME, mongodb_tools
+>>>>>>> adad50e (mongodb connectivity issue fixed for phoenix)
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states."
@@ -71,8 +142,262 @@ llm = ChatOllama(
 # Bind tools to the LLM for tool calling
 llm_with_tools = llm.bind_tools(tools_list)
 
+<<<<<<< HEAD
 class ToolCallingCallbackHandler(AsyncCallbackHandler):
     """Callback handler for tool calling streaming"""
+=======
+
+class PhoenixSpanManager:
+    """Manages Phoenix spans and tracer for the agent."""
+
+    def __init__(self):
+        self.tracer_provider = None
+        self.tracer = None
+        self._initialized = False
+
+    async def initialize(self):
+        """Initialize OpenTelemetry tracer provider with Phoenix exporter."""
+        if self._initialized:
+            return
+
+        try:
+            # Add a resource so Phoenix shows a sensible service name
+            resource = Resource.create({
+                "service.name": "pms-assistant",
+                "service.version": "1.0.0",
+            })
+            self.tracer_provider = TracerProvider(resource=resource)
+            trace.set_tracer_provider(self.tracer_provider)
+
+            # Console exporter for local dev visibility
+            console_exporter = ConsoleSpanExporter()
+            console_processor = BatchSpanProcessor(console_exporter)
+            self.tracer_provider.add_span_processor(console_processor)
+
+            # Register MongoDB span processor (stores spans directly in MongoDB)
+            try:
+                mongodb_processor = MongoDBSpanProcessor()
+                self.tracer_provider.add_span_processor(mongodb_processor)
+                mongodb_span_collector.start_periodic_export()
+                print("✅ MongoDB span processor configured for tracing")
+            except Exception as e:
+                print(f"⚠️  Failed to configure MongoDB span processor: {e}")
+
+            # Also export to Phoenix UI via OTLP HTTP so GUI shows new spans
+            try:
+                otlp_http_exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
+                otlp_processor = BatchSpanProcessor(otlp_http_exporter)
+                self.tracer_provider.add_span_processor(otlp_processor)
+                print("✅ OTLP HTTP exporter configured for Phoenix UI (/v1/traces)")
+            except Exception as e:
+                print(f"⚠️  Failed to configure OTLP HTTP exporter: {e}")
+
+            # Disable custom collector-based export to avoid duplicates
+            # (We keep the class around, but do not register the processor or start the collector.)
+
+            self.tracer = trace.get_tracer(__name__)
+            self._initialized = True
+            print("✅ Tracing initialized with MongoDB + Phoenix UI export")
+        except Exception as e:
+            print(f"❌ Failed to initialize tracing: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+class PhoenixSpanCollector:
+    """Collects and exports spans to Phoenix"""
+
+    def __init__(self):
+        self.collected_spans = []
+        self.phoenix_client = Client()
+        self.export_thread = None
+        self.running = False
+
+    def collect_span(self, span):
+        """Collect a span for export to Phoenix"""
+        self.collected_spans.append(span)
+
+        # If we have many spans, export them
+        if len(self.collected_spans) >= 10:
+            self.export_to_phoenix()
+
+    def export_to_phoenix(self):
+        """Export collected spans to Phoenix"""
+        if not self.collected_spans:
+            return
+
+        try:
+            # Convert spans to DataFrame format
+            spans_data = []
+            for span in self.collected_spans:
+                # Extract span information with proper timestamp conversion
+                def format_timestamp(timestamp):
+                    """Convert OpenTelemetry timestamp to ISO format"""
+                    if hasattr(timestamp, 'isoformat'):
+                        return timestamp.isoformat()
+                    elif isinstance(timestamp, (int, float)):
+                        # Convert nanoseconds to datetime
+                        from datetime import datetime
+                        return datetime.fromtimestamp(timestamp / 1e9).isoformat()
+                    else:
+                        return str(timestamp)
+
+                def _to_int(value):
+                    if isinstance(value, int):
+                        return value
+                    if isinstance(value, str):
+                        v = value[2:] if value.startswith('0x') else value
+                        try:
+                            return int(v, 16)
+                        except Exception:
+                            try:
+                                return int(v)
+                            except Exception:
+                                return 0
+                    return 0
+
+                def format_trace_id(value):
+                    """Return 32-char zero-padded lowercase hex trace ID."""
+                    return f"{_to_int(value):032x}"
+
+                def format_span_id(value):
+                    """Return 16-char zero-padded lowercase hex span ID."""
+                    return f"{_to_int(value):016x}"
+
+                span_dict = {
+                    'name': span.name,
+                    'span_kind': str(span.kind),
+                    'kind': getattr(getattr(span, 'kind', None), 'name', str(getattr(span, 'kind', 'INTERNAL'))),
+                    'trace_id': format_trace_id(span.context.trace_id),
+                    'span_id': format_span_id(span.context.span_id),
+                    'parent_id': format_span_id(span.parent.span_id) if span.parent and getattr(span.parent, 'span_id', None) else None,
+                    'start_time': format_timestamp(span.start_time),
+                    'end_time': format_timestamp(span.end_time),
+                    'status_code': span.status.status_code.name,
+                    'status_message': span.status.description or '',
+                    # Keep attributes as structured data (dict) for Phoenix UI parsing
+                    'attributes': dict(span.attributes),
+                    'context.trace_id': format_trace_id(span.context.trace_id),
+                    'context.span_id': format_span_id(span.context.span_id),
+                    'context.trace_state': str(span.context.trace_state)
+                }
+
+                # Extract generic input/output for convenience
+                try:
+                    def _extract_first(attrs, keys):
+                        for k in keys:
+                            if k in attrs:
+                                return attrs.get(k)
+                        return None
+
+                    attrs = dict(span.attributes)
+                    input_val = _extract_first(attrs, [
+                        getattr(OI, 'INPUT_VALUE', 'input.value'),
+                        getattr(OI, 'TOOL_INPUT', 'tool.input'),
+                        'input.value',
+                        'tool.input'
+                    ])
+                    output_val = _extract_first(attrs, [
+                        getattr(OI, 'OUTPUT_VALUE', 'output.value'),
+                        getattr(OI, 'TOOL_OUTPUT', 'tool.output'),
+                        'output.value',
+                        'tool.output'
+                    ])
+                    if input_val is not None:
+                        span_dict['input'] = str(input_val)
+                    if output_val is not None:
+                        span_dict['output'] = str(output_val)
+                except Exception:
+                    pass
+
+                # Add events
+                events_list = []
+                for event in span.events:
+                    events_list.append({
+                        'name': event.name,
+                        'timestamp': format_timestamp(event.timestamp),
+                        'attributes': dict(event.attributes)
+                    })
+                # Keep events as structured list for Phoenix UI
+                span_dict['events'] = events_list
+
+                spans_data.append(span_dict)
+
+            # Create DataFrame and export
+            if spans_data:
+                df = pd.DataFrame(spans_data)
+                trace_dataset = TraceDataset(dataframe=df, name='agent-traces')
+                self.phoenix_client.log_traces(trace_dataset, project_name='default')
+                print(f"✅ Exported {len(spans_data)} spans to Phoenix")
+
+            # Clear collected spans
+            self.collected_spans.clear()
+
+        except Exception as e:
+            print(f"❌ Error exporting spans to Phoenix: {e}")
+
+    def start_periodic_export(self):
+        """Start periodic export of collected spans"""
+        if self.export_thread and self.export_thread.is_alive():
+            return
+
+        self.running = True
+        self.export_thread = threading.Thread(target=self._periodic_export_worker, daemon=True)
+        self.export_thread.start()
+
+    def stop_periodic_export(self):
+        """Stop periodic export"""
+        self.running = False
+        if self.export_thread:
+            self.export_thread.join(timeout=5)
+        self.export_to_phoenix()  # Export any remaining spans
+
+    def _periodic_export_worker(self):
+        """Worker thread for periodic span export"""
+        while self.running:
+            time.sleep(5)  # Export every 5 seconds
+            self.export_to_phoenix()
+
+
+class PhoenixSpanProcessor(SpanProcessor):
+    """Custom span processor that sends spans to Phoenix collector"""
+
+    def on_start(self, span, parent_context=None):
+        """Called when a span starts"""
+        pass
+
+    def on_end(self, span):
+        """Called when a span ends - send to Phoenix"""
+        try:
+            phoenix_span_collector.collect_span(span)
+        except Exception as e:
+            # Don't let span processing errors break the application
+            print(f"Warning: Failed to collect span for Phoenix: {e}")
+
+    def shutdown(self, timeout_millis=30000):
+        """Shutdown the processor"""
+        try:
+            phoenix_span_collector.export_to_phoenix()
+        except Exception as e:
+            print(f"Warning: Failed to export spans during shutdown: {e}")
+
+    def force_flush(self, timeout_millis=30000):
+        """Force flush any pending spans"""
+        try:
+            phoenix_span_collector.export_to_phoenix()
+        except Exception as e:
+            print(f"Warning: Failed to flush spans: {e}")
+
+
+# Global span collector
+phoenix_span_collector = PhoenixSpanCollector()
+
+# Global Phoenix span manager instance
+phoenix_span_manager = PhoenixSpanManager()
+
+class PhoenixSpanManager(AsyncCallbackHandler):
+    """Manages Phoenix tracing configuration"""
+>>>>>>> adad50e (mongodb connectivity issue fixed for phoenix)
 
     def __init__(self, websocket=None):
         self.websocket = websocket
