@@ -24,7 +24,51 @@ from phoenix.trace.trace_dataset import TraceDataset
 import pandas as pd
 import threading
 import time
-from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor
+from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
+
+# OpenInference semantic conventions (optional)
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:  # Fallback when OpenInference isn't installed
+    class _OI:
+        INPUT_VALUE = "input.value"
+        OUTPUT_VALUE = "output.value"
+        LLM_MODEL_NAME = "llm.model_name"
+        LLM_TEMPERATURE = "llm.temperature"
+        LLM_TOP_P = "llm.top_p"
+        LLM_TOP_K = "llm.top_k"
+        LLM_PROMPT = "llm.prompt"
+        LLM_SYSTEM = "llm.system_prompt"
+        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
+        TOOL_NAME = "tool.name"
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
+
+    OI = _OI()
+
+# OpenInference semantic conventions (optional)
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:  # Fallback when OpenInference isn't installed
+    class _OI:
+        INPUT_VALUE = "input.value"
+        OUTPUT_VALUE = "output.value"
+        LLM_MODEL_NAME = "llm.model_name"
+        LLM_TEMPERATURE = "llm.temperature"
+        LLM_TOP_P = "llm.top_p"
+        LLM_TOP_K = "llm.top_k"
+        LLM_PROMPT = "llm.prompt"
+        LLM_SYSTEM = "llm.system_prompt"
+        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
+        TOOL_NAME = "tool.name"
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
+
+    OI = _OI()
 
 # Import tools list
 try:
@@ -113,7 +157,10 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Phoenix span processor (our working solution)
+            # Note: Skipping direct HttpExporter adapter. It does not accept OTel ReadableSpan objects
+            # and caused runtime errors. We rely on the custom PhoenixSpanProcessor + collector below.
+
+            # Phoenix span processor (batch export to Phoenix dataset as fallback)
             phoenix_processor = PhoenixSpanProcessor()
             self.tracer_provider.add_span_processor(phoenix_processor)
 
@@ -168,41 +215,79 @@ class PhoenixSpanCollector:
                     else:
                         return str(timestamp)
 
-                def clean_hex_id(hex_id):
-                    """Convert hex IDs to proper hex string format"""
-                    if isinstance(hex_id, str):
-                        if hex_id.startswith('0x'):
-                            return hex_id[2:]
-                        else:
-                            return hex_id
-                    elif isinstance(hex_id, int):
-                        # Convert integer to hex and remove 0x prefix
-                        return hex(hex_id)[2:]
-                    else:
-                        return str(hex_id)
+                def _to_int(value):
+                    if isinstance(value, int):
+                        return value
+                    if isinstance(value, str):
+                        v = value[2:] if value.startswith('0x') else value
+                        try:
+                            return int(v, 16)
+                        except Exception:
+                            try:
+                                return int(v)
+                            except Exception:
+                                return 0
+                    return 0
+
+                def format_trace_id(value):
+                    """Return 32-char zero-padded lowercase hex trace ID."""
+                    return f"{_to_int(value):032x}"
+
+                def format_span_id(value):
+                    """Return 16-char zero-padded lowercase hex span ID."""
+                    return f"{_to_int(value):016x}"
 
                 span_dict = {
                     'name': span.name,
                     'span_kind': str(span.kind),
-                    'trace_id': clean_hex_id(span.context.trace_id),
-                    'span_id': clean_hex_id(span.context.span_id),
-                    'parent_id': clean_hex_id(span.parent.span_id) if span.parent and span.parent.span_id else None,
+                    'kind': getattr(getattr(span, 'kind', None), 'name', str(getattr(span, 'kind', 'INTERNAL'))),
+                    'trace_id': format_trace_id(span.context.trace_id),
+                    'span_id': format_span_id(span.context.span_id),
+                    'parent_id': format_span_id(span.parent.span_id) if span.parent and getattr(span.parent, 'span_id', None) else None,
                     'start_time': format_timestamp(span.start_time),
                     'end_time': format_timestamp(span.end_time),
                     'status_code': span.status.status_code.name,
                     'status_message': span.status.description or '',
                     'attributes': json.dumps(dict(span.attributes)),
-                    'context.trace_id': clean_hex_id(span.context.trace_id),
-                    'context.span_id': clean_hex_id(span.context.span_id),
+                    'context.trace_id': format_trace_id(span.context.trace_id),
+                    'context.span_id': format_span_id(span.context.span_id),
                     'context.trace_state': str(span.context.trace_state)
                 }
+
+                # Extract generic input/output for convenience
+                try:
+                    def _extract_first(attrs, keys):
+                        for k in keys:
+                            if k in attrs:
+                                return attrs.get(k)
+                        return None
+
+                    attrs = dict(span.attributes)
+                    input_val = _extract_first(attrs, [
+                        getattr(OI, 'INPUT_VALUE', 'input.value'),
+                        getattr(OI, 'TOOL_INPUT', 'tool.input'),
+                        'input.value',
+                        'tool.input'
+                    ])
+                    output_val = _extract_first(attrs, [
+                        getattr(OI, 'OUTPUT_VALUE', 'output.value'),
+                        getattr(OI, 'TOOL_OUTPUT', 'tool.output'),
+                        'output.value',
+                        'tool.output'
+                    ])
+                    if input_val is not None:
+                        span_dict['input'] = str(input_val)
+                    if output_val is not None:
+                        span_dict['output'] = str(output_val)
+                except Exception:
+                    pass
 
                 # Add events
                 events_list = []
                 for event in span.events:
                     events_list.append({
                         'name': event.name,
-                        'timestamp': event.timestamp,
+                        'timestamp': format_timestamp(event.timestamp),
                         'attributes': dict(event.attributes)
                     })
                 span_dict['events'] = json.dumps(events_list)
@@ -387,6 +472,13 @@ class MongoDBAgent:
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
+        # Ensure tracing is initialized so spans include attributes/events
+        if not self.tracing_enabled:
+            try:
+                await self.initialize_tracing()
+            except Exception as _e:
+                # Proceed without tracing if initialization fails
+                pass
         span = self._start_span("mongodb_connect")
         try:
             await mongodb_tools.connect()
@@ -420,12 +512,21 @@ class MongoDBAgent:
                 span_cm = tracer.start_as_current_span(
                     "agent_run",
                     kind=trace.SpanKind.INTERNAL,
-                    attributes={"query_preview": query[:80]},
+                    attributes={
+                        "query_preview": query[:80],
+                        "query_length": len(query or ""),
+                        "database.name": DATABASE_NAME,
+                    },
                 )
             else:
                 span_cm = None
 
             with (span_cm if span_cm is not None else contextlib.nullcontext()) as run_span:
+                if run_span:
+                    try:
+                        run_span.add_event("agent_start")
+                    except Exception:
+                        pass
                 # Use default conversation ID if none provided
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
@@ -459,8 +560,28 @@ class MongoDBAgent:
                     else:
                         llm_cm = None
 
-                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()):
+                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
+                        # Record model invocation parameters
+                        if llm_span:
+                            try:
+                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
+                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
+                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                if self.system_prompt:
+                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                # Add prompt summary event
+                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
+                            except Exception:
+                                pass
                         response = await self.llm_with_tools.ainvoke(messages)
+                        if llm_span and getattr(response, "content", None):
+                            try:
+                                preview = str(response.content)[:500]
+                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                            except Exception:
+                                pass
                     last_response = response
 
                     # Persist assistant message
@@ -494,13 +615,30 @@ class MongoDBAgent:
                                 continue
 
                             try:
+                                if tool_span:
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
+                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.add_event("tool_start", {"tool": tool.name})
+                                    except Exception:
+                                        pass
                                 result = await tool.ainvoke(tool_call["args"])
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.add_event("tool_end", {"tool": tool.name})
+                                    except Exception:
+                                        pass
                             except Exception as tool_exc:
                                 result = f"Tool execution error: {tool_exc}"
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                    try:
+                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                    except Exception:
+                                        pass
 
                             tool_message = ToolMessage(
                                 content=str(result),
@@ -512,7 +650,19 @@ class MongoDBAgent:
 
                 # Step cap reached; return best available answer
                 if last_response is not None:
+                    if run_span:
+                        try:
+                            preview = str(last_response.content)[:500]
+                            run_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                            run_span.add_event("agent_end", {"steps": steps})
+                        except Exception:
+                            pass
                     return last_response.content
+                if run_span:
+                    try:
+                        run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps"})
+                    except Exception:
+                        pass
                 return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
@@ -529,7 +679,11 @@ class MongoDBAgent:
                 span_cm = tracer.start_as_current_span(
                     "agent_run_streaming",
                     kind=trace.SpanKind.INTERNAL,
-                    attributes={"query_preview": query[:80]},
+                    attributes={
+                        "query_preview": query[:80],
+                        "query_length": len(query or ""),
+                        "database.name": DATABASE_NAME,
+                    },
                 )
             else:
                 span_cm = None
@@ -570,11 +724,29 @@ class MongoDBAgent:
                     else:
                         llm_cm = None
 
-                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()):
+                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
+                        if llm_span:
+                            try:
+                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
+                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
+                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                if self.system_prompt:
+                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
+                            except Exception:
+                                pass
                         response = await self.llm_with_tools.ainvoke(
                             messages,
                             config={"callbacks": [callback_handler]},
                         )
+                        if llm_span and getattr(response, "content", None):
+                            try:
+                                preview = str(response.content)[:500]
+                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                            except Exception:
+                                pass
                     last_response = response
 
                     # Persist assistant message
@@ -609,14 +781,31 @@ class MongoDBAgent:
 
                             await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                             try:
-                                result = await tool.ainvoke(tool_call["args"])
+                                if tool_span:
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
+                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.add_event("tool_start", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                                result = await tool.ainvoke(tool_call["args"]) 
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
+                                    try:
+                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.add_event("tool_end", {"tool": tool.name})
+                                    except Exception:
+                                        pass
                                 await callback_handler.on_tool_end(str(result))
                             except Exception as tool_exc:
                                 result = f"Tool execution error: {tool_exc}"
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                    try:
+                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                    except Exception:
+                                        pass
                                 await callback_handler.on_tool_end(str(result))
 
                             tool_message = ToolMessage(
