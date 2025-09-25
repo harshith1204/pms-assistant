@@ -1,5 +1,6 @@
 """Unified tracing module to avoid circular imports"""
 from datetime import datetime
+import json
 import time
 import uuid
 from typing import Dict, Any, List
@@ -244,34 +245,61 @@ class PhoenixSpanCollector:
                     else:
                         return str(timestamp)
 
-                def clean_hex_id(hex_id):
-                    """Convert hex IDs to proper hex string format"""
-                    if isinstance(hex_id, str):
-                        if hex_id.startswith('0x'):
-                            return hex_id[2:]
-                        else:
-                            return hex_id
-                    elif isinstance(hex_id, int):
-                        # Convert integer to hex and remove 0x prefix
-                        return hex(hex_id)[2:]
-                    else:
-                        return str(hex_id)
+                def _to_int(value):
+                    if isinstance(value, int):
+                        return value
+                    if isinstance(value, str):
+                        v = value[2:] if value.startswith('0x') else value
+                        try:
+                            return int(v, 16)
+                        except Exception:
+                            try:
+                                return int(v)
+                            except Exception:
+                                return 0
+                    return 0
+
+                def format_trace_id(value):
+                    """Return 32-char zero-padded lowercase hex trace ID."""
+                    return f"{_to_int(value):032x}"
+
+                def format_span_id(value):
+                    """Return 16-char zero-padded lowercase hex span ID."""
+                    return f"{_to_int(value):016x}"
 
                 span_dict = {
                     'name': span.name,
                     'span_kind': str(span.kind),
-                    'trace_id': clean_hex_id(span.context.trace_id),
-                    'span_id': clean_hex_id(span.context.span_id),
-                    'parent_id': clean_hex_id(span.parent.span_id) if span.parent and span.parent.span_id else None,
+                    'kind': getattr(getattr(span, 'kind', None), 'name', str(getattr(span, 'kind', 'INTERNAL'))),
+                    'trace_id': format_trace_id(span.context.trace_id),
+                    'span_id': format_span_id(span.context.span_id),
+                    'parent_id': format_span_id(span.parent.span_id) if span.parent and getattr(span.parent, 'span_id', None) else None,
                     'start_time': format_timestamp(span.start_time),
                     'end_time': format_timestamp(span.end_time),
                     'status_code': span.status.status_code.name,
                     'status_message': span.status.description or '',
-                    'attributes': str(dict(span.attributes)),  # Convert to string for JSON serialization
-                    'context.trace_id': clean_hex_id(span.context.trace_id),
-                    'context.span_id': clean_hex_id(span.context.span_id),
+                    'attributes': json.dumps(dict(span.attributes)),
+                    'context.trace_id': format_trace_id(span.context.trace_id),
+                    'context.span_id': format_span_id(span.context.span_id),
                     'context.trace_state': str(span.context.trace_state)
                 }
+
+                # Extract generic input/output for convenience
+                try:
+                    attrs = dict(span.attributes)
+                    def _first(keys):
+                        for k in keys:
+                            if k in attrs:
+                                return attrs.get(k)
+                        return None
+                    input_val = _first(['input.value', 'tool.input'])
+                    output_val = _first(['output.value', 'tool.output'])
+                    if input_val is not None:
+                        span_dict['input'] = str(input_val)
+                    if output_val is not None:
+                        span_dict['output'] = str(output_val)
+                except Exception:
+                    pass
 
                 # Add events
                 events_list = []
@@ -279,9 +307,9 @@ class PhoenixSpanCollector:
                     events_list.append({
                         'name': event.name,
                         'timestamp': format_timestamp(event.timestamp),
-                        'attributes': str(dict(event.attributes))  # Convert to string for JSON serialization
+                        'attributes': dict(event.attributes)
                     })
-                span_dict['events'] = str(events_list)
+                span_dict['events'] = json.dumps(events_list)
 
                 spans_data.append(span_dict)
 
