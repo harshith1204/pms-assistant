@@ -1071,7 +1071,7 @@ class Planner:
             with tracer.start_as_current_span(
                 "planner.parse_intent",
                 kind=trace.SpanKind.INTERNAL,
-                attributes={OI.INPUT_VALUE: (query or "")[:1000]},
+                attributes={getattr(OI, 'INPUT_VALUE', 'input.value'): (query or "")[:1000]},
             ) as parse_span:
                 intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
                 if parse_span:
@@ -1096,7 +1096,7 @@ class Planner:
                     try:
                         gen_span.set_attribute("pipeline.stage_count", len(pipeline or []))
                         preview = str(pipeline)[:1500]
-                        gen_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                        gen_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                     except Exception:
                         pass
 
@@ -1116,7 +1116,7 @@ class Planner:
                 }
                 if exec_span:
                     try:
-                        exec_span.set_attribute(OI.TOOL_INPUT, str({**args, "pipeline": "<omitted>"})[:1000])
+                        exec_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str({**args, "pipeline": "<omitted>"})[:1000])
                         exec_span.set_attribute("pipeline.stage_count", len(pipeline or []))
                     except Exception:
                         pass
@@ -1125,7 +1125,7 @@ class Planner:
                     try:
                         size = len(result) if isinstance(result, list) else 1 if result is not None else 0
                         exec_span.set_attribute("result.size", size)
-                        exec_span.set_attribute(OI.TOOL_OUTPUT, (str(result)[:1200] if not isinstance(result, list) else f"list[{size}]") )
+                        exec_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), (str(result)[:1200] if not isinstance(result, list) else f"list[{size}]") )
                     except Exception:
                         pass
 
@@ -1144,8 +1144,8 @@ class Planner:
                 if current_span:
                     current_span.set_status(Status(StatusCode.ERROR, str(e)))
                     try:
-                        current_span.set_attribute(OI.ERROR_TYPE, e.__class__.__name__)
-                        current_span.set_attribute(OI.ERROR_MESSAGE, str(e))
+                        current_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), e.__class__.__name__)
+                        current_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(e))
                     except Exception:
                         pass
             except Exception:

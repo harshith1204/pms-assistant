@@ -107,8 +107,13 @@ class MongoDBTools:
         with tracer.start_as_current_span(
             "mongodb_tools.execute_tool",
             kind=trace.SpanKind.INTERNAL,
-            attributes={"tool.name": tool_name, OI.TOOL_INPUT: str(arguments)[:1200]},
+            attributes={"tool.name": tool_name},
         ) as span:
+            # Set tool input attribute with safe fallback key
+            try:
+                span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(arguments)[:1200])
+            except Exception:
+                pass
             if not self.connected:
                 await self.connect()
 
@@ -123,7 +128,7 @@ class MongoDBTools:
                 if span:
                     try:
                         preview = str(result)
-                        span.set_attribute(OI.TOOL_OUTPUT, (preview[:1200] if not isinstance(result, list) else f"list[{len(result)}]"))
+                        span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), (preview[:1200] if not isinstance(result, list) else f"list[{len(result)}]"))
                     except Exception:
                         pass
                 return result
@@ -131,8 +136,8 @@ class MongoDBTools:
                 if span:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     try:
-                        span.set_attribute(OI.ERROR_TYPE, e.__class__.__name__)
-                        span.set_attribute(OI.ERROR_MESSAGE, str(e))
+                        span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), e.__class__.__name__)
+                        span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(e))
                     except Exception:
                         pass
                 raise
