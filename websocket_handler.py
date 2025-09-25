@@ -13,6 +13,7 @@ import re
 from mongo.constants import DATABASE_NAME
 from planner import plan_and_execute_query
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 def _should_use_planner(message_text: str) -> bool:
     q = (message_text or "").lower()
@@ -157,15 +158,25 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     "conversation_id": conversation_id,
                     "client_id": client_id,
                     "message_preview": (message or "")[:120],
+                    "message_length": len(message or ""),
                 },
-            ):
+            ) as user_span:
                 # Route to planner or LLM based on heuristics/flag
                 if force_planner or _should_use_planner(message):
                     try:
                         with tracer.start_as_current_span(
                             "planner_execute", kind=trace.SpanKind.INTERNAL
-                        ):
+                        ) as planner_span:
+                            try:
+                                planner_span.set_attribute("input.value", (message or "")[:1000])
+                            except Exception:
+                                pass
                             plan_result = await plan_and_execute_query(message)
+                            if planner_span:
+                                try:
+                                    planner_span.set_attribute("planner.success", plan_result.get("success", False))
+                                except Exception:
+                                    pass
                         await websocket.send_json({
                             "type": "planner_result",
                             "success": plan_result.get("success", False),
@@ -175,6 +186,11 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             "timestamp": datetime.now().isoformat()
                         })
                     except Exception as e:
+                        if user_span:
+                            try:
+                                user_span.set_status(Status(StatusCode.ERROR, str(e)))
+                            except Exception:
+                                pass
                         await websocket.send_json({
                             "type": "planner_error",
                             "message": str(e),
@@ -184,7 +200,12 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     # Use regular LLM with tool calling
                     with tracer.start_as_current_span(
                         "agent_stream", kind=trace.SpanKind.INTERNAL
-                    ):
+                    ) as agent_span:
+                        if agent_span:
+                            try:
+                                agent_span.set_attribute("input.value", (message or "")[:1000])
+                            except Exception:
+                                pass
                         async for _ in mongodb_agent.run_streaming(
                             query=message,
                             websocket=websocket,
