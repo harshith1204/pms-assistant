@@ -18,9 +18,10 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from phoenix.trace.exporter import HttpExporter
 from phoenix import Client
 from phoenix.trace.trace_dataset import TraceDataset
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
 import pandas as pd
 import threading
 import time
@@ -151,7 +152,12 @@ class PhoenixSpanManager:
             return
 
         try:
-            self.tracer_provider = TracerProvider()
+            # Add a resource so Phoenix shows a sensible service name
+            resource = Resource.create({
+                "service.name": "pms-assistant",
+                "service.version": "1.0.0",
+            })
+            self.tracer_provider = TracerProvider(resource=resource)
             trace.set_tracer_provider(self.tracer_provider)
 
             # Console exporter for local dev visibility
@@ -159,14 +165,14 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Enable Phoenix OTLP/OpenInference ingestion via HTTP exporter
+            # Enable OTLP over HTTP exporter pointing to Phoenix's /v1/traces
             try:
-                http_exporter = HttpExporter(endpoint="http://localhost:6006/v1/traces")
-                http_processor = BatchSpanProcessor(http_exporter)
-                self.tracer_provider.add_span_processor(http_processor)
-                print("✅ Phoenix HTTP exporter configured (OTLP/OpenInference)")
+                otlp_http_exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
+                otlp_processor = BatchSpanProcessor(otlp_http_exporter)
+                self.tracer_provider.add_span_processor(otlp_processor)
+                print("✅ OTLP HTTP exporter configured for Phoenix (/v1/traces)")
             except Exception as e:
-                print(f"⚠️  Failed to configure Phoenix HTTP exporter: {e}")
+                print(f"⚠️  Failed to configure OTLP HTTP exporter: {e}")
 
             # Disable custom collector-based export to avoid duplicates
             # (We keep the class around, but do not register the processor or start the collector.)
