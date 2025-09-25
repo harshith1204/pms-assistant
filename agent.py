@@ -159,16 +159,17 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Note: Skipping direct HttpExporter adapter. It does not accept OTel ReadableSpan objects
-            # and caused runtime errors. We rely on the custom PhoenixSpanProcessor + collector below.
+            # Enable Phoenix OTLP/OpenInference ingestion via HTTP exporter
+            try:
+                http_exporter = HttpExporter(endpoint="http://localhost:6006/v1/traces")
+                http_processor = BatchSpanProcessor(http_exporter)
+                self.tracer_provider.add_span_processor(http_processor)
+                print("✅ Phoenix HTTP exporter configured (OTLP/OpenInference)")
+            except Exception as e:
+                print(f"⚠️  Failed to configure Phoenix HTTP exporter: {e}")
 
-            # Phoenix span processor (batch export to Phoenix dataset as fallback)
-            phoenix_processor = PhoenixSpanProcessor()
-            self.tracer_provider.add_span_processor(phoenix_processor)
-
-            # Start Phoenix span collector
-            phoenix_span_collector.start_periodic_export()
-            print("✅ Phoenix span processor and collector configured")
+            # Disable custom collector-based export to avoid duplicates
+            # (We keep the class around, but do not register the processor or start the collector.)
 
             self.tracer = trace.get_tracer(__name__)
             self._initialized = True
