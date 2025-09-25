@@ -18,9 +18,10 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from phoenix.trace.exporter import HttpExporter
 from phoenix import Client
 from phoenix.trace.trace_dataset import TraceDataset
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
 import pandas as pd
 import threading
 import time
@@ -33,6 +34,7 @@ except Exception:  # Fallback when OpenInference isn't installed
     class _OI:
         INPUT_VALUE = "input.value"
         OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
         LLM_MODEL_NAME = "llm.model_name"
         LLM_TEMPERATURE = "llm.temperature"
         LLM_TOP_P = "llm.top_p"
@@ -55,6 +57,7 @@ except Exception:  # Fallback when OpenInference isn't installed
     class _OI:
         INPUT_VALUE = "input.value"
         OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
         LLM_MODEL_NAME = "llm.model_name"
         LLM_TEMPERATURE = "llm.temperature"
         LLM_TOP_P = "llm.top_p"
@@ -149,7 +152,12 @@ class PhoenixSpanManager:
             return
 
         try:
-            self.tracer_provider = TracerProvider()
+            # Add a resource so Phoenix shows a sensible service name
+            resource = Resource.create({
+                "service.name": "pms-assistant",
+                "service.version": "1.0.0",
+            })
+            self.tracer_provider = TracerProvider(resource=resource)
             trace.set_tracer_provider(self.tracer_provider)
 
             # Console exporter for local dev visibility
@@ -157,16 +165,17 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Note: Skipping direct HttpExporter adapter. It does not accept OTel ReadableSpan objects
-            # and caused runtime errors. We rely on the custom PhoenixSpanProcessor + collector below.
+            # Enable OTLP over HTTP exporter pointing to Phoenix's /v1/traces
+            try:
+                otlp_http_exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
+                otlp_processor = BatchSpanProcessor(otlp_http_exporter)
+                self.tracer_provider.add_span_processor(otlp_processor)
+                print("✅ OTLP HTTP exporter configured for Phoenix (/v1/traces)")
+            except Exception as e:
+                print(f"⚠️  Failed to configure OTLP HTTP exporter: {e}")
 
-            # Phoenix span processor (batch export to Phoenix dataset as fallback)
-            phoenix_processor = PhoenixSpanProcessor()
-            self.tracer_provider.add_span_processor(phoenix_processor)
-
-            # Start Phoenix span collector
-            phoenix_span_collector.start_periodic_export()
-            print("✅ Phoenix span processor and collector configured")
+            # Disable custom collector-based export to avoid duplicates
+            # (We keep the class around, but do not register the processor or start the collector.)
 
             self.tracer = trace.get_tracer(__name__)
             self._initialized = True
@@ -248,7 +257,8 @@ class PhoenixSpanCollector:
                     'end_time': format_timestamp(span.end_time),
                     'status_code': span.status.status_code.name,
                     'status_message': span.status.description or '',
-                    'attributes': json.dumps(dict(span.attributes)),
+                    # Keep attributes as structured data (dict) for Phoenix UI parsing
+                    'attributes': dict(span.attributes),
                     'context.trace_id': format_trace_id(span.context.trace_id),
                     'context.span_id': format_span_id(span.context.span_id),
                     'context.trace_state': str(span.context.trace_state)
@@ -290,7 +300,8 @@ class PhoenixSpanCollector:
                         'timestamp': format_timestamp(event.timestamp),
                         'attributes': dict(event.attributes)
                     })
-                span_dict['events'] = json.dumps(events_list)
+                # Keep events as structured list for Phoenix UI
+                span_dict['events'] = events_list
 
                 spans_data.append(span_dict)
 
@@ -568,6 +579,19 @@ class MongoDBAgent:
                                 llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                # Tag span kind for OpenInference UI (uppercase expected)
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'LLM')
+                                # Record the current user input as LLM input
+                                try:
+                                    llm_input_preview = str(human_message.content)[:1000]
+                                except Exception:
+                                    llm_input_preview = ""
+                                # Set both generic and OpenInference-prefixed keys
+                                llm_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), llm_input_preview)
+                                try:
+                                    llm_span.set_attribute('openinference.input.value', llm_input_preview)
+                                except Exception:
+                                    pass
                                 if self.system_prompt:
                                     llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 # Add prompt summary event
@@ -619,6 +643,14 @@ class MongoDBAgent:
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
                                         tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        # Tag span kind for OpenInference UI (uppercase expected)
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                                        # Also set generic and OpenInference input.value for Phoenix UI
+                                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                                        try:
+                                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                                        except Exception:
+                                            pass
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -627,6 +659,11 @@ class MongoDBAgent:
                                     tool_span.set_attribute("tool_success", True)
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                                        try:
+                                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                                        except Exception:
+                                            pass
                                         tool_span.add_event("tool_end", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -731,6 +768,7 @@ class MongoDBAgent:
                                 llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'llm')
                                 if self.system_prompt:
                                     llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
@@ -785,6 +823,7 @@ class MongoDBAgent:
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
                                         tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
