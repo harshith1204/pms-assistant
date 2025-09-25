@@ -219,6 +219,8 @@ class MongoDBSpanCollector:
         self.mongodb_client = None
         self.database = None
         self.collection = None
+        self.events_collection = None
+        self.metrics_collection = None
         self.export_thread = None
         self.running = False
         self.batch_size = 50
@@ -231,6 +233,9 @@ class MongoDBSpanCollector:
             self.mongodb_client = MongoClient(PHOENIX_DB_CONFIG["connection_string"])
             self.database = self.mongodb_client[PHOENIX_DB_CONFIG["database"]]
             self.collection = self.database[PHOENIX_DB_CONFIG["collection"]]
+            # Standardized collections
+            self.events_collection = self.database["trace_events"]
+            self.metrics_collection = self.database["metrics"]
             print("✅ MongoDB connection initialized for span collection")
         except Exception as e:
             print(f"❌ Failed to initialize MongoDB connection: {e}")
@@ -307,16 +312,7 @@ class MongoDBSpanCollector:
         if 'tool.output' in attrs:
             span_dict['output'] = str(attrs['tool.output'])
 
-        # Convert events to simple format
-        if span.events:
-            events_list = []
-            for event in span.events:
-                events_list.append({
-                    'name': event.name,
-                    'timestamp': format_timestamp(event.timestamp),
-                    'attributes': dict(event.attributes)
-                })
-            span_dict['events'] = events_list
+        # Do not attach events here; events are stored in dedicated collection
 
         return span_dict
 
@@ -326,25 +322,65 @@ class MongoDBSpanCollector:
             return
 
         try:
-            # Convert spans to documents
-            documents = []
+            # Build documents for traces, events, and metrics
+            trace_docs = []
+            event_docs = []
+            metric_docs = []
+
             for span in self.collected_spans:
-                doc = self.convert_span_to_dict(span)
-                documents.append(doc)
+                span_doc = self.convert_span_to_dict(span)
+                trace_docs.append(span_doc)
 
-            if documents:
-                # Bulk insert for efficiency
-                result = self.collection.insert_many(documents, ordered=False)
-                print(f"✅ Exported {len(documents)} spans to MongoDB")
+                # Build event documents (one per event)
+                if span.events:
+                    for event in span.events:
+                        event_docs.append({
+                            'trace_id': span_doc['trace_id'],
+                            'span_id': span_doc['span_id'],
+                            'span_name': span_doc['name'],
+                            'name': event.name,
+                            'timestamp': event.timestamp if not isinstance(event.timestamp, (int, float)) else datetime.fromtimestamp(event.timestamp / 1e9),
+                            'attributes': dict(event.attributes),
+                            'created_at': datetime.now()
+                        })
 
-                # Also store in time-based collection for better querying
-                now = datetime.now()
-                time_collection_name = f"traces_{now.strftime('%Y_%m')}"
-                time_collection = self.database[time_collection_name]
+                # Build basic metrics document per span
+                metric_docs.append({
+                    'trace_id': span_doc['trace_id'],
+                    'span_id': span_doc['span_id'],
+                    'span_name': span_doc['name'],
+                    'span_kind': span_doc.get('kind'),
+                    'status_code': span_doc.get('status_code'),
+                    'duration_ms': span_doc.get('duration_ms'),
+                    'start_time': span_doc.get('start_time'),
+                    'end_time': span_doc.get('end_time'),
+                    'attributes_count': len(span_doc.get('attributes', {})),
+                    'events_count': len(span.events or []),
+                    'created_at': datetime.now()
+                })
 
-                # Insert into time-based collection too
-                time_collection.insert_many(documents, ordered=False)
-                print(f"✅ Also stored in time-based collection: {time_collection_name}")
+            # Insert traces
+            if trace_docs:
+                self.collection.insert_many(trace_docs, ordered=False)
+                print(f"✅ Exported {len(trace_docs)} spans to MongoDB collection 'traces'")
+
+                # Optional: Also store in time-based collection for better querying
+                # Uncomment the following lines if you want time-based collections
+                # now = datetime.now()
+                # time_collection_name = f"traces_{now.strftime('%Y_%m')}"
+                # time_collection = self.database[time_collection_name]
+                # time_collection.insert_many(trace_docs, ordered=False)
+                # print(f"✅ Also stored in time-based collection: {time_collection_name}")
+
+            # Insert events
+            if event_docs and self.events_collection is not None:
+                self.events_collection.insert_many(event_docs, ordered=False)
+                print(f"✅ Exported {len(event_docs)} events to MongoDB collection 'trace_events'")
+
+            # Insert metrics
+            if metric_docs and self.metrics_collection is not None:
+                self.metrics_collection.insert_many(metric_docs, ordered=False)
+                print(f"✅ Exported {len(metric_docs)} metrics to MongoDB collection 'metrics'")
 
             # Clear collected spans
             self.collected_spans.clear()
