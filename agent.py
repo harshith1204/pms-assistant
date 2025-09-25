@@ -20,12 +20,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from phoenix import Client
 from phoenix.trace.trace_dataset import TraceDataset
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 import pandas as pd
 import threading
 import time
 from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
+from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 
 # OpenInference semantic conventions (optional)
 try:
@@ -165,21 +165,21 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Enable OTLP over HTTP exporter pointing to Phoenix's /v1/traces
+            # Register MongoDB span processor (stores spans directly in MongoDB)
             try:
-                otlp_http_exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
-                otlp_processor = BatchSpanProcessor(otlp_http_exporter)
-                self.tracer_provider.add_span_processor(otlp_processor)
-                print("✅ OTLP HTTP exporter configured for Phoenix (/v1/traces)")
+                mongodb_processor = MongoDBSpanProcessor()
+                self.tracer_provider.add_span_processor(mongodb_processor)
+                mongodb_span_collector.start_periodic_export()
+                print("✅ MongoDB span processor configured for tracing")
             except Exception as e:
-                print(f"⚠️  Failed to configure OTLP HTTP exporter: {e}")
+                print(f"⚠️  Failed to configure MongoDB span processor: {e}")
 
             # Disable custom collector-based export to avoid duplicates
             # (We keep the class around, but do not register the processor or start the collector.)
 
             self.tracer = trace.get_tracer(__name__)
             self._initialized = True
-            print("✅ Tracing initialized with Phoenix export")
+            print("✅ Tracing initialized with MongoDB export")
         except Exception as e:
             print(f"❌ Failed to initialize tracing: {e}")
             import traceback
