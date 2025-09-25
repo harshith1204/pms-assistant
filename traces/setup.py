@@ -26,6 +26,9 @@ from phoenix.evals.models import OpenAIModel
 from agent import MongoDBAgent
 from mongo.constants import DATABASE_NAME
 
+# MongoDB imports
+from pymongo import MongoClient
+
 
 class PMSEvaluator:
     """Custom evaluators for Project Management System responses"""
@@ -288,22 +291,94 @@ class PMSEvaluator:
         }
 
 
+class MongoDBEvaluationStore:
+    """Handles MongoDB storage for evaluation results"""
+
+    def __init__(self):
+        self.mongodb_client = None
+        self.database = None
+        self.collection = None
+
+    async def initialize(self):
+        """Initialize MongoDB connection for evaluations"""
+        try:
+            from .config import PHOENIX_DB_CONFIG
+            self.mongodb_client = MongoClient(PHOENIX_DB_CONFIG["connection_string"])
+            self.database = self.mongodb_client[PHOENIX_DB_CONFIG["database"]]
+            self.collection = self.database["evaluations"]
+            print("✅ MongoDB evaluation storage initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize MongoDB evaluation storage: {e}")
+            self.mongodb_client = None
+
+    async def log_evaluation(self, query: str, response: str, metrics: Dict[str, float], trace_id: str = None):
+        """Log evaluation results to MongoDB"""
+        if self.mongodb_client is None or self.collection is None:
+            print("⚠️  MongoDB not connected, skipping evaluation logging")
+            return
+
+        try:
+            eval_data = {
+                "query": query,
+                "response": response,
+                "metrics": metrics,
+                "trace_id": trace_id,
+                "timestamp": datetime.now(),
+                "created_at": datetime.now()
+            }
+
+            result = self.collection.insert_one(eval_data)
+            print(f"✅ Evaluation logged to MongoDB with ID: {result.inserted_id}")
+            return result.inserted_id
+
+        except Exception as e:
+            print(f"❌ Error logging evaluation to MongoDB: {e}")
+
+    async def get_evaluations(self, limit: int = 100):
+        """Retrieve recent evaluations"""
+        if self.mongodb_client is None or self.collection is None:
+            return []
+
+        try:
+            return list(self.collection.find().sort('timestamp', -1).limit(limit))
+        except Exception as e:
+            print(f"❌ Error retrieving evaluations: {e}")
+            return []
+
+    async def get_evaluation_by_trace_id(self, trace_id: str):
+        """Get evaluation by trace ID"""
+        if self.mongodb_client is None or self.collection is None:
+            return None
+
+        try:
+            return self.collection.find_one({'trace_id': trace_id})
+        except Exception as e:
+            print(f"❌ Error retrieving evaluation for trace {trace_id}: {e}")
+            return None
+
 class PhoenixTracer:
-    """Handles Phoenix tracing for the PMS Assistant"""
+    """Handles Phoenix tracing for the PMS Assistant (kept for backward compatibility)"""
 
     def __init__(self, project_name: str = "pms-assistant"):
         self.project_name = project_name
         self.client = None
+        self.eval_store = None
 
     async def initialize(self):
-        """Initialize Phoenix client and tracing"""
+        """Initialize Phoenix client and MongoDB evaluation storage"""
         try:
             # Initialize Phoenix client
             self.client = Client()
-            print("Phoenix client initialized successfully")
+            print("✅ Phoenix client initialized successfully")
+
+            # Initialize MongoDB evaluation storage
+            self.eval_store = MongoDBEvaluationStore()
+            await self.eval_store.initialize()
+
         except Exception as e:
-            print(f"Failed to initialize Phoenix client: {e}")
+            print(f"❌ Failed to initialize Phoenix tracer: {e}")
             self.client = None
+            self.eval_store = None
 
     def start_trace(self, name: str, span_kind: str = "INTERNAL"):
         """Start a new trace span"""
@@ -315,28 +390,28 @@ class PhoenixTracer:
             span_kind=span_kind
         )
 
-    async def log_evaluation(self, query: str, response: str, metrics: Dict[str, float]):
-        """Log evaluation results to Phoenix"""
+    async def log_evaluation(self, query: str, response: str, metrics: Dict[str, float], trace_id: str = None):
+        """Log evaluation results to both Phoenix and MongoDB"""
         if not self.client:
             return
 
         try:
-            # Log the evaluation results
+            # Log to Phoenix (original functionality)
             with using_project(self.project_name):
-                # This would typically be done within a trace context
-                # For now, we'll log to the evaluation dataset
                 eval_data = {
                     "query": query,
                     "response": response,
                     "timestamp": datetime.now().isoformat(),
                     **metrics
                 }
+                print(f"📊 Evaluation data prepared: {eval_data}")
 
-                # In a real implementation, you'd save this to a structured dataset
-                print(f"Evaluation logged: {eval_data}")
+            # Log to MongoDB for persistent storage
+            if self.eval_store:
+                await self.eval_store.log_evaluation(query, response, metrics, trace_id)
 
         except Exception as e:
-            print(f"Error logging evaluation: {e}")
+            print(f"❌ Error logging evaluation: {e}")
 
 
 class EvaluationPipeline:
