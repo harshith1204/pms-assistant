@@ -1,0 +1,61 @@
+{
+  "_id": {
+    "$binary": {
+      "base64": "GERBNxWW/9lPeQtYn4LUpA==",
+      "subType": "03"
+    }
+  },
+  "projectDisplayId": "GGGG",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "TmBkxQU5Bx9oX+NCZRljrA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "name": "gggg",
+  "imageUrl": "https://d2yx15pncgmu63.cloudfront.net/prod-images/524681c1750191737292Website-Design-Background-Feb-09-2022-03-13-55-73-AM.webp",
+  "icon": "",
+  "access": "PUBLIC",
+  "lead": {
+    "_id": {
+      "$binary": {
+        "base64": "HGm3S+9pBx8TR97O1mE0tQ==",
+        "subType": "03"
+      }
+    },
+    "name": "vihan"
+  },
+  "leadMail": "v@gmail.com",
+  "defaultAsignee": {
+    "_id": {
+      "$binary": {
+        "base64": "HGm3S+9pBx8TR97O1mE0tQ==",
+        "subType": "03"
+      }
+    },
+    "name": "vihan"
+  },
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "umg/7ek1Bx8lVC+tVS80tQ==",
+        "subType": "03"
+      }
+    },
+    "name": "sharanya"
+  },
+  "isActive": true,
+  "status": "NOT_STARTED",
+  "favourite": false,
+  "isArchived": false,
+  "createdTimeStamp": {
+    "$date": "2025-08-11T12:17:10.300Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-08-11T12:17:10.300Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Project"
+}
