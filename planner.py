@@ -15,6 +15,7 @@ from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
+from observability.langfuse import langfuse_obs
 
 @dataclass
 class QueryIntent:
@@ -294,7 +295,8 @@ class LLMIntentParser:
         user = f"Convert to JSON: {query}"
 
         try:
-            ai = await self.llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+            callbacks = langfuse_obs.langchain_callbacks()
+            ai = await self.llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)], config={"callbacks": callbacks} if callbacks else None)
             content = ai.content.strip()
             print(f"DEBUG: LLM response: {content}")
             import re
