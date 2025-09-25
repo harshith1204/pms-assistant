@@ -115,21 +115,25 @@ EXPORT_CONFIGS = {
         "enable_console_export": True,
         "enable_file_export": True,
         "export_path": "./logs/phoenix_traces.jsonl",
-        "enable_phoenix_export": False
+        "enable_mongodb_export": True,  # Enable MongoDB storage
+        "mongodb_database": "SimpoAssist",
+        "batch_size": 10  # Smaller batches for development
     },
     "production": {
         "enable_console_export": False,
         "enable_file_export": True,
         "export_path": "./logs/phoenix_traces.jsonl",
-        "enable_phoenix_export": True,
-        "phoenix_endpoint": "http://localhost:6006/v1/traces"
+        "enable_mongodb_export": True,  # Enable MongoDB storage
+        "mongodb_database": "SimpoAssist",
+        "batch_size": 100  # Larger batches for production
     },
     "evaluation": {
         "enable_console_export": True,
         "enable_file_export": True,
         "export_path": "./logs/evaluation_traces.jsonl",
-        "enable_phoenix_export": True,
-        "phoenix_endpoint": "http://localhost:6006/v1/traces"
+        "enable_mongodb_export": True,  # Enable MongoDB storage
+        "mongodb_database": "SimpoAssist",
+        "batch_size": 50
     }
 }
 
@@ -183,9 +187,15 @@ def get_export_config() -> Dict[str, Any]:
 
 # Database connection settings for Phoenix
 PHOENIX_DB_CONFIG = {
-    "database_url": "sqlite:///phoenix.db",  # Use SQLite for simplicity
-    "echo": False,  # Set to True for SQL debugging
-    "pool_pre_ping": True
+    "connection_string": "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin",  # MongoDB connection
+    "database": "SimpoAssist",
+    "collection": "traces",
+    "max_pool_size": 100,
+    "min_pool_size": 10,
+    "max_idle_time_ms": 30000,
+    "server_selection_timeout_ms": 5000,
+    "write_concern": "majority",
+    "read_preference": "secondaryPreferred"
 }
 
 # Evaluation thresholds
