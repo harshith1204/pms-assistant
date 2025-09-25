@@ -572,14 +572,19 @@ class MongoDBAgent:
                                 llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
                                 llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
-                                # Tag span kind for OpenInference UI
-                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'llm')
+                                # Tag span kind for OpenInference UI (uppercase expected)
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'LLM')
                                 # Record the current user input as LLM input
                                 try:
                                     llm_input_preview = str(human_message.content)[:1000]
                                 except Exception:
                                     llm_input_preview = ""
+                                # Set both generic and OpenInference-prefixed keys
                                 llm_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), llm_input_preview)
+                                try:
+                                    llm_span.set_attribute('openinference.input.value', llm_input_preview)
+                                except Exception:
+                                    pass
                                 if self.system_prompt:
                                     llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 # Add prompt summary event
@@ -631,10 +636,14 @@ class MongoDBAgent:
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
                                         tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                        # Tag span kind for OpenInference UI
-                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
-                                        # Also set generic input.value for Phoenix UI
+                                        # Tag span kind for OpenInference UI (uppercase expected)
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                                        # Also set generic and OpenInference input.value for Phoenix UI
                                         tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                                        try:
+                                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                                        except Exception:
+                                            pass
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -644,6 +653,10 @@ class MongoDBAgent:
                                     try:
                                         tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
                                         tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                                        try:
+                                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                                        except Exception:
+                                            pass
                                         tool_span.add_event("tool_end", {"tool": tool.name})
                                     except Exception:
                                         pass
