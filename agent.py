@@ -9,6 +9,7 @@ from typing import Dict, Any, List, AsyncGenerator, Optional
 from pydantic import BaseModel
 import tools
 from datetime import datetime
+from observability.langfuse import langfuse_obs
 import time
 from collections import defaultdict, deque
 
@@ -181,7 +182,9 @@ class MongoDBAgent:
             last_response: Optional[AIMessage] = None
 
             while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(messages)
+                # Attach Langfuse callback if enabled
+                callbacks = langfuse_obs.langchain_callbacks()
+                response = await self.llm_with_tools.ainvoke(messages, config={"callbacks": callbacks} if callbacks else None)
                 last_response = response
 
                 # Persist assistant message
@@ -259,9 +262,10 @@ class MongoDBAgent:
             last_response: Optional[AIMessage] = None
 
             while steps < self.max_steps:
+                callbacks = [callback_handler] + langfuse_obs.langchain_callbacks()
                 response = await self.llm_with_tools.ainvoke(
                     messages,
-                    config={"callbacks": [callback_handler]},
+                    config={"callbacks": callbacks} if callbacks else None,
                 )
                 last_response = response
 

@@ -6,6 +6,7 @@ import json
 import re
 from glob import glob
 from datetime import datetime
+from observability.langfuse import langfuse_obs
 
 # Qdrant and RAG dependencies
 try:
@@ -153,7 +154,11 @@ def filter_meaningful_content(data: Any) -> Any:
     return clean_document(normalized_data)
 
 
+observe = langfuse_obs.observe_decorator()
+
+
 @tool
+@observe(name="mongo_query")
 async def mongo_query(query: str, show_all: bool = False) -> str:
     """Execute natural language queries against the Project Management database.
 
@@ -466,6 +471,7 @@ class RAGTool:
 
 
 @tool
+@observe(name="rag_content_search")
 async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
     """Search for page and work item content using RAG (Retrieval-Augmented Generation).
 
@@ -509,6 +515,7 @@ async def rag_content_search(query: str, content_type: str = None, limit: int = 
 
 
 @tool
+@observe(name="rag_answer_question")
 async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
     """Answer questions about page and work item content using RAG.
 

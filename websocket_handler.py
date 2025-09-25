@@ -13,6 +13,7 @@ import re
 
 from mongo.constants import DATABASE_NAME
 from planner import plan_and_execute_query
+from observability.langfuse import langfuse_obs
 
 def _should_use_planner(message_text: str) -> bool:
     q = (message_text or "").lower()
