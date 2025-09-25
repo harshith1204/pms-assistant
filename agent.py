@@ -564,12 +564,12 @@ class MongoDBAgent:
                         # Record model invocation parameters
                         if llm_span:
                             try:
-                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
-                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
-                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
-                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
                                 if self.system_prompt:
-                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 # Add prompt summary event
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
@@ -578,7 +578,7 @@ class MongoDBAgent:
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
-                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                                 llm_span.add_event("llm_response", {"preview_len": len(preview)})
                             except Exception:
                                 pass
@@ -617,8 +617,8 @@ class MongoDBAgent:
                             try:
                                 if tool_span:
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
-                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -626,7 +626,7 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
                                         tool_span.add_event("tool_end", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -635,8 +635,8 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
                                     try:
-                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
                                     except Exception:
                                         pass
 
@@ -653,7 +653,7 @@ class MongoDBAgent:
                     if run_span:
                         try:
                             preview = str(last_response.content)[:500]
-                            run_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                            run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                             run_span.add_event("agent_end", {"steps": steps})
                         except Exception:
                             pass
@@ -727,12 +727,12 @@ class MongoDBAgent:
                     with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
                         if llm_span:
                             try:
-                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
-                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
-                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
-                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
                                 if self.system_prompt:
-                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
@@ -743,7 +743,7 @@ class MongoDBAgent:
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
-                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                                 llm_span.add_event("llm_response", {"preview_len": len(preview)})
                             except Exception:
                                 pass
@@ -783,8 +783,8 @@ class MongoDBAgent:
                             try:
                                 if tool_span:
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
-                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -792,7 +792,7 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
                                         tool_span.add_event("tool_end", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -802,8 +802,8 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
                                     try:
-                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
                                     except Exception:
                                         pass
                                 await callback_handler.on_tool_end(str(result))
