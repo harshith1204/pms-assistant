@@ -180,8 +180,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     "message_length": len(message or ""),
                 },
             ) as user_span:
-                # Route to planner or LLM based on heuristics/flag
-                if force_planner or _should_use_planner(message):
+                # Route ONLY when explicitly forced; default to streaming agent
+                if force_planner:
                     try:
                         with tracer.start_as_current_span(
                             "planner_execute", kind=trace.SpanKind.INTERNAL
