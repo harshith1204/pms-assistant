@@ -46,9 +46,21 @@ export function ChatInterface() {
   const { toast } = useToast();
   
   // WebSocket connection
-  const wsUrl = `ws://${window.location.hostname}:8000/ws/chat`;
+  const wsUrl = (() => {
+    const envUrl = (import.meta as any)?.env?.VITE_WS_URL as string | undefined;
+    if (envUrl) return envUrl;
+    const isHttps = window.location.protocol === "https:";
+    const protocol = isHttps ? "wss" : "ws";
+    const host = window.location.hostname;
+    // If running locally, default backend to 8000; otherwise assume same-origin proxy
+    const isLocal = host === "localhost" || host === "127.0.0.1";
+    const port = isLocal ? ":8000" : (window.location.port ? `:${window.location.port}` : "");
+    return `${protocol}://${host}${port}/ws/chat`;
+  })();
+  console.debug("[WS] using URL:", wsUrl);
   
   const handleWebSocketMessage = useCallback((data: any) => {
+    console.debug("[WS] <-", data);
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
     switch (data.type) {
@@ -238,6 +250,36 @@ export function ChatInterface() {
         setIsLoading(false);
         break;
 
+      case "planner_result": {
+        // Render planner intent/pipeline summary and result payload
+        const contentParts: string[] = [];
+        if (data.intent) {
+          try {
+            contentParts.push(`Planner intent:\n${JSON.stringify(data.intent, null, 2)}`);
+          } catch {}
+        }
+        if (data.pipeline) {
+          try {
+            contentParts.push(`Pipeline:\n${JSON.stringify(data.pipeline, null, 2)}`);
+          } catch {}
+        }
+        if (data.result !== undefined) {
+          try {
+            contentParts.push(`Result:\n${typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)}`);
+          } catch {}
+        }
+
+        const plannerMessage: Message = {
+          id: Date.now().toString(),
+          type: "assistant",
+          content: contentParts.filter(Boolean).join("\n\n" ) || "(Planner completed)",
+          timestamp,
+        };
+        setMessages(prev => [...prev, plannerMessage]);
+        setIsLoading(false);
+        break;
+      }
+
       case "error":
         toast({
           title: "Error",
@@ -246,6 +288,8 @@ export function ChatInterface() {
         });
         setIsLoading(false);
         break;
+      default:
+        console.debug("[WS] unhandled message type:", data?.type, data);
     }
   }, [toast]);
   
@@ -317,11 +361,14 @@ export function ChatInterface() {
     const currentInput = input.trim();
     setInput("");
     
+    // Indicate loading immediately; backend will confirm with llm_start
+    setIsLoading(true);
     // Send message via WebSocket
     const success = sendMessage({
       type: "message",
       message: currentInput,
       conversation_id: conversationId,
+      planner: false,
     });
     
     if (!success) {
@@ -330,6 +377,7 @@ export function ChatInterface() {
         description: "Failed to send message. Not connected to server.",
         variant: "destructive",
       });
+      setIsLoading(false);
       setInput(currentInput);
     }
   };
