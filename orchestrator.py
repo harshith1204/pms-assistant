@@ -191,4 +191,3 @@ def as_async(fn: Callable[..., Any]) -> Callable[[Dict[str, Any]], Awaitable[Any
         return await fn(ctx) if asyncio.iscoroutinefunction(fn) else fn(ctx)
     return _wrapper
 
-
