@@ -368,6 +368,7 @@ export function ChatInterface() {
       type: "message",
       message: currentInput,
       conversation_id: conversationId,
+      planner: false,
     });
     
     if (!success) {

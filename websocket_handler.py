@@ -151,6 +151,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{client_id}"
             force_planner = data.get("planner", False)
+            force_llm = data.get("force_llm", False)
 
             # Send user message acknowledgment
             await _send({
@@ -172,8 +173,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     "message_length": len(message or ""),
                 },
             ) as user_span:
-                # Route to planner or LLM based on heuristics/flag
-                if force_planner or _should_use_planner(message):
+                # Route to planner or LLM based on explicit flags or heuristics
+                if force_planner:
                     try:
                         with tracer.start_as_current_span(
                             "planner_execute", kind=trace.SpanKind.INTERNAL
@@ -209,7 +210,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             "conversation_id": conversation_id,
                             "timestamp": datetime.now().isoformat()
                         })
-                else:
+                elif force_llm or not _should_use_planner(message):
                     # Use regular LLM with tool calling
                     with tracer.start_as_current_span(
                         "agent_stream", kind=trace.SpanKind.INTERNAL
@@ -227,6 +228,43 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             # The streaming is handled internally by the callback handler
                             # Just iterate through the generator to complete the streaming
                             pass
+                else:
+                    # Heuristics prefer planner
+                    try:
+                        with tracer.start_as_current_span(
+                            "planner_execute", kind=trace.SpanKind.INTERNAL
+                        ) as planner_span:
+                            try:
+                                planner_span.set_attribute("input.value", (message or "")[:1000])
+                            except Exception:
+                                pass
+                            plan_result = await plan_and_execute_query(message)
+                            if planner_span:
+                                try:
+                                    planner_span.set_attribute("planner.success", plan_result.get("success", False))
+                                except Exception:
+                                    pass
+                        await _send({
+                            "type": "planner_result",
+                            "success": plan_result.get("success", False),
+                            "intent": plan_result.get("intent"),
+                            "pipeline": plan_result.get("pipeline"),
+                            "result": plan_result.get("result"),
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    except Exception as e:
+                        if user_span:
+                            try:
+                                user_span.set_status(Status(StatusCode.ERROR, str(e)))
+                            except Exception:
+                                pass
+                        await _send({
+                            "type": "planner_error",
+                            "message": str(e),
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.now().isoformat()
+                        })
 
             # Send completion message
             await _send({
