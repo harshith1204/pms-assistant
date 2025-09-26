@@ -250,6 +250,36 @@ export function ChatInterface() {
         setIsLoading(false);
         break;
 
+      case "planner_result": {
+        // Render planner intent/pipeline summary and result payload
+        const contentParts: string[] = [];
+        if (data.intent) {
+          try {
+            contentParts.push(`Planner intent:\n${JSON.stringify(data.intent, null, 2)}`);
+          } catch {}
+        }
+        if (data.pipeline) {
+          try {
+            contentParts.push(`Pipeline:\n${JSON.stringify(data.pipeline, null, 2)}`);
+          } catch {}
+        }
+        if (data.result !== undefined) {
+          try {
+            contentParts.push(`Result:\n${typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)}`);
+          } catch {}
+        }
+
+        const plannerMessage: Message = {
+          id: Date.now().toString(),
+          type: "assistant",
+          content: contentParts.filter(Boolean).join("\n\n" ) || "(Planner completed)",
+          timestamp,
+        };
+        setMessages(prev => [...prev, plannerMessage]);
+        setIsLoading(false);
+        break;
+      }
+
       case "error":
         toast({
           title: "Error",
