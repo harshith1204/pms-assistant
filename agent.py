@@ -12,6 +12,7 @@ import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
+import re
 
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
@@ -83,12 +84,22 @@ except AttributeError:
 from mongo.constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states.\n\n"
+    "You are a Project Management System assistant. Use the tools exactly as instructed below to answer questions about projects, work items, cycles, members, pages, modules, and project states.\n\n"
+    "Tool selection rules (critical):\n"
+    "1) If the user asks to 'find tasks mentioning <phrase>' and then list metadata like state/assignee, use rag_to_mongo_workitems. Do NOT use mongo_query for the second step once you have IDs.\n"
+    "2) If the user needs relevant snippets from pages or work items (content only), use rag_content_search.\n"
+    "3) If the user asks a question that needs context from content (summaries/explanations), use rag_answer_question.\n"
+    "4) Use mongo_query for general database questions that can be answered with a single natural-language-to-aggregation translation (counts, lists, groupings) and when no prior RAG-derived ID list is involved.\n\n"
     "Available tools:\n"
-    "- mongo_query: Natural language to Mongo aggregation for database questions.\n"
-    "- rag_content_search: Vector search over page/work item content for relevant snippets.\n"
-    "- rag_answer_question: Retrieve relevant content context for a question.\n"
-    "- rag_to_mongo_workitems: First use RAG to find work items by content (e.g., 'login timeout'), then fetch authoritative fields (state.name, assignee) from Mongo via IDs. Use this when you need metadata after content search."
+    "- mongo_query: Natural language → Mongo aggregation for database questions. Avoid for post-RAG ID follow-ups.\n"
+    "- rag_content_search: Vector search over page/work item content to return relevant content snippets.\n"
+    "- rag_answer_question: Retrieve condensed context from content to help answer a question.\n"
+    "- rag_to_mongo_workitems: Use for 'mentioning <phrase>' task searches → returns authoritative fields (state.name, assignee, etc.) via an aggregate using RAG-matched IDs. This is the preferred tool to list states/assignees after content search.\n\n"
+    "Examples:\n"
+    "• 'Find tasks mentioning \"login timeout\" and list their states and assignees' → rag_to_mongo_workitems(query='login timeout')\n"
+    "• 'Show snippets about login timeout across pages' → rag_content_search(query='login timeout', content_type='page')\n"
+    "• 'How is the login flow documented?' → rag_answer_question(question='How is the login flow documented?')\n"
+    "• 'How many open work items per state?' → mongo_query('How many open work items per state?')\n"
 )
 
 class ConversationMemory:
@@ -129,14 +140,14 @@ conversation_memory = ConversationMemory()
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
     model="qwen3:0.6b-fp16",
-    temperature=0.3,
-    num_ctx=4096,  # Increased context for better understanding
-    num_predict=1024,  # Allow longer responses for detailed insights
-    num_thread=8,  # Use multiple threads for speed
-    streaming=True,  # Enable streaming for real-time responses
+    temperature=0.1,  # Lowered to reduce hallucinations
+    num_ctx=4096,
+    num_predict=1024,
+    num_thread=8,
+    streaming=True,
     verbose=False,
-    top_p=0.9,  # Better response diversity
-    top_k=40,  # Focus on high-probability tokens
+    top_p=0.8,  # Slightly tighter nucleus sampling
+    top_k=40,
 )
 
 # Bind tools to the LLM for tool calling
@@ -531,6 +542,23 @@ class MongoDBAgent:
         if not self.connected:
             await self.connect()
 
+        # Deterministic router: direct tool call for "mentioning" queries to avoid hallucinations
+        try:
+            simplified = (query or "").lower()
+            if any(k in simplified for k in ["mentioning", "mentions", "containing", "contain", "that mention", "that contain"]) 
+               and any(k in simplified for k in ["state", "assignee", "assignees", "current state", "assigned"]):
+                tool = next((t for t in tools_list if t.name == "rag_to_mongo_workitems"), None)
+                if tool:
+                    tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+                    span_cm = tracer.start_as_current_span("router_direct_call", kind=trace.SpanKind.INTERNAL, attributes={"tool": "rag_to_mongo_workitems"}) if tracer else None
+                    with (span_cm if span_cm is not None else contextlib.nullcontext()):
+                        # Pass the raw query; the composite tool uses vector search robustly
+                        result = await tool.ainvoke({"query": query})
+                        return str(result)
+        except Exception:
+            # Fall back to normal flow if router fails
+            pass
+
         try:
             tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
             if tracer is not None:
@@ -723,6 +751,23 @@ class MongoDBAgent:
         """Run the agent with streaming support and conversation context"""
         if not self.connected:
             await self.connect()
+
+        # Deterministic router: direct tool call for "mentioning" queries to avoid hallucinations
+        try:
+            simplified = (query or "").lower()
+            if any(k in simplified for k in ["mentioning", "mentions", "containing", "contain", "that mention", "that contain"]) 
+               and any(k in simplified for k in ["state", "assignee", "assignees", "current state", "assigned"]):
+                tool = next((t for t in tools_list if t.name == "rag_to_mongo_workitems"), None)
+                if tool:
+                    tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+                    span_cm = tracer.start_as_current_span("router_direct_call_stream", kind=trace.SpanKind.INTERNAL, attributes={"tool": "rag_to_mongo_workitems"}) if tracer else None
+                    with (span_cm if span_cm is not None else contextlib.nullcontext()):
+                        result = await tool.ainvoke({"query": query})
+                        yield str(result)
+                        return
+        except Exception:
+            # Fall back to normal flow if router fails
+            pass
 
         try:
             tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
