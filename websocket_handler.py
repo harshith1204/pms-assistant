@@ -23,6 +23,9 @@ class StreamingCallbackHandler(AsyncCallbackHandler):
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
         self.start_time = None
+        # Optional: allow showing raw tool outputs if explicitly enabled
+        import os as _os
+        self.stream_tool_outputs = _os.getenv("STREAM_TOOL_OUTPUTS", "false").lower() == "true"
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -61,11 +64,21 @@ class StreamingCallbackHandler(AsyncCallbackHandler):
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
-        await self.websocket.send_json({
-            "type": "tool_end",
-            "output": output,
-            "timestamp": datetime.now().isoformat()
-        })
+        # Suppress raw tool outputs unless explicitly enabled
+        if self.stream_tool_outputs:
+            payload = {
+                "type": "tool_end",
+                "output": output,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            payload = {
+                "type": "tool_end",
+                "output_preview": str(output)[:120],
+                "hidden": True,
+                "timestamp": datetime.now().isoformat()
+            }
+        await self.websocket.send_json(payload)
 
 class WebSocketManager:
     """Manages WebSocket connections"""

@@ -395,6 +395,10 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         super().__init__()
         self.websocket = websocket
         self.start_time = None
+        # Control whether to stream raw tool outputs to the client
+        # Default is False to avoid dumping tool text as the final answer
+        import os as _os
+        self.stream_tool_outputs = _os.getenv("STREAM_TOOL_OUTPUTS", "false").lower() == "true"
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -438,11 +442,21 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
         if self.websocket:
-            await self.websocket.send_json({
-                "type": "tool_end",
-                "output": output,
-                "timestamp": datetime.now().isoformat()
-            })
+            # Suppress raw tool outputs unless explicitly enabled
+            if self.stream_tool_outputs:
+                payload = {
+                    "type": "tool_end",
+                    "output": output,
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                payload = {
+                    "type": "tool_end",
+                    "output_preview": str(output)[:120],
+                    "hidden": True,
+                    "timestamp": datetime.now().isoformat()
+                }
+            await self.websocket.send_json(payload)
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
@@ -571,6 +585,7 @@ class MongoDBAgent:
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
+                need_finalization: bool = False
 
                 while steps < self.max_steps:
                     if tracer is not None:
@@ -615,6 +630,16 @@ class MongoDBAgent:
                     "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
                 ))
                 routed_messages = messages + [routing_instructions]
+                # If we previously executed tools, bias the model to synthesize instead of pasting tool text
+                if need_finalization:
+                    finalization_instructions = SystemMessage(content=(
+                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                        "Do not paste tool outputs verbatim or include banners/emojis. "
+                        "If the user asked to browse or see examples, summarize briefly and offer to expand. "
+                        "For work items, present canonical fields succinctly."
+                    ))
+                    routed_messages = messages + [routing_instructions, finalization_instructions]
+                    need_finalization = False
                 response = await self.llm_with_tools.ainvoke(routed_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
@@ -634,6 +659,7 @@ class MongoDBAgent:
 
                 # Execute requested tools sequentially
                 messages.append(response)
+                did_any_tool = False
                 for tool_call in response.tool_calls:
                     if tracer is not None:
                         tool_cm = tracer.start_as_current_span(
@@ -700,7 +726,12 @@ class MongoDBAgent:
                         )
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
+                        did_any_tool = True
                 steps += 1
+
+                # After executing any tools, force the next LLM turn to synthesize
+                if did_any_tool:
+                    need_finalization = True
 
                 # Step cap reached; return best available answer
                 if last_response is not None:
@@ -767,6 +798,7 @@ class MongoDBAgent:
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
+                need_finalization: bool = False
 
                 while steps < self.max_steps:
                     if tracer is not None:
@@ -795,8 +827,18 @@ class MongoDBAgent:
                             "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
                             "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
                         ))
+                        invoke_messages = messages + [routing_instructions]
+                        if need_finalization:
+                            finalization_instructions = SystemMessage(content=(
+                                "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                                "Do not paste tool outputs verbatim or include banners/emojis. "
+                                "If the user asked to browse or see examples, summarize briefly and offer to expand. "
+                                "For work items, present canonical fields succinctly."
+                            ))
+                            invoke_messages = messages + [routing_instructions, finalization_instructions]
+                            need_finalization = False
                         response = await self.llm_with_tools.ainvoke(
-                            messages + [routing_instructions],
+                            invoke_messages,
                             config={"callbacks": [callback_handler]},
                         )
                         if llm_span and getattr(response, "content", None):
@@ -817,6 +859,7 @@ class MongoDBAgent:
 
                     # Execute requested tools sequentially with streaming callbacks
                     messages.append(response)
+                    did_any_tool = False
                     for tool_call in response.tool_calls:
                         if tracer is not None:
                             tool_cm = tracer.start_as_current_span(
@@ -874,7 +917,12 @@ class MongoDBAgent:
                             )
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
+                            did_any_tool = True
                     steps += 1
+
+                    # After executing any tools, force the next LLM turn to synthesize
+                    if did_any_tool:
+                        need_finalization = True
 
                 # Step cap reached; send best available response
                 if last_response is not None:
