@@ -233,6 +233,68 @@ export function ChatInterface() {
         };
         setMessages(prev => [...prev, toolEndMessage]);
         break;
+
+      case "planner_result":
+        // Display planner execution results (aggregation output)
+        {
+          const success = !!data.success;
+          if (!success) {
+            toast({
+              title: "Planner Error",
+              description: data.error || "Planner failed to execute",
+              variant: "destructive",
+            });
+            setIsLoading(false);
+            break;
+          }
+
+          // Summarize results for quick glance
+          const result = data.result;
+          let summary = "";
+          if (Array.isArray(result)) {
+            if (result.length > 0 && typeof result[0] === "object" && result[0] && "total" in result[0]) {
+              summary = `Count: ${result[0].total}`;
+            } else {
+              summary = `Found ${result.length} item(s).`;
+            }
+          } else if (result && typeof result === "object") {
+            summary = "Planner executed. Showing result object.";
+          } else if (result != null) {
+            summary = String(result);
+          } else {
+            summary = "No results returned by planner.";
+          }
+
+          // Add a concise assistant summary
+          const summaryMessage: Message = {
+            id: Date.now().toString(),
+            type: "assistant",
+            content: summary,
+            timestamp,
+          };
+          setMessages(prev => [...prev, summaryMessage]);
+
+          // Add raw output as a tool block for details
+          const detailsMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            type: "tool",
+            content: "Aggregation result",
+            timestamp,
+            toolOutput: result,
+          };
+          setMessages(prev => [...prev, detailsMessage]);
+          setIsLoading(false);
+        }
+        break;
+
+      case "planner_error":
+        toast({
+          title: "Planner Error",
+          description: data.message || "An error occurred while planning",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        break;
         
       case "complete":
         setIsLoading(false);
