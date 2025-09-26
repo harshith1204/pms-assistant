@@ -12,6 +12,7 @@ import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
+import re
 
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
@@ -139,14 +140,14 @@ conversation_memory = ConversationMemory()
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
     model="qwen3:0.6b-fp16",
-    temperature=0.3,
-    num_ctx=4096,  # Increased context for better understanding
-    num_predict=1024,  # Allow longer responses for detailed insights
-    num_thread=8,  # Use multiple threads for speed
-    streaming=True,  # Enable streaming for real-time responses
+    temperature=0.1,  # Lowered to reduce hallucinations
+    num_ctx=4096,
+    num_predict=1024,
+    num_thread=8,
+    streaming=True,
     verbose=False,
-    top_p=0.9,  # Better response diversity
-    top_k=40,  # Focus on high-probability tokens
+    top_p=0.8,  # Slightly tighter nucleus sampling
+    top_k=40,
 )
 
 # Bind tools to the LLM for tool calling
@@ -541,6 +542,23 @@ class MongoDBAgent:
         if not self.connected:
             await self.connect()
 
+        # Deterministic router: direct tool call for "mentioning" queries to avoid hallucinations
+        try:
+            simplified = (query or "").lower()
+            if any(k in simplified for k in ["mentioning", "mentions", "containing", "contain", "that mention", "that contain"]) 
+               and any(k in simplified for k in ["state", "assignee", "assignees", "current state", "assigned"]):
+                tool = next((t for t in tools_list if t.name == "rag_to_mongo_workitems"), None)
+                if tool:
+                    tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+                    span_cm = tracer.start_as_current_span("router_direct_call", kind=trace.SpanKind.INTERNAL, attributes={"tool": "rag_to_mongo_workitems"}) if tracer else None
+                    with (span_cm if span_cm is not None else contextlib.nullcontext()):
+                        # Pass the raw query; the composite tool uses vector search robustly
+                        result = await tool.ainvoke({"query": query})
+                        return str(result)
+        except Exception:
+            # Fall back to normal flow if router fails
+            pass
+
         try:
             tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
             if tracer is not None:
@@ -733,6 +751,23 @@ class MongoDBAgent:
         """Run the agent with streaming support and conversation context"""
         if not self.connected:
             await self.connect()
+
+        # Deterministic router: direct tool call for "mentioning" queries to avoid hallucinations
+        try:
+            simplified = (query or "").lower()
+            if any(k in simplified for k in ["mentioning", "mentions", "containing", "contain", "that mention", "that contain"]) 
+               and any(k in simplified for k in ["state", "assignee", "assignees", "current state", "assigned"]):
+                tool = next((t for t in tools_list if t.name == "rag_to_mongo_workitems"), None)
+                if tool:
+                    tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+                    span_cm = tracer.start_as_current_span("router_direct_call_stream", kind=trace.SpanKind.INTERNAL, attributes={"tool": "rag_to_mongo_workitems"}) if tracer else None
+                    with (span_cm if span_cm is not None else contextlib.nullcontext()):
+                        result = await tool.ainvoke({"query": query})
+                        yield str(result)
+                        return
+        except Exception:
+            # Fall back to normal flow if router fails
+            pass
 
         try:
             tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
