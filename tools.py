@@ -561,37 +561,53 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         rag_tool = RAGTool()
         rag_results = await rag_tool.search_content(query, content_type="work_item", limit=max(limit, 5))
 
-        # Extract unique Mongo IDs from RAG results (point id is mongo_id)
-        id_strings: List[str] = []
-        seen: set[str] = set()
+        # Extract unique Mongo IDs and titles from RAG results (point id is mongo_id)
+        all_ids: List[str] = []
+        titles: List[str] = []
+        seen_ids: set[str] = set()
         for r in rag_results:
             mongo_id = str(r.get("id") or r.get("mongo_id") or "").strip()
-            if mongo_id and mongo_id not in seen:
-                seen.add(mongo_id)
-                id_strings.append(mongo_id)
+            title = str(r.get("title") or "").strip()
+            if mongo_id and mongo_id not in seen_ids:
+                seen_ids.add(mongo_id)
+                all_ids.append(mongo_id)
+            if title:
+                titles.append(title)
 
-        if not id_strings:
+        # Partition IDs: keep only 24-hex strings for ObjectId conversion; ignore UUIDs here
+        object_id_strings = [s for s in all_ids if len(s) == 24 and all(c in '0123456789abcdefABCDEF' for c in s)]
+        object_id_strings = object_id_strings[: max(0, limit)]
+        title_patterns = titles[: max(0, limit)]
+        if not object_id_strings and not title_patterns:
             return f"❌ No matching work items found for: '{query}'"
-
-        # Respect requested limit
-        id_strings = id_strings[:limit]
 
         # Step 2: Fetch work items by _id list, converting string IDs to ObjectId via $toObjectId
         # Use $expr + $in + $map to avoid client-side ObjectId construction
-        id_array_expr = {
-            "$map": {
-                "input": id_strings,
-                "as": "id",
-                "in": {"$toObjectId": "$$id"}
+        or_clauses: List[Dict[str, Any]] = []
+        if object_id_strings:
+            id_array_expr = {
+                "$map": {
+                    "input": object_id_strings,
+                    "as": "id",
+                    "in": {"$toObjectId": "$$id"}
+                }
             }
-        }
+            or_clauses.append({"$expr": {"$in": ["$_id", id_array_expr]}})
+
+        if title_patterns:
+            # Build an $or of case-insensitive regex matches on title as a fallback
+            title_or = [{"title": {"$regex": t, "$options": "i"}} for t in title_patterns]
+            if title_or:
+                or_clauses.append({"$or": title_or})
+
+        match_stage: Dict[str, Any]
+        if len(or_clauses) == 1:
+            match_stage = {"$match": or_clauses[0]}
+        else:
+            match_stage = {"$match": {"$or": or_clauses}}
 
         pipeline = [
-            {
-                "$match": {
-                    "$expr": {"$in": ["$_id", id_array_expr]}
-                }
-            },
+            match_stage,
             {"$project": {
                 "_id": 1,
                 "displayBugNo": 1,
