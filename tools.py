@@ -542,11 +542,137 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
         return f"❌ RAG QUESTION ERROR:\nQuestion: '{question}'\nError: {str(e)}"
 
 
+@tool
+async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
+    """Find work items matching a free-text query via RAG, then fetch state and assignee from Mongo.
+
+    Steps:
+    1) Use vector search over work item content to collect candidate Mongo IDs
+    2) Fetch those work items via aggregation `$in` and project key fields
+
+    Args:
+        query: Free-text like "login timeout" or any phrase to search in content
+        limit: Max number of work items to return
+
+    Returns: A compact, human-readable summary of matched work items with state and assignee.
+    """
+    try:
+        # Step 1: RAG search for work items only
+        rag_tool = RAGTool()
+        rag_results = await rag_tool.search_content(query, content_type="work_item", limit=max(limit, 5))
+
+        # Extract unique Mongo IDs and titles from RAG results (point id is mongo_id)
+        all_ids: List[str] = []
+        titles: List[str] = []
+        seen_ids: set[str] = set()
+        for r in rag_results:
+            mongo_id = str(r.get("id") or r.get("mongo_id") or "").strip()
+            title = str(r.get("title") or "").strip()
+            if mongo_id and mongo_id not in seen_ids:
+                seen_ids.add(mongo_id)
+                all_ids.append(mongo_id)
+            if title:
+                titles.append(title)
+
+        # Partition IDs: keep only 24-hex strings for ObjectId conversion; ignore UUIDs here
+        object_id_strings = [s for s in all_ids if len(s) == 24 and all(c in '0123456789abcdefABCDEF' for c in s)]
+        object_id_strings = object_id_strings[: max(0, limit)]
+        title_patterns = titles[: max(0, limit)]
+        if not object_id_strings and not title_patterns:
+            return f"❌ No matching work items found for: '{query}'"
+
+        # Step 2: Fetch work items by _id list, converting string IDs to ObjectId via $toObjectId
+        # Use $expr + $in + $map to avoid client-side ObjectId construction
+        or_clauses: List[Dict[str, Any]] = []
+        if object_id_strings:
+            id_array_expr = {
+                "$map": {
+                    "input": object_id_strings,
+                    "as": "id",
+                    "in": {"$toObjectId": "$$id"}
+                }
+            }
+            or_clauses.append({"$expr": {"$in": ["$_id", id_array_expr]}})
+
+        if title_patterns:
+            # Build an $or of case-insensitive regex matches on title as a fallback
+            title_or = [{"title": {"$regex": t, "$options": "i"}} for t in title_patterns]
+            if title_or:
+                or_clauses.append({"$or": title_or})
+
+        match_stage: Dict[str, Any]
+        if len(or_clauses) == 1:
+            match_stage = {"$match": or_clauses[0]}
+        else:
+            match_stage = {"$match": {"$or": or_clauses}}
+
+        pipeline = [
+            match_stage,
+            {"$project": {
+                "_id": 1,
+                "displayBugNo": 1,
+                "title": 1,
+                "state.name": 1,
+                "assignee.name": 1,
+                "project.name": 1,
+                "createdTimeStamp": 1,
+            }},
+            {"$limit": limit}
+        ]
+
+        args = {
+            "database": DATABASE_NAME,
+            "collection": "workItem",
+            "pipeline": pipeline,
+        }
+
+        rows = await mongodb_tools.execute_tool("aggregate", args)
+
+        # Normalize and produce a compact summary
+        try:
+            parsed = json.loads(rows) if isinstance(rows, str) else rows
+        except Exception:
+            parsed = rows
+
+        docs = parsed if isinstance(parsed, list) else ([] if parsed is None else [parsed])
+        if not docs:
+            return f"❌ No MongoDB records found for the RAG matches of '{query}'"
+
+        # Keep content meaningful
+        cleaned = filter_meaningful_content(docs)
+
+        # Render
+        lines = [f"🔗 Matches for '{query}':"]
+        for d in cleaned[:limit]:
+            if not isinstance(d, dict):
+                continue
+            bug = d.get("displayBugNo") or d.get("_id")
+            title = d.get("title", "(no title)")
+            state = (d.get("state") or {}).get("name") if isinstance(d.get("state"), dict) else d.get("state")
+            # assignee may be array or object depending on schema; try best-effort
+            assignee_val = d.get("assignee")
+            if isinstance(assignee_val, dict):
+                assignee = assignee_val.get("name")
+            elif isinstance(assignee_val, list) and assignee_val and isinstance(assignee_val[0], dict):
+                assignee = assignee_val[0].get("name")
+            else:
+                assignee = None
+            lines.append(f"• {bug}: {title} — state={state or 'N/A'}, assignee={assignee or 'N/A'}")
+
+        return "\n".join(lines)
+
+    except ImportError:
+        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+    except Exception as e:
+        return f"❌ RAG→Mongo ERROR:\nQuery: '{query}'\nError: {str(e)}"
+
+
 # Define the tools list (no schema tool)
 tools = [
     mongo_query,
     rag_content_search,
     rag_answer_question,
+    rag_to_mongo_workitems,
 ]
 
 # import asyncio
