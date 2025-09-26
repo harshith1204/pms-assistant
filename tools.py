@@ -619,46 +619,84 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         # Partition IDs: keep only 24-hex strings for ObjectId conversion; ignore UUIDs here
         object_id_strings = [s for s in all_ids if len(s) == 24 and all(c in '0123456789abcdefABCDEF' for c in s)]
         object_id_strings = object_id_strings[: max(0, limit)]
-        title_patterns = titles[: max(0, limit)]
-        if not object_id_strings and not title_patterns:
-            return f"❌ No matching work items found for: '{query}'"
+        # Deduplicate and cap titles
+        seen_titles: set[str] = set()
+        title_patterns: List[str] = []
+        for t in titles:
+            if t and t not in seen_titles:
+                seen_titles.add(t)
+                title_patterns.append(t)
+            if len(title_patterns) >= max(0, limit):
+                break
 
-        # Step 2: Fetch work items by _id list, converting string IDs to ObjectId via $toObjectId
-        # Use $expr + $in + $map to avoid client-side ObjectId construction
-        or_clauses: List[Dict[str, Any]] = []
-        if object_id_strings:
-            id_array_expr = {
-                "$map": {
-                    "input": object_id_strings,
-                    "as": "id",
-                    "in": {"$toObjectId": "$$id"}
+        # Helper builders
+        def build_match_from_ids_and_titles(ids: List[str], title_list: List[str]) -> Dict[str, Any]:
+            or_clauses_local: List[Dict[str, Any]] = []
+            if ids:
+                id_array_expr = {
+                    "$map": {
+                        "input": ids,
+                        "as": "id",
+                        "in": {"$toObjectId": "$$id"}
+                    }
+                }
+                or_clauses_local.append({"$expr": {"$in": ["$_id", id_array_expr]}})
+            if title_list:
+                # Use escaped regex to avoid pathological patterns
+                title_or = [{"title": {"$regex": re.escape(t), "$options": "i"}} for t in title_list if t]
+                if title_or:
+                    or_clauses_local.append({"$or": title_or})
+            if not or_clauses_local:
+                return {"$match": {"_id": {"$exists": True}}}  # no-op match
+            if len(or_clauses_local) == 1:
+                return {"$match": or_clauses_local[0]}
+            return {"$match": {"$or": or_clauses_local}}
+
+        def project_stage() -> Dict[str, Any]:
+            return {
+                "$project": {
+                    "_id": 1,
+                    "displayBugNo": 1,
+                    "title": 1,
+                    "state.name": 1,
+                    "assignee.name": 1,
+                    "project.name": 1,
+                    "createdTimeStamp": 1,
                 }
             }
-            or_clauses.append({"$expr": {"$in": ["$_id", id_array_expr]}})
 
-        if title_patterns:
-            # Build an $or of case-insensitive regex matches on title as a fallback
-            title_or = [{"title": {"$regex": t, "$options": "i"}} for t in title_patterns]
-            if title_or:
-                or_clauses.append({"$or": title_or})
+        def parse_mcp_rows(rows_any: Any) -> List[Dict[str, Any]]:
+            try:
+                parsed_local = json.loads(rows_any) if isinstance(rows_any, str) else rows_any
+            except Exception:
+                parsed_local = rows_any
+            docs_local: List[Dict[str, Any]] = []
+            if isinstance(parsed_local, list) and parsed_local:
+                if isinstance(parsed_local[0], str) and parsed_local[0].startswith("Found"):
+                    for item in parsed_local[1:]:
+                        if isinstance(item, str):
+                            try:
+                                doc = json.loads(item)
+                                if isinstance(doc, dict):
+                                    docs_local.append(doc)
+                            except Exception:
+                                continue
+                        elif isinstance(item, dict):
+                            docs_local.append(item)
+                else:
+                    # Filter only dicts
+                    docs_local = [d for d in parsed_local if isinstance(d, dict)]
+            elif isinstance(parsed_local, dict):
+                docs_local = [parsed_local]
+            else:
+                docs_local = []
+            return docs_local
 
-        match_stage: Dict[str, Any]
-        if len(or_clauses) == 1:
-            match_stage = {"$match": or_clauses[0]}
-        else:
-            match_stage = {"$match": {"$or": or_clauses}}
-
+        # Step 2: First attempt — match by RAG object IDs and RAG titles
+        primary_match = build_match_from_ids_and_titles(object_id_strings, title_patterns)
         pipeline = [
-            match_stage,
-            {"$project": {
-                "_id": 1,
-                "displayBugNo": 1,
-                "title": 1,
-                "state.name": 1,
-                "assignee.name": 1,
-                "project.name": 1,
-                "createdTimeStamp": 1,
-            }},
+            primary_match,
+            project_stage(),
             {"$limit": limit}
         ]
 
@@ -671,14 +709,45 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         rows = await mongodb_tools.execute_tool("aggregate", args)
 
         # Normalize and produce a compact summary
-        try:
-            parsed = json.loads(rows) if isinstance(rows, str) else rows
-        except Exception:
-            parsed = rows
+        docs = parse_mcp_rows(rows)
 
-        docs = parsed if isinstance(parsed, list) else ([] if parsed is None else [parsed])
+        # Fallback 1: If nothing matched via IDs/titles, try Mongo text search
         if not docs:
-            return f"❌ No MongoDB records found for the RAG matches of '{query}'"
+            text_pipeline = [
+                {"$match": {"$text": {"$search": query}}},
+                project_stage(),
+                {"$limit": limit}
+            ]
+            rows_text = await mongodb_tools.execute_tool("aggregate", {
+                "database": DATABASE_NAME,
+                "collection": "workItem",
+                "pipeline": text_pipeline,
+            })
+            docs = parse_mcp_rows(rows_text)
+
+        # Fallback 2: Regex across common fields and tokens
+        if not docs:
+            tokens = [w for w in re.findall(r"[A-Za-z0-9_]+", query) if w]
+            field_list = ["title", "description", "state.name", "project.name", "cycle.name", "modules.name"]
+            and_conditions: List[Dict[str, Any]] = []
+            for tok in tokens:
+                or_fields = [{fld: {"$regex": re.escape(tok), "$options": "i"}} for fld in field_list]
+                and_conditions.append({"$or": or_fields})
+            regex_match = {"$match": {"$and": and_conditions}} if and_conditions else {"$match": {"_id": {"$exists": True}}}
+            regex_pipeline = [
+                regex_match,
+                project_stage(),
+                {"$limit": limit}
+            ]
+            rows_regex = await mongodb_tools.execute_tool("aggregate", {
+                "database": DATABASE_NAME,
+                "collection": "workItem",
+                "pipeline": regex_pipeline,
+            })
+            docs = parse_mcp_rows(rows_regex)
+
+        if not docs:
+            return f"❌ No MongoDB records found for the RAG matches or fallbacks of '{query}'"
 
         # Keep content meaningful
         cleaned = filter_meaningful_content(docs)
