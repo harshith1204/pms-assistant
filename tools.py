@@ -10,7 +10,14 @@ from datetime import datetime
 # Qdrant and RAG dependencies
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+    from qdrant_client.models import (
+        Distance,
+        VectorParams,
+        PointStruct,
+        Filter,
+        FieldCondition,
+        MatchValue,
+    )
     from sentence_transformers import SentenceTransformer
     import numpy as np
 except ImportError:
@@ -412,7 +419,6 @@ class RAGTool:
         try:
             # Generate embedding for the query
             query_embedding = self.embedding_model.encode(query).tolist()
-            # h
             print("Query embedding generated")
             # Build filter if content_type is specified
             search_filter = None
@@ -426,34 +432,100 @@ class RAGTool:
                     ]
                 )
 
-            # Search in Qdrant
+            # First-stage vector search: retrieve a larger pool, apply a modest score threshold
+            pool_limit = max(limit * 5, 20)
             search_results = self.qdrant_client.search(
                 collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
                 query_vector=query_embedding,
                 query_filter=search_filter,
-                limit=limit,
-                with_payload=True
+                limit=pool_limit,
+                with_payload=True,
+                score_threshold=0.25,
             )
 
-            # Format results
-            results = []
-            # print(f"total results",search_results)
-            for result in search_results:
-                payload = result.payload or {}
-                results.append({
-                    "id": result.id,
-                    "score": result.score,
+            # Early exit if no candidates
+            if not search_results:
+                return []
+
+            # Build candidate list (use full_text when available for re-embedding)
+            candidates: List[Dict[str, Any]] = []
+            for res in search_results:
+                payload = res.payload or {}
+                candidates.append({
+                    "id": res.id,
+                    "score": float(res.score or 0.0),
                     "title": payload.get("title", "Untitled"),
                     "content": payload.get("content", ""),
+                    "full_text": payload.get("full_text") or f"{payload.get('title','')} {payload.get('content','')}",
                     "content_type": payload.get("content_type", "unknown"),
                     "mongo_id": payload.get("mongo_id"),
                     "parent_id": payload.get("parent_id"),
                     "chunk_index": payload.get("chunk_index"),
                     "chunk_count": payload.get("chunk_count"),
-                    # "metadata": payload.get("metadata", {})
                 })
 
-            return results
+            # Second-stage re-ranking with MMR to improve diversity and reduce near-duplicates
+            def _normalize_rows(mat: "np.ndarray") -> "np.ndarray":
+                norms = np.linalg.norm(mat, axis=1, keepdims=True) + 1e-12
+                return mat / norms
+
+            def _mmr(query_vec: List[float], doc_vecs: List[List[float]], lambda_mult: float, k: int) -> List[int]:
+                q = np.array(query_vec, dtype=np.float32)
+                q = q / (np.linalg.norm(q) + 1e-12)
+                D = np.array(doc_vecs, dtype=np.float32)
+                if D.ndim == 1:
+                    D = D.reshape(1, -1)
+                D = _normalize_rows(D)
+                sim_to_query = D @ q
+                selected: List[int] = []
+                candidate_idxs = list(range(D.shape[0]))
+                for _ in range(min(k, len(candidate_idxs))):
+                    if not selected:
+                        next_idx = int(np.argmax(sim_to_query))
+                        selected.append(next_idx)
+                        candidate_idxs.remove(next_idx)
+                        continue
+                    # Compute diversity as max similarity to any already selected doc
+                    selected_mat = D[selected]
+                    sim_to_selected = D @ selected_mat.T  # (N, |S|)
+                    max_sim_selected = np.max(sim_to_selected, axis=1)
+                    mmr_scores = lambda_mult * sim_to_query - (1.0 - lambda_mult) * max_sim_selected
+                    # Mask already selected
+                    mmr_scores[selected] = -1e9
+                    next_idx = int(np.argmax(mmr_scores))
+                    if next_idx in selected:
+                        break
+                    selected.append(next_idx)
+                return selected[:k]
+
+            # Embed candidate texts
+            candidate_texts = [c.get("full_text") or c.get("content") or c.get("title") or "" for c in candidates]
+            doc_vectors = self.embedding_model.encode(candidate_texts, convert_to_numpy=True)
+
+            # Choose indices via MMR
+            chosen_indices = _mmr(query_embedding, doc_vectors.tolist(), lambda_mult=0.6, k=limit)
+            final_results: List[Dict[str, Any]] = [
+                {
+                    "id": candidates[i]["id"],
+                    "score": candidates[i]["score"],
+                    "title": candidates[i]["title"],
+                    "content": candidates[i]["content"],
+                    "content_type": candidates[i]["content_type"],
+                    "mongo_id": candidates[i]["mongo_id"],
+                    "parent_id": candidates[i]["parent_id"],
+                    "chunk_index": candidates[i]["chunk_index"],
+                    "chunk_count": candidates[i]["chunk_count"],
+                }
+                for i in chosen_indices
+            ]
+
+            # Apply a stricter threshold relative to the pool to filter weak matches
+            if final_results:
+                max_score = max(c["score"] for c in candidates)
+                dynamic_floor = max(0.25, max_score * 0.55)
+                final_results = [r for r in final_results if r["score"] >= dynamic_floor]
+
+            return final_results[:limit]
 
         except Exception as e:
             print(f"Error searching Qdrant: {e}")
