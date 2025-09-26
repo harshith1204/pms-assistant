@@ -720,26 +720,59 @@ class MongoDBAgent:
                         did_any_tool = True
                 steps += 1
 
-                # After executing any tools, force the next LLM turn to synthesize
+                # After executing any tools, force a synthesis turn
                 if did_any_tool:
-                    need_finalization = True
+                    finalization_instructions = SystemMessage(content=(
+                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                        "Do not paste tool outputs verbatim or include banners/emojis. "
+                        "If the user asked to browse or see examples, summarize briefly and offer to expand. "
+                        "For work items, present canonical fields succinctly."
+                    ))
+                    invoke_messages = messages + [routing_instructions, finalization_instructions]
+                    if tracer is not None:
+                        synth_cm = tracer.start_as_current_span(
+                            "llm_finalize",
+                            kind=trace.SpanKind.INTERNAL,
+                            attributes={"message_count": len(invoke_messages)},
+                        )
+                    else:
+                        synth_cm = None
+                    with (synth_cm if synth_cm is not None else contextlib.nullcontext()) as _:
+                        final_response = await self.llm_with_tools.ainvoke(invoke_messages)
+                    last_response = final_response
+                    conversation_memory.add_message(conversation_id, final_response)
 
-                # Step cap reached; return best available answer
-                if last_response is not None:
-                    if run_span:
-                        try:
-                            preview = str(last_response.content)[:500]
-                            run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                            run_span.add_event("agent_end", {"steps": steps})
-                        except Exception:
-                            pass
-                    return last_response.content
+                    # If the synthesis asks for more tools, loop again; otherwise, return the final content
+                    if not getattr(final_response, "tool_calls", None):
+                        if run_span:
+                            try:
+                                preview = str(final_response.content)[:500]
+                                run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                                run_span.add_event("agent_end", {"steps": steps})
+                            except Exception:
+                                pass
+                        return final_response.content
+
+                    # else continue loop for additional tool calls
+
+                # If we reached here without a final answer, continue the loop
+
+            # Step cap reached; return last response content if available
+            if last_response is not None:
                 if run_span:
                     try:
+                        preview = str(last_response.content)[:500]
+                        run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                         run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps"})
                     except Exception:
                         pass
-                return "Reached maximum reasoning steps without a final answer."
+                return last_response.content
+            if run_span:
+                try:
+                    run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps_no_response"})
+                except Exception:
+                    pass
+            return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
