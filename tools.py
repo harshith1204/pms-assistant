@@ -426,32 +426,76 @@ class RAGTool:
                     ]
                 )
 
-            # Search in Qdrant
+            # Primary vector search in Qdrant (fetch extra for post-filtering)
+            fetch_k = max(limit * 3, 10)
             search_results = self.qdrant_client.search(
                 collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
                 query_vector=query_embedding,
                 query_filter=search_filter,
-                limit=limit,
+                limit=fetch_k,
                 with_payload=True
             )
 
-            # Format results
-            results = []
-            # print(f"total results",search_results)
+            # Format + post-filter results
+            raw_results = []
             for result in search_results:
                 payload = result.payload or {}
-                results.append({
+                title = (payload.get("title") or "").strip()
+                content = (payload.get("content") or "").strip()
+                content_len = len(content)
+                # Skip extremely short/noisy chunks
+                if content_len < 30 and title == "":
+                    continue
+                raw_results.append({
                     "id": result.id,
-                    "score": result.score,
-                    "title": payload.get("title", "Untitled"),
-                    "content": payload.get("content", ""),
+                    "score": float(result.score or 0.0),
+                    "title": title if title else "Untitled",
+                    "content": content,
                     "content_type": payload.get("content_type", "unknown"),
                     "mongo_id": payload.get("mongo_id"),
                     "parent_id": payload.get("parent_id"),
                     "chunk_index": payload.get("chunk_index"),
                     "chunk_count": payload.get("chunk_count"),
-                    # "metadata": payload.get("metadata", {})
+                    "full_text": (payload.get("full_text") or "").strip(),
                 })
+
+            if not raw_results:
+                return []
+
+            # Apply a minimum score cutoff to reduce junk. Qdrant cosine scores are similarity; tuneable threshold.
+            min_score = 0.2
+            filtered_by_score = [r for r in raw_results if r["score"] >= min_score]
+            if not filtered_by_score:
+                filtered_by_score = raw_results[:5]
+
+            # Simple lexical reranking using query term overlap on title/full_text
+            query_terms = [t.lower() for t in query.split() if t]
+            def lexical_score(r: Dict[str, Any]) -> float:
+                hay = f"{r.get('title','')} {r.get('full_text','')}".lower()
+                if not hay:
+                    hay = r.get('content','').lower()
+                matches = sum(1 for t in query_terms if t in hay)
+                return matches / max(1, len(set(query_terms)))
+
+            for r in filtered_by_score:
+                r["lexical"] = lexical_score(r)
+
+            # Combine vector score and lexical score (weighted)
+            def combined_score(r: Dict[str, Any]) -> float:
+                return 0.7 * r["score"] + 0.3 * r.get("lexical", 0.0)
+
+            filtered_by_score.sort(key=combined_score, reverse=True)
+
+            # Deduplicate by mongo_id, prefer earlier (higher combined score)
+            seen_ids = set()
+            deduped: List[Dict[str, Any]] = []
+            for r in filtered_by_score:
+                key = r.get("mongo_id") or r.get("id")
+                if key and key not in seen_ids:
+                    seen_ids.add(key)
+                    deduped.append(r)
+
+            results = deduped[:limit]
 
             return results
 
@@ -466,11 +510,13 @@ class RAGTool:
 
         all_results = []
         for content_type in content_types:
-            results = await self.search_content(query, content_type=content_type, limit=3)
+            results = await self.search_content(query, content_type=content_type, limit=4)
             all_results.extend(results)
 
-        # Sort by relevance score
-        all_results.sort(key=lambda x: x["score"], reverse=True)
+        # Sort by combined heuristic if available; fallback to score
+        def sort_key(r):
+            return (0.7 * float(r.get("score", 0.0))) + (0.3 * float(r.get("lexical", 0.0)))
+        all_results.sort(key=sort_key, reverse=True)
 
         # Format context
         context_parts = []
@@ -482,7 +528,7 @@ class RAGTool:
             context_parts.append(
                 f"[{i}] {result['content_type'].upper()}: {result['title']}{chunk_info}\n"
                 f"Content: {result['content'][:500]}{'...' if len(result['content']) > 500 else ''}\n"
-                f"Relevance Score: {result['score']:.3f}\n"
+                f"Score: {float(result['score']):.3f}  Lexical: {float(result.get('lexical', 0.0)):.3f}\n"
             )
 
         return "\n".join(context_parts) if context_parts else "No relevant content found."

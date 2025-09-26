@@ -631,7 +631,18 @@ class MongoDBAgent:
                 ))
                 routed_messages = messages + [routing_instructions]
                 
-                response = await self.llm_with_tools.ainvoke(routed_messages)
+                # Build invoke messages, optionally forcing finalization after tools
+                invoke_messages = routed_messages
+                if need_finalization:
+                    finalization_instructions = SystemMessage(content=(
+                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                        "Do not paste tool outputs verbatim or include banners/emojis. "
+                        "Cite key fields succinctly when listing work items."
+                    ))
+                    invoke_messages = messages + [routing_instructions, finalization_instructions]
+                    need_finalization = False
+
+                response = await self.llm_with_tools.ainvoke(invoke_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
                             preview = str(response.content)[:500]
@@ -723,8 +734,10 @@ class MongoDBAgent:
                 # After executing any tools, force the next LLM turn to synthesize
                 if did_any_tool:
                     need_finalization = True
+                    # Continue loop to perform a final synthesis turn
+                    continue
 
-                # Step cap reached; return best available answer
+                # If we reach here without tools and have a response, return it
                 if last_response is not None:
                     if run_span:
                         try:
