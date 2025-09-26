@@ -5,6 +5,7 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import json
 import asyncio
+import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
 from pydantic import BaseModel
 import tools
@@ -27,7 +28,28 @@ import time
 from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 
+# OpenInference semantic conventions (optional)
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:  # Fallback when OpenInference isn't installed
+    class _OI:
+        INPUT_VALUE = "input.value"
+        OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
+        LLM_MODEL_NAME = "llm.model_name"
+        LLM_TEMPERATURE = "llm.temperature"
+        LLM_TOP_P = "llm.top_p"
+        LLM_TOP_K = "llm.top_k"
+        LLM_PROMPT = "llm.prompt"
+        LLM_SYSTEM = "llm.system_prompt"
+        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
+        TOOL_NAME = "tool.name"
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
 
+    OI = _OI()
 
 # Import tools list
 try:
@@ -35,12 +57,11 @@ try:
 except AttributeError:
     # Fallback: define empty tools list if import fails
     tools_list = []
-
 from mongo.constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states."
-    "\n\nAvailable tool: intelligent_query - Use this for any questions requiring data from the database."
+    "\n\nAvailable tool: mongo_query - Use this for any questions requiring data from the database."
 )
 
 class ConversationMemory:
@@ -343,8 +364,8 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
-class ToolCallingCallbackHandler(AsyncCallbackHandler):
-    """Callback handler for tool calling streaming"""
+class PhoenixSpanManager(AsyncCallbackHandler):
+    """Manages Phoenix tracing configuration"""
 
     def __init__(self, websocket=None):
         self.websocket = websocket
@@ -398,6 +419,15 @@ class ToolCallingCallbackHandler(AsyncCallbackHandler):
                 "timestamp": datetime.now().isoformat()
             })
 
+    def cleanup(self):
+        """Clean up Phoenix span collector"""
+        try:
+            # Clean up the global span collector
+            phoenix_span_collector.stop_periodic_export()
+            print("✅ Phoenix span collector stopped")
+        except Exception as e:
+            print(f"Warning: Error stopping Phoenix span collector: {e}")
+
 class MongoDBAgent:
     """MongoDB Agent using Tool Calling"""
 
@@ -406,17 +436,67 @@ class MongoDBAgent:
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
+        self.tracing_enabled = False
+
+    async def initialize_tracing(self):
+        """Enable Phoenix tracing for this agent."""
+        await phoenix_span_manager.initialize()
+        self.tracing_enabled = True
+
+    def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
+        if not self.tracing_enabled or phoenix_span_manager.tracer is None:
+            return None
+        try:
+            span = phoenix_span_manager.tracer.start_span(
+                name=name,
+                kind=trace.SpanKind.INTERNAL,
+                attributes=attributes or {},
+            )
+            return span
+        except Exception as e:
+            print(f"Tracing error starting span '{name}': {e}")
+            return None
+
+    def _end_span(self, span, status: str = "OK", message: str = ""):
+        if not span:
+            return
+        try:
+            if status == "ERROR":
+                span.set_status(Status(StatusCode.ERROR, message))
+            span.end()
+        except Exception as e:
+            print(f"Tracing error ending span: {e}")
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
-        await mongodb_tools.connect()
-        self.connected = True
-        print("MongoDB Agent connected successfully!")
+        # Ensure tracing is initialized so spans include attributes/events
+        if not self.tracing_enabled:
+            try:
+                await self.initialize_tracing()
+            except Exception as _e:
+                # Proceed without tracing if initialization fails
+                pass
+        span = self._start_span("mongodb_connect")
+        try:
+            await mongodb_tools.connect()
+            self.connected = True
+            if span:
+                span.set_attribute("connection_success", True)
+            print("MongoDB Agent connected successfully!")
+        except Exception as e:
+            if span:
+                span.set_attribute("connection_success", False)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise
+        finally:
+            self._end_span(span)
 
     async def disconnect(self):
         """Disconnect from MongoDB MCP server"""
         await mongodb_tools.disconnect()
         self.connected = False
+        # Clean up Phoenix tracing
+        phoenix_span_manager.cleanup()
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
         """Run the agent with a query and optional conversation context"""
@@ -424,72 +504,189 @@ class MongoDBAgent:
             await self.connect()
 
         try:
-            # Use default conversation ID if none provided
-            if not conversation_id:
-                conversation_id = f"conv_{int(time.time())}"
+            tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+            if tracer is not None:
+                span_cm = tracer.start_as_current_span(
+                    "agent_run",
+                    kind=trace.SpanKind.INTERNAL,
+                    attributes={
+                        "query_preview": query[:80],
+                        "query_length": len(query or ""),
+                        "database.name": DATABASE_NAME,
+                    },
+                )
+            else:
+                span_cm = None
 
-            # Get conversation history
-            conversation_context = conversation_memory.get_recent_context(conversation_id)
-
-            # Build messages with optional system instruction
-            messages: List[BaseMessage] = []
-            if self.system_prompt:
-                messages.append(SystemMessage(content=self.system_prompt))
-            messages.extend(conversation_context)
-
-            # Add current user message
-            human_message = HumanMessage(content=query)
-            messages.append(human_message)
-
-            # Persist the human message
-            conversation_memory.add_message(conversation_id, human_message)
-
-            steps = 0
-            last_response: Optional[AIMessage] = None
-
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(messages)
-                last_response = response
-
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
-
-                # If no tools requested, we are done
-                if not getattr(response, "tool_calls", None):
-                    return response.content
-
-                # Execute requested tools sequentially
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        # If tool not found, surface an error message and stop
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
-                            tool_call_id=tool_call["id"],
-                        )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
-
+            with (span_cm if span_cm is not None else contextlib.nullcontext()) as run_span:
+                if run_span:
                     try:
-                        result = await tool.ainvoke(tool_call["args"])
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
+                        run_span.add_event("agent_start")
+                    except Exception:
+                        pass
+                # Use default conversation ID if none provided
+                if not conversation_id:
+                    conversation_id = f"conv_{int(time.time())}"
 
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
+                # Get conversation history
+                conversation_context = conversation_memory.get_recent_context(conversation_id)
 
-                steps += 1
+                # Build messages with optional system instruction
+                messages: List[BaseMessage] = []
+                if self.system_prompt:
+                    messages.append(SystemMessage(content=self.system_prompt))
+                messages.extend(conversation_context)
 
-            # Step cap reached; return best available answer
-            if last_response is not None:
-                return last_response.content
-            return "Reached maximum reasoning steps without a final answer."
+                # Add current user message
+                human_message = HumanMessage(content=query)
+                messages.append(human_message)
+
+                # Persist the human message
+                conversation_memory.add_message(conversation_id, human_message)
+
+                steps = 0
+                last_response: Optional[AIMessage] = None
+
+                while steps < self.max_steps:
+                    if tracer is not None:
+                        llm_cm = tracer.start_as_current_span(
+                            "llm_invoke",
+                            kind=trace.SpanKind.INTERNAL,
+                            attributes={"message_count": len(messages)},
+                        )
+                    else:
+                        llm_cm = None
+
+                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
+                        # Record model invocation parameters
+                        if llm_span:
+                            try:
+                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                # Tag span kind for OpenInference UI (uppercase expected)
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'LLM')
+                                # Record the current user input as LLM input
+                                try:
+                                    llm_input_preview = str(human_message.content)[:1000]
+                                except Exception:
+                                    llm_input_preview = ""
+                                # Set both generic and OpenInference-prefixed keys
+                                llm_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), llm_input_preview)
+                                try:
+                                    llm_span.set_attribute('openinference.input.value', llm_input_preview)
+                                except Exception:
+                                    pass
+                                if self.system_prompt:
+                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
+                                # Add prompt summary event
+                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
+                            except Exception:
+                                pass
+                        response = await self.llm_with_tools.ainvoke(messages)
+                        if llm_span and getattr(response, "content", None):
+                            try:
+                                preview = str(response.content)[:500]
+                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                            except Exception:
+                                pass
+                    last_response = response
+
+                    # Persist assistant message
+                    conversation_memory.add_message(conversation_id, response)
+
+                    # If no tools requested, we are done
+                    if not getattr(response, "tool_calls", None):
+                        return response.content
+
+                    # Execute requested tools sequentially
+                    messages.append(response)
+                    for tool_call in response.tool_calls:
+                        if tracer is not None:
+                            tool_cm = tracer.start_as_current_span(
+                                "tool_execute",
+                                kind=trace.SpanKind.INTERNAL,
+                                attributes={"tool_name": tool_call["name"]},
+                            )
+                        else:
+                            tool_cm = None
+
+                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+                            tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                            if not tool:
+                                error_msg = ToolMessage(
+                                    content=f"Tool '{tool_call['name']}' not found.",
+                                    tool_call_id=tool_call["id"],
+                                )
+                                messages.append(error_msg)
+                                conversation_memory.add_message(conversation_id, error_msg)
+                                continue
+
+                            try:
+                                if tool_span:
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        # Tag span kind for OpenInference UI (uppercase expected)
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                                        # Also set generic and OpenInference input.value for Phoenix UI
+                                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                                        try:
+                                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                                        except Exception:
+                                            pass
+                                        tool_span.add_event("tool_start", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                                result = await tool.ainvoke(tool_call["args"])
+                                if tool_span:
+                                    tool_span.set_attribute("tool_success", True)
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                                        try:
+                                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                                        except Exception:
+                                            pass
+                                        tool_span.add_event("tool_end", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                            except Exception as tool_exc:
+                                result = f"Tool execution error: {tool_exc}"
+                                if tool_span:
+                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
+                                    except Exception:
+                                        pass
+
+                            tool_message = ToolMessage(
+                                content=str(result),
+                                tool_call_id=tool_call["id"],
+                            )
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                    steps += 1
+
+                # Step cap reached; return best available answer
+                if last_response is not None:
+                    if run_span:
+                        try:
+                            preview = str(last_response.content)[:500]
+                            run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                            run_span.add_event("agent_end", {"steps": steps})
+                        except Exception:
+                            pass
+                    return last_response.content
+                if run_span:
+                    try:
+                        run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps"})
+                    except Exception:
+                        pass
+                return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
@@ -500,81 +697,156 @@ class MongoDBAgent:
             await self.connect()
 
         try:
-            # Use default conversation ID if none provided
-            if not conversation_id:
-                conversation_id = f"conv_{int(time.time())}"
-
-            # Get conversation history
-            conversation_context = conversation_memory.get_recent_context(conversation_id)
-
-            # Build messages with optional system instruction
-            messages: List[BaseMessage] = []
-            if self.system_prompt:
-                messages.append(SystemMessage(content=self.system_prompt))
-            messages.extend(conversation_context)
-
-            # Add current user message
-            human_message = HumanMessage(content=query)
-            messages.append(human_message)
-
-            callback_handler = ToolCallingCallbackHandler(websocket)
-
-            # Persist the human message
-            conversation_memory.add_message(conversation_id, human_message)
-
-            steps = 0
-            last_response: Optional[AIMessage] = None
-
-            while steps < self.max_steps:
-                response = await self.llm_with_tools.ainvoke(
-                    messages,
-                    config={"callbacks": [callback_handler]},
+            tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+            if tracer is not None:
+                span_cm = tracer.start_as_current_span(
+                    "agent_run_streaming",
+                    kind=trace.SpanKind.INTERNAL,
+                    attributes={
+                        "query_preview": query[:80],
+                        "query_length": len(query or ""),
+                        "database.name": DATABASE_NAME,
+                    },
                 )
-                last_response = response
-
-                # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
-
-                if not getattr(response, "tool_calls", None):
-                    yield response.content
-                    return
-
-                # Execute requested tools sequentially with streaming callbacks
-                messages.append(response)
-                for tool_call in response.tool_calls:
-                    tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                    if not tool:
-                        error_msg = ToolMessage(
-                            content=f"Tool '{tool_call['name']}' not found.",
-                            tool_call_id=tool_call["id"],
-                        )
-                        messages.append(error_msg)
-                        conversation_memory.add_message(conversation_id, error_msg)
-                        continue
-
-                    await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
-                    try:
-                        result = await tool.ainvoke(tool_call["args"])
-                        await callback_handler.on_tool_end(str(result))
-                    except Exception as tool_exc:
-                        result = f"Tool execution error: {tool_exc}"
-                        await callback_handler.on_tool_end(str(result))
-
-                    tool_message = ToolMessage(
-                        content=str(result),
-                        tool_call_id=tool_call["id"],
-                    )
-                    messages.append(tool_message)
-                    conversation_memory.add_message(conversation_id, tool_message)
-
-                steps += 1
-
-            # Step cap reached; send best available response
-            if last_response is not None:
-                yield last_response.content
             else:
-                yield "Reached maximum reasoning steps without a final answer."
-            return
+                span_cm = None
+
+            with (span_cm if span_cm is not None else contextlib.nullcontext()):
+                # Use default conversation ID if none provided
+                if not conversation_id:
+                    conversation_id = f"conv_{int(time.time())}"
+
+                # Get conversation history
+                conversation_context = conversation_memory.get_recent_context(conversation_id)
+
+                # Build messages with optional system instruction
+                messages: List[BaseMessage] = []
+                if self.system_prompt:
+                    messages.append(SystemMessage(content=self.system_prompt))
+                messages.extend(conversation_context)
+
+                # Add current user message
+                human_message = HumanMessage(content=query)
+                messages.append(human_message)
+
+                callback_handler = PhoenixSpanManager(websocket)
+
+                # Persist the human message
+                conversation_memory.add_message(conversation_id, human_message)
+
+                steps = 0
+                last_response: Optional[AIMessage] = None
+
+                while steps < self.max_steps:
+                    if tracer is not None:
+                        llm_cm = tracer.start_as_current_span(
+                            "llm_invoke",
+                            kind=trace.SpanKind.INTERNAL,
+                            attributes={"message_count": len(messages)},
+                        )
+                    else:
+                        llm_cm = None
+
+                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
+                        if llm_span:
+                            try:
+                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'llm')
+                                if self.system_prompt:
+                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
+                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
+                            except Exception:
+                                pass
+                        response = await self.llm_with_tools.ainvoke(
+                            messages,
+                            config={"callbacks": [callback_handler]},
+                        )
+                        if llm_span and getattr(response, "content", None):
+                            try:
+                                preview = str(response.content)[:500]
+                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                            except Exception:
+                                pass
+                    last_response = response
+
+                    # Persist assistant message
+                    conversation_memory.add_message(conversation_id, response)
+
+                    if not getattr(response, "tool_calls", None):
+                        yield response.content
+                        return
+
+                    # Execute requested tools sequentially with streaming callbacks
+                    messages.append(response)
+                    for tool_call in response.tool_calls:
+                        if tracer is not None:
+                            tool_cm = tracer.start_as_current_span(
+                                "tool_execute",
+                                kind=trace.SpanKind.INTERNAL,
+                                attributes={"tool_name": tool_call["name"]},
+                            )
+                        else:
+                            tool_cm = None
+
+                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+                            tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                            if not tool:
+                                error_msg = ToolMessage(
+                                    content=f"Tool '{tool_call['name']}' not found.",
+                                    tool_call_id=tool_call["id"],
+                                )
+                                messages.append(error_msg)
+                                conversation_memory.add_message(conversation_id, error_msg)
+                                continue
+
+                            await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                            try:
+                                if tool_span:
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
+                                        tool_span.add_event("tool_start", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                                result = await tool.ainvoke(tool_call["args"]) 
+                                if tool_span:
+                                    tool_span.set_attribute("tool_success", True)
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                                        tool_span.add_event("tool_end", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                                await callback_handler.on_tool_end(str(result))
+                            except Exception as tool_exc:
+                                result = f"Tool execution error: {tool_exc}"
+                                if tool_span:
+                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
+                                    except Exception:
+                                        pass
+                                await callback_handler.on_tool_end(str(result))
+
+                            tool_message = ToolMessage(
+                                content=str(result),
+                                tool_call_id=tool_call["id"],
+                            )
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                    steps += 1
+
+                # Step cap reached; send best available response
+                if last_response is not None:
+                    yield last_response.content
+                else:
+                    yield "Reached maximum reasoning steps without a final answer."
+                return
 
         except Exception as e:
             yield f"Error running streaming agent: {str(e)}"

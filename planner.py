@@ -11,10 +11,26 @@ from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
 
-from registry import REL, ALLOWED_FIELDS, build_lookup_stage
-from constants import mongodb_tools, DATABASE_NAME
+from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
+from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+# OpenInference semantic conventions (optional)
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:  # Fallback when OpenInference isn't installed
+    class _OI:
+        INPUT_VALUE = "input.value"
+        OUTPUT_VALUE = "output.value"
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
+
+    OI = _OI()
 
 @dataclass
 class QueryIntent:
@@ -166,6 +182,34 @@ class LLMIntentParser:
             return self._normalize_boolean_value(value)
         return None
 
+    def _infer_sort_order_from_query(self, query_text: str) -> Optional[Dict[str, int]]:
+        """Infer time-based sorting preferences from free-form query text.
+
+        Recognizes phrases like 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
+        and 'oldest', 'earliest' → createdTimeStamp asc (1). Also handles
+        'ascending/descending' when mentioned alongside time/date/created keywords.
+        """
+        if not query_text:
+            return None
+
+        text = query_text.lower()
+
+        # Direct recency/age cues
+        if re.search(r"\b(recent|latest|newest|most\s+recent|newer\s+first)\b", text):
+            return {"createdTimeStamp": -1}
+        if re.search(r"\b(oldest|earliest|older\s+first)\b", text):
+            return {"createdTimeStamp": 1}
+
+        # Asc/Desc cues when paired with time/date/created terms
+        mentions_time = re.search(r"\b(time|date|created|creation|timestamp|recent)\b", text) is not None
+        if mentions_time:
+            if re.search(r"\b(desc|descending|new\s*->\s*old|new\s+to\s+old)\b", text):
+                return {"createdTimeStamp": -1}
+            if re.search(r"\b(asc|ascending|old\s*->\s*new|old\s+to\s+new)\b", text):
+                return {"createdTimeStamp": 1}
+
+        return None
+
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
         system = (
@@ -203,6 +247,13 @@ class LLMIntentParser:
             "- project_name, cycle_name, assignee_name, module_name\n"
             "- createdBy_name: (creator names)\n"
             "- label: (work item labels)\n\n"
+
+            "## TIME-BASED SORTING (CRITICAL)\n"
+            "Infer sort_order from phrasing when the user implies recency or age.\n"
+            "- 'recent', 'latest', 'newest', 'most recent' → {\"createdTimeStamp\": -1}\n"
+            "- 'oldest', 'earliest', 'older first' → {\"createdTimeStamp\": 1}\n"
+            "- If 'ascending/descending' is mentioned with created/time/date/timestamp, map to 1/-1 respectively on 'createdTimeStamp'.\n"
+            "Only include sort_order when relevant; otherwise set it to null.\n\n"
 
             "## NAME EXTRACTION RULES - CRITICAL\n"
             "ALWAYS extract ONLY the core entity name, NEVER include descriptive phrases:\n"
@@ -249,6 +300,9 @@ class LLMIntentParser:
             "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
             "- 'show work items with bug label' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": []}\n"
             "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n\n"
+            "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
+            "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
+            "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -377,8 +431,31 @@ class LLMIntentParser:
         so = data.get("sort_order") or {}
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
-            if key in {"createdTimeStamp", "priority", "state", "status"} and val in (1, -1):
-                sort_order = {key: val}
+            # Accept synonyms and normalize
+            key_map = {
+                "created": "createdTimeStamp",
+                "createdAt": "createdTimeStamp",
+                "created_time": "createdTimeStamp",
+                "time": "createdTimeStamp",
+                "date": "createdTimeStamp",
+                "timestamp": "createdTimeStamp",
+            }
+            norm_key = key_map.get(key, key)
+
+            def _norm_dir(v: Any) -> Optional[int]:
+                if v in (1, -1):
+                    return int(v)
+                if isinstance(v, str):
+                    s = v.strip().lower()
+                    if s in {"asc", "ascending", "old->new", "old to new", "old_to_new"}:
+                        return 1
+                    if s in {"desc", "descending", "new->old", "new to old", "new_to_old"}:
+                        return -1
+                return None
+
+            norm_dir = _norm_dir(val)
+            if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
+                sort_order = {norm_key: norm_dir}
 
         # Limit
         limit_val = data.get("limit")
@@ -411,6 +488,12 @@ class LLMIntentParser:
             # For non-count queries, ensure consistency
             if group_by and wants_details_raw is None:
                 wants_details = False
+
+        # If no explicit sort provided and no grouping/count, infer time-based sort from phrasing
+        if not sort_order and not group_by and not wants_count:
+            inferred_sort = self._infer_sort_order_from_query(original_query or "")
+            if inferred_sort:
+                sort_order = inferred_sort
 
         return QueryIntent(
             primary_entity=primary,
@@ -796,7 +879,12 @@ class PipelineGenerator:
         s: Dict[str, Any] = {}
 
         # Project name: allow both embedded project.name and joined alias projectDoc.name
-        if 'project_name' in filters:
+        if 'project_name' in filters and collection == 'project':
+            s['$or'] = [
+                {'name': {'$regex': filters['project_name'], '$options': 'i'}},
+                {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
+            ]
+        elif 'project_name' in filters:
             s['$or'] = [
                 {'project.name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
@@ -959,12 +1047,38 @@ class Planner:
 
     async def plan_and_execute(self, query: str) -> Dict[str, Any]:
         """Plan and execute a natural language query"""
+        tracer = trace.get_tracer(__name__)
         try:
             # Ensure MongoDB connection
-            await mongodb_tools.connect()
+            with tracer.start_as_current_span(
+                "planner.ensure_connection", kind=trace.SpanKind.INTERNAL
+            ) as conn_span:
+                try:
+                    await mongodb_tools.connect()
+                    if conn_span:
+                        conn_span.set_attribute("database.name", DATABASE_NAME)
+                except Exception as e:
+                    if conn_span:
+                        conn_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        try:
+                            conn_span.set_attribute(OI.ERROR_TYPE, e.__class__.__name__)
+                            conn_span.set_attribute(OI.ERROR_MESSAGE, str(e))
+                        except Exception:
+                            pass
+                    raise
 
             # Parse intent via LLM
-            intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
+            with tracer.start_as_current_span(
+                "planner.parse_intent",
+                kind=trace.SpanKind.INTERNAL,
+                attributes={getattr(OI, 'INPUT_VALUE', 'input.value'): (query or "")[:1000]},
+            ) as parse_span:
+                intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
+                if parse_span:
+                    try:
+                        parse_span.set_attribute("intent.success", bool(intent))
+                    except Exception:
+                        pass
             if not intent:
                 return {
                     "success": False,
@@ -973,14 +1087,47 @@ class Planner:
                 }
 
             # Generate the pipeline
-            pipeline = self.generator.generate_pipeline(intent)
+            with tracer.start_as_current_span(
+                "planner.generate_pipeline",
+                kind=trace.SpanKind.INTERNAL,
+            ) as gen_span:
+                pipeline = self.generator.generate_pipeline(intent)
+                if gen_span:
+                    try:
+                        gen_span.set_attribute("pipeline.stage_count", len(pipeline or []))
+                        preview = str(pipeline)[:1500]
+                        gen_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                    except Exception:
+                        pass
 
             # Execute the query
-            result = await mongodb_tools.execute_tool("aggregate", {
-                "database": DATABASE_NAME,
-                "collection": intent.primary_entity,
-                "pipeline": pipeline
-            })
+            with tracer.start_as_current_span(
+                "planner.execute_query",
+                kind=trace.SpanKind.INTERNAL,
+                attributes={
+                    "collection": intent.primary_entity,
+                    "database.name": DATABASE_NAME,
+                },
+            ) as exec_span:
+                args = {
+                    "database": DATABASE_NAME,
+                    "collection": intent.primary_entity,
+                    "pipeline": pipeline,
+                }
+                if exec_span:
+                    try:
+                        exec_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str({**args, "pipeline": "<omitted>"})[:1000])
+                        exec_span.set_attribute("pipeline.stage_count", len(pipeline or []))
+                    except Exception:
+                        pass
+                result = await mongodb_tools.execute_tool("aggregate", args)
+                if exec_span:
+                    try:
+                        size = len(result) if isinstance(result, list) else 1 if result is not None else 0
+                        exec_span.set_attribute("result.size", size)
+                        exec_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), (str(result)[:1200] if not isinstance(result, list) else f"list[{size}]") )
+                    except Exception:
+                        pass
 
             return {
                 "success": True,
@@ -991,6 +1138,18 @@ class Planner:
             }
 
         except Exception as e:
+            # Attach error details to a span if one is current
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    try:
+                        current_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), e.__class__.__name__)
+                        current_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(e))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             return {
                 "success": False,
                 "error": str(e),
