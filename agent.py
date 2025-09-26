@@ -133,7 +133,7 @@ llm = ChatOllama(
     streaming=True,
     verbose=False,
     top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
-    top_k=int(os.getenv("OLLAMA_TOP_K", "25")),
+    top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
 )
 
 # Bind tools to the LLM for tool calling
