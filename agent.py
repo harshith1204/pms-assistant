@@ -17,13 +17,15 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from phoenix.trace.exporter import HttpExporter
 from phoenix import Client
 from phoenix.trace.trace_dataset import TraceDataset
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 import pandas as pd
 import threading
 import time
 from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
+from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 
 # OpenInference semantic conventions (optional)
 try:
@@ -32,6 +34,7 @@ except Exception:  # Fallback when OpenInference isn't installed
     class _OI:
         INPUT_VALUE = "input.value"
         OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
         LLM_MODEL_NAME = "llm.model_name"
         LLM_TEMPERATURE = "llm.temperature"
         LLM_TOP_P = "llm.top_p"
@@ -54,6 +57,7 @@ except Exception:  # Fallback when OpenInference isn't installed
     class _OI:
         INPUT_VALUE = "input.value"
         OUTPUT_VALUE = "output.value"
+        SPAN_KIND = "openinference.span.kind"
         LLM_MODEL_NAME = "llm.model_name"
         LLM_TEMPERATURE = "llm.temperature"
         LLM_TOP_P = "llm.top_p"
@@ -161,7 +165,12 @@ class PhoenixSpanManager:
             return
 
         try:
-            self.tracer_provider = TracerProvider()
+            # Add a resource so Phoenix shows a sensible service name
+            resource = Resource.create({
+                "service.name": "pms-assistant",
+                "service.version": "1.0.0",
+            })
+            self.tracer_provider = TracerProvider(resource=resource)
             trace.set_tracer_provider(self.tracer_provider)
 
             # Console exporter for local dev visibility
@@ -169,20 +178,30 @@ class PhoenixSpanManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Note: Skipping direct HttpExporter adapter. It does not accept OTel ReadableSpan objects
-            # and caused runtime errors. We rely on the custom PhoenixSpanProcessor + collector below.
+            # Register MongoDB span processor (stores spans directly in MongoDB)
+            try:
+                mongodb_processor = MongoDBSpanProcessor()
+                self.tracer_provider.add_span_processor(mongodb_processor)
+                mongodb_span_collector.start_periodic_export()
+                print("✅ MongoDB span processor configured for tracing")
+            except Exception as e:
+                print(f"⚠️  Failed to configure MongoDB span processor: {e}")
 
-            # Phoenix span processor (batch export to Phoenix dataset as fallback)
-            phoenix_processor = PhoenixSpanProcessor()
-            self.tracer_provider.add_span_processor(phoenix_processor)
+            # Also export to Phoenix UI via OTLP HTTP so GUI shows new spans
+            try:
+                otlp_http_exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
+                otlp_processor = BatchSpanProcessor(otlp_http_exporter)
+                self.tracer_provider.add_span_processor(otlp_processor)
+                print("✅ OTLP HTTP exporter configured for Phoenix UI (/v1/traces)")
+            except Exception as e:
+                print(f"⚠️  Failed to configure OTLP HTTP exporter: {e}")
 
-            # Start Phoenix span collector
-            phoenix_span_collector.start_periodic_export()
-            print("✅ Phoenix span processor and collector configured")
+            # Disable custom collector-based export to avoid duplicates
+            # (We keep the class around, but do not register the processor or start the collector.)
 
             self.tracer = trace.get_tracer(__name__)
             self._initialized = True
-            print("✅ Tracing initialized with Phoenix export")
+            print("✅ Tracing initialized with MongoDB + Phoenix UI export")
         except Exception as e:
             print(f"❌ Failed to initialize tracing: {e}")
             import traceback
@@ -260,7 +279,8 @@ class PhoenixSpanCollector:
                     'end_time': format_timestamp(span.end_time),
                     'status_code': span.status.status_code.name,
                     'status_message': span.status.description or '',
-                    'attributes': json.dumps(dict(span.attributes)),
+                    # Keep attributes as structured data (dict) for Phoenix UI parsing
+                    'attributes': dict(span.attributes),
                     'context.trace_id': format_trace_id(span.context.trace_id),
                     'context.span_id': format_span_id(span.context.span_id),
                     'context.trace_state': str(span.context.trace_state)
@@ -302,7 +322,8 @@ class PhoenixSpanCollector:
                         'timestamp': format_timestamp(event.timestamp),
                         'attributes': dict(event.attributes)
                     })
-                span_dict['events'] = json.dumps(events_list)
+                # Keep events as structured list for Phoenix UI
+                span_dict['events'] = events_list
 
                 spans_data.append(span_dict)
 
@@ -576,12 +597,25 @@ class MongoDBAgent:
                         # Record model invocation parameters
                         if llm_span:
                             try:
-                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
-                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
-                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
-                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                # Tag span kind for OpenInference UI (uppercase expected)
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'LLM')
+                                # Record the current user input as LLM input
+                                try:
+                                    llm_input_preview = str(human_message.content)[:1000]
+                                except Exception:
+                                    llm_input_preview = ""
+                                # Set both generic and OpenInference-prefixed keys
+                                llm_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), llm_input_preview)
+                                try:
+                                    llm_span.set_attribute('openinference.input.value', llm_input_preview)
+                                except Exception:
+                                    pass
                                 if self.system_prompt:
-                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 # Add prompt summary event
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
@@ -590,7 +624,7 @@ class MongoDBAgent:
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
-                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                                 llm_span.add_event("llm_response", {"preview_len": len(preview)})
                             except Exception:
                                 pass
@@ -629,8 +663,16 @@ class MongoDBAgent:
                             try:
                                 if tool_span:
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
-                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        # Tag span kind for OpenInference UI (uppercase expected)
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                                        # Also set generic and OpenInference input.value for Phoenix UI
+                                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                                        try:
+                                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                                        except Exception:
+                                            pass
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -638,7 +680,12 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                                        try:
+                                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                                        except Exception:
+                                            pass
                                         tool_span.add_event("tool_end", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -647,8 +694,8 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
                                     try:
-                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
                                     except Exception:
                                         pass
 
@@ -665,7 +712,7 @@ class MongoDBAgent:
                     if run_span:
                         try:
                             preview = str(last_response.content)[:500]
-                            run_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                            run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                             run_span.add_event("agent_end", {"steps": steps})
                         except Exception:
                             pass
@@ -739,12 +786,13 @@ class MongoDBAgent:
                     with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
                         if llm_span:
                             try:
-                                llm_span.set_attribute(OI.LLM_MODEL_NAME, getattr(llm, "model", "unknown"))
-                                llm_span.set_attribute(OI.LLM_TEMPERATURE, getattr(llm, "temperature", None))
-                                llm_span.set_attribute(OI.LLM_TOP_P, getattr(llm, "top_p", None))
-                                llm_span.set_attribute(OI.LLM_TOP_K, getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
+                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
+                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'llm')
                                 if self.system_prompt:
-                                    llm_span.set_attribute(OI.LLM_SYSTEM, self.system_prompt[:1000])
+                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
@@ -755,7 +803,7 @@ class MongoDBAgent:
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
-                                llm_span.set_attribute(OI.OUTPUT_VALUE, preview)
+                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
                                 llm_span.add_event("llm_response", {"preview_len": len(preview)})
                             except Exception:
                                 pass
@@ -795,8 +843,9 @@ class MongoDBAgent:
                             try:
                                 if tool_span:
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_NAME, tool.name)
-                                        tool_span.set_attribute(OI.TOOL_INPUT, str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -804,7 +853,7 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
                                     try:
-                                        tool_span.set_attribute(OI.TOOL_OUTPUT, str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
                                         tool_span.add_event("tool_end", {"tool": tool.name})
                                     except Exception:
                                         pass
@@ -814,8 +863,8 @@ class MongoDBAgent:
                                 if tool_span:
                                     tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
                                     try:
-                                        tool_span.set_attribute(OI.ERROR_TYPE, tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(OI.ERROR_MESSAGE, str(tool_exc))
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
                                     except Exception:
                                         pass
                                 await callback_handler.on_tool_end(str(result))

@@ -18,6 +18,10 @@ import threading
 import time
 from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor
 
+# MongoDB imports
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, OperationFailure
+
 
 class UnifiedTracingManager:
     """Unified tracing manager that consolidates all tracing functionality"""
@@ -44,17 +48,17 @@ class UnifiedTracingManager:
             console_processor = BatchSpanProcessor(console_exporter)
             self.tracer_provider.add_span_processor(console_processor)
 
-            # Phoenix span processor (our working solution)
-            phoenix_processor = PhoenixSpanProcessor()
-            self.tracer_provider.add_span_processor(phoenix_processor)
+            # MongoDB span processor (our working solution)
+            mongodb_processor = PhoenixSpanProcessor()
+            self.tracer_provider.add_span_processor(mongodb_processor)
 
-            # Start Phoenix span collector
-            phoenix_span_collector.start_periodic_export()
-            print("✅ Phoenix span processor and collector configured")
+            # Start MongoDB span collector
+            mongodb_span_collector.start_periodic_export()
+            print("✅ MongoDB span processor and collector configured")
 
             self.tracer = trace.get_tracer(__name__)
             self._initialized = True
-            print("✅ Unified tracing initialized with Phoenix export")
+            print("✅ Unified tracing initialized with MongoDB storage")
         except Exception as e:
             print(f"❌ Failed to initialize tracing: {e}")
             import traceback
@@ -207,124 +211,182 @@ class UnifiedTracingManager:
             })
 
 
-class PhoenixSpanCollector:
-    """Collects and exports spans to Phoenix"""
+class MongoDBSpanCollector:
+    """Collects and exports spans to MongoDB"""
 
     def __init__(self):
         self.collected_spans = []
-        self.phoenix_client = Client()
+        self.mongodb_client = None
+        self.database = None
+        self.collection = None
+        self.events_collection = None
+        self.metrics_collection = None
         self.export_thread = None
         self.running = False
+        self.batch_size = 50
+        self.initialize_mongodb()
+
+    def initialize_mongodb(self):
+        """Initialize MongoDB connection"""
+        try:
+            from .config import PHOENIX_DB_CONFIG
+            self.mongodb_client = MongoClient(PHOENIX_DB_CONFIG["connection_string"])
+            self.database = self.mongodb_client[PHOENIX_DB_CONFIG["database"]]
+            self.collection = self.database[PHOENIX_DB_CONFIG["collection"]]
+            # Standardized collections
+            self.events_collection = self.database["trace_events"]
+            self.metrics_collection = self.database["metrics"]
+            print("✅ MongoDB connection initialized for span collection")
+        except Exception as e:
+            print(f"❌ Failed to initialize MongoDB connection: {e}")
+            self.mongodb_client = None
 
     def collect_span(self, span):
-        """Collect a span for export to Phoenix"""
+        """Collect a span for export to MongoDB"""
+        if not self.mongodb_client:
+            print("⚠️  MongoDB not connected, skipping span collection")
+            return
+
         self.collected_spans.append(span)
 
         # If we have many spans, export them
-        if len(self.collected_spans) >= 10:
-            self.export_to_phoenix()
+        if len(self.collected_spans) >= self.batch_size:
+            self.export_to_mongodb()
 
-    def export_to_phoenix(self):
-        """Export collected spans to Phoenix"""
-        if not self.collected_spans:
+    def convert_span_to_dict(self, span):
+        """Convert OpenTelemetry span to MongoDB document"""
+        def format_timestamp(timestamp):
+            """Convert OpenTelemetry timestamp to datetime"""
+            if isinstance(timestamp, (int, float)):
+                # Convert nanoseconds to datetime
+                from datetime import datetime
+                return datetime.fromtimestamp(timestamp / 1e9)
+            return timestamp
+
+        def _to_hex(value):
+            """Convert to hex string"""
+            if isinstance(value, int):
+                return f"{value:032x}" if len(f"{value:x}") <= 32 else f"{value:016x}"
+            if isinstance(value, str):
+                v = value[2:] if value.startswith('0x') else value
+                try:
+                    return f"{int(v, 16):032x}"
+                except:
+                    return value
+            return str(value)
+
+        # Calculate duration if end_time is available
+        duration_ms = None
+        if span.start_time and span.end_time:
+            duration_ms = (span.end_time - span.start_time) // 1_000_000  # Convert to milliseconds
+
+        span_dict = {
+            'trace_id': _to_hex(span.context.trace_id),
+            'span_id': _to_hex(span.context.span_id),
+            'parent_id': _to_hex(span.parent.span_id) if span.parent and hasattr(span.parent, 'span_id') else None,
+            'name': span.name,
+            'span_kind': str(span.kind),
+            'kind': getattr(getattr(span, 'kind', None), 'name', str(getattr(span, 'kind', 'INTERNAL'))),
+            'start_time': format_timestamp(span.start_time),
+            'end_time': format_timestamp(span.end_time) if span.end_time else None,
+            'duration_ms': duration_ms,
+            'status_code': span.status.status_code.name,
+            'status_message': span.status.description or '',
+            'attributes': dict(span.attributes),
+            'context': {
+                'trace_id': _to_hex(span.context.trace_id),
+                'span_id': _to_hex(span.context.span_id),
+                'trace_state': str(span.context.trace_state)
+            },
+            'created_at': datetime.now()
+        }
+
+        # Extract input/output from attributes for convenience
+        attrs = dict(span.attributes)
+        if 'input.value' in attrs:
+            span_dict['input'] = str(attrs['input.value'])
+        if 'tool.input' in attrs:
+            span_dict['input'] = str(attrs['tool.input'])
+        if 'output.value' in attrs:
+            span_dict['output'] = str(attrs['output.value'])
+        if 'tool.output' in attrs:
+            span_dict['output'] = str(attrs['tool.output'])
+
+        # Do not attach events here; events are stored in dedicated collection
+
+        return span_dict
+
+    def export_to_mongodb(self):
+        """Export collected spans to MongoDB"""
+        if not self.collected_spans or not self.mongodb_client:
             return
 
         try:
-            # Convert spans to DataFrame format
-            spans_data = []
+            # Build documents for traces, events, and metrics
+            trace_docs = []
+            event_docs = []
+            metric_docs = []
+
             for span in self.collected_spans:
-                # Extract span information with proper timestamp conversion
-                def format_timestamp(timestamp):
-                    """Convert OpenTelemetry timestamp to ISO format"""
-                    if hasattr(timestamp, 'isoformat'):
-                        return timestamp.isoformat()
-                    elif isinstance(timestamp, (int, float)):
-                        # Convert nanoseconds to datetime
-                        from datetime import datetime
-                        return datetime.fromtimestamp(timestamp / 1e9).isoformat()
-                    else:
-                        return str(timestamp)
+                span_doc = self.convert_span_to_dict(span)
+                trace_docs.append(span_doc)
 
-                def _to_int(value):
-                    if isinstance(value, int):
-                        return value
-                    if isinstance(value, str):
-                        v = value[2:] if value.startswith('0x') else value
-                        try:
-                            return int(v, 16)
-                        except Exception:
-                            try:
-                                return int(v)
-                            except Exception:
-                                return 0
-                    return 0
+                # Build event documents (one per event)
+                if span.events:
+                    for event in span.events:
+                        event_docs.append({
+                            'trace_id': span_doc['trace_id'],
+                            'span_id': span_doc['span_id'],
+                            'span_name': span_doc['name'],
+                            'name': event.name,
+                            'timestamp': event.timestamp if not isinstance(event.timestamp, (int, float)) else datetime.fromtimestamp(event.timestamp / 1e9),
+                            'attributes': dict(event.attributes),
+                            'created_at': datetime.now()
+                        })
 
-                def format_trace_id(value):
-                    """Return 32-char zero-padded lowercase hex trace ID."""
-                    return f"{_to_int(value):032x}"
+                # Build basic metrics document per span
+                metric_docs.append({
+                    'trace_id': span_doc['trace_id'],
+                    'span_id': span_doc['span_id'],
+                    'span_name': span_doc['name'],
+                    'span_kind': span_doc.get('kind'),
+                    'status_code': span_doc.get('status_code'),
+                    'duration_ms': span_doc.get('duration_ms'),
+                    'start_time': span_doc.get('start_time'),
+                    'end_time': span_doc.get('end_time'),
+                    'attributes_count': len(span_doc.get('attributes', {})),
+                    'events_count': len(span.events or []),
+                    'created_at': datetime.now()
+                })
 
-                def format_span_id(value):
-                    """Return 16-char zero-padded lowercase hex span ID."""
-                    return f"{_to_int(value):016x}"
+            # Insert traces
+            if trace_docs:
+                self.collection.insert_many(trace_docs, ordered=False)
+                print(f"✅ Exported {len(trace_docs)} spans to MongoDB collection 'traces'")
 
-                span_dict = {
-                    'name': span.name,
-                    'span_kind': str(span.kind),
-                    'kind': getattr(getattr(span, 'kind', None), 'name', str(getattr(span, 'kind', 'INTERNAL'))),
-                    'trace_id': format_trace_id(span.context.trace_id),
-                    'span_id': format_span_id(span.context.span_id),
-                    'parent_id': format_span_id(span.parent.span_id) if span.parent and getattr(span.parent, 'span_id', None) else None,
-                    'start_time': format_timestamp(span.start_time),
-                    'end_time': format_timestamp(span.end_time),
-                    'status_code': span.status.status_code.name,
-                    'status_message': span.status.description or '',
-                    'attributes': json.dumps(dict(span.attributes)),
-                    'context.trace_id': format_trace_id(span.context.trace_id),
-                    'context.span_id': format_span_id(span.context.span_id),
-                    'context.trace_state': str(span.context.trace_state)
-                }
+                # Optional: Also store in time-based collection for better querying
+                # Uncomment the following lines if you want time-based collections
+                # now = datetime.now()
+                # time_collection_name = f"traces_{now.strftime('%Y_%m')}"
+                # time_collection = self.database[time_collection_name]
+                # time_collection.insert_many(trace_docs, ordered=False)
+                # print(f"✅ Also stored in time-based collection: {time_collection_name}")
 
-                # Extract generic input/output for convenience
-                try:
-                    attrs = dict(span.attributes)
-                    def _first(keys):
-                        for k in keys:
-                            if k in attrs:
-                                return attrs.get(k)
-                        return None
-                    input_val = _first(['input.value', 'tool.input'])
-                    output_val = _first(['output.value', 'tool.output'])
-                    if input_val is not None:
-                        span_dict['input'] = str(input_val)
-                    if output_val is not None:
-                        span_dict['output'] = str(output_val)
-                except Exception:
-                    pass
+            # Insert events
+            if event_docs and self.events_collection is not None:
+                self.events_collection.insert_many(event_docs, ordered=False)
+                print(f"✅ Exported {len(event_docs)} events to MongoDB collection 'trace_events'")
 
-                # Add events
-                events_list = []
-                for event in span.events:
-                    events_list.append({
-                        'name': event.name,
-                        'timestamp': format_timestamp(event.timestamp),
-                        'attributes': dict(event.attributes)
-                    })
-                span_dict['events'] = json.dumps(events_list)
-
-                spans_data.append(span_dict)
-
-            # Create DataFrame and export
-            if spans_data:
-                df = pd.DataFrame(spans_data)
-                trace_dataset = TraceDataset(dataframe=df, name='agent-traces')
-                self.phoenix_client.log_traces(trace_dataset, project_name='default')
-                print(f"✅ Exported {len(spans_data)} spans to Phoenix")
+            # Insert metrics
+            if metric_docs and self.metrics_collection is not None:
+                self.metrics_collection.insert_many(metric_docs, ordered=False)
+                print(f"✅ Exported {len(metric_docs)} metrics to MongoDB collection 'metrics'")
 
             # Clear collected spans
             self.collected_spans.clear()
 
         except Exception as e:
-            print(f"❌ Error exporting spans to Phoenix: {e}")
+            print(f"❌ Error exporting spans to MongoDB: {e}")
 
     def start_periodic_export(self):
         """Start periodic export of collected spans"""
@@ -340,47 +402,93 @@ class PhoenixSpanCollector:
         self.running = False
         if self.export_thread:
             self.export_thread.join(timeout=5)
-        self.export_to_phoenix()  # Export any remaining spans
+        self.export_to_mongodb()  # Export any remaining spans
 
     def _periodic_export_worker(self):
         """Worker thread for periodic span export"""
         while self.running:
             time.sleep(5)  # Export every 5 seconds
-            self.export_to_phoenix()
+            self.export_to_mongodb()
+
+    def get_trace_by_id(self, trace_id):
+        """Retrieve all spans for a given trace ID"""
+        if not self.mongodb_client:
+            return []
+
+        try:
+            return list(self.collection.find({'trace_id': trace_id}).sort('start_time', 1))
+        except Exception as e:
+            print(f"❌ Error retrieving trace {trace_id}: {e}")
+            return []
+
+    def get_recent_traces(self, limit=100):
+        """Get recent traces"""
+        if not self.mongodb_client:
+            return []
+
+        try:
+            return list(self.collection.find().sort('start_time', -1).limit(limit))
+        except Exception as e:
+            print(f"❌ Error retrieving recent traces: {e}")
+            return []
+
+    def search_traces(self, query, limit=50):
+        """Search traces by text query"""
+        if not self.mongodb_client:
+            return []
+
+        try:
+            search_pipeline = [
+                {
+                    '$search': {
+                        'text': {
+                            'query': query,
+                            'path': ['name', 'status_message', 'attributes', 'events.name']
+                        }
+                    }
+                },
+                {'$limit': limit},
+                {'$sort': {'start_time': -1}}
+            ]
+
+            return list(self.collection.aggregate(search_pipeline))
+        except Exception as e:
+            print(f"❌ Error searching traces: {e}")
+            return []
 
 
 class PhoenixSpanProcessor(SpanProcessor):
-    """Custom span processor that sends spans to Phoenix collector"""
+    """Custom span processor that sends spans to MongoDB collector"""
 
     def on_start(self, span, parent_context=None):
         """Called when a span starts"""
         pass
 
     def on_end(self, span):
-        """Called when a span ends - send to Phoenix"""
+        """Called when a span ends - send to MongoDB"""
         try:
-            phoenix_span_collector.collect_span(span)
+            mongodb_span_collector.collect_span(span)
         except Exception as e:
             # Don't let span processing errors break the application
-            print(f"Warning: Failed to collect span for Phoenix: {e}")
+            print(f"Warning: Failed to collect span for MongoDB: {e}")
 
     def shutdown(self, timeout_millis=30000):
         """Shutdown the processor"""
         try:
-            phoenix_span_collector.export_to_phoenix()
+            mongodb_span_collector.export_to_mongodb()
         except Exception as e:
             print(f"Warning: Failed to export spans during shutdown: {e}")
 
     def force_flush(self, timeout_millis=30000):
         """Force flush any pending spans"""
         try:
-            phoenix_span_collector.export_to_phoenix()
+            mongodb_span_collector.export_to_mongodb()
         except Exception as e:
             print(f"Warning: Failed to flush spans: {e}")
 
 
 # Global span collector
-phoenix_span_collector = PhoenixSpanCollector()
+mongodb_span_collector = MongoDBSpanCollector()
 
 # Global unified tracing manager instance
 unified_tracing_manager = UnifiedTracingManager()
