@@ -155,7 +155,12 @@ def filter_meaningful_content(data: Any) -> Any:
 
 @tool
 async def mongo_query(query: str, show_all: bool = False) -> str:
-    """Execute natural language queries against the Project Management database.
+    """Execute natural-language Mongo aggregations for general database questions.
+
+    Use this for: counts, lists, groupings, filters on structured fields when the
+    question can be answered in a single aggregation. Do NOT use this after a RAG
+    step that already returned candidate IDs. For 'mentioning <phrase>' scenarios
+    (content → then metadata like state/assignee), prefer `rag_to_mongo_workitems`.
 
     Args:
         query: Natural language query about projects, work items, cycles, members, pages, modules, or project states.
@@ -467,10 +472,11 @@ class RAGTool:
 
 @tool
 async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
-    """Search for page and work item content using RAG (Retrieval-Augmented Generation).
+    """Search page/work item content using RAG and return relevant snippets.
 
-    This tool searches through stored page and work item content in Qdrant vector database
-    to find relevant information for answering questions about specific content.
+    Use this when the user wants content snippets themselves. If the request is to
+    first find items by content, then report metadata like state/assignee, use
+    `rag_to_mongo_workitems` instead of this tool.
 
     Args:
         query: Natural language question or search terms about page or work item content.
@@ -510,10 +516,11 @@ async def rag_content_search(query: str, content_type: str = None, limit: int = 
 
 @tool
 async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
-    """Answer questions about page and work item content using RAG.
+    """Retrieve condensed context from content to help answer a question.
 
-    This tool retrieves relevant context from the Qdrant vector database
-    and provides context for answering questions about specific content.
+    Use this when the user asks explanatory questions that need content-derived
+    context. For listing states/assignees after finding items by content, prefer
+    `rag_to_mongo_workitems`.
 
     Args:
         question: Natural language question about page or work item content.
@@ -544,17 +551,18 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
 
 @tool
 async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
-    """Find work items matching a free-text query via RAG, then fetch state and assignee from Mongo.
+    """Find tasks by content, then list authoritative metadata from Mongo.
 
-    Steps:
-    1) Use vector search over work item content to collect candidate Mongo IDs
-    2) Fetch those work items via aggregation `$in` and project key fields
+    Use this for queries like: "Find tasks mentioning '<phrase>' and list their
+    current states and assignees". It performs:
+      1) Vector search over work item content to collect candidate Mongo IDs
+      2) Aggregation on `workItem` with `$in` and projections for state/assignee
 
     Args:
         query: Free-text like "login timeout" or any phrase to search in content
         limit: Max number of work items to return
 
-    Returns: A compact, human-readable summary of matched work items with state and assignee.
+    Returns: Compact list with displayBugNo/title and state/assignee for each match.
     """
     try:
         # Step 1: RAG search for work items only
