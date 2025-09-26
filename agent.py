@@ -91,8 +91,12 @@ if not groq_api_key:
         "Please create a .env file and add your Groq API key to it."
     )
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states."
-    "\n\nAvailable tool: mongo_query - Use this for any questions requiring data from the database."
+    "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states.\n\n"
+    "Available tools:\n"
+    "- mongo_query: Natural language to Mongo aggregation for database questions.\n"
+    "- rag_content_search: Vector search over page/work item content for relevant snippets.\n"
+    "- rag_answer_question: Retrieve relevant content context for a question.\n"
+    "- rag_to_mongo_workitems: First use RAG to find work items by content (e.g., 'login timeout'), then fetch authoritative fields (state.name, assignee) from Mongo via IDs. Use this when you need metadata after content search."
 )
 
 class ConversationMemory:
