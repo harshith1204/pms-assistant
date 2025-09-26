@@ -12,10 +12,6 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 
-<<<<<<< HEAD
-tools_list = tools.tools
-from constants import DATABASE_NAME, mongodb_tools
-=======
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -54,37 +50,14 @@ except Exception:  # Fallback when OpenInference isn't installed
 
     OI = _OI()
 
-# OpenInference semantic conventions (optional)
-try:
-    from openinference.semconv.trace import SpanAttributes as OI
-except Exception:  # Fallback when OpenInference isn't installed
-    class _OI:
-        INPUT_VALUE = "input.value"
-        OUTPUT_VALUE = "output.value"
-        SPAN_KIND = "openinference.span.kind"
-        LLM_MODEL_NAME = "llm.model_name"
-        LLM_TEMPERATURE = "llm.temperature"
-        LLM_TOP_P = "llm.top_p"
-        LLM_TOP_K = "llm.top_k"
-        LLM_PROMPT = "llm.prompt"
-        LLM_SYSTEM = "llm.system_prompt"
-        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
-        TOOL_NAME = "tool.name"
-        TOOL_INPUT = "tool.input"
-        TOOL_OUTPUT = "tool.output"
-        ERROR_TYPE = "error.type"
-        ERROR_MESSAGE = "error.message"
-
-    OI = _OI()
-
 # Import tools list
 try:
     tools_list = tools.tools
 except AttributeError:
     # Fallback: define empty tools list if import fails
     tools_list = []
+
 from mongo.constants import DATABASE_NAME, mongodb_tools
->>>>>>> adad50e (mongodb connectivity issue fixed for phoenix)
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states."
@@ -142,10 +115,6 @@ llm = ChatOllama(
 # Bind tools to the LLM for tool calling
 llm_with_tools = llm.bind_tools(tools_list)
 
-<<<<<<< HEAD
-class ToolCallingCallbackHandler(AsyncCallbackHandler):
-    """Callback handler for tool calling streaming"""
-=======
 
 class PhoenixSpanManager:
     """Manages Phoenix spans and tracer for the agent."""
@@ -395,8 +364,8 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
-class PhoenixSpanManager(AsyncCallbackHandler):
-    """Manages Phoenix tracing configuration"""
+class ToolCallingCallbackHandler(AsyncCallbackHandler):
+    """Callback handler for tool calling streaming"""
 >>>>>>> adad50e (mongodb connectivity issue fixed for phoenix)
 
     def __init__(self, websocket=None):
