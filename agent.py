@@ -12,6 +12,7 @@ import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
+import os
 
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
@@ -51,29 +52,6 @@ except Exception:  # Fallback when OpenInference isn't installed
 
     OI = _OI()
 
-# OpenInference semantic conventions (optional)
-try:
-    from openinference.semconv.trace import SpanAttributes as OI
-except Exception:  # Fallback when OpenInference isn't installed
-    class _OI:
-        INPUT_VALUE = "input.value"
-        OUTPUT_VALUE = "output.value"
-        SPAN_KIND = "openinference.span.kind"
-        LLM_MODEL_NAME = "llm.model_name"
-        LLM_TEMPERATURE = "llm.temperature"
-        LLM_TOP_P = "llm.top_p"
-        LLM_TOP_K = "llm.top_k"
-        LLM_PROMPT = "llm.prompt"
-        LLM_SYSTEM = "llm.system_prompt"
-        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
-        TOOL_NAME = "tool.name"
-        TOOL_INPUT = "tool.input"
-        TOOL_OUTPUT = "tool.output"
-        ERROR_TYPE = "error.type"
-        ERROR_MESSAGE = "error.message"
-
-    OI = _OI()
-
 # Import tools list
 try:
     tools_list = tools.tools
@@ -83,12 +61,31 @@ except AttributeError:
 from mongo.constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states.\n\n"
-    "Available tools:\n"
-    "- mongo_query: Natural language to Mongo aggregation for database questions.\n"
-    "- rag_content_search: Vector search over page/work item content for relevant snippets.\n"
-    "- rag_answer_question: Retrieve relevant content context for a question.\n"
-    "- rag_to_mongo_workitems: First use RAG to find work items by content (e.g., 'login timeout'), then fetch authoritative fields (state.name, assignee) from Mongo via IDs. Use this when you need metadata after content search."
+    "You are a precise, non-speculative Project Management assistant.\n\n"
+    "GENERAL RULES:\n"
+    "- Never guess facts about the database or content. Prefer invoking a tool.\n"
+    "- If a tool is appropriate, always call it before answering.\n"
+    "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
+    "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
+    "DECISION GUIDE:\n"
+    "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
+    "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
+    "   - Do NOT answer from memory; run a query.\n"
+    "2) Use 'rag_content_search' to find content snippets for pages/work items by semantic meaning.\n"
+    "   - Example: 'find notes about OAuth errors' or 'search design doc for navigation'.\n"
+    "3) Use 'rag_answer_question' to assemble short context for answering a content question.\n"
+    "   - Use when the user asks a question that needs reading content first.\n"
+    "4) Use 'rag_to_mongo_workitems' when a free-text phrase identifies work items, but you must report canonical fields (state.name, assignee, project.name).\n\n"
+    "TOOL CHEATSHEET:\n"
+    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
+    "- rag_content_search(query:str, content_type:'page'|'work_item'|None, limit:int=5): Retrieve relevant snippets with scores.\n"
+    "- rag_answer_question(question:str, content_types:list[str]|None): Provide condensed context to inform your final answer.\n"
+    "- rag_to_mongo_workitems(query:str, limit:int=20): Vector-match items, then fetch authoritative Mongo fields.\n\n"
+    "WHEN UNSURE WHICH TOOL:\n"
+    "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
+    "- If the question references 'content', 'notes', 'docs', 'pages', or 'descriptions' → rag_content_search or rag_answer_question.\n"
+    "- If the user wants tickets by phrase AND their state/assignee → rag_to_mongo_workitems.\n\n"
+    "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
 
 class ConversationMemory:
@@ -128,15 +125,15 @@ conversation_memory = ConversationMemory()
 
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
-    model="qwen3:0.6b-fp16",
-    temperature=0.3,
-    num_ctx=4096,  # Increased context for better understanding
-    num_predict=1024,  # Allow longer responses for detailed insights
-    num_thread=8,  # Use multiple threads for speed
-    streaming=True,  # Enable streaming for real-time responses
+    model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
+    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.1")),
+    num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
+    num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
+    num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
+    streaming=True,
     verbose=False,
-    top_p=0.9,  # Better response diversity
-    top_k=40,  # Focus on high-probability tokens
+    top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
+    top_k=int(os.getenv("OLLAMA_TOP_K", "25")),
 )
 
 # Bind tools to the LLM for tool calling
@@ -391,8 +388,8 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
-class PhoenixSpanManager(AsyncCallbackHandler):
-    """Manages Phoenix tracing configuration"""
+class PhoenixCallbackHandler(AsyncCallbackHandler):
+    """WebSocket streaming callback handler for Phoenix events"""
 
     def __init__(self, websocket=None):
         super().__init__()
@@ -612,92 +609,98 @@ class MongoDBAgent:
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
-                        response = await self.llm_with_tools.ainvoke(messages)
-                        if llm_span and getattr(response, "content", None):
-                            try:
-                                preview = str(response.content)[:500]
-                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
-                            except Exception:
-                                pass
-                    last_response = response
+                # Lightweight routing hint to bias correct tool choice
+                routing_instructions = SystemMessage(content=(
+                    "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
+                    "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
+                ))
+                routed_messages = messages + [routing_instructions]
+                response = await self.llm_with_tools.ainvoke(routed_messages)
+                if llm_span and getattr(response, "content", None):
+                        try:
+                            preview = str(response.content)[:500]
+                            llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                            llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                        except Exception:
+                            pass
+                last_response = response
 
-                    # Persist assistant message
-                    conversation_memory.add_message(conversation_id, response)
+                # Persist assistant message
+                conversation_memory.add_message(conversation_id, response)
 
-                    # If no tools requested, we are done
-                    if not getattr(response, "tool_calls", None):
-                        return response.content
+                # If no tools requested, we are done
+                if not getattr(response, "tool_calls", None):
+                    return response.content
 
-                    # Execute requested tools sequentially
-                    messages.append(response)
-                    for tool_call in response.tool_calls:
-                        if tracer is not None:
-                            tool_cm = tracer.start_as_current_span(
-                                "tool_execute",
-                                kind=trace.SpanKind.INTERNAL,
-                                attributes={"tool_name": tool_call["name"]},
-                            )
-                        else:
-                            tool_cm = None
+                # Execute requested tools sequentially
+                messages.append(response)
+                for tool_call in response.tool_calls:
+                    if tracer is not None:
+                        tool_cm = tracer.start_as_current_span(
+                            "tool_execute",
+                            kind=trace.SpanKind.INTERNAL,
+                            attributes={"tool_name": tool_call["name"]},
+                        )
+                    else:
+                        tool_cm = None
 
-                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                            tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                            if not tool:
-                                error_msg = ToolMessage(
-                                    content=f"Tool '{tool_call['name']}' not found.",
-                                    tool_call_id=tool_call["id"],
-                                )
-                                messages.append(error_msg)
-                                conversation_memory.add_message(conversation_id, error_msg)
-                                continue
-
-                            try:
-                                if tool_span:
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                        # Tag span kind for OpenInference UI (uppercase expected)
-                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
-                                        # Also set generic and OpenInference input.value for Phoenix UI
-                                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
-                                        try:
-                                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
-                                        except Exception:
-                                            pass
-                                        tool_span.add_event("tool_start", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                result = await tool.ainvoke(tool_call["args"])
-                                if tool_span:
-                                    tool_span.set_attribute("tool_success", True)
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
-                                        try:
-                                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
-                                        except Exception:
-                                            pass
-                                        tool_span.add_event("tool_end", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                            except Exception as tool_exc:
-                                result = f"Tool execution error: {tool_exc}"
-                                if tool_span:
-                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                    except Exception:
-                                        pass
-
-                            tool_message = ToolMessage(
-                                content=str(result),
+                    with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+                        tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                        if not tool:
+                            error_msg = ToolMessage(
+                                content=f"Tool '{tool_call['name']}' not found.",
                                 tool_call_id=tool_call["id"],
                             )
-                            messages.append(tool_message)
-                            conversation_memory.add_message(conversation_id, tool_message)
-                    steps += 1
+                            messages.append(error_msg)
+                            conversation_memory.add_message(conversation_id, error_msg)
+                            continue
+
+                        try:
+                            if tool_span:
+                                try:
+                                    tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                    tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                    # Tag span kind for OpenInference UI (uppercase expected)
+                                    tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                                    # Also set generic and OpenInference input.value for Phoenix UI
+                                    tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                                    try:
+                                        tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                                    except Exception:
+                                        pass
+                                    tool_span.add_event("tool_start", {"tool": tool.name})
+                                except Exception:
+                                    pass
+                            result = await tool.ainvoke(tool_call["args"])
+                            if tool_span:
+                                tool_span.set_attribute("tool_success", True)
+                                try:
+                                    tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                                    tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                                    try:
+                                        tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                                    except Exception:
+                                        pass
+                                    tool_span.add_event("tool_end", {"tool": tool.name})
+                                except Exception:
+                                    pass
+                        except Exception as tool_exc:
+                            result = f"Tool execution error: {tool_exc}"
+                            if tool_span:
+                                tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                try:
+                                    tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                    tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
+                                except Exception:
+                                    pass
+
+                        tool_message = ToolMessage(
+                            content=str(result),
+                            tool_call_id=tool_call["id"],
+                        )
+                        messages.append(tool_message)
+                        conversation_memory.add_message(conversation_id, tool_message)
+                steps += 1
 
                 # Step cap reached; return best available answer
                 if last_response is not None:
@@ -757,7 +760,7 @@ class MongoDBAgent:
                 human_message = HumanMessage(content=query)
                 messages.append(human_message)
 
-                callback_handler = PhoenixSpanManager(websocket)
+                callback_handler = PhoenixCallbackHandler(websocket)
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
@@ -788,8 +791,12 @@ class MongoDBAgent:
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
+                        routing_instructions = SystemMessage(content=(
+                            "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
+                            "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
+                        ))
                         response = await self.llm_with_tools.ainvoke(
-                            messages,
+                            messages + [routing_instructions],
                             config={"callbacks": [callback_handler]},
                         )
                         if llm_span and getattr(response, "content", None):
