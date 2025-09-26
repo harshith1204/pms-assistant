@@ -26,6 +26,9 @@ try:
     db = mongo_client["ProjectManagement"]
     page_collection = db["page"]
     workitem_collection = db["workItem"]
+    cycle_collection = db["cycle"]
+    module_collection = db["module"]
+    project_collection = db["project"]
 
 except Exception as e:
     print("❌ MongoDB connection failed:", e)

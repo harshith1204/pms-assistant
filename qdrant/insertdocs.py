@@ -13,6 +13,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qdrant.dbconnection import (
     page_collection,
     workitem_collection,
+    cycle_collection,
+    module_collection,
+    project_collection,
     qdrant_client,
     QDRANT_COLLECTION
 )
@@ -98,6 +101,33 @@ def parse_editorjs_blocks(content_str: str):
         print(f"⚠️ Failed to parse content: {e}")
         return [], ""
 
+def chunk_text(text: str, max_words: int = 300, overlap_words: int = 60):
+    """Split long text into overlapping word chunks suitable for embeddings.
+
+    Args:
+        text: Input text to chunk.
+        max_words: Target words per chunk.
+        overlap_words: Overlap words between consecutive chunks.
+
+    Returns:
+        List of chunk strings.
+    """
+    if not text:
+        return []
+    words = text.split()
+    if len(words) <= max_words:
+        return [text]
+    chunks = []
+    step = max(1, max_words - overlap_words)
+    for start in range(0, len(words), step):
+        end = min(start + max_words, len(words))
+        chunk = " ".join(words[start:end]).strip()
+        if chunk:
+            chunks.append(chunk)
+        if end == len(words):
+            break
+    return chunks
+
 def batch_iterable(iterable, batch_size):
     """Yield successive batches from a list or iterable."""
     it = iter(iterable)
@@ -139,31 +169,39 @@ def index_pages_to_qdrant():
             else:
                 print(f"⚠️ Failed to ensure index: {e}")
 
-        documents = page_collection.find({}, {"_id": 1, "content": 1,"title":1})
+        documents = page_collection.find({}, {"_id": 1, "content": 1, "title": 1})
         points = []
 
         for doc in documents:
             mongo_id = normalize_mongo_id(doc["_id"])
-            title=doc.get("title","")
+            title = doc.get("title", "")
             blocks, combined_text = parse_editorjs_blocks(doc.get("content", ""))
-            if not blocks:
+            if not blocks and not combined_text:
                 continue
 
-            vector = embedder.encode(combined_text).tolist()
+            # Chunk combined text for better retrieval
+            chunks = chunk_text(combined_text, max_words=320, overlap_words=80)
+            if not chunks:
+                chunks = [combined_text]
 
-            point = PointStruct(
-                id=mongo_id,
-                vector=vector,
-                payload={
-                    "mongo_id": mongo_id,
-                    "title": title,
-                    "content": blocks,
-                    # Provide a concatenated text field for full-text search
-                    "full_text": f"{title} {combined_text}".strip(),
-                    "content_type": "page"
-                }
-            )
-            points.append(point)
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                point = PointStruct(
+                    id=f"{mongo_id}::page::{idx}",
+                    vector=vector,
+                    payload={
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": title,
+                        "content": chunk,
+                        # Provide a concatenated text field for full-text search
+                        "full_text": f"{title} {chunk}".strip(),
+                        "content_type": "page"
+                    }
+                )
+                points.append(point)
 
         if not points:
             print("⚠️ No valid pages to index.")
@@ -234,9 +272,138 @@ def index_workitems_to_qdrant():
         print(f"❌ Error during work item indexing: {e}")
         return {"status": "error", "message": str(e)}
 
+def index_projects_to_qdrant():
+    try:
+        print("🔄 Indexing projects to Qdrant...")
+
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
+        documents = project_collection.find({}, {"_id": 1, "name": 1, "description": 1})
+        points = []
+
+        for doc in documents:
+            mongo_id = normalize_mongo_id(doc["_id"])
+            name = doc.get("name", "")
+            description = (doc.get("description") or "").strip()
+            combined_text = " ".join(filter(None, [name, description])).strip()
+            if not combined_text:
+                continue
+
+            vector = embedder.encode(combined_text).tolist()
+            point = PointStruct(
+                id=f"{mongo_id}::project",
+                vector=vector,
+                payload={
+                    "mongo_id": mongo_id,
+                    "title": name,
+                    "content": description or name,
+                    "full_text": combined_text,
+                    "content_type": "project"
+                }
+            )
+            points.append(point)
+
+        if not points:
+            print("ℹ️ No projects with descriptions to index.")
+            return {"status": "warning", "message": "No projects to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        print(f"✅ Indexed {total_indexed} projects to Qdrant.")
+        return {"status": "success", "indexed_documents": total_indexed}
+    except Exception as e:
+        print(f"❌ Error during project indexing: {e}")
+        return {"status": "error", "message": str(e)}
+
+def index_cycles_to_qdrant():
+    try:
+        print("🔄 Indexing cycles to Qdrant...")
+
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
+        documents = cycle_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1})
+        points = []
+
+        for doc in documents:
+            mongo_id = normalize_mongo_id(doc["_id"])
+            name = doc.get("name") or doc.get("title") or ""
+            description = (doc.get("description") or "").strip()
+            combined_text = " ".join(filter(None, [name, description])).strip()
+            if not combined_text:
+                continue
+
+            vector = embedder.encode(combined_text).tolist()
+            point = PointStruct(
+                id=f"{mongo_id}::cycle",
+                vector=vector,
+                payload={
+                    "mongo_id": mongo_id,
+                    "title": name,
+                    "content": description or name,
+                    "full_text": combined_text,
+                    "content_type": "cycle"
+                }
+            )
+            points.append(point)
+
+        if not points:
+            print("ℹ️ No cycles with descriptions to index.")
+            return {"status": "warning", "message": "No cycles to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        print(f"✅ Indexed {total_indexed} cycles to Qdrant.")
+        return {"status": "success", "indexed_documents": total_indexed}
+    except Exception as e:
+        print(f"❌ Error during cycle indexing: {e}")
+        return {"status": "error", "message": str(e)}
+
+def index_modules_to_qdrant():
+    try:
+        print("🔄 Indexing modules to Qdrant...")
+
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
+        documents = module_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1})
+        points = []
+
+        for doc in documents:
+            mongo_id = normalize_mongo_id(doc["_id"])
+            name = doc.get("name") or doc.get("title") or ""
+            description = (doc.get("description") or "").strip()
+            combined_text = " ".join(filter(None, [name, description])).strip()
+            if not combined_text:
+                continue
+
+            vector = embedder.encode(combined_text).tolist()
+            point = PointStruct(
+                id=f"{mongo_id}::module",
+                vector=vector,
+                payload={
+                    "mongo_id": mongo_id,
+                    "title": name,
+                    "content": description or name,
+                    "full_text": combined_text,
+                    "content_type": "module"
+                }
+            )
+            points.append(point)
+
+        if not points:
+            print("ℹ️ No modules with descriptions to index.")
+            return {"status": "warning", "message": "No modules to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        print(f"✅ Indexed {total_indexed} modules to Qdrant.")
+        return {"status": "success", "indexed_documents": total_indexed}
+    except Exception as e:
+        print(f"❌ Error during module indexing: {e}")
+        return {"status": "error", "message": str(e)}
+
 # ------------------ Usage ------------------
 if __name__ == "__main__":
     print("🚀 Starting Qdrant indexing...")
     index_pages_to_qdrant()
     index_workitems_to_qdrant()
+    index_projects_to_qdrant()
+    index_cycles_to_qdrant()
+    index_modules_to_qdrant()
     print("✅ Qdrant indexing complete!")
