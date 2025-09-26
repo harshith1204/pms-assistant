@@ -13,7 +13,8 @@ qdrant_url = os.getenv("QDRANT_URL")
 # --- Connect to MongoDB ---
 try:
     mongo_client = MongoClient(
-        "mongodb://backendInterns:mUXe57JwdugphnEn@4.213.88.219:27017/?authSource=admin",
+        "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin",
+        # "mongodb://backendInterns:mUXe57JwdugphnEn@4.213.88.219:27017/?authSource=admin",
         directConnection=True,
         serverSelectionTimeoutMS=5000
     )
@@ -38,7 +39,7 @@ try:
         timeout=60 
     )
 
-    QDRANT_COLLECTION= "pms_collection"
+    QDRANT_COLLECTION= "pms"
 
     # Check if collection exists, if not, create
     if QDRANT_COLLECTION not in [col.name for col in qdrant_client.get_collections().collections]:

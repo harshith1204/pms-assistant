@@ -39,6 +39,19 @@ smithery_config = {
 }
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+try:
+    from openinference.semconv.trace import SpanAttributes as OI
+except Exception:
+    class _OI:
+        TOOL_INPUT = "tool.input"
+        TOOL_OUTPUT = "tool.output"
+        ERROR_TYPE = "error.type"
+        ERROR_MESSAGE = "error.message"
+
+    OI = _OI()
 from typing import Dict, Any
 import asyncio
 
@@ -54,20 +67,32 @@ class MongoDBTools:
 
     async def connect(self):
         """Initialize connection to MongoDB MCP server using langchain-mcp-adapters"""
-        try:
-            async with self._connect_lock:
-                # If already connected and tools are loaded, avoid reconnecting
-                if self.connected and self.tools:
-                    return
-                # Get tools from the MCP server (this will establish connections as needed)
-                self.tools = await self.client.get_tools()
-                self._tool_map = {tool.name: tool for tool in self.tools}
-                self.connected = True
-                print(f"Connected to MongoDB MCP. Available tools: {[tool.name for tool in self.tools]}")
-
-        except Exception as e:
-            print(f"Failed to connect to MongoDB MCP server: {e}")
-            raise
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("mongodb_tools.connect", kind=trace.SpanKind.INTERNAL) as span:
+            try:
+                async with self._connect_lock:
+                    if self.connected and self.tools:
+                        return
+                    self.tools = await self.client.get_tools()
+                    self._tool_map = {tool.name: tool for tool in self.tools}
+                    self.connected = True
+                    if span:
+                        try:
+                            span.set_attribute("tools.count", len(self.tools))
+                            span.set_attribute(OI.TOOL_OUTPUT, str([t.name for t in self.tools])[:800])
+                        except Exception:
+                            pass
+                    print(f"Connected to MongoDB MCP. Available tools: {[tool.name for tool in self.tools]}")
+            except Exception as e:
+                if span:
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    try:
+                        span.set_attribute(OI.ERROR_TYPE, e.__class__.__name__)
+                        span.set_attribute(OI.ERROR_MESSAGE, str(e))
+                    except Exception:
+                        pass
+                print(f"Failed to connect to MongoDB MCP server: {e}")
+                raise
 
     async def disconnect(self):
         """Disconnect from MongoDB MCP server"""
@@ -78,18 +103,44 @@ class MongoDBTools:
 
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Execute a MongoDB MCP tool"""
-        if not self.connected:
-            # Attempt to lazily (re)connect for resilience
-            await self.connect()
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span(
+            "mongodb_tools.execute_tool",
+            kind=trace.SpanKind.INTERNAL,
+            attributes={"tool.name": tool_name},
+        ) as span:
+            # Set tool input attribute with safe fallback key
+            try:
+                span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(arguments)[:1200])
+            except Exception:
+                pass
+            if not self.connected:
+                await self.connect()
 
-        # Find the tool
-        tool = self._tool_map.get(tool_name)
-        if not tool:
-            raise ValueError(f"Tool {tool_name} not available")
+            tool = self._tool_map.get(tool_name)
+            if not tool:
+                if span:
+                    span.set_status(Status(StatusCode.ERROR, f"Tool {tool_name} not found"))
+                raise ValueError(f"Tool {tool_name} not available")
 
-        # Execute the tool directly (it handles MCP communication internally)
-        result = await tool.ainvoke(arguments)
-        return result
+            try:
+                result = await tool.ainvoke(arguments)
+                if span:
+                    try:
+                        preview = str(result)
+                        span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), (preview[:1200] if not isinstance(result, list) else f"list[{len(result)}]"))
+                    except Exception:
+                        pass
+                return result
+            except Exception as e:
+                if span:
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    try:
+                        span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), e.__class__.__name__)
+                        span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(e))
+                    except Exception:
+                        pass
+                raise
 
 # Global MongoDB tools instance
 mongodb_tools = MongoDBTools()
