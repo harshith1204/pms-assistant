@@ -224,12 +224,16 @@ export function ChatInterface() {
         break;
         
       case "tool_end":
+        // When BACKEND hides raw tool output, prefer preview text and mark hidden
+        const toolContent = typeof data.output === "string" && data.output.length > 0
+          ? data.output
+          : (typeof data.output_preview === "string" ? `(tool output hidden) ${data.output_preview}` : "(tool output hidden)" );
         const toolEndMessage: Message = {
           id: (Date.now() + 1).toString(),
           type: "tool",
-          content: data.output,
+          content: toolContent,
           timestamp,
-          toolOutput: data.output,
+          toolOutput: data.output ?? data.output_preview,
         };
         setMessages(prev => [...prev, toolEndMessage]);
         break;
