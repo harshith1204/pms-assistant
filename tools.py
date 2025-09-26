@@ -542,11 +542,121 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
         return f"❌ RAG QUESTION ERROR:\nQuestion: '{question}'\nError: {str(e)}"
 
 
+@tool
+async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
+    """Find work items matching a free-text query via RAG, then fetch state and assignee from Mongo.
+
+    Steps:
+    1) Use vector search over work item content to collect candidate Mongo IDs
+    2) Fetch those work items via aggregation `$in` and project key fields
+
+    Args:
+        query: Free-text like "login timeout" or any phrase to search in content
+        limit: Max number of work items to return
+
+    Returns: A compact, human-readable summary of matched work items with state and assignee.
+    """
+    try:
+        # Step 1: RAG search for work items only
+        rag_tool = RAGTool()
+        rag_results = await rag_tool.search_content(query, content_type="work_item", limit=max(limit, 5))
+
+        # Extract unique Mongo IDs from RAG results (point id is mongo_id)
+        id_strings: List[str] = []
+        seen: set[str] = set()
+        for r in rag_results:
+            mongo_id = str(r.get("id") or r.get("mongo_id") or "").strip()
+            if mongo_id and mongo_id not in seen:
+                seen.add(mongo_id)
+                id_strings.append(mongo_id)
+
+        if not id_strings:
+            return f"❌ No matching work items found for: '{query}'"
+
+        # Respect requested limit
+        id_strings = id_strings[:limit]
+
+        # Step 2: Fetch work items by _id list, converting string IDs to ObjectId via $toObjectId
+        # Use $expr + $in + $map to avoid client-side ObjectId construction
+        id_array_expr = {
+            "$map": {
+                "input": id_strings,
+                "as": "id",
+                "in": {"$toObjectId": "$$id"}
+            }
+        }
+
+        pipeline = [
+            {
+                "$match": {
+                    "$expr": {"$in": ["$_id", id_array_expr]}
+                }
+            },
+            {"$project": {
+                "_id": 1,
+                "displayBugNo": 1,
+                "title": 1,
+                "state.name": 1,
+                "assignee.name": 1,
+                "project.name": 1,
+                "createdTimeStamp": 1,
+            }},
+            {"$limit": limit}
+        ]
+
+        args = {
+            "database": DATABASE_NAME,
+            "collection": "workItem",
+            "pipeline": pipeline,
+        }
+
+        rows = await mongodb_tools.execute_tool("aggregate", args)
+
+        # Normalize and produce a compact summary
+        try:
+            parsed = json.loads(rows) if isinstance(rows, str) else rows
+        except Exception:
+            parsed = rows
+
+        docs = parsed if isinstance(parsed, list) else ([] if parsed is None else [parsed])
+        if not docs:
+            return f"❌ No MongoDB records found for the RAG matches of '{query}'"
+
+        # Keep content meaningful
+        cleaned = filter_meaningful_content(docs)
+
+        # Render
+        lines = [f"🔗 Matches for '{query}':"]
+        for d in cleaned[:limit]:
+            if not isinstance(d, dict):
+                continue
+            bug = d.get("displayBugNo") or d.get("_id")
+            title = d.get("title", "(no title)")
+            state = (d.get("state") or {}).get("name") if isinstance(d.get("state"), dict) else d.get("state")
+            # assignee may be array or object depending on schema; try best-effort
+            assignee_val = d.get("assignee")
+            if isinstance(assignee_val, dict):
+                assignee = assignee_val.get("name")
+            elif isinstance(assignee_val, list) and assignee_val and isinstance(assignee_val[0], dict):
+                assignee = assignee_val[0].get("name")
+            else:
+                assignee = None
+            lines.append(f"• {bug}: {title} — state={state or 'N/A'}, assignee={assignee or 'N/A'}")
+
+        return "\n".join(lines)
+
+    except ImportError:
+        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+    except Exception as e:
+        return f"❌ RAG→Mongo ERROR:\nQuery: '{query}'\nError: {str(e)}"
+
+
 # Define the tools list (no schema tool)
 tools = [
     mongo_query,
     rag_content_search,
     rag_answer_question,
+    rag_to_mongo_workitems,
 ]
 
 # import asyncio
