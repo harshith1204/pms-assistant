@@ -446,6 +446,10 @@ class RAGTool:
                     "title": payload.get("title", "Untitled"),
                     "content": payload.get("content", ""),
                     "content_type": payload.get("content_type", "unknown"),
+                    "mongo_id": payload.get("mongo_id"),
+                    "parent_id": payload.get("parent_id"),
+                    "chunk_index": payload.get("chunk_index"),
+                    "chunk_count": payload.get("chunk_count"),
                     # "metadata": payload.get("metadata", {})
                 })
 
@@ -458,7 +462,7 @@ class RAGTool:
     async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
         """Get relevant context for answering questions about page and work item content"""
         if not content_types:
-            content_types = ["page", "work_item"]
+            content_types = ["page", "work_item", "project", "cycle", "module"]
 
         all_results = []
         for content_type in content_types:
@@ -472,8 +476,11 @@ class RAGTool:
         context_parts = []
         # print(all_results)
         for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
+            chunk_info = ""
+            if result.get("chunk_index") is not None and result.get("chunk_count"):
+                chunk_info = f" (chunk {int(result['chunk_index'])+1}/{int(result['chunk_count'])})"
             context_parts.append(
-                f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                f"[{i}] {result['content_type'].upper()}: {result['title']}{chunk_info}\n"
                 f"Content: {result['content'][:500]}{'...' if len(result['content']) > 500 else ''}\n"
                 f"Relevance Score: {result['score']:.3f}\n"
             )
@@ -601,7 +608,7 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         titles: List[str] = []
         seen_ids: set[str] = set()
         for r in rag_results:
-            mongo_id = str(r.get("id") or r.get("mongo_id") or "").strip()
+            mongo_id = str(r.get("mongo_id") or r.get("id") or "").strip()
             title = str(r.get("title") or "").strip()
             if mongo_id and mongo_id not in seen_ids:
                 seen_ids.add(mongo_id)
