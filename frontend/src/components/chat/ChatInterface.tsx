@@ -46,9 +46,21 @@ export function ChatInterface() {
   const { toast } = useToast();
   
   // WebSocket connection
-  const wsUrl = `ws://${window.location.hostname}:8000/ws/chat`;
+  const wsUrl = (() => {
+    const envUrl = (import.meta as any)?.env?.VITE_WS_URL as string | undefined;
+    if (envUrl) return envUrl;
+    const isHttps = window.location.protocol === "https:";
+    const protocol = isHttps ? "wss" : "ws";
+    const host = window.location.hostname;
+    // If running locally, default backend to 8000; otherwise assume same-origin proxy
+    const isLocal = host === "localhost" || host === "127.0.0.1";
+    const port = isLocal ? ":8000" : (window.location.port ? `:${window.location.port}` : "");
+    return `${protocol}://${host}${port}/ws/chat`;
+  })();
+  console.debug("[WS] using URL:", wsUrl);
   
   const handleWebSocketMessage = useCallback((data: any) => {
+    console.debug("[WS] <-", data);
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
     switch (data.type) {
@@ -246,6 +258,8 @@ export function ChatInterface() {
         });
         setIsLoading(false);
         break;
+      default:
+        console.debug("[WS] unhandled message type:", data?.type, data);
     }
   }, [toast]);
   
@@ -317,6 +331,8 @@ export function ChatInterface() {
     const currentInput = input.trim();
     setInput("");
     
+    // Indicate loading immediately; backend will confirm with llm_start
+    setIsLoading(true);
     // Send message via WebSocket
     const success = sendMessage({
       type: "message",
@@ -330,6 +346,7 @@ export function ChatInterface() {
         description: "Failed to send message. Not connected to server.",
         variant: "destructive",
       });
+      setIsLoading(false);
       setInput(currentInput);
     }
   };
