@@ -118,8 +118,15 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     try:
         await ws_manager.connect(websocket, client_id)
 
+        async def _send(event: dict):
+            try:
+                print(f"WS -> type={event.get('type')} conv={event.get('conversation_id')} client={client_id}")
+            except Exception:
+                pass
+            await websocket.send_json(event)
+
         # Send welcome message
-        await websocket.send_json({
+        await _send({
             "type": "connected",
             "client_id": client_id,
             "timestamp": datetime.now().isoformat()
@@ -128,10 +135,14 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         while True:
             # Receive message from client
             data = await websocket.receive_json()
+            try:
+                print(f"WS <- type={data.get('type')} conv={data.get('conversation_id')} client={client_id}")
+            except Exception:
+                pass
 
             if data.get("type") == "ping":
                 # Handle ping/pong for connection keepalive
-                await websocket.send_json({
+                await _send({
                     "type": "pong",
                     "timestamp": datetime.now().isoformat()
                 })
@@ -142,7 +153,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             force_planner = data.get("planner", False)
 
             # Send user message acknowledgment
-            await websocket.send_json({
+            await _send({
                 "type": "user_message",
                 "content": message,
                 "conversation_id": conversation_id,
@@ -177,12 +188,13 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                     planner_span.set_attribute("planner.success", plan_result.get("success", False))
                                 except Exception:
                                     pass
-                        await websocket.send_json({
+                        await _send({
                             "type": "planner_result",
                             "success": plan_result.get("success", False),
                             "intent": plan_result.get("intent"),
                             "pipeline": plan_result.get("pipeline"),
                             "result": plan_result.get("result"),
+                            "conversation_id": conversation_id,
                             "timestamp": datetime.now().isoformat()
                         })
                     except Exception as e:
@@ -191,9 +203,10 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                 user_span.set_status(Status(StatusCode.ERROR, str(e)))
                             except Exception:
                                 pass
-                        await websocket.send_json({
+                        await _send({
                             "type": "planner_error",
                             "message": str(e),
+                            "conversation_id": conversation_id,
                             "timestamp": datetime.now().isoformat()
                         })
                 else:
@@ -216,7 +229,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             pass
 
             # Send completion message
-            await websocket.send_json({
+            await _send({
                 "type": "complete",
                 "conversation_id": conversation_id,
                 "timestamp": datetime.now().isoformat()
@@ -227,9 +240,12 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         print(f"Client {client_id} disconnected")
     except Exception as e:
         print(f"WebSocket error for client {client_id}: {e}")
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e),
-            "timestamp": datetime.now().isoformat()
-        })
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat()
+            })
+        except Exception:
+            pass
         ws_manager.disconnect(client_id)

@@ -107,6 +107,9 @@ export function useWebSocket({
 
   const sendMessage = useCallback((message: any) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
+      try {
+        console.debug("[WS] ->", message);
+      } catch {}
       ws.current.send(JSON.stringify(message));
       return true;
     }
