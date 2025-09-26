@@ -18,6 +18,9 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+# Orchestration utilities
+from orchestrator import Orchestrator, StepSpec, as_async
+
 # OpenInference semantic conventions (optional)
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -1044,101 +1047,87 @@ class Planner:
     def __init__(self):
         self.generator = PipelineGenerator()
         self.llm_parser = LLMIntentParser()
+        self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
     async def plan_and_execute(self, query: str) -> Dict[str, Any]:
-        """Plan and execute a natural language query"""
-        tracer = trace.get_tracer(__name__)
+        """Plan and execute a natural language query using the Orchestrator."""
         try:
-            # Ensure MongoDB connection
-            with tracer.start_as_current_span(
-                "planner.ensure_connection", kind=trace.SpanKind.INTERNAL
-            ) as conn_span:
-                try:
-                    await mongodb_tools.connect()
-                    if conn_span:
-                        conn_span.set_attribute("database.name", DATABASE_NAME)
-                except Exception as e:
-                    if conn_span:
-                        conn_span.set_status(Status(StatusCode.ERROR, str(e)))
-                        try:
-                            conn_span.set_attribute(OI.ERROR_TYPE, e.__class__.__name__)
-                            conn_span.set_attribute(OI.ERROR_MESSAGE, str(e))
-                        except Exception:
-                            pass
-                    raise
+            # Define step coroutines as closures to capture self
+            async def _ensure_connection(ctx: Dict[str, Any]) -> bool:
+                await mongodb_tools.connect()
+                return True
 
-            # Parse intent via LLM
-            with tracer.start_as_current_span(
-                "planner.parse_intent",
-                kind=trace.SpanKind.INTERNAL,
-                attributes={getattr(OI, 'INPUT_VALUE', 'input.value'): (query or "")[:1000]},
-            ) as parse_span:
-                intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
-                if parse_span:
-                    try:
-                        parse_span.set_attribute("intent.success", bool(intent))
-                    except Exception:
-                        pass
-            if not intent:
-                return {
-                    "success": False,
-                    "error": "Failed to parse query intent",
-                    "query": query
-                }
+            async def _parse_intent(ctx: Dict[str, Any]) -> Optional[QueryIntent]:
+                return await self.llm_parser.parse(ctx["query"])  # type: ignore[index]
 
-            # Generate the pipeline
-            with tracer.start_as_current_span(
-                "planner.generate_pipeline",
-                kind=trace.SpanKind.INTERNAL,
-            ) as gen_span:
-                pipeline = self.generator.generate_pipeline(intent)
-                if gen_span:
-                    try:
-                        gen_span.set_attribute("pipeline.stage_count", len(pipeline or []))
-                        preview = str(pipeline)[:1500]
-                        gen_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                    except Exception:
-                        pass
+            def _parse_validator(result: Any, _ctx: Dict[str, Any]) -> bool:
+                return result is not None
 
-            # Execute the query
-            with tracer.start_as_current_span(
-                "planner.execute_query",
-                kind=trace.SpanKind.INTERNAL,
-                attributes={
-                    "collection": intent.primary_entity,
-                    "database.name": DATABASE_NAME,
-                },
-            ) as exec_span:
+            def _generate_pipeline(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+                return self.generator.generate_pipeline(ctx["intent"])  # type: ignore[index]
+
+            async def _execute(ctx: Dict[str, Any]) -> Any:
+                intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
                 args = {
                     "database": DATABASE_NAME,
                     "collection": intent.primary_entity,
-                    "pipeline": pipeline,
+                    "pipeline": ctx["pipeline"],
                 }
-                if exec_span:
-                    try:
-                        exec_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str({**args, "pipeline": "<omitted>"})[:1000])
-                        exec_span.set_attribute("pipeline.stage_count", len(pipeline or []))
-                    except Exception:
-                        pass
-                result = await mongodb_tools.execute_tool("aggregate", args)
-                if exec_span:
-                    try:
-                        size = len(result) if isinstance(result, list) else 1 if result is not None else 0
-                        exec_span.set_attribute("result.size", size)
-                        exec_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), (str(result)[:1200] if not isinstance(result, list) else f"list[{size}]") )
-                    except Exception:
-                        pass
+                return await mongodb_tools.execute_tool("aggregate", args)
+
+            steps: List[StepSpec] = [
+                StepSpec(
+                    name="ensure_connection",
+                    coroutine=as_async(_ensure_connection),
+                    requires=(),
+                    provides="connected",
+                    retries=2,
+                    timeout_s=8.0,
+                ),
+                StepSpec(
+                    name="parse_intent",
+                    coroutine=as_async(_parse_intent),
+                    requires=("query",),
+                    provides="intent",
+                    timeout_s=15.0,
+                    retries=1,
+                    validator=_parse_validator,
+                ),
+                StepSpec(
+                    name="generate_pipeline",
+                    coroutine=as_async(_generate_pipeline),
+                    requires=("intent",),
+                    provides="pipeline",
+                    timeout_s=5.0,
+                ),
+                StepSpec(
+                    name="execute_query",
+                    coroutine=as_async(_execute),
+                    requires=("intent", "pipeline"),
+                    provides="result",
+                    timeout_s=20.0,
+                    retries=1,
+                ),
+            ]
+
+            ctx = await self.orchestrator.run(
+                steps,
+                initial_context={"query": query},
+                correlation_id=f"planner_{hash(query) & 0xFFFFFFFF:x}",
+            )
+
+            intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
+            pipeline: List[Dict[str, Any]] = ctx["pipeline"]  # type: ignore[assignment]
+            result = ctx.get("result")
 
             return {
                 "success": True,
                 "intent": intent.__dict__,
                 "pipeline": pipeline,
                 "result": result,
-                "planner": "llm"
+                "planner": "llm",
             }
-
         except Exception as e:
-            # Attach error details to a span if one is current
             try:
                 current_span = trace.get_current_span()
                 if current_span:
@@ -1153,7 +1142,7 @@ class Planner:
             return {
                 "success": False,
                 "error": str(e),
-                "query": query
+                "query": query,
             }
 
 # Global instance
