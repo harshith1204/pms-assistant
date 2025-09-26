@@ -155,13 +155,29 @@ def filter_meaningful_content(data: Any) -> Any:
 
 @tool
 async def mongo_query(query: str, show_all: bool = False) -> str:
-    """Execute natural language queries against the Project Management database.
+    """Plan-first Mongo query executor for structured, factual questions.
+
+    Use this ONLY when the user asks for authoritative data that must come from
+    MongoDB (counts, lists, filters, group-by, state/assignee/project details)
+    across collections: `project`, `workItem`, `cycle`, `module`, `members`,
+    `page`, `projectState`.
+
+    Do NOT use this for:
+    - Free-form content questions (use `rag_answer_question` or `rag_content_search`).
+    - Pure summarization or opinion without data retrieval.
+    - When you already have the exact answer in prior tool results.
+
+    Behavior:
+    - Follows a planner to generate a safe aggregation pipeline; avoids
+      hallucinated fields.
+    - Return concise summaries by default; pass `show_all=True` only when the
+      user explicitly requests full records.
 
     Args:
-        query: Natural language query about projects, work items, cycles, members, pages, modules, or project states.
-        show_all: If True, show all results instead of a summary (may be verbose for large datasets).
+        query: Natural language, structured data request about PM entities.
+        show_all: If True, output full details instead of a summary. Use sparingly.
 
-    Returns: Query results formatted for easy reading.
+    Returns: A compact result suitable for direct user display.
     """
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
@@ -467,17 +483,24 @@ class RAGTool:
 
 @tool
 async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
-    """Search for page and work item content using RAG (Retrieval-Augmented Generation).
+    """Retrieve relevant content snippets for inspection (not final answers).
 
-    This tool searches through stored page and work item content in Qdrant vector database
-    to find relevant information for answering questions about specific content.
+    Use to locate semantically relevant `page` or `work_item` snippets via RAG
+    when the user asks to "search/find/show examples" or when you need context
+    BEFORE answering. Prefer `rag_answer_question` when the user asks a direct
+    question that needs synthesized context.
+
+    Do NOT use this for:
+    - Structured database facts (use `mongo_query`).
+    - Producing the final answer. This returns excerpts to read, not conclusions.
+    - Large limits by default; keep `limit` small (<= 5) unless the user asks.
 
     Args:
-        query: Natural language question or search terms about page or work item content.
-        content_type: Type of content to search ('page', 'work_item', or None for both).
-        limit: Maximum number of results to return (default: 5).
+        query: Search phrase to find related content.
+        content_type: 'page' | 'work_item' | None (both).
+        limit: How many snippets to show (default 5).
 
-    Returns: Formatted search results with relevant content snippets and relevance scores.
+    Returns: Snippets with scores to inform subsequent reasoning.
     """
     try:
         rag_tool = RAGTool()
@@ -510,16 +533,24 @@ async def rag_content_search(query: str, content_type: str = None, limit: int = 
 
 @tool
 async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
-    """Answer questions about page and work item content using RAG.
+    """Assemble compact context to answer a content question (RAG-first).
 
-    This tool retrieves relevant context from the Qdrant vector database
-    and provides context for answering questions about specific content.
+    Use when the user asks a direct question about content in `page`/`work_item`
+    data and you need short, high-signal context to support your answer.
+
+    Do NOT use this for:
+    - Structured facts like counts/groupings (use `mongo_query`).
+    - Broad content discovery (use `rag_content_search`).
+
+    Behavior:
+    - Gathers a few high-relevance snippets and returns them as context to read.
+    - Keep the final answer in the agent message; this tool returns only context.
 
     Args:
-        question: Natural language question about page or work item content.
-        content_types: List of content types to search ('page', 'work_item', or None for both).
+        question: The specific content question to answer.
+        content_types: Optional list of ['page','work_item']; defaults to both.
 
-    Returns: Relevant context and content snippets for answering the question.
+    Returns: Concise context snippets for the agent to read and then answer.
     """
     try:
         rag_tool = RAGTool()
@@ -544,17 +575,21 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
 
 @tool
 async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
-    """Find work items matching a free-text query via RAG, then fetch state and assignee from Mongo.
+    """Bridge free-text to canonical work item records (RAG → Mongo).
 
-    Steps:
-    1) Use vector search over work item content to collect candidate Mongo IDs
-    2) Fetch those work items via aggregation `$in` and project key fields
+    Use when the user describes issues in prose and wants real work items with
+    authoritative fields (e.g., `state.name`, `assignee`, `project.name`). This
+    first vector-matches likely items, then fetches official records from Mongo.
+
+    Do NOT use this for:
+    - Pure semantic browsing without mapping to Mongo (use `rag_content_search`).
+    - Arbitrary entities other than work items.
 
     Args:
-        query: Free-text like "login timeout" or any phrase to search in content
-        limit: Max number of work items to return
+        query: Free-text description to match work items.
+        limit: Maximum records to return (keep modest; default 20).
 
-    Returns: A compact, human-readable summary of matched work items with state and assignee.
+    Returns: Brief lines summarizing matched items with canonical fields.
     """
     try:
         # Step 1: RAG search for work items only
