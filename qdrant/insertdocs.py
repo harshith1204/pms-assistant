@@ -101,6 +101,10 @@ def parse_editorjs_blocks(content_str: str):
         print(f"⚠️ Failed to parse content: {e}")
         return [], ""
 
+def point_id_from_seed(seed: str) -> str:
+    """Create a deterministic UUID from a seed string for Qdrant point IDs."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+
 def chunk_text(text: str, max_words: int = 300, overlap_words: int = 60):
     """Split long text into overlapping word chunks suitable for embeddings.
 
@@ -187,7 +191,7 @@ def index_pages_to_qdrant():
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
                 point = PointStruct(
-                    id=f"{mongo_id}::page::{idx}",
+                    id=point_id_from_seed(f"{mongo_id}/page/{idx}"),
                     vector=vector,
                     payload={
                         "mongo_id": mongo_id,
@@ -248,7 +252,7 @@ def index_workitems_to_qdrant():
             vector = embedder.encode(combined_text).tolist()
 
             point = PointStruct(
-                id=mongo_id,
+                id=point_id_from_seed(f"{mongo_id}/work_item"),
                 vector=vector,
                 payload={
                     "mongo_id": mongo_id,
@@ -291,7 +295,7 @@ def index_projects_to_qdrant():
 
             vector = embedder.encode(combined_text).tolist()
             point = PointStruct(
-                id=f"{mongo_id}::project",
+                id=point_id_from_seed(f"{mongo_id}/project"),
                 vector=vector,
                 payload={
                     "mongo_id": mongo_id,
@@ -333,7 +337,7 @@ def index_cycles_to_qdrant():
 
             vector = embedder.encode(combined_text).tolist()
             point = PointStruct(
-                id=f"{mongo_id}::cycle",
+                id=point_id_from_seed(f"{mongo_id}/cycle"),
                 vector=vector,
                 payload={
                     "mongo_id": mongo_id,
@@ -375,7 +379,7 @@ def index_modules_to_qdrant():
 
             vector = embedder.encode(combined_text).tolist()
             point = PointStruct(
-                id=f"{mongo_id}::module",
+                id=point_id_from_seed(f"{mongo_id}/module"),
                 vector=vector,
                 payload={
                     "mongo_id": mongo_id,

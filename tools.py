@@ -608,7 +608,7 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         titles: List[str] = []
         seen_ids: set[str] = set()
         for r in rag_results:
-            mongo_id = str(r.get("id") or r.get("mongo_id") or "").strip()
+            mongo_id = str(r.get("mongo_id") or r.get("id") or "").strip()
             title = str(r.get("title") or "").strip()
             if mongo_id and mongo_id not in seen_ids:
                 seen_ids.add(mongo_id)
