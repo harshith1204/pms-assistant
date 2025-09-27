@@ -153,6 +153,223 @@ def filter_meaningful_content(data: Any) -> Any:
     return clean_document(normalized_data)
 
 
+def _is_hex_object_id(value: str) -> bool:
+    try:
+        return isinstance(value, str) and len(value) == 24 and all(c in '0123456789abcdefABCDEF' for c in value)
+    except Exception:
+        return False
+
+
+def _is_binary_placeholder(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("<binary:")
+
+
+def _is_uuid_string(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    # Simple UUID v4-like pattern check
+    if len(value) != 36:
+        return False
+    parts = value.split("-")
+    if len(parts) != 5:
+        return False
+    expected_lengths = [8, 4, 4, 4, 12]
+    for part, L in zip(parts, expected_lengths):
+        if len(part) != L:
+            return False
+        if not all(c in '0123456789abcdefABCDEF' for c in part):
+            return False
+    return True
+
+
+def _is_id_like_key(key: str) -> bool:
+    # Allowlist display ids
+    ALLOWLIST = {"projectDisplayId"}
+    if key in ALLOWLIST:
+        return False
+    lowered = key.lower()
+    return (
+        key == "_id"
+        or lowered == "id"
+        or lowered.endswith("id")  # memberId, projectId, defaultAsigneeId, etc.
+        or lowered.endswith("_id")
+        or lowered.endswith("uuid")
+    )
+
+
+def _strip_ids(value: Any) -> Any:
+    """Recursively remove id/uuid-like fields and raw id values from documents."""
+    if isinstance(value, dict):
+        cleaned: Dict[str, Any] = {}
+        for k, v in value.items():
+            if _is_id_like_key(k):
+                # drop id-like keys entirely
+                continue
+            # Recurse first
+            v2 = _strip_ids(v)
+            # Drop values that are just IDs or binary placeholders
+            if isinstance(v2, str) and (_is_hex_object_id(v2) or _is_uuid_string(v2) or _is_binary_placeholder(v2)):
+                continue
+            if v2 is None:
+                continue
+            # Drop empty containers
+            if isinstance(v2, (dict, list)) and not v2:
+                continue
+            cleaned[k] = v2
+        return cleaned
+    if isinstance(value, list):
+        items = [_strip_ids(x) for x in value]
+        items = [x for x in items if x not in (None, {}) and not (isinstance(x, str) and (_is_hex_object_id(x) or _is_uuid_string(x) or _is_binary_placeholder(x)))]
+        return items
+    return value
+
+
+def _ensure_list_of_names(obj: Any) -> List[str]:
+    names: List[str] = []
+    if isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("title")
+                if isinstance(name, str) and name.strip():
+                    names.append(name)
+            elif isinstance(item, str) and item.strip() and not _is_hex_object_id(item) and not _is_binary_placeholder(item):
+                names.append(item)
+    elif isinstance(obj, dict):
+        name = obj.get("name") or obj.get("title")
+        if isinstance(name, str) and name.strip():
+            names.append(name)
+    elif isinstance(obj, str) and obj.strip():
+        names.append(obj)
+    return names
+
+
+def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> Dict[str, Any]:
+    if not isinstance(doc, dict):
+        return doc  # type: ignore[return-value]
+
+    collection = (collection or "").strip()
+    out: Dict[str, Any] = {}
+
+    def copy_if_present(key: str, alias: Optional[str] = None):
+        val = doc.get(key)
+        if val is not None:
+            out[alias or key] = val
+
+    # Common flatteners
+    def set_name(source_key: str, target_key: str):
+        val = doc.get(source_key)
+        if isinstance(val, dict):
+            name = val.get("name") or val.get("title")
+            if name:
+                out[target_key] = name
+
+    def set_names_list(source_key: str, target_key: str):
+        val = doc.get(source_key)
+        names = _ensure_list_of_names(val)
+        if names:
+            out[target_key] = names
+
+    # Always useful common keys
+    for k in ["title", "name", "description", "status", "priority", "label",
+              "visibility", "access", "imageUrl", "icon",
+              "favourite", "isFavourite", "isActive", "isArchived",
+              "content", "displayBugNo", "projectDisplayId",
+              "startDate", "endDate", "createdAt", "updatedAt"]:
+        if k in doc:
+            out[k] = doc[k]
+
+    # Per collection enrichments
+    if collection == "workItem":
+        set_name("project", "projectName")
+        set_name("state", "stateName")
+        set_name("stateMaster", "stateMasterName")
+        set_name("cycle", "cycleName")
+        # modules in schema is a single subdoc despite plural key
+        set_name("modules", "moduleName")
+        set_name("business", "businessName")
+        set_name("createdBy", "createdByName")
+        set_names_list("assignee", "assignees")
+        set_names_list("updatedBy", "updatedBy")
+
+    elif collection == "project":
+        set_name("business", "businessName")
+        set_name("lead", "leadName")
+        set_name("defaultAsignee", "defaultAssigneeName")
+        set_name("createdBy", "createdByName")
+        copy_if_present("leadMail")
+
+    elif collection == "cycle":
+        # Project may only contain id; we skip if name isn't present
+        set_name("project", "projectName")
+
+    elif collection == "module":
+        set_name("project", "projectName")
+        set_name("lead", "leadName")
+        set_names_list("assignee", "assignees")
+
+    elif collection == "members":
+        set_name("project", "projectName")
+        set_name("staff", "staffName")
+
+    elif collection == "page":
+        set_name("project", "projectName")
+        set_name("createdBy", "createdByName")
+        set_name("business", "businessName")
+        # Linked arrays could contain ids only; surface counts
+        if isinstance(doc.get("linkedCycle"), list):
+            out["linkedCycleCount"] = len(doc["linkedCycle"])  # type: ignore[index]
+        if isinstance(doc.get("linkedModule"), list):
+            out["linkedModuleCount"] = len(doc["linkedModule"])  # type: ignore[index]
+
+    elif collection == "projectState":
+        # Keep core fields and slim subStates
+        substates = doc.get("subStates")
+        if isinstance(substates, list):
+            slim: List[Dict[str, Any]] = []
+            for s in substates:
+                if isinstance(s, dict):
+                    entry: Dict[str, Any] = {}
+                    if isinstance(s.get("name"), str):
+                        entry["name"] = s["name"]
+                    if isinstance(s.get("order"), (int, float)):
+                        entry["order"] = s["order"]
+                    if entry:
+                        slim.append(entry)
+            if slim:
+                out["subStates"] = slim
+
+    # Drop empty/None values
+    out = {k: v for k, v in out.items() if v not in (None, "", [], {})}
+    return out
+
+
+def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None) -> Any:
+    """Preserve meaningful fields, strip IDs/UUIDs, and flatten references per collection.
+
+    Steps:
+    1) Use existing filter to keep meaningful content fields.
+    2) Strip any remaining id/uuid-like keys/values.
+    3) Apply per-collection flatteners to surface human-friendly names.
+    """
+    base = filter_meaningful_content(data)
+    stripped = _strip_ids(base)
+
+    def enrich(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            # Merge base with collection-specific projection
+            extra = _transform_by_collection(obj, primary_entity)
+            # Overlay extra on top of obj (extra wins)
+            merged = {**obj, **extra}
+            return {k: v for k, v in merged.items() if v not in (None, "", [], {})}
+        return obj
+
+    if isinstance(stripped, list):
+        return [enrich(x) for x in stripped]
+    if isinstance(stripped, dict):
+        return enrich(stripped)
+    return stripped
+
+
 @tool
 async def mongo_query(query: str, show_all: bool = False) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
@@ -254,10 +471,10 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                     filtered = documents
                 else:
                     # Regular list, filter as before
-                    filtered = filter_meaningful_content(parsed)
+                    filtered = parsed
             else:
                 # Not a list, filter as before
-                filtered = filter_meaningful_content(parsed)
+                filtered = parsed
 
 
             def format_llm_friendly(data, max_items=20):
@@ -364,6 +581,10 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 else:
                     # Fallback to JSON for other data types
                     return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
+
+            # Apply strong filter/transform now that we know the primary entity
+            primary_entity = intent.get('primary_entity') if isinstance(intent, dict) else None
+            filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
 
             # Format in LLM-friendly way
             max_items = None if show_all else 20
@@ -756,16 +977,16 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
             return f"❌ No MongoDB records found for the RAG matches or fallbacks of '{query}'"
 
         # Keep content meaningful
-        cleaned = filter_meaningful_content(docs)
+        cleaned = filter_and_transform_content(docs, primary_entity="workItem")
 
         # Render
         lines = [f"🔗 Matches for '{query}':"]
-        for d in cleaned[:limit]:
+        for i, d in enumerate(cleaned[:limit], 1):
             if not isinstance(d, dict):
                 continue
-            bug = d.get("displayBugNo") or d.get("_id")
+            bug = d.get("displayBugNo") or d.get("title") or f"Item {i}"
             title = d.get("title", "(no title)")
-            state = (d.get("state") or {}).get("name") if isinstance(d.get("state"), dict) else d.get("state")
+            state = d.get("stateName") or ((d.get("state") or {}).get("name") if isinstance(d.get("state"), dict) else d.get("state"))
             # assignee may be array or object depending on schema; try best-effort
             assignee_val = d.get("assignee")
             if isinstance(assignee_val, dict):
@@ -773,7 +994,7 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
             elif isinstance(assignee_val, list) and assignee_val and isinstance(assignee_val[0], dict):
                 assignee = assignee_val[0].get("name")
             else:
-                assignee = None
+                assignee = (d.get("assignees") or [None])[0] if isinstance(d.get("assignees"), list) else None
             lines.append(f"• {bug}: {title} — state={state or 'N/A'}, assignee={assignee or 'N/A'}")
 
         return "\n".join(lines)
