@@ -62,6 +62,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "GENERAL RULES:\n"
     "- Never guess facts about the database or content. Prefer invoking a tool.\n"
     "- If a tool is appropriate, always call it before answering.\n"
+    "- Do NOT narrate your plan (e.g., 'let me think'). Call a tool first.\n"
     "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
     "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
     "DECISION GUIDE:\n"
@@ -694,6 +695,13 @@ class MongoDBAgent:
 
                 # If no tools requested, we are done
                 if not getattr(response, "tool_calls", None):
+                    # Fallback: if router allowed mongo_query but LLM didn't call it, invoke it directly
+                    if "mongo_query" in allowed_names and "mongo_query" in _TOOLS_BY_NAME:
+                        try:
+                            result = await _TOOLS_BY_NAME["mongo_query"].ainvoke({"query": query})
+                            return str(result)
+                        except Exception:
+                            pass
                     return response.content
 
                 # Execute requested tools sequentially
@@ -896,6 +904,14 @@ class MongoDBAgent:
                     conversation_memory.add_message(conversation_id, response)
 
                     if not getattr(response, "tool_calls", None):
+                        # Fallback: if router allowed mongo_query but LLM didn't call it, invoke it directly
+                        if "mongo_query" in allowed_names and "mongo_query" in _TOOLS_BY_NAME:
+                            try:
+                                result = await _TOOLS_BY_NAME["mongo_query"].ainvoke({"query": query})
+                                yield str(result)
+                                return
+                            except Exception:
+                                pass
                         yield response.content
                         return
 
