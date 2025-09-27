@@ -2,12 +2,9 @@ from langchain_ollama import ChatOllama
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_mcp_adapters.client import MultiServerMCPClient
-import json
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
-from pydantic import BaseModel
 import tools
 from datetime import datetime
 import time
@@ -26,7 +23,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 import pandas as pd
 import threading
 import time
-from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
+from opentelemetry.sdk.trace.export import SpanProcessor
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 
 # OpenInference semantic conventions (optional)
