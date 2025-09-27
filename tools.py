@@ -155,13 +155,29 @@ def filter_meaningful_content(data: Any) -> Any:
 
 @tool
 async def mongo_query(query: str, show_all: bool = False) -> str:
-    """Execute natural language queries against the Project Management database.
+    """Plan-first Mongo query executor for structured, factual questions.
+
+    Use this ONLY when the user asks for authoritative data that must come from
+    MongoDB (counts, lists, filters, group-by, state/assignee/project details)
+    across collections: `project`, `workItem`, `cycle`, `module`, `members`,
+    `page`, `projectState`.
+
+    Do NOT use this for:
+    - Free-form content questions (use `rag_answer_question` or `rag_content_search`).
+    - Pure summarization or opinion without data retrieval.
+    - When you already have the exact answer in prior tool results.
+
+    Behavior:
+    - Follows a planner to generate a safe aggregation pipeline; avoids
+      hallucinated fields.
+    - Return concise summaries by default; pass `show_all=True` only when the
+      user explicitly requests full records.
 
     Args:
-        query: Natural language query about projects, work items, cycles, members, pages, modules, or project states.
-        show_all: If True, show all results instead of a summary (may be verbose for large datasets).
+        query: Natural language, structured data request about PM entities.
+        show_all: If True, output full details instead of a summary. Use sparingly.
 
-    Returns: Query results formatted for easy reading.
+    Returns: A compact result suitable for direct user display.
     """
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
@@ -430,6 +446,10 @@ class RAGTool:
                     "title": payload.get("title", "Untitled"),
                     "content": payload.get("content", ""),
                     "content_type": payload.get("content_type", "unknown"),
+                    "mongo_id": payload.get("mongo_id"),
+                    "parent_id": payload.get("parent_id"),
+                    "chunk_index": payload.get("chunk_index"),
+                    "chunk_count": payload.get("chunk_count"),
                     # "metadata": payload.get("metadata", {})
                 })
 
@@ -442,7 +462,7 @@ class RAGTool:
     async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
         """Get relevant context for answering questions about page and work item content"""
         if not content_types:
-            content_types = ["page", "work_item"]
+            content_types = ["page", "work_item", "project", "cycle", "module"]
 
         all_results = []
         for content_type in content_types:
@@ -456,8 +476,11 @@ class RAGTool:
         context_parts = []
         # print(all_results)
         for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
+            chunk_info = ""
+            if result.get("chunk_index") is not None and result.get("chunk_count"):
+                chunk_info = f" (chunk {int(result['chunk_index'])+1}/{int(result['chunk_count'])})"
             context_parts.append(
-                f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                f"[{i}] {result['content_type'].upper()}: {result['title']}{chunk_info}\n"
                 f"Content: {result['content'][:500]}{'...' if len(result['content']) > 500 else ''}\n"
                 f"Relevance Score: {result['score']:.3f}\n"
             )
@@ -467,17 +490,24 @@ class RAGTool:
 
 @tool
 async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
-    """Search for page and work item content using RAG (Retrieval-Augmented Generation).
+    """Retrieve relevant content snippets for inspection (not final answers).
 
-    This tool searches through stored page and work item content in Qdrant vector database
-    to find relevant information for answering questions about specific content.
+    Use to locate semantically relevant `page` or `work_item` snippets via RAG
+    when the user asks to "search/find/show examples" or when you need context
+    BEFORE answering. Prefer `rag_answer_question` when the user asks a direct
+    question that needs synthesized context.
+
+    Do NOT use this for:
+    - Structured database facts (use `mongo_query`).
+    - Producing the final answer. This returns excerpts to read, not conclusions.
+    - Large limits by default; keep `limit` small (<= 5) unless the user asks.
 
     Args:
-        query: Natural language question or search terms about page or work item content.
-        content_type: Type of content to search ('page', 'work_item', or None for both).
-        limit: Maximum number of results to return (default: 5).
+        query: Search phrase to find related content.
+        content_type: 'page' | 'work_item' | None (both).
+        limit: How many snippets to show (default 5).
 
-    Returns: Formatted search results with relevant content snippets and relevance scores.
+    Returns: Snippets with scores to inform subsequent reasoning.
     """
     try:
         rag_tool = RAGTool()
@@ -510,16 +540,24 @@ async def rag_content_search(query: str, content_type: str = None, limit: int = 
 
 @tool
 async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
-    """Answer questions about page and work item content using RAG.
+    """Assemble compact context to answer a content question (RAG-first).
 
-    This tool retrieves relevant context from the Qdrant vector database
-    and provides context for answering questions about specific content.
+    Use when the user asks a direct question about content in `page`/`work_item`
+    data and you need short, high-signal context to support your answer.
+
+    Do NOT use this for:
+    - Structured facts like counts/groupings (use `mongo_query`).
+    - Broad content discovery (use `rag_content_search`).
+
+    Behavior:
+    - Gathers a few high-relevance snippets and returns them as context to read.
+    - Keep the final answer in the agent message; this tool returns only context.
 
     Args:
-        question: Natural language question about page or work item content.
-        content_types: List of content types to search ('page', 'work_item', or None for both).
+        question: The specific content question to answer.
+        content_types: Optional list of ['page','work_item']; defaults to both.
 
-    Returns: Relevant context and content snippets for answering the question.
+    Returns: Concise context snippets for the agent to read and then answer.
     """
     try:
         rag_tool = RAGTool()
@@ -544,17 +582,21 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
 
 @tool
 async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
-    """Find work items matching a free-text query via RAG, then fetch state and assignee from Mongo.
+    """Bridge free-text to canonical work item records (RAG → Mongo).
 
-    Steps:
-    1) Use vector search over work item content to collect candidate Mongo IDs
-    2) Fetch those work items via aggregation `$in` and project key fields
+    Use when the user describes issues in prose and wants real work items with
+    authoritative fields (e.g., `state.name`, `assignee`, `project.name`). This
+    first vector-matches likely items, then fetches official records from Mongo.
+
+    Do NOT use this for:
+    - Pure semantic browsing without mapping to Mongo (use `rag_content_search`).
+    - Arbitrary entities other than work items.
 
     Args:
-        query: Free-text like "login timeout" or any phrase to search in content
-        limit: Max number of work items to return
+        query: Free-text description to match work items.
+        limit: Maximum records to return (keep modest; default 20).
 
-    Returns: A compact, human-readable summary of matched work items with state and assignee.
+    Returns: Brief lines summarizing matched items with canonical fields.
     """
     try:
         # Step 1: RAG search for work items only
@@ -566,7 +608,7 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         titles: List[str] = []
         seen_ids: set[str] = set()
         for r in rag_results:
-            mongo_id = str(r.get("id") or r.get("mongo_id") or "").strip()
+            mongo_id = str(r.get("mongo_id") or r.get("id") or "").strip()
             title = str(r.get("title") or "").strip()
             if mongo_id and mongo_id not in seen_ids:
                 seen_ids.add(mongo_id)
@@ -577,46 +619,84 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         # Partition IDs: keep only 24-hex strings for ObjectId conversion; ignore UUIDs here
         object_id_strings = [s for s in all_ids if len(s) == 24 and all(c in '0123456789abcdefABCDEF' for c in s)]
         object_id_strings = object_id_strings[: max(0, limit)]
-        title_patterns = titles[: max(0, limit)]
-        if not object_id_strings and not title_patterns:
-            return f"❌ No matching work items found for: '{query}'"
+        # Deduplicate and cap titles
+        seen_titles: set[str] = set()
+        title_patterns: List[str] = []
+        for t in titles:
+            if t and t not in seen_titles:
+                seen_titles.add(t)
+                title_patterns.append(t)
+            if len(title_patterns) >= max(0, limit):
+                break
 
-        # Step 2: Fetch work items by _id list, converting string IDs to ObjectId via $toObjectId
-        # Use $expr + $in + $map to avoid client-side ObjectId construction
-        or_clauses: List[Dict[str, Any]] = []
-        if object_id_strings:
-            id_array_expr = {
-                "$map": {
-                    "input": object_id_strings,
-                    "as": "id",
-                    "in": {"$toObjectId": "$$id"}
+        # Helper builders
+        def build_match_from_ids_and_titles(ids: List[str], title_list: List[str]) -> Dict[str, Any]:
+            or_clauses_local: List[Dict[str, Any]] = []
+            if ids:
+                id_array_expr = {
+                    "$map": {
+                        "input": ids,
+                        "as": "id",
+                        "in": {"$toObjectId": "$$id"}
+                    }
+                }
+                or_clauses_local.append({"$expr": {"$in": ["$_id", id_array_expr]}})
+            if title_list:
+                # Use escaped regex to avoid pathological patterns
+                title_or = [{"title": {"$regex": re.escape(t), "$options": "i"}} for t in title_list if t]
+                if title_or:
+                    or_clauses_local.append({"$or": title_or})
+            if not or_clauses_local:
+                return {"$match": {"_id": {"$exists": True}}}  # no-op match
+            if len(or_clauses_local) == 1:
+                return {"$match": or_clauses_local[0]}
+            return {"$match": {"$or": or_clauses_local}}
+
+        def project_stage() -> Dict[str, Any]:
+            return {
+                "$project": {
+                    "_id": 1,
+                    "displayBugNo": 1,
+                    "title": 1,
+                    "state.name": 1,
+                    "assignee.name": 1,
+                    "project.name": 1,
+                    "createdTimeStamp": 1,
                 }
             }
-            or_clauses.append({"$expr": {"$in": ["$_id", id_array_expr]}})
 
-        if title_patterns:
-            # Build an $or of case-insensitive regex matches on title as a fallback
-            title_or = [{"title": {"$regex": t, "$options": "i"}} for t in title_patterns]
-            if title_or:
-                or_clauses.append({"$or": title_or})
+        def parse_mcp_rows(rows_any: Any) -> List[Dict[str, Any]]:
+            try:
+                parsed_local = json.loads(rows_any) if isinstance(rows_any, str) else rows_any
+            except Exception:
+                parsed_local = rows_any
+            docs_local: List[Dict[str, Any]] = []
+            if isinstance(parsed_local, list) and parsed_local:
+                if isinstance(parsed_local[0], str) and parsed_local[0].startswith("Found"):
+                    for item in parsed_local[1:]:
+                        if isinstance(item, str):
+                            try:
+                                doc = json.loads(item)
+                                if isinstance(doc, dict):
+                                    docs_local.append(doc)
+                            except Exception:
+                                continue
+                        elif isinstance(item, dict):
+                            docs_local.append(item)
+                else:
+                    # Filter only dicts
+                    docs_local = [d for d in parsed_local if isinstance(d, dict)]
+            elif isinstance(parsed_local, dict):
+                docs_local = [parsed_local]
+            else:
+                docs_local = []
+            return docs_local
 
-        match_stage: Dict[str, Any]
-        if len(or_clauses) == 1:
-            match_stage = {"$match": or_clauses[0]}
-        else:
-            match_stage = {"$match": {"$or": or_clauses}}
-
+        # Step 2: First attempt — match by RAG object IDs and RAG titles
+        primary_match = build_match_from_ids_and_titles(object_id_strings, title_patterns)
         pipeline = [
-            match_stage,
-            {"$project": {
-                "_id": 1,
-                "displayBugNo": 1,
-                "title": 1,
-                "state.name": 1,
-                "assignee.name": 1,
-                "project.name": 1,
-                "createdTimeStamp": 1,
-            }},
+            primary_match,
+            project_stage(),
             {"$limit": limit}
         ]
 
@@ -629,14 +709,45 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         rows = await mongodb_tools.execute_tool("aggregate", args)
 
         # Normalize and produce a compact summary
-        try:
-            parsed = json.loads(rows) if isinstance(rows, str) else rows
-        except Exception:
-            parsed = rows
+        docs = parse_mcp_rows(rows)
 
-        docs = parsed if isinstance(parsed, list) else ([] if parsed is None else [parsed])
+        # Fallback 1: If nothing matched via IDs/titles, try Mongo text search
         if not docs:
-            return f"❌ No MongoDB records found for the RAG matches of '{query}'"
+            text_pipeline = [
+                {"$match": {"$text": {"$search": query}}},
+                project_stage(),
+                {"$limit": limit}
+            ]
+            rows_text = await mongodb_tools.execute_tool("aggregate", {
+                "database": DATABASE_NAME,
+                "collection": "workItem",
+                "pipeline": text_pipeline,
+            })
+            docs = parse_mcp_rows(rows_text)
+
+        # Fallback 2: Regex across common fields and tokens
+        if not docs:
+            tokens = [w for w in re.findall(r"[A-Za-z0-9_]+", query) if w]
+            field_list = ["title", "description", "state.name", "project.name", "cycle.name", "modules.name"]
+            and_conditions: List[Dict[str, Any]] = []
+            for tok in tokens:
+                or_fields = [{fld: {"$regex": re.escape(tok), "$options": "i"}} for fld in field_list]
+                and_conditions.append({"$or": or_fields})
+            regex_match = {"$match": {"$and": and_conditions}} if and_conditions else {"$match": {"_id": {"$exists": True}}}
+            regex_pipeline = [
+                regex_match,
+                project_stage(),
+                {"$limit": limit}
+            ]
+            rows_regex = await mongodb_tools.execute_tool("aggregate", {
+                "database": DATABASE_NAME,
+                "collection": "workItem",
+                "pipeline": regex_pipeline,
+            })
+            docs = parse_mcp_rows(rows_regex)
+
+        if not docs:
+            return f"❌ No MongoDB records found for the RAG matches or fallbacks of '{query}'"
 
         # Keep content meaningful
         cleaned = filter_meaningful_content(docs)

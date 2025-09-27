@@ -16,9 +16,10 @@ interface Message {
 
 interface ChatMessageProps {
   message: Message;
+  showToolOutputs?: boolean;
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
 
   const copyToClipboard = () => {
@@ -173,7 +174,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
               {message.content}
             </div>
             
-            {message.type === "tool" && renderToolOutput()}
+            {message.type === "tool" && showToolOutputs && renderToolOutput()}
           </div>
         </Card>
       </div>
