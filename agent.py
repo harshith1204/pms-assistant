@@ -132,18 +132,22 @@ class ConversationMemory:
 conversation_memory = ConversationMemory()
 
 # Initialize the LLM with optimized settings for tool calling
-llm = ChatOllama(
-    model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
-    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.1")),
-    num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
-    num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
-    num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
-    streaming=True,
-    verbose=False,
-    top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
-    top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
-)
-
+# llm = ChatOllama(
+#     model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
+#     temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.1")),
+#     num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
+#     num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
+#     num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
+#     streaming=True,
+#     verbose=False,
+#     top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
+#     top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
+# )
+llm = ChatGroq(
+            api_key=groq_api_key,
+            model="llama-3.1-8b-instant",
+            streaming=True
+        )
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
