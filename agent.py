@@ -656,29 +656,29 @@ class MongoDBAgent:
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
-                # Lightweight routing hint to bias correct tool choice
-                routing_instructions = SystemMessage(content=(
-                    "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
-                    "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
-                ))
-                # In non-streaming mode, also support a synthesis pass after tools
-                invoke_messages = messages + [routing_instructions]
-                if need_finalization:
-                    finalization_instructions = SystemMessage(content=(
-                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
-                        "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
-                    ))
-                    invoke_messages = messages + [routing_instructions, finalization_instructions]
-                    need_finalization = False
+                        # Lightweight routing hint to bias correct tool choice
+                        routing_instructions = SystemMessage(content=(
+                            "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
+                            "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
+                        ))
+                        # In non-streaming mode, also support a synthesis pass after tools
+                        invoke_messages = messages + [routing_instructions]
+                        if need_finalization:
+                            finalization_instructions = SystemMessage(content=(
+                                "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                                "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
+                            ))
+                            invoke_messages = messages + [routing_instructions, finalization_instructions]
+                            need_finalization = False
 
-                response = await llm_with_tools.ainvoke(invoke_messages)
-                if llm_span and getattr(response, "content", None):
-                        try:
-                            preview = str(response.content)[:500]
-                            llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                            llm_span.add_event("llm_response", {"preview_len": len(preview)})
-                        except Exception:
-                            pass
+                        response = await llm_with_tools.ainvoke(invoke_messages)
+                        if llm_span and getattr(response, "content", None):
+                            try:
+                                preview = str(response.content)[:500]
+                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
+                            except Exception:
+                                pass
                 last_response = response
 
                 # Persist assistant message
