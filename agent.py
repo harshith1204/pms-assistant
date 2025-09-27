@@ -132,24 +132,61 @@ class ConversationMemory:
 conversation_memory = ConversationMemory()
 
 # Initialize the LLM with optimized settings for tool calling
-# llm = ChatOllama(
-#     model="qwen3:0.6b-fp16",
-#     temperature=0.3,
-#     num_ctx=4096,  # Increased context for better understanding
-#     num_predict=1024,  # Allow longer responses for detailed insights
-#     num_thread=8,  # Use multiple threads for speed
-#     streaming=True,  # Enable streaming for real-time responses
-#     verbose=False,
-#     top_p=0.9,  # Better response diversity
-#     top_k=40,  # Focus on high-probability tokens
-# )
-llm = ChatGroq(
-            api_key=groq_api_key,
-            model="llama-3.1-8b-instant",
-            streaming=False
-        )
-# Bind tools to the LLM for tool calling
-llm_with_tools = llm.bind_tools(tools_list)
+llm = ChatOllama(
+    model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
+    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.1")),
+    num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
+    num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
+    num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
+    streaming=True,
+    verbose=False,
+    top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
+    top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
+)
+
+# Simple per-query tool router: restrict RAG unless content/context is requested
+_TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
+
+def _select_tools_for_query(user_query: str):
+    """Return a subset of tools to expose to the LLM for this query.
+
+    Policy:
+    - Default to mongo_query for structured field questions.
+    - Only enable RAG tools when the query clearly asks for content/context.
+    - Enable rag_to_mongo_workitems only when content-like AND canonical fields are requested.
+    """
+    q = (user_query or "").lower()
+    content_markers = [
+        "content", "note", "notes", "doc", "docs", "documentation", "page", "pages",
+        "description", "context", "summarize", "summary", "snippet", "snippets",
+        "search", "find examples", "show examples", "browse"
+    ]
+    workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
+    canonical_field_terms = [
+        "state", "assignee", "project", "count", "group", "filter", "sort",
+        "created", "updated", "date", "due", "id", "displaybugno", "priority"
+    ]
+
+    def has_any(terms):
+        return any(term in q for term in terms)
+
+    # Strict default: Mongo for everything unless content/context explicitly requested
+    allow_rag = has_any(content_markers)
+
+    allowed_names = ["mongo_query"]
+    if allow_rag:
+        # Allow content-oriented RAG tools
+        allowed_names.extend(["rag_content_search", "rag_answer_question"])
+        # Only allow rag_to_mongo_workitems when user mentions work items AND canonical fields
+        if has_any(workitem_terms) and has_any(canonical_field_terms):
+            allowed_names.append("rag_to_mongo_workitems")
+
+    # Map to actual tool objects, keep only those present
+    selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
+    # Fallback safety: if mapping failed for any reason, expose mongo_query only
+    if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
+        selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
+    return selected_tools, allowed_names
 
 
 class PhoenixSpanManager:
@@ -407,6 +444,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         super().__init__()
         self.websocket = websocket
         self.start_time = None
+        # Tool outputs are now always streamed to the frontend for better visibility
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -450,11 +488,13 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
         if self.websocket:
-            await self.websocket.send_json({
+            # Always send full tool outputs to frontend for better visibility
+            payload = {
                 "type": "tool_end",
                 "output": output,
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            await self.websocket.send_json(payload)
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
@@ -469,7 +509,8 @@ class MongoDBAgent:
     """MongoDB Agent using Tool Calling"""
 
     def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
-        self.llm_with_tools = llm_with_tools
+        # Base LLM; tools will be bound per-query via router
+        self.llm_base = llm
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
@@ -583,8 +624,13 @@ class MongoDBAgent:
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
+                need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Choose tools for this query iteration
+                    selected_tools, allowed_names = _select_tools_for_query(query)
+                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
+
                     if tracer is not None:
                         llm_cm = tracer.start_as_current_span(
                             "llm_invoke",
@@ -627,7 +673,8 @@ class MongoDBAgent:
                     "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
                 ))
                 routed_messages = messages + [routing_instructions]
-                response = await self.llm_with_tools.ainvoke(routed_messages)
+                
+                response = await llm_with_tools.ainvoke(routed_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
                             preview = str(response.content)[:500]
@@ -646,6 +693,7 @@ class MongoDBAgent:
 
                 # Execute requested tools sequentially
                 messages.append(response)
+                did_any_tool = False
                 for tool_call in response.tool_calls:
                     if tracer is not None:
                         tool_cm = tracer.start_as_current_span(
@@ -657,7 +705,8 @@ class MongoDBAgent:
                         tool_cm = None
 
                     with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                        tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                        # Enforce router: only allow selected tools
+                        tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                         if not tool:
                             error_msg = ToolMessage(
                                 content=f"Tool '{tool_call['name']}' not found.",
@@ -712,7 +761,12 @@ class MongoDBAgent:
                         )
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
+                        did_any_tool = True
                 steps += 1
+
+                # After executing any tools, force the next LLM turn to synthesize
+                if did_any_tool:
+                    need_finalization = True
 
                 # Step cap reached; return best available answer
                 if last_response is not None:
@@ -779,8 +833,12 @@ class MongoDBAgent:
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
+                need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Choose tools for this query iteration
+                    selected_tools, allowed_names = _select_tools_for_query(query)
+                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
                     if tracer is not None:
                         llm_cm = tracer.start_as_current_span(
                             "llm_invoke",
@@ -807,8 +865,18 @@ class MongoDBAgent:
                             "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
                             "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
                         ))
-                        response = await self.llm_with_tools.ainvoke(
-                            messages + [routing_instructions],
+                        invoke_messages = messages + [routing_instructions]
+                        if need_finalization:
+                            finalization_instructions = SystemMessage(content=(
+                                "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                                "Do not paste tool outputs verbatim or include banners/emojis. "
+                                "If the user asked to browse or see examples, summarize briefly and offer to expand. "
+                                "For work items, present canonical fields succinctly."
+                            ))
+                            invoke_messages = messages + [routing_instructions, finalization_instructions]
+                            need_finalization = False
+                        response = await llm_with_tools.ainvoke(
+                            invoke_messages,
                             config={"callbacks": [callback_handler]},
                         )
                         if llm_span and getattr(response, "content", None):
@@ -829,6 +897,7 @@ class MongoDBAgent:
 
                     # Execute requested tools sequentially with streaming callbacks
                     messages.append(response)
+                    did_any_tool = False
                     for tool_call in response.tool_calls:
                         if tracer is not None:
                             tool_cm = tracer.start_as_current_span(
@@ -840,7 +909,8 @@ class MongoDBAgent:
                             tool_cm = None
 
                         with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                            tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                            # Enforce router: only allow selected tools
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if not tool:
                                 error_msg = ToolMessage(
                                     content=f"Tool '{tool_call['name']}' not found.",
@@ -886,7 +956,12 @@ class MongoDBAgent:
                             )
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
+                            did_any_tool = True
                     steps += 1
+
+                    # After executing any tools, force the next LLM turn to synthesize
+                    if did_any_tool:
+                        need_finalization = True
 
                 # Step cap reached; send best available response
                 if last_response is not None:
@@ -903,6 +978,7 @@ async def main():
     """Example usage of the ProjectManagement Insights Agent"""
     agent = MongoDBAgent()
     await agent.connect()
+    await agent.disconnect()
 
 
 if __name__ == "__main__":

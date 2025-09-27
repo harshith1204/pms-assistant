@@ -15,16 +15,6 @@ from planner import plan_and_execute_query
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-def _should_use_planner(message_text: str) -> bool:
-    q = (message_text or "").lower()
-    # Heuristics: group by / count / sum / avg / min / max / sort by / limit / between / in [ ... ] / comparisons
-    triggers = ["group by","count","sum","avg","average","minimum","maximum","sort by","limit ","between "," in ["," in ["," this month"," last month"," this week"," last week"," today"," yesterday"]
-    if any(t in q for t in triggers):
-        return True
-    # comparisons like field >= 10
-    if re.search(r'\w+\s*(>=|<=|!=|==|=|>|<)\s*[^\s,]+', q):
-        return True
-    return False
 
 
 class StreamingCallbackHandler(AsyncCallbackHandler):
@@ -33,6 +23,9 @@ class StreamingCallbackHandler(AsyncCallbackHandler):
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
         self.start_time = None
+        # Optional: allow showing raw tool outputs if explicitly enabled
+        import os as _os
+        self.stream_tool_outputs = _os.getenv("STREAM_TOOL_OUTPUTS", "false").lower() == "true"
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -71,11 +64,21 @@ class StreamingCallbackHandler(AsyncCallbackHandler):
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
-        await self.websocket.send_json({
-            "type": "tool_end",
-            "output": output,
-            "timestamp": datetime.now().isoformat()
-        })
+        # Suppress raw tool outputs unless explicitly enabled
+        if self.stream_tool_outputs:
+            payload = {
+                "type": "tool_end",
+                "output": output,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            payload = {
+                "type": "tool_end",
+                "output_preview": str(output)[:120],
+                "hidden": True,
+                "timestamp": datetime.now().isoformat()
+            }
+        await self.websocket.send_json(payload)
 
 class WebSocketManager:
     """Manages WebSocket connections"""
@@ -161,8 +164,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     "message_length": len(message or ""),
                 },
             ) as user_span:
-                # Route to planner or LLM based on heuristics/flag
-                if force_planner or _should_use_planner(message):
+                # Route ONLY when explicitly forced; default to streaming agent
+                if force_planner:
                     try:
                         with tracer.start_as_current_span(
                             "planner_execute", kind=trace.SpanKind.INTERNAL
