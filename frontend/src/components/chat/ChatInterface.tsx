@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, StopCircle, Brain, Eye, EyeOff, Wifi, WifiOff } from "lucide-react";
+import { Send, StopCircle, Brain, Eye, EyeOff, Wifi, WifiOff, Wrench } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
 import { useToast } from "@/hooks/use-toast";
 import { useWebSocket } from "@/hooks/use-websocket";
@@ -31,6 +31,7 @@ export function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [showThinking, setShowThinking] = useState(true);
+  const [showToolOutputs, setShowToolOutputs] = useState(true);
   const [currentStreamingMessage, setCurrentStreamingMessage] = useState<string>("");
   const [currentStreamingId, setCurrentStreamingId] = useState<string | null>(null);
   const [currentThoughtMessage, setCurrentThoughtMessage] = useState<string>("");
@@ -224,16 +225,12 @@ export function ChatInterface() {
         break;
         
       case "tool_end":
-        // When BACKEND hides raw tool output, prefer preview text and mark hidden
-        const toolContent = typeof data.output === "string" && data.output.length > 0
-          ? data.output
-          : (typeof data.output_preview === "string" ? `(tool output hidden) ${data.output_preview}` : "(tool output hidden)" );
         const toolEndMessage: Message = {
           id: (Date.now() + 1).toString(),
           type: "tool",
-          content: toolContent,
+          content: data.output || "Tool execution completed",
           timestamp,
-          toolOutput: data.output ?? data.output_preview,
+          toolOutput: data.output,
         };
         setMessages(prev => [...prev, toolEndMessage]);
         break;
@@ -360,7 +357,7 @@ export function ChatInterface() {
             console.log("All messages:", allMessages.length, allMessages.map(m => ({ type: m.type, content: m.content.substring(0, 50) + "..." })));
             console.log("Filtered messages (showThinking=" + showThinking + "):", filteredMessages.length);
             return filteredMessages.map((message) => (
-              <ChatMessage key={message.id} message={message} />
+              <ChatMessage key={message.id} message={message} showToolOutputs={showToolOutputs} />
             ));
           })()}
             
@@ -461,6 +458,17 @@ export function ChatInterface() {
                 <Brain className="h-3 w-3 mr-1" />
                 {showThinking ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
                 <span className="ml-1">{showThinking ? "Hide" : "Show"} Thinking</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowToolOutputs(!showToolOutputs)}
+                className="h-6 px-2 text-xs"
+              >
+                <Wrench className="h-3 w-3 mr-1" />
+                {showToolOutputs ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                <span className="ml-1">{showToolOutputs ? "Hide" : "Show"} Tool Outputs</span>
               </Button>
             </div>
             <span>{input.length}/2000</span>
