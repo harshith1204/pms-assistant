@@ -664,9 +664,17 @@ class MongoDBAgent:
                     "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
                     "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
                 ))
-                routed_messages = messages + [routing_instructions]
-                
-                response = await llm_with_tools.ainvoke(routed_messages)
+                # In non-streaming mode, also support a synthesis pass after tools
+                invoke_messages = messages + [routing_instructions]
+                if need_finalization:
+                    finalization_instructions = SystemMessage(content=(
+                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                        "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
+                    ))
+                    invoke_messages = messages + [routing_instructions, finalization_instructions]
+                    need_finalization = False
+
+                response = await llm_with_tools.ainvoke(invoke_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
                             preview = str(response.content)[:500]
@@ -759,8 +767,10 @@ class MongoDBAgent:
                 # After executing any tools, force the next LLM turn to synthesize
                 if did_any_tool:
                     need_finalization = True
+                    # Continue loop to perform finalization pass
+                    continue
 
-                # Step cap reached; return best available answer
+                # If no tools were executed, return the latest response
                 if last_response is not None:
                     if run_span:
                         try:
@@ -770,12 +780,11 @@ class MongoDBAgent:
                         except Exception:
                             pass
                     return last_response.content
-                if run_span:
-                    try:
-                        run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps"})
-                    except Exception:
-                        pass
-                return "Reached maximum reasoning steps without a final answer."
+
+            # If we exit the loop due to step cap, return the best available answer
+            if last_response is not None:
+                return last_response.content
+            return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
