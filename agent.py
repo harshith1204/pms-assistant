@@ -2,12 +2,9 @@
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_mcp_adapters.client import MultiServerMCPClient
-import json
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
-from pydantic import BaseModel
 import tools
 from datetime import datetime
 import time
@@ -25,7 +22,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 import pandas as pd
 import threading
 import time
-from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
+from opentelemetry.sdk.trace.export import SpanProcessor
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 
 # OpenInference semantic conventions (optional)
@@ -166,6 +163,11 @@ def _select_tools_for_query(user_query: str):
         "search", "find examples", "show examples", "browse"
     ]
     workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
+    # Member-related structured queries should always go to mongo_query (avoid RAG)
+    member_terms = [
+        "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
+        "user", "users", "staff", "people", "personnel"
+    ]
     canonical_field_terms = [
         "state", "assignee", "project", "count", "group", "filter", "sort",
         "created", "updated", "date", "due", "id", "displaybugno", "priority"
@@ -176,6 +178,9 @@ def _select_tools_for_query(user_query: str):
 
     # Strict default: Mongo for everything unless content/context explicitly requested
     allow_rag = has_any(content_markers)
+    # Override: if the query is about members/assignees/team, force Mongo only
+    if has_any(member_terms):
+        allow_rag = False
 
     allowed_names = ["mongo_query"]
     if allow_rag:
@@ -676,9 +681,17 @@ class MongoDBAgent:
                     "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
                     "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
                 ))
-                routed_messages = messages + [routing_instructions]
-                
-                response = await llm_with_tools.ainvoke(routed_messages)
+                # In non-streaming mode, also support a synthesis pass after tools
+                invoke_messages = messages + [routing_instructions]
+                if need_finalization:
+                    finalization_instructions = SystemMessage(content=(
+                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                        "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
+                    ))
+                    invoke_messages = messages + [routing_instructions, finalization_instructions]
+                    need_finalization = False
+
+                response = await llm_with_tools.ainvoke(invoke_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
                             preview = str(response.content)[:500]
@@ -771,23 +784,22 @@ class MongoDBAgent:
                 # After executing any tools, force the next LLM turn to synthesize
                 if did_any_tool:
                     need_finalization = True
+                else:
+                    # If no tools were executed, return the latest response
+                    if last_response is not None:
+                        if run_span:
+                            try:
+                                preview = str(last_response.content)[:500]
+                                run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                                run_span.add_event("agent_end", {"steps": steps})
+                            except Exception:
+                                pass
+                        return last_response.content
 
-                # Step cap reached; return best available answer
-                if last_response is not None:
-                    if run_span:
-                        try:
-                            preview = str(last_response.content)[:500]
-                            run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                            run_span.add_event("agent_end", {"steps": steps})
-                        except Exception:
-                            pass
-                    return last_response.content
-                if run_span:
-                    try:
-                        run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps"})
-                    except Exception:
-                        pass
-                return "Reached maximum reasoning steps without a final answer."
+            # If we exit the loop due to step cap, return the best available answer
+            if last_response is not None:
+                return last_response.content
+            return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
