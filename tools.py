@@ -90,7 +90,8 @@ def filter_meaningful_content(data: Any) -> Any:
     # Fields to always exclude (metadata)
     EXCLUDE_FIELDS = {
         '_id', 'createdTimeStamp', 'updatedTimeStamp',
-        '_priorityRank'  # Helper field added by pipeline
+        '_priorityRank',  # Helper field added by pipeline
+        '_class',  # Drop Java class metadata
     }
 
     def is_meaningful_field(key: str, value: Any) -> bool:
@@ -117,10 +118,15 @@ def filter_meaningful_content(data: Any) -> Any:
             # Recursively check nested objects
             return any(is_meaningful_field(k, v) for k, v in value.items())
         elif isinstance(value, list) and value:
-            # Check if list contains meaningful content
-            return any(isinstance(item, (str, int, float, bool)) and
-                      (isinstance(item, str) and item.strip() or True)
-                      for item in value if isinstance(item, (str, int, float, bool, dict)))
+            # Check if list contains meaningful content, including dict items
+            for item in value:
+                if isinstance(item, (str, int, float, bool)):
+                    if not isinstance(item, str) or item.strip():
+                        return True
+                elif isinstance(item, dict):
+                    if any(is_meaningful_field(k, v) for k, v in item.items()):
+                        return True
+            return False
 
         return False
 
@@ -289,7 +295,7 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
         set_name("business", "businessName")
         set_name("createdBy", "createdByName")
         set_names_list("assignee", "assignees")
-        set_names_list("updatedBy", "updatedBy")
+        set_names_list("updatedBy", "updatedByNames")
 
     elif collection == "project":
         set_name("business", "businessName")
@@ -301,10 +307,12 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
     elif collection == "cycle":
         # Project may only contain id; we skip if name isn't present
         set_name("project", "projectName")
+        set_name("business", "businessName")
 
     elif collection == "module":
         set_name("project", "projectName")
         set_name("lead", "leadName")
+        set_name("business", "businessName")
         set_names_list("assignee", "assignees")
 
     elif collection == "members":
@@ -320,6 +328,9 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
             out["linkedCycleCount"] = len(doc["linkedCycle"])  # type: ignore[index]
         if isinstance(doc.get("linkedModule"), list):
             out["linkedModuleCount"] = len(doc["linkedModule"])  # type: ignore[index]
+        # Also surface names if available
+        set_names_list("linkedCycle", "linkedCycleNames")
+        set_names_list("linkedModule", "linkedModuleNames")
 
     elif collection == "projectState":
         # Keep core fields and slim subStates
@@ -338,8 +349,8 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
             if slim:
                 out["subStates"] = slim
 
-    # Drop empty/None values
-    out = {k: v for k, v in out.items() if v not in (None, "", [], {})}
+    # Drop empty/None values and metadata keys
+    out = {k: v for k, v in out.items() if v not in (None, "", [], {}) and k != "_class"}
     return out
 
 
@@ -477,8 +488,97 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 filtered = parsed
 
 
-            def format_llm_friendly(data, max_items=20):
+            def format_llm_friendly(data, max_items=20, primary_entity: Optional[str] = None):
                 """Format data in a more LLM-friendly way to avoid hallucinations."""
+                def get_nested(d: Dict[str, Any], key: str) -> Any:
+                    if key in d:
+                        return d[key]
+                    if "." in key:
+                        cur: Any = d
+                        for part in key.split("."):
+                            if isinstance(cur, dict) and part in cur:
+                                cur = cur[part]
+                            else:
+                                return None
+                        return cur
+                    return None
+
+                def ensure_list_str(val: Any) -> List[str]:
+                    if isinstance(val, list):
+                        res: List[str] = []
+                        for x in val:
+                            if isinstance(x, str) and x.strip():
+                                res.append(x)
+                            elif isinstance(x, dict):
+                                n = x.get("name") or x.get("title")
+                                if isinstance(n, str) and n.strip():
+                                    res.append(n)
+                        return res
+                    if isinstance(val, dict):
+                        n = val.get("name") or val.get("title")
+                        return [n] if isinstance(n, str) and n.strip() else []
+                    if isinstance(val, str) and val.strip():
+                        return [val]
+                    return []
+
+                def truncate_str(s: Any, limit: int = 120) -> str:
+                    if not isinstance(s, str):
+                        return str(s)
+                    return s if len(s) <= limit else s[:limit] + "..."
+
+                def render_line(entity: Dict[str, Any]) -> str:
+                    e = (primary_entity or "").lower()
+                    if e == "workitem":
+                        bug = entity.get("displayBugNo") or entity.get("title") or "Item"
+                        title = entity.get("title") or entity.get("name") or ""
+                        state = entity.get("stateName") or get_nested(entity, "state.name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        priority = entity.get("priority")
+                        return f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                    if e == "project":
+                        pid = entity.get("projectDisplayId")
+                        name = entity.get("name") or entity.get("title")
+                        status_v = entity.get("status")
+                        lead = entity.get("leadName") or get_nested(entity, "lead.name")
+                        business = entity.get("businessName") or get_nested(entity, "business.name")
+                        return f"• {pid or name}: {name or ''} — status={status_v or 'N/A'}, lead={lead or 'N/A'}, business={business or 'N/A'}"
+                    if e == "cycle":
+                        title = entity.get("title") or entity.get("name")
+                        status_v = entity.get("status")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        sd = entity.get("startDate")
+                        ed = entity.get("endDate")
+                        dates = f"{sd} → {ed}" if sd or ed else "N/A"
+                        return f"• {truncate_str(title or 'Cycle', 80)} — status={status_v or 'N/A'}, project={project or 'N/A'}, dates={dates}"
+                    if e == "module":
+                        title = entity.get("title") or entity.get("name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        business = entity.get("businessName") or get_nested(entity, "business.name")
+                        return f"• {truncate_str(title or 'Module', 80)} — project={project or 'N/A'}, assignees={(len(assignees) if assignees else 0)}, business={business or 'N/A'}"
+                    if e == "members":
+                        name = entity.get("name")
+                        email = entity.get("email")
+                        role = entity.get("role")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        type_v = entity.get("type")
+                        return f"• {name or 'Member'} — role={role or 'N/A'}, email={email or 'N/A'}, type={type_v or 'N/A'}, project={project or 'N/A'}"
+                    if e == "page":
+                        title = entity.get("title") or entity.get("name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        visibility = entity.get("visibility")
+                        fav = entity.get("isFavourite")
+                        return f"• {truncate_str(title or 'Page', 80)} — visibility={visibility or 'N/A'}, favourite={fav if fav is not None else 'N/A'}, project={project or 'N/A'}"
+                    if e == "projectstate":
+                        name = entity.get("name")
+                        icon = entity.get("icon")
+                        subs = entity.get("subStates")
+                        sub_count = len(subs) if isinstance(subs, list) else 0
+                        return f"• {name or 'State'} — icon={icon or 'N/A'}, substates={sub_count}"
+                    # Default fallback
+                    title = entity.get("title") or entity.get("name") or "Item"
+                    return f"• {truncate_str(title, 80)}"
                 if isinstance(data, list):
                     # Handle count-only results
                     if len(data) == 1 and isinstance(data[0], dict) and "total" in data[0]:
@@ -522,61 +622,45 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                     if max_items is not None and len(data) > max_items:
                         response = f"📊 RESULTS SUMMARY:\n"
                         response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
-
-                        # Group by priority if available
-                        priority_counts = {}
-                        for item in data[:max_items]:
-                            if isinstance(item, dict) and 'priority' in item:
-                                priority = item['priority']
-                                priority_counts[priority] = priority_counts.get(priority, 0) + 1
-
-                        if priority_counts:
-                            response += "Priority breakdown:\n"
-                            for priority, count in sorted(priority_counts.items()):
-                                response += f"• {priority}: {count} items\n"
-                            response += "\n"
-
-                        # Show sample items in a readable format
-                        response += "Sample items:\n"
-                        for i, item in enumerate(data[:5], 1):  # Show 5 samples instead of 3
+                        # Show sample items in a collection-aware way
+                        for i, item in enumerate(data[:max_items], 1):
                             if isinstance(item, dict):
-                                title = item.get('title', 'No title')[:50] + "..." if len(item.get('title', '')) > 50 else item.get('title', 'No title')
-                                priority = item.get('priority', 'No priority')
-                                display_no = item.get('displayBugNo', f'Item {i}')
-                                response += f"• {display_no}: {title} ({priority})\n"
-
-                        if len(data) > 5:
-                            response += f"• ... and {len(data) - 5} more items\n"
-                        print(response)
+                                response += render_line(item) + "\n"
+                        if len(data) > max_items:
+                            response += f"• ... and {len(data) - max_items} more items\n"
                         return response
                     else:
                         # Show all items or small list - show in formatted way
                         response = "📊 RESULTS:\n"
-                        for i, item in enumerate(data, 1):
+                        for item in data:
                             if isinstance(item, dict):
-                                title = item.get('title', 'No title')[:30] + "..." if len(item.get('title', '')) > 30 else item.get('title', 'No title')
-                                priority = item.get('priority', 'No priority')
-                                display_no = item.get('displayBugNo', f'Item {i}')
-                                response += f"• {display_no}: {title} ({priority})\n"
-                        print(response)
+                                response += render_line(item) + "\n"
                         return response
 
                 # Single document or other data
                 if isinstance(data, dict):
                     # Format single document in a readable way
                     response = "📊 RESULT:\n"
+                    # Prefer a single-line summary first
+                    if isinstance(data, dict):
+                        response += render_line(data) + "\n\n"
+                    # Then show key fields compactly (truncate long strings)
                     for key, value in data.items():
                         if isinstance(value, (str, int, float, bool)):
-                            response += f"• {key}: {value}\n"
+                            response += f"• {key}: {truncate_str(value, 140)}\n"
                         elif isinstance(value, dict):
-                            response += f"• {key}:\n"
-                            for sub_key, sub_value in value.items():
-                                response += f"  - {sub_key}: {sub_value}\n"
-                        elif isinstance(value, list) and len(value) <= 3:
-                            response += f"• {key}: {value}\n"
-                        else:
-                            response += f"• {key}: [{len(value)} items]\n"
-                    print(response)
+                            # Show only shallow summary for dict
+                            name_val = value.get('name') or value.get('title')
+                            if name_val:
+                                response += f"• {key}: {truncate_str(name_val, 120)}\n"
+                            else:
+                                child_keys = ", ".join(list(value.keys())[:5])
+                                response += f"• {key}: {{ {child_keys} }}\n"
+                        elif isinstance(value, list):
+                            if len(value) <= 5:
+                                response += f"• {key}: {truncate_str(str(value), 160)}\n"
+                            else:
+                                response += f"• {key}: [{len(value)} items]\n"
                     return response
                 else:
                     # Fallback to JSON for other data types
@@ -588,7 +672,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 
             # Format in LLM-friendly way
             max_items = None if show_all else 20
-            formatted_result = format_llm_friendly(filtered, max_items=max_items)
+            formatted_result = format_llm_friendly(filtered, max_items=max_items, primary_entity=primary_entity)
             # If members primary entity and no rows, proactively hint about filters
             try:
                 if isinstance(result.get("intent"), dict) and result["intent"].get("primary_entity") == "members" and not filtered:
