@@ -178,6 +178,27 @@ def _select_tools_for_query(user_query: str):
     return selected_tools, allowed_names
 
 
+def _looks_like_db_query(user_query: str) -> bool:
+    """Heuristic: detect if the query targets structured DB facts.
+
+    Used as a fallback trigger to call `mongo_query` when the LLM fails to issue any tool calls.
+    Emphasizes members-related intents in addition to general canonical fields.
+    """
+    q = (user_query or "").lower()
+    member_markers = [
+        "member", "members", "team member", "team members", "teammate", "teammates",
+        "role", "email", "joining date", "joiningdate", "type", "staff", "user", "users"
+    ]
+    general_markers = [
+        "project", "work item", "work items", "cycle", "module", "page", "projectstate",
+        "count", "list", "show", "find", "filter", "group", "sort", "state", "priority",
+        "created", "updated", "date", "id"
+    ]
+    def has_any(terms):
+        return any(term in q for term in terms)
+    return has_any(member_markers) or has_any(general_markers)
+
+
 class PhoenixSpanManager:
     """Manages Phoenix spans and tracer for the agent."""
 
@@ -684,6 +705,22 @@ class MongoDBAgent:
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
 
+                # If no tools were requested but the query looks like DB facts,
+                # proactively run mongo_query as a safety net (especially for members queries)
+                if not getattr(response, "tool_calls", None) and _looks_like_db_query(query):
+                    try:
+                        tool = next((t for t in _TOOLS_BY_NAME.values() if getattr(t, "name", "") == "mongo_query"), None)
+                        if tool:
+                            tool_result = await tool.ainvoke({"query": query})
+                            tool_message = ToolMessage(content=str(tool_result), tool_call_id="fallback_mongo_query")
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                            need_finalization = True
+                            steps += 1
+                            continue
+                    except Exception:
+                        pass
+                    return response.content
                 # If no tools requested, we are done
                 if not getattr(response, "tool_calls", None):
                     return response.content
