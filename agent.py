@@ -151,6 +151,11 @@ def _select_tools_for_query(user_query: str):
         "search", "find examples", "show examples", "browse"
     ]
     workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
+    # Member-related structured queries should always go to mongo_query (avoid RAG)
+    member_terms = [
+        "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
+        "user", "users", "staff", "people", "personnel"
+    ]
     canonical_field_terms = [
         "state", "assignee", "project", "count", "group", "filter", "sort",
         "created", "updated", "date", "due", "id", "displaybugno", "priority"
@@ -161,6 +166,9 @@ def _select_tools_for_query(user_query: str):
 
     # Strict default: Mongo for everything unless content/context explicitly requested
     allow_rag = has_any(content_markers)
+    # Override: if the query is about members/assignees/team, force Mongo only
+    if has_any(member_terms):
+        allow_rag = False
 
     allowed_names = ["mongo_query"]
     if allow_rag:

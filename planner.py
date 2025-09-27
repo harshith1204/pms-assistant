@@ -97,6 +97,28 @@ class LLMIntentParser:
         self.allowed_fields: Dict[str, List[str]] = {
             entity: sorted(list(ALLOWED_FIELDS.get(entity, set()))) for entity in self.entities
         }
+        # Map common synonyms to canonical entity names to reduce LLM mistakes
+        self.entity_synonyms = {
+            "member": "members",
+            "members": "members",
+            "team": "members",
+            "teammate": "members",
+            "teammates": "members",
+            "assignee": "members",
+            "assignees": "members",
+            "user": "members",
+            "users": "members",
+            "staff": "members",
+            "personnel": "members",
+            "task": "workItem",
+            "tasks": "workItem",
+            "bug": "workItem",
+            "bugs": "workItem",
+            "issue": "workItem",
+            "issues": "workItem",
+            "tickets": "workItem",
+            "ticket": "workItem",
+        }
 
     def _is_placeholder(self, v) -> bool:
         if v is None:
@@ -357,6 +379,11 @@ class LLMIntentParser:
             return None
 
         try:
+            # Normalize primary entity synonyms before sanitization
+            if isinstance(data, dict):
+                pe = (data.get("primary_entity") or "").strip()
+                if pe:
+                    data["primary_entity"] = self.entity_synonyms.get(pe.lower(), pe)
             return await self._sanitize_intent(data, query)
         except Exception:
             return None
@@ -699,6 +726,11 @@ class PipelineGenerator:
                     required_relations.add(relation_alias_by_token['assignee'])
                 if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
                     required_relations.add(relation_alias_by_token['module'])
+                # Business name may require project hop for collections without embedded business
+                if 'business_name' in intent.filters:
+                    # If primary lacks direct business relation, but has project relation, join project
+                    if relation_alias_by_token.get('project') in REL.get(collection, {}):
+                        required_relations.add(relation_alias_by_token['project'])
             if 'member_role' in intent.filters:
                 # Require member join depending on collection
                 if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
@@ -1072,11 +1104,14 @@ class PipelineGenerator:
             elif collection == 'page' and 'linkedModule' in REL.get('page', {}):
                 s['linkedModuleDocs.name'] = {'$regex': filters['module_name'], '$options': 'i'}
 
-        # Business name via embedded where available
+        # Business name via embedded or joined path
         if 'business_name' in filters:
-            # collections that embed business
+            # Directly embedded business on these collections
             if collection in ('project', 'cycle', 'module', 'page', 'workItem'):
                 s['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            # For members: through joined project
+            if collection == 'members' and 'project' in REL.get('members', {}):
+                s['project.business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
 
         return s
 
