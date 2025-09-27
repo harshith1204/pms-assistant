@@ -431,7 +431,8 @@ class LLMIntentParser:
             # entity name filters (secondary lookups)
             "project_name", "cycle_name", "assignee_name", "module_name", "member_role",
             # actor/name filters
-            "createdBy_name", "lead_name", "business_name",
+            "createdBy_name", "lead_name", "leadMail", "business_name",
+            "defaultAssignee_name", "defaultAsignee_name", "staff_name",
             # members specific
             "role", "type", "joiningDate", "joiningDate_from", "joiningDate_to",
         }
@@ -697,6 +698,7 @@ class PipelineGenerator:
                 'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
                 'cycle': 'linkedCycle',
                 'module': 'linkedModule',
+                'linkedMembers': 'linkedMembers',
             },
             'members': {
                 'project': 'project',
@@ -731,6 +733,9 @@ class PipelineGenerator:
                     # If primary lacks direct business relation, but has project relation, join project
                     if relation_alias_by_token.get('project') in REL.get(collection, {}):
                         required_relations.add(relation_alias_by_token['project'])
+                # Page linked members filter requires linkedMembers join
+                if collection == 'page' and 'LinkedMembers_0_name' in intent.filters and relation_alias_by_token.get('linkedMembers') in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token['linkedMembers'])
             if 'member_role' in intent.filters:
                 # Require member join depending on collection
                 if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
@@ -974,12 +979,21 @@ class PipelineGenerator:
                 primary_filters['favourite'] = bool(filters['isFavourite'])
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
                 primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
+                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
+            if 'leadMail' in filters and isinstance(filters['leadMail'], str):
+                primary_filters['leadMail'] = {'$regex': f"^{filters['leadMail']}", '$options': 'i'}
             if 'projectDisplayId' in filters and isinstance(filters['projectDisplayId'], str):
                 primary_filters['projectDisplayId'] = {'$regex': f"^{filters['projectDisplayId']}", '$options': 'i'}
             if 'name' in filters and isinstance(filters['name'], str):
                 primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
             if 'business_name' in filters and isinstance(filters['business_name'], str):
                 primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            # default assignee (object): allow name filtering
+            if 'defaultAssignee_name' in filters and isinstance(filters['defaultAssignee_name'], str):
+                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAssignee_name'], '$options': 'i'}
+            if 'defaultAsignee_name' in filters and isinstance(filters['defaultAsignee_name'], str):
+                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAsignee_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
             _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
@@ -1020,6 +1034,13 @@ class PipelineGenerator:
                 primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
             if 'name' in filters and isinstance(filters['name'], str):
                 primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
+                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # module.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
 
         elif collection == "members":
@@ -1031,6 +1052,10 @@ class PipelineGenerator:
                 primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
             if 'email' in filters and isinstance(filters['email'], str):
                 primary_filters['email'] = {'$regex': f"^{filters['email']}", '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'staff_name' in filters and isinstance(filters['staff_name'], str):
+                primary_filters['staff.name'] = {'$regex': filters['staff_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'joiningDate', filters)
 
         elif collection == "projectState":
@@ -1113,6 +1138,11 @@ class PipelineGenerator:
             if collection == 'members' and 'project' in REL.get('members', {}):
                 s['project.business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
 
+        # Page linked members: support name filter via joined alias when available
+        if collection == 'page' and 'LinkedMembers_0_name' in filters:
+            # Interpret as any linked member name regex
+            s['linkedMembersDocs.name'] = {'$regex': filters['LinkedMembers_0_name'], '$options': 'i'}
+
         return s
 
     def _generate_lookup_stage(self, from_collection: str, target_entity: str, filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -1151,7 +1181,7 @@ class PipelineGenerator:
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
-                "createdBy.name"
+                "createdBy.name", "lead.name", "leadMail", "defaultAsignee.name"
             ],
             "cycle": [
                 "title", "status", "startDate", "endDate"

@@ -140,6 +140,14 @@ REL: Dict[str, Dict[str, dict]] = {
             "as": "linkedModuleDocs",
             "many": True
         },
+        # Optional: pages can link to members; support lookups when present
+        "linkedMembers": {
+            "target": "members",
+            "localField": "linkedMembers",
+            "foreignField": "_id",
+            "as": "linkedMembersDocs",
+            "many": True
+        },
     },
 
     "projectState": {
@@ -175,8 +183,11 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "imageUrl", "icon", "access", "isActive", "status",
         "favourite", "isArchived", "createdTimeStamp", "updatedTimeStamp",
         "business._id", "business.name",
-        # creator info (for queries like "who created the project")
-        "createdBy._id", "createdBy.name"
+        # creator/lead/assignee info
+        "createdBy._id", "createdBy.name",
+        "lead.name", "leadMail",
+        # default assignee (note: schema uses 'defaultAsignee' spelling)
+        "defaultAsignee._id", "defaultAsignee.name"
     },
     "cycle": {
         "_id", "title", "name", "description", "status",
@@ -189,11 +200,13 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
     "module": {
         "_id", "title", "name", "description", "isFavourite",
         "project._id", "business._id",
-        "createdTimeStamp", "assignee"
+        "createdTimeStamp", "assignee",
+        # optional lead object commonly present in modules
+        "lead.name"
     },
     "members": {
         "_id", "name", "email", "role", "joiningDate",
-        "type", "project._id",
+        "type", "project._id", "project.name",
         "memberId", "staff._id", "staff.name"
     },
     "page": {
