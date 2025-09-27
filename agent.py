@@ -62,6 +62,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "GENERAL RULES:\n"
     "- Never guess facts about the database or content. Prefer invoking a tool.\n"
     "- If a tool is appropriate, always call it before answering.\n"
+    "- Do NOT narrate your plan (e.g., 'let me think'). Call a tool first.\n"
     "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
     "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
     "DECISION GUIDE:\n"
@@ -151,6 +152,11 @@ def _select_tools_for_query(user_query: str):
         "search", "find examples", "show examples", "browse"
     ]
     workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
+    # Member-related structured queries should always go to mongo_query (avoid RAG)
+    member_terms = [
+        "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
+        "user", "users", "staff", "people", "personnel"
+    ]
     canonical_field_terms = [
         "state", "assignee", "project", "count", "group", "filter", "sort",
         "created", "updated", "date", "due", "id", "displaybugno", "priority"
@@ -161,6 +167,9 @@ def _select_tools_for_query(user_query: str):
 
     # Strict default: Mongo for everything unless content/context explicitly requested
     allow_rag = has_any(content_markers)
+    # Override: if the query is about members/assignees/team, force Mongo only
+    if has_any(member_terms):
+        allow_rag = False
 
     allowed_names = ["mongo_query"]
     if allow_rag:
@@ -686,6 +695,13 @@ class MongoDBAgent:
 
                 # If no tools requested, we are done
                 if not getattr(response, "tool_calls", None):
+                    # Fallback: if router allowed mongo_query but LLM didn't call it, invoke it directly
+                    if "mongo_query" in allowed_names and "mongo_query" in _TOOLS_BY_NAME:
+                        try:
+                            result = await _TOOLS_BY_NAME["mongo_query"].ainvoke({"query": query})
+                            return str(result)
+                        except Exception:
+                            pass
                     return response.content
 
                 # Execute requested tools sequentially
@@ -888,6 +904,14 @@ class MongoDBAgent:
                     conversation_memory.add_message(conversation_id, response)
 
                     if not getattr(response, "tool_calls", None):
+                        # Fallback: if router allowed mongo_query but LLM didn't call it, invoke it directly
+                        if "mongo_query" in allowed_names and "mongo_query" in _TOOLS_BY_NAME:
+                            try:
+                                result = await _TOOLS_BY_NAME["mongo_query"].ainvoke({"query": query})
+                                yield str(result)
+                                return
+                            except Exception:
+                                pass
                         yield response.content
                         return
 
