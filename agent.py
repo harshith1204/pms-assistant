@@ -395,10 +395,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         super().__init__()
         self.websocket = websocket
         self.start_time = None
-        # Control whether to stream raw tool outputs to the client
-        # Default is False to avoid dumping tool text as the final answer
-        import os as _os
-        self.stream_tool_outputs = _os.getenv("STREAM_TOOL_OUTPUTS", "false").lower() == "true"
+        # Tool outputs are now always streamed to the frontend for better visibility
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -442,20 +439,12 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
         if self.websocket:
-            # Suppress raw tool outputs unless explicitly enabled
-            if self.stream_tool_outputs:
-                payload = {
-                    "type": "tool_end",
-                    "output": output,
-                    "timestamp": datetime.now().isoformat()
-                }
-            else:
-                payload = {
-                    "type": "tool_end",
-                    "output_preview": str(output)[:120],
-                    "hidden": True,
-                    "timestamp": datetime.now().isoformat()
-                }
+            # Always send full tool outputs to frontend for better visibility
+            payload = {
+                "type": "tool_end",
+                "output": output,
+                "timestamp": datetime.now().isoformat()
+            }
             await self.websocket.send_json(payload)
 
     def cleanup(self):
