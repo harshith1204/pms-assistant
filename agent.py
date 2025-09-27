@@ -136,8 +136,49 @@ llm = ChatOllama(
     top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
 )
 
-# Bind tools to the LLM for tool calling
-llm_with_tools = llm.bind_tools(tools_list)
+# Simple per-query tool router: restrict RAG unless content/context is requested
+_TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
+
+def _select_tools_for_query(user_query: str):
+    """Return a subset of tools to expose to the LLM for this query.
+
+    Policy:
+    - Default to mongo_query for structured field questions.
+    - Only enable RAG tools when the query clearly asks for content/context.
+    - Enable rag_to_mongo_workitems only when content-like AND canonical fields are requested.
+    """
+    q = (user_query or "").lower()
+    content_markers = [
+        "content", "note", "notes", "doc", "docs", "documentation", "page", "pages",
+        "description", "context", "summarize", "summary", "snippet", "snippets",
+        "search", "find examples", "show examples", "browse"
+    ]
+    workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
+    canonical_field_terms = [
+        "state", "assignee", "project", "count", "group", "filter", "sort",
+        "created", "updated", "date", "due", "id", "displaybugno", "priority"
+    ]
+
+    def has_any(terms):
+        return any(term in q for term in terms)
+
+    # Strict default: Mongo for everything unless content/context explicitly requested
+    allow_rag = has_any(content_markers)
+
+    allowed_names = ["mongo_query"]
+    if allow_rag:
+        # Allow content-oriented RAG tools
+        allowed_names.extend(["rag_content_search", "rag_answer_question"])
+        # Only allow rag_to_mongo_workitems when user mentions work items AND canonical fields
+        if has_any(workitem_terms) and has_any(canonical_field_terms):
+            allowed_names.append("rag_to_mongo_workitems")
+
+    # Map to actual tool objects, keep only those present
+    selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
+    # Fallback safety: if mapping failed for any reason, expose mongo_query only
+    if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
+        selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
+    return selected_tools, allowed_names
 
 
 class PhoenixSpanManager:
@@ -460,7 +501,8 @@ class MongoDBAgent:
     """MongoDB Agent using Tool Calling"""
 
     def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
-        self.llm_with_tools = llm_with_tools
+        # Base LLM; tools will be bound per-query via router
+        self.llm_base = llm
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
@@ -577,6 +619,10 @@ class MongoDBAgent:
                 need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Choose tools for this query iteration
+                    selected_tools, allowed_names = _select_tools_for_query(query)
+                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
+
                     if tracer is not None:
                         llm_cm = tracer.start_as_current_span(
                             "llm_invoke",
@@ -620,7 +666,7 @@ class MongoDBAgent:
                 ))
                 routed_messages = messages + [routing_instructions]
                 
-                response = await self.llm_with_tools.ainvoke(routed_messages)
+                response = await llm_with_tools.ainvoke(routed_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
                             preview = str(response.content)[:500]
@@ -651,7 +697,8 @@ class MongoDBAgent:
                         tool_cm = None
 
                     with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                        tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                        # Enforce router: only allow selected tools
+                        tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                         if not tool:
                             error_msg = ToolMessage(
                                 content=f"Tool '{tool_call['name']}' not found.",
@@ -781,6 +828,9 @@ class MongoDBAgent:
                 need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Choose tools for this query iteration
+                    selected_tools, allowed_names = _select_tools_for_query(query)
+                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
                     if tracer is not None:
                         llm_cm = tracer.start_as_current_span(
                             "llm_invoke",
@@ -817,7 +867,7 @@ class MongoDBAgent:
                             ))
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
-                        response = await self.llm_with_tools.ainvoke(
+                        response = await llm_with_tools.ainvoke(
                             invoke_messages,
                             config={"callbacks": [callback_handler]},
                         )
@@ -851,7 +901,8 @@ class MongoDBAgent:
                             tool_cm = None
 
                         with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                            tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
+                            # Enforce router: only allow selected tools
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if not tool:
                                 error_msg = ToolMessage(
                                     content=f"Tool '{tool_call['name']}' not found.",

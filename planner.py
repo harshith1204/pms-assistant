@@ -82,10 +82,10 @@ class LLMIntentParser:
         # Keep the model reasonably deterministic for planning
         self.llm = ChatOllama(
             model=self.model_name,
-            temperature=0.1,
+            temperature=0,
             num_ctx=4096,
-            num_predict=768,
-            top_p=0.9,
+            num_predict=1024,
+            top_p=0.8,
             top_k=40,
         )
 
