@@ -876,18 +876,53 @@ class PipelineGenerator:
             if 'state' in filters:
                 # Map logical state filter to embedded field
                 primary_filters['state.name'] = filters['state']
+            if 'label' in filters and isinstance(filters['label'], str):
+                primary_filters['label'] = {'$regex': filters['label'], '$options': 'i'}
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
 
         elif collection == "project":
             if 'project_status' in filters:
                 primary_filters['status'] = filters['project_status']
+            if 'isActive' in filters:
+                primary_filters['isActive'] = bool(filters['isActive'])
+            if 'isArchived' in filters:
+                primary_filters['isArchived'] = bool(filters['isArchived'])
+            if 'access' in filters:
+                primary_filters['access'] = filters['access']
+            if 'isFavourite' in filters:
+                # Some schemas use 'favourite' on projects
+                primary_filters['favourite'] = bool(filters['isFavourite'])
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
 
         elif collection == "cycle":
             if 'cycle_status' in filters:
                 primary_filters['status'] = filters['cycle_status']
+            if 'isDefault' in filters:
+                primary_filters['isDefault'] = bool(filters['isDefault'])
+            if 'isFavourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['isFavourite'])
 
         elif collection == "page":
             if 'page_visibility' in filters:
                 primary_filters['visibility'] = filters['page_visibility']
+            if 'visibility' in filters:
+                primary_filters['visibility'] = filters['visibility']
+            if 'isFavourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['isFavourite'])
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+
+        elif collection == "module":
+            if 'isFavourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['isFavourite'])
+
+        elif collection == "members":
+            if 'role' in filters and isinstance(filters['role'], str):
+                primary_filters['role'] = {'$regex': f"^{filters['role']}$", '$options': 'i'}
+            if 'type' in filters and isinstance(filters['type'], str):
+                primary_filters['type'] = {'$regex': f"^{filters['type']}$", '$options': 'i'}
 
         return primary_filters
 
