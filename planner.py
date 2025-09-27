@@ -1000,6 +1000,8 @@ class PipelineGenerator:
         elif collection == "cycle":
             if 'cycle_status' in filters:
                 primary_filters['status'] = filters['cycle_status']
+            if 'status' in filters and 'status' not in primary_filters:
+                primary_filters['status'] = filters['status']
             if 'isDefault' in filters:
                 primary_filters['isDefault'] = bool(filters['isDefault'])
             if 'isFavourite' in filters:
@@ -1132,8 +1134,11 @@ class PipelineGenerator:
         # Business name via embedded or joined path
         if 'business_name' in filters:
             # Directly embedded business on these collections
-            if collection in ('project', 'cycle', 'module', 'page', 'workItem'):
+            if collection in ('project', 'page'):
                 s['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            # For cycle/module: prefer project join to reach project.business.name
+            if collection in ('cycle', 'module'):
+                s['project.business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
             # For members: through joined project
             if collection == 'members' and 'project' in REL.get('members', {}):
                 s['project.business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
