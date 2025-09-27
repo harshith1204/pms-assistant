@@ -371,7 +371,7 @@ class LLMIntentParser:
             if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
                 target_entities.append(rel)
 
-        # Simplified filter processing - keep only valid filters
+        # Simplified filter processing - keep valid filters, expanded to cover all collections
         raw_filters = data.get("filters") or {}
         filters: Dict[str, Any] = {}
 
@@ -379,44 +379,68 @@ class LLMIntentParser:
         if primary == "workItem" and "status" in raw_filters and "state" not in raw_filters:
             raw_filters["state"] = raw_filters.pop("status")
 
-        # Keep only known filter keys and clean them
+        # Allow plain 'status' for project/cycle as their canonical status
+        if primary in ("project", "cycle") and "status" in raw_filters:
+            if primary == "project" and "project_status" not in raw_filters:
+                raw_filters["project_status"] = raw_filters["status"]
+            if primary == "cycle" and "cycle_status" not in raw_filters:
+                raw_filters["cycle_status"] = raw_filters["status"]
+
+        # Build dynamic known keys from allow-listed fields and common tokens
+        allowed_primary_fields = set(self.allowed_fields.get(primary, []))
+        # Recognize date-like fields for range filters
+        date_like_fields = {f for f in allowed_primary_fields if any(t in f.lower() for t in ["date", "timestamp", "createdat", "updatedat"]) }
+
+        # Base normalized keys across collections
         known_filter_keys = {
+            # normalized enums/booleans
             "state", "priority", "project_status", "cycle_status", "page_visibility",
             "status", "access", "isActive", "isArchived", "isDefault", "isFavourite",
-            "type", "role", "visibility", "label",
+            "visibility", "locked",
+            # name/title/id style queries
+            "label", "title", "name", "displayBugNo", "projectDisplayId", "email",
+            # entity name filters (secondary lookups)
             "project_name", "cycle_name", "assignee_name", "module_name", "member_role",
-            "createdBy_name"
+            # actor/name filters
+            "createdBy_name", "lead_name", "business_name",
+            # members specific
+            "role", "type", "joiningDate", "joiningDate_from", "joiningDate_to",
         }
 
+        # Also accept any allow-listed primary fields directly
+        known_filter_keys |= allowed_primary_fields
+        # Add dynamic range keys for each date-like field
+        for f in date_like_fields:
+            known_filter_keys.add(f + "_from")
+            known_filter_keys.add(f + "_to")
+
         for k, v in raw_filters.items():
-            if k in known_filter_keys and not self._is_placeholder(v):
-                # Validate and normalize filter values
-                if k == "state" and isinstance(v, str):
-                    # Normalize state values
-                    normalized_state = self._normalize_state_value(v.strip())
-                    if normalized_state:
-                        filters[k] = normalized_state
-                elif k == "priority" and isinstance(v, str):
-                    # Normalize priority values
-                    normalized_priority = self._normalize_priority_value(v.strip())
-                    if normalized_priority:
-                        filters[k] = normalized_priority
-                elif k in ["project_status", "cycle_status", "page_visibility"] and isinstance(v, str):
-                    # Normalize status enum values
-                    normalized_status = self._normalize_status_value(k, v.strip())
-                    if normalized_status:
-                        filters[k] = normalized_status
-                elif k in ["isActive", "isArchived", "isDefault", "isFavourite"]:
-                    # Handle boolean values
-                    normalized_bool = self._normalize_boolean_value_from_any(v)
-                    if normalized_bool is not None:
-                        filters[k] = normalized_bool
-                # Keep name-based filter values as provided by LLM
-                elif k in ["project_name", "cycle_name", "module_name", "assignee_name", "createdBy_name"] and isinstance(v, str):
-                    filters[k] = v.strip()
-                else:
-                    # For other valid filters, keep as-is
-                    filters[k] = v
+            if k not in known_filter_keys or self._is_placeholder(v):
+                continue
+            # Normalize values where appropriate
+            if k == "state" and isinstance(v, str):
+                normalized_state = self._normalize_state_value(v.strip())
+                if normalized_state:
+                    filters[k] = normalized_state
+            elif k == "priority" and isinstance(v, str):
+                normalized_priority = self._normalize_priority_value(v.strip())
+                if normalized_priority:
+                    filters[k] = normalized_priority
+            elif k in ["project_status", "cycle_status", "page_visibility"] and isinstance(v, str):
+                normalized_status = self._normalize_status_value(k, v.strip())
+                if normalized_status:
+                    filters[k] = normalized_status
+            elif k in ["isActive", "isArchived", "isDefault", "isFavourite", "locked"]:
+                normalized_bool = self._normalize_boolean_value_from_any(v)
+                if normalized_bool is not None:
+                    filters[k] = normalized_bool
+            elif k in ["project_name", "cycle_name", "module_name", "assignee_name", "createdBy_name", "lead_name", "business_name"] and isinstance(v, str):
+                filters[k] = v.strip()
+            elif isinstance(v, str) and k in {"title", "name", "displayBugNo", "projectDisplayId", "email"}:
+                filters[k] = v.strip()
+            else:
+                # Keep other valid filters (including direct field filters and date range tokens)
+                filters[k] = v
 
 
         # Aggregations
@@ -868,6 +892,19 @@ class PipelineGenerator:
         """Extract filters that apply to the primary collection"""
         primary_filters = {}
 
+        def _apply_date_range(target: Dict[str, Any], field: str, f: Dict[str, Any]):
+            gte_key = f.get(f"{field}_from")
+            lte_key = f.get(f"{field}_to")
+            if gte_key is None and lte_key is None:
+                return
+            range_expr: Dict[str, Any] = {}
+            if gte_key is not None:
+                range_expr["$gte"] = gte_key
+            if lte_key is not None:
+                range_expr["$lte"] = lte_key
+            if range_expr:
+                target[field] = range_expr
+
         if collection == "workItem":
             if 'status' in filters:
                 primary_filters['status'] = filters['status']
@@ -880,10 +917,18 @@ class PipelineGenerator:
                 primary_filters['label'] = {'$regex': filters['label'], '$options': 'i'}
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
                 primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'displayBugNo' in filters and isinstance(filters['displayBugNo'], str):
+                primary_filters['displayBugNo'] = {'$regex': f"^{filters['displayBugNo']}", '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
         elif collection == "project":
             if 'project_status' in filters:
                 primary_filters['status'] = filters['project_status']
+            if 'status' in filters and 'status' not in primary_filters:
+                primary_filters['status'] = filters['status']
             if 'isActive' in filters:
                 primary_filters['isActive'] = bool(filters['isActive'])
             if 'isArchived' in filters:
@@ -895,6 +940,14 @@ class PipelineGenerator:
                 primary_filters['favourite'] = bool(filters['isFavourite'])
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
                 primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'projectDisplayId' in filters and isinstance(filters['projectDisplayId'], str):
+                primary_filters['projectDisplayId'] = {'$regex': f"^{filters['projectDisplayId']}", '$options': 'i'}
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
         elif collection == "cycle":
             if 'cycle_status' in filters:
@@ -903,6 +956,12 @@ class PipelineGenerator:
                 primary_filters['isDefault'] = bool(filters['isDefault'])
             if 'isFavourite' in filters:
                 primary_filters['isFavourite'] = bool(filters['isFavourite'])
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'startDate', filters)
+            _apply_date_range(primary_filters, 'endDate', filters)
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
         elif collection == "page":
             if 'page_visibility' in filters:
@@ -913,16 +972,38 @@ class PipelineGenerator:
                 primary_filters['isFavourite'] = bool(filters['isFavourite'])
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
                 primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'locked' in filters:
+                primary_filters['locked'] = bool(filters['locked'])
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdAt', filters)
+            _apply_date_range(primary_filters, 'updatedAt', filters)
 
         elif collection == "module":
             if 'isFavourite' in filters:
                 primary_filters['isFavourite'] = bool(filters['isFavourite'])
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
 
         elif collection == "members":
             if 'role' in filters and isinstance(filters['role'], str):
                 primary_filters['role'] = {'$regex': f"^{filters['role']}$", '$options': 'i'}
             if 'type' in filters and isinstance(filters['type'], str):
                 primary_filters['type'] = {'$regex': f"^{filters['type']}$", '$options': 'i'}
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'email' in filters and isinstance(filters['email'], str):
+                primary_filters['email'] = {'$regex': f"^{filters['email']}", '$options': 'i'}
+            _apply_date_range(primary_filters, 'joiningDate', filters)
+
+        elif collection == "projectState":
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
+                primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
 
         return primary_filters
 
@@ -988,6 +1069,12 @@ class PipelineGenerator:
                 s['modules.name'] = {'$regex': filters['module_name'], '$options': 'i'}
             elif collection == 'page' and 'linkedModule' in REL.get('page', {}):
                 s['linkedModuleDocs.name'] = {'$regex': filters['module_name'], '$options': 'i'}
+
+        # Business name via embedded where available
+        if 'business_name' in filters:
+            # collections that embed business
+            if collection in ('project', 'cycle', 'module', 'page', 'workItem'):
+                s['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
 
         return s
 
