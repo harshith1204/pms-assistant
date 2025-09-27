@@ -368,6 +368,12 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             # Format in LLM-friendly way
             max_items = None if show_all else 20
             formatted_result = format_llm_friendly(filtered, max_items=max_items)
+            # If members primary entity and no rows, proactively hint about filters
+            try:
+                if isinstance(result.get("intent"), dict) and result["intent"].get("primary_entity") == "members" and not filtered:
+                    formatted_result += "\n(No members matched. Try filtering by name, role, type, or project.)"
+            except Exception:
+                pass
             response += formatted_result
             print(response)
             return response
