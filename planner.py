@@ -491,11 +491,6 @@ class LLMIntentParser:
         allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
-        # If user grouped by cross-entity tokens, force workItem as base (entity lock)
-        cross_tokens = {"assignee", "project", "cycle", "module"}
-        if any(g in cross_tokens for g in group_by):
-            primary = "workItem"
-
         # Aggregations & group_by coherence
         if group_by and "group" not in aggregations:
             aggregations.insert(0, "group")
@@ -1245,6 +1240,9 @@ class PipelineGenerator:
             },
             'project': {
                 'status': 'status',  # project status unchanged
+                'cycle': 'cycles.name',
+                'module': 'modules.name',
+                'assignee': 'members.name',
             },
             'cycle': {
                 'project': 'project.name',
