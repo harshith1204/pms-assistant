@@ -195,19 +195,25 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "project._id",
         "isDefault", "isFavourite",
         "createdTimeStamp", "updatedTimeStamp",
-        "business._id"
+        "business._id",
+        # normalized scalar fields from planner
+        "projectName", "projectBusinessName", "projectId"
     },
     "module": {
         "_id", "title", "name", "description", "isFavourite",
         "project._id", "business._id",
         "createdTimeStamp", "assignee",
         # optional lead object commonly present in modules
-        "lead.name"
+        "lead.name",
+        # normalized scalar fields from planner
+        "projectName", "projectBusinessName", "projectId"
     },
     "members": {
         "_id", "name", "email", "role", "joiningDate",
         "type", "project._id", "project.name",
-        "memberId", "staff._id", "staff.name"
+        "memberId", "staff._id", "staff.name",
+        # normalized scalar fields from planner
+        "projectName", "projectBusinessName", "projectId"
     },
     "page": {
         "_id", "title", "content", "visibility",
@@ -216,7 +222,9 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "linkedCycle", "linkedModule",
         "locked", "isFavourite",
         "createdAt", "updatedAt",
-        "business._id", "business.name"
+        "business._id", "business.name",
+        # normalized scalar fields from planner
+        "projectName", "projectBusinessName", "projectId"
     },
     "projectState": {
         "_id", "projectId", "name", "icon",
