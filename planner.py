@@ -46,8 +46,10 @@ class QueryIntent:
     projections: List[str]  # Fields to return
     sort_order: Optional[Dict[str, int]]  # Sort specification
     limit: Optional[int]  # Result limit
+    skip: Optional[int]  # Result offset for pagination
     wants_details: bool  # Prefer detailed documents over counts
     wants_count: bool  # Whether the user asked for a count
+    fetch_one: bool  # Whether the user wants a single specific item
 
 @dataclass
 class RelationshipPath:
@@ -82,7 +84,7 @@ class LLMIntentParser:
         # Keep the model reasonably deterministic for planning
         self.llm = ChatOllama(
             model=self.model_name,
-            temperature=0.1,
+            temperature=0.2,
             num_ctx=4096,
             num_predict=1024,
             top_p=0.8,
@@ -329,8 +331,10 @@ class LLMIntentParser:
             '  "projections": [],\n'
             '  "sort_order": null,\n'
             '  "limit": 20,\n'
+            '  "skip": 0,\n'
             '  "wants_details": true,\n'
-            '  "wants_count": false\n'
+            '  "wants_count": false,\n'
+            '  "fetch_one": false\n'
             "}\n\n"
 
             "## EXAMPLES\n"
@@ -548,6 +552,15 @@ class LLMIntentParser:
         except Exception:
             limit = 20
 
+        # Skip (offset)
+        skip_val = data.get("skip")
+        try:
+            skip = int(skip_val) if skip_val is not None else 0
+            if skip < 0:
+                skip = 0
+        except Exception:
+            skip = 0
+
         # Details vs count (mutually exclusive) + heuristic for "how many"
         oq = (original_query or "").lower()
         wants_details_raw = data.get("wants_details")
@@ -576,6 +589,9 @@ class LLMIntentParser:
             if inferred_sort:
                 sort_order = inferred_sort
 
+        # Fetch one heuristic
+        fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
+
         return QueryIntent(
             primary_entity=primary,
             target_entities=target_entities,
@@ -585,8 +601,10 @@ class LLMIntentParser:
             projections=projections,
             sort_order=sort_order,
             limit=limit,
+            skip=skip,
             wants_details=wants_details,
             wants_count=wants_count,
+            fetch_one=fetch_one,
         )
 
     async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
@@ -950,15 +968,44 @@ class PipelineGenerator:
         if added_priority_rank:
             pipeline.append({"$unset": "_priorityRank"})
 
-        # Add limit (only for non-grouped queries; grouped handled above)
-        if intent.limit and not intent.group_by:
-            pipeline.append({"$limit": intent.limit})
+        # Add pagination: skip then limit (only for non-grouped queries; grouped handled above)
+        if not intent.group_by:
+            # Apply skip before limit
+            try:
+                if intent.skip and int(intent.skip) > 0:
+                    pipeline.append({"$skip": int(intent.skip)})
+            except Exception:
+                pass
+            effective_limit = 1 if intent.fetch_one else (intent.limit or None)
+            if effective_limit:
+                pipeline.append({"$limit": int(effective_limit)})
 
         return pipeline
 
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
         """Extract filters that apply to the primary collection"""
         primary_filters = {}
+
+        # Handle direct _id filters first using $expr with $toObjectId for safety
+        def _is_hex24(s: str) -> bool:
+            try:
+                return isinstance(s, str) and len(s) == 24 and all(c in '0123456789abcdefABCDEF' for c in s)
+            except Exception:
+                return False
+
+        if "_id" in filters:
+            val = filters.get("_id")
+            if isinstance(val, str) and _is_hex24(val):
+                primary_filters["$expr"] = {"$eq": ["$_id", {"$toObjectId": val}]}
+            elif isinstance(val, list):
+                ids = [v for v in val if isinstance(v, str) and _is_hex24(v)]
+                if ids:
+                    primary_filters["$expr"] = {
+                        "$in": [
+                            "$_id",
+                            {"$map": {"input": ids, "as": "id", "in": {"$toObjectId": "$$id"}}}
+                        ]
+                    }
 
         def _apply_date_range(target: Dict[str, Any], field: str, f: Dict[str, Any]):
             gte_key = f.get(f"{field}_from")
