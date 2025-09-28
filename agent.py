@@ -73,6 +73,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "3) Use 'rag_answer_question' to assemble short context for answering a content question.\n"
     "   - Use when the user asks a question that needs reading content first.\n"
     "4) Use 'rag_to_mongo_workitems' when a free-text phrase identifies work items, but you must report canonical fields (state.name, assignee, project.name).\n\n"
+    "For breakdown / group-by / distribution / progress analytics, call 'report_query'.\n\n"
     "TOOL CHEATSHEET:\n"
     "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
     "- rag_content_search(query:str, content_type:'page'|'work_item'|None, limit:int=5): Retrieve relevant snippets with scores.\n"
@@ -171,6 +172,9 @@ def _select_tools_for_query(user_query: str):
         allow_rag = False
 
     allowed_names = ["mongo_query"]
+    # Fast path for report-style analytics
+    if any(k in q for k in ["break down","group by","distribution","progress","count cycles","pages grouped"]):
+        allowed_names.append("report_query")
     if allow_rag:
         # Allow content-oriented RAG tools
         allowed_names.extend(["rag_content_search", "rag_answer_question"])
