@@ -660,19 +660,9 @@ class PipelineGenerator:
         primary_filters = self._extract_primary_filters(intent.filters, collection) if intent.filters else {}
         secondary_filters = self._extract_secondary_filters(intent.filters, collection) if intent.filters else {}
 
-        # COUNT-ONLY: no group_by, no details → do not add lookups
-        if (("count" in intent.aggregations) or intent.wants_count) and not intent.group_by and not intent.wants_details:
-            # Combine all filters for optimal count query
-            all_filters = {}
-            if primary_filters:
-                all_filters.update(primary_filters)
-            if secondary_filters:
-                all_filters.update(secondary_filters)
-
-            if all_filters:
-                return [{"$match": all_filters}, {"$count": "total"}]
-            else:
-                return [{"$count": "total"}]
+        # NOTE: Even for count-only queries we continue building the pipeline
+        # (add lookups, then count) so secondary filters (e.g., project_name)
+        # that require joins can work correctly.
 
         # Add filters for the primary collection
         if primary_filters:
@@ -1064,8 +1054,8 @@ class PipelineGenerator:
                 primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
             if 'email' in filters and isinstance(filters['email'], str):
                 primary_filters['email'] = {'$regex': f"^{filters['email']}", '$options': 'i'}
-            if 'project_name' in filters and isinstance(filters['project_name'], str):
-                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            # Do not filter on embedded project.name here since members.project may
+            # only contain _id. Let secondary filters handle project_name via $lookup.
             if 'staff_name' in filters and isinstance(filters['staff_name'], str):
                 primary_filters['staff.name'] = {'$regex': filters['staff_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'joiningDate', filters)
