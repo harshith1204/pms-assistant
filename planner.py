@@ -12,6 +12,12 @@ import os
 from dataclasses import dataclass
 
 from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
+try:
+    # IR compiler provides generalized join/group/measure compilation
+    from mongo.ir_compiler import intent_to_ir as _intent_to_ir, compile_pipeline as _compile_ir_pipeline
+except Exception:
+    _intent_to_ir = None  # type: ignore[assignment]
+    _compile_ir_pipeline = None  # type: ignore[assignment]
 from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -649,12 +655,37 @@ class PipelineGenerator:
     def __init__(self):
         self.relationship_cache = {}  # Cache for computed relationship paths
 
+    def _try_generate_with_ir(self, intent: QueryIntent) -> Optional[List[Dict[str, Any]]]:
+        """Attempt to compile using the IR-based generalization engine for grouped queries.
+
+        Falls back to legacy generator when IR is unavailable or not applicable.
+        """
+        try:
+            if not _intent_to_ir or not _compile_ir_pipeline:
+                return None
+            # Use IR path primarily for grouped breakdowns (any sequence of dims)
+            if intent.group_by:
+                ir = _intent_to_ir(intent.__dict__ if hasattr(intent, "__dict__") else intent)
+                pipeline = _compile_ir_pipeline(ir)
+                # Defensive: ensure a pipeline was produced
+                if isinstance(pipeline, list) and pipeline:
+                    return pipeline
+        except Exception:
+            # Silent fallback to legacy logic
+            return None
+        return None
+
     def generate_pipeline(self, intent: QueryIntent) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
         pipeline: List[Dict[str, Any]] = []
 
         # Start with the primary collection
         collection = intent.primary_entity
+
+        # Prefer IR compiler for generalized group-by queries
+        ir_pipeline = self._try_generate_with_ir(intent)
+        if ir_pipeline is not None:
+            return ir_pipeline
 
         # Build sanitized filters once
         primary_filters = self._extract_primary_filters(intent.filters, collection) if intent.filters else {}
