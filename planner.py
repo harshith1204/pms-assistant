@@ -848,6 +848,12 @@ class PipelineGenerator:
 
         # Add grouping if requested
         if intent.group_by:
+            # Pre-group unwind for embedded arrays that are used as grouping keys
+            # For workItem, assignee is an array subdocument; unwind to get per-assignee buckets
+            if intent.primary_entity == 'workItem' and 'assignee' in intent.group_by:
+                pipeline.append({
+                    "$unwind": {"path": "$assignee", "preserveNullAndEmptyArrays": True}
+                })
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
             for token in intent.group_by:
