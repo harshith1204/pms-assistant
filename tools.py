@@ -320,7 +320,12 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
         set_name("staff", "staffName")
 
     elif collection == "page":
-        set_name("project", "projectName")
+        # Some lookups/project embeddings use alias 'projectDoc'
+        project_obj = doc.get("project") or doc.get("projectDoc")
+        if isinstance(project_obj, dict):
+            name = project_obj.get("name") or project_obj.get("title")
+            if name:
+                out["projectName"] = name
         set_name("createdBy", "createdByName")
         set_name("business", "businessName")
         # Linked arrays could contain ids only; surface counts

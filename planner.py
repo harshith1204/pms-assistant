@@ -273,6 +273,15 @@ class LLMIntentParser:
             "- createdBy_name: (creator names)\n"
             "- label: (work item labels)\n\n"
 
+            "## PRIMARY ENTITY SELECTION RULES (CRITICAL)\n"
+            "Choose primary_entity based on WHAT the user wants listed/count/grouped:\n"
+            "- If the query mentions tasks/bugs/issues or filters like state/priority/assignee/title/label → primary_entity = 'workItem'\n"
+            "- If the query is about team members (roles/emails/types) → primary_entity = 'members'\n"
+            "- If asking about cycles/sprints themselves (not items inside) → primary_entity = 'cycle'\n"
+            "- If asking about modules themselves (not items inside) → primary_entity = 'module'\n"
+            "- If asking about projects themselves (status/active/archived/access) → primary_entity = 'project'\n"
+            "- If grouping by cross-entity tokens (project/cycle/module/assignee) about items → prefer 'workItem'\n\n"
+
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
             "- 'recent', 'latest', 'newest', 'most recent' → {\"createdTimeStamp\": -1}\n"
@@ -503,6 +512,27 @@ class LLMIntentParser:
             # drop stray 'group'
             aggregations = [a for a in aggregations if a != "group"]
 
+        # Disambiguate competing name filters using DB evidence (project/cycle/module/assignee)
+        try:
+            name_keys = {k: v for k, v in filters.items() if k in {"project_name", "cycle_name", "module_name", "assignee_name"}}
+            if len(name_keys) > 1:
+                chosen_key = await self._disambiguate_name_entity(name_keys)
+                if chosen_key:
+                    # Keep only the chosen name filter
+                    filters = {k: v for k, v in filters.items() if k not in {"project_name", "cycle_name", "module_name", "assignee_name"} or k == chosen_key}
+        except Exception:
+            pass
+
+        # Heuristic correction of primary entity when filters imply item-level intent
+        item_level_keys = {"state", "priority", "label", "assignee_name", "title", "displayBugNo"}
+        project_only_keys = {"project_status", "isActive", "isArchived", "access", "isFavourite"}
+        # If LLM picked a non-item collection but user clearly asked about items
+        if primary in {"project", "cycle", "module", "members", "page", "projectState"} and any(k in filters for k in item_level_keys):
+            primary = "workItem"
+        # If LLM picked workItem but filters are purely project-level, prefer project
+        if primary == "workItem" and any(k in filters for k in project_only_keys) and not any(k in filters for k in item_level_keys):
+            primary = "project"
+
         # Projections limited to allow-listed fields for primary
         allowed_projection_set = set(self.allowed_fields.get(primary, []))
         projections = [p for p in (data.get("projections") or []) if p in allowed_projection_set][:10]
@@ -726,6 +756,11 @@ class PipelineGenerator:
             if first_hop in REL.get(collection, {}):
                 required_relations.add(rel)
 
+        # If we are returning details for non-workItem entities, join project by default to surface names
+        if intent.wants_details and collection in {"cycle", "module", "page", "members", "projectState"}:
+            if "project" in REL.get(collection, {}):
+                required_relations.add("project")
+
         # Filters → relations (map filter tokens to relation alias for this primary)
         if intent.filters:
             # For workItem, project/assignee/cycle/modules are embedded; no lookups needed for name filters
@@ -797,7 +832,7 @@ class PipelineGenerator:
                     # If array relation, unwind the alias used in $lookup
                     is_many = bool(relationship.get("isArray") or relationship.get("many", False))
                     alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
-                    if is_many:
+                    if is_many and alias_name:
                         pipeline.append({
                             "$unwind": {"path": f"${alias_name}", "preserveNullAndEmptyArrays": True}
                         })
@@ -1176,10 +1211,10 @@ class PipelineGenerator:
             if field in ALLOWED_FIELDS.get(primary_entity, {}):
                 projection[field] = 1
 
-        # Add target entity fields
-        for entity in target_entities:
-            if entity in REL.get(primary_entity, {}):
-                projection[entity] = 1
+        # Add joined aliases so downstream can surface human-friendly names
+        for alias_name in target_entities:
+            # alias_name corresponds to the $lookup "as" field (e.g., project, projectDoc, assignees)
+            projection[alias_name] = 1
 
         return projection
 
