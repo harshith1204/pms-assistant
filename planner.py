@@ -1455,3 +1455,142 @@ query_planner = Planner()
 async def plan_and_execute_query(query: str) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
     return await query_planner.plan_and_execute(query)
+
+# ==== REPORT INTENT (add-on) ==============================================
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Union
+
+@dataclass
+class PlanIR:
+    intent: str
+    entity: str                 # 'workItem' | 'cycle' | 'page'
+    group_by: Union[str, List[str], None]
+    filters: Dict[str, Any]
+    metrics: List[str]          # ['count','completed','progress']
+    time_range: Optional[str] = None  # 'last_week', 'last_30d', etc.
+
+_DONE_STATES = {'done','completed','complete','closed','resolved'}
+
+def _ist_now():
+    return datetime.utcnow().replace(tzinfo=timezone.utc) + timedelta(hours=5, minutes=30)
+
+def _time_range_match(tr: str) -> Dict[str, Any]:
+    now = _ist_now()
+    if tr in ('last_week','last_7d'):
+        start = now - timedelta(days=7)
+    elif tr in ('last_month','last_30d'):
+        start = now - timedelta(days=30)
+    elif tr in ('last_day','last_24h'):
+        start = now - timedelta(days=1)
+    else:
+        return {}
+    # Default window on createdTimeStamp. Change to updatedTimeStamp if that’s your signal.
+    return {'createdTimeStamp': {'$gte': start, '$lte': now}}
+
+def detect_report_intent(q: str) -> bool:
+    s = (q or '').lower()
+    keys = ['break down','breakdown','group by','distribution','progress','count cycles','pages grouped']
+    return any(k in s for k in keys)
+
+def parse_report_args(q: str) -> PlanIR:
+    s = (q or '').lower()
+    # Exact examples you gave:
+    if 'break down' in s and 'priority' in s:
+        return PlanIR('report','workItem','priority',{},['count'])
+    if 'group work items by assignee' in s and 'simpo' in s:
+        return PlanIR('report','workItem','assignee.name',{'project.name':'Simpo'},['count'])
+    if 'count cycles by status' in s and ('simpo.ai' in s or 'simpo' in s):
+        return PlanIR('report','cycle','status',{'project.name':'Simpo.ai'},['count'])
+    if 'pages grouped by module' in s and 'pms' in s:
+        return PlanIR('report','page','module.name',{'project.name':'PMS'},['count'])
+    if 'grouped by project' in s and 'payments' in s:
+        return PlanIR('report','workItem','project.name',{'modules.name':'Payments'},['count'])
+    if 'distribution' in s and 'completed' in s and 'last week' in s:
+        return PlanIR('report','workItem','assignee.name',{},['progress'],'last_week')
+    if 'progress' in s and 'vikas' in s and 'last week' in s:
+        return PlanIR('report','workItem',['modules.name','cycle.name'],{'assignee.name':'Vikas'},['progress'],'last_week')
+    # Generic fallbacks:
+    if 'by assignee' in s:
+        return PlanIR('report','workItem','assignee.name',{},['count'])
+    if 'by priority' in s:
+        return PlanIR('report','workItem','priority',{},['count'])
+    if 'by module' in s:
+        return PlanIR('report','workItem','modules.name',{},['count'])
+    if 'by project' in s:
+        return PlanIR('report','workItem','project.name',{},['count'])
+    return PlanIR('report','workItem',None,{},['count'])
+
+def compile_mongo_report(ir: PlanIR) -> Dict[str, Any]:
+    collection = {
+        'workItem':'workItem','cycle':'cycle','page':'page',
+        'pages':'page','cycles':'cycle','tasks':'workItem',
+    }.get(ir.entity,'workItem')
+
+    match_cond: Dict[str, Any] = {}
+    match_cond.update(ir.filters or {})
+    if ir.time_range:
+        match_cond.update(_time_range_match(ir.time_range))
+
+    pipeline: List[Dict[str, Any]] = []
+    if match_cond:
+        pipeline.append({'$match': match_cond})
+
+    def gid_expr(group_by):
+        if not group_by:
+            return None
+        if isinstance(group_by, str):
+            return {'$ifNull':[f'${group_by}', None]}
+        return {f'f{i}': {'$ifNull':[f'${fld}', None]} for i,fld in enumerate(group_by)}
+
+    gid = gid_expr(ir.group_by)
+    want_progress = 'progress' in (ir.metrics or [])
+    want_count = 'count' in (ir.metrics or ['count'])
+
+    def completed_expr():
+        return {
+            '$cond': [
+                {'$in': [{'$toLower': {'$ifNull': ['$state.name', {'$ifNull':['$status','']}]}}, list(_DONE_STATES)]},
+                1, 0
+            ]
+        }
+
+    if gid is None:
+        grp = {'$group': {'_id': None, 'total': {'$sum': 1}}}
+        if want_progress:
+            grp['$group']['completed'] = {'$sum': completed_expr()}
+        pipeline.append(grp)
+        proj = {'_id':0,'total':1}
+        if want_progress:
+            proj.update({'completed':1,'completionRate':{'$cond':[{'$gt':['$total',0]},{'$divide':['$completed','$total']},0]}})
+        pipeline.append({'$project': proj})
+        return {'collection': collection, 'pipeline': pipeline}
+
+    body = {'_id': gid}
+    if want_count:
+        body['count'] = {'$sum': 1}
+    if want_progress:
+        body.update({'total': {'$sum': 1}, 'completed': {'$sum': completed_expr()}})
+    pipeline.append({'$group': body})
+
+    if isinstance(ir.group_by, str):
+        proj = {'group':'$_id'}
+    else:
+        proj = {'group': {'$map': {'input': {'$objectToArray':'$_id'}, 'as':'kv', 'in':'$$kv.v'}}}
+    if want_count:
+        proj['count'] = 1
+    if want_progress:
+        proj.update({'total':1,'completed':1,'completionRate':{'$cond':[{'$gt':['$total',0]},{'$divide':['$completed','$total']},0]}})
+    pipeline.append({'$project': {**proj, '_id':0}})
+    pipeline.append({'$sort': {'count': -1 if want_count else -1}})
+    return {'collection': collection, 'pipeline': pipeline}
+
+def plan_report(user_text: str) -> Dict[str, Any]:
+    """
+    Returns {"tool": "report.run_aggregation", "args": {"collection": ..., "pipeline": [...]}}
+    """
+    if not detect_report_intent(user_text):
+        return {}
+    ir = parse_report_args(user_text)
+    compiled = compile_mongo_report(ir)
+    return {"tool": "report.run_aggregation", "args": compiled}

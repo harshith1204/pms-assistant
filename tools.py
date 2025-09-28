@@ -25,6 +25,40 @@ try:
 except ImportError:
     plan_and_execute_query = None
 
+from langchain_core.tools import tool
+from mongo.constants import mongodb_tools as _mongodb_tools_ref, DATABASE_NAME as _DB_NAME_REF
+from planner import plan_report
+
+
+@tool
+async def report_run_aggregation(collection: str, pipeline: list) -> dict:
+    """
+    Execute a MongoDB aggregation pipeline compiled by planner.plan_report().
+    """
+    await mongodb_tools.connect()
+    args = {
+        "database": DATABASE_NAME,
+        "collection": collection,
+        "pipeline": pipeline,
+    }
+    res = await mongodb_tools.execute_tool("aggregate", args)
+    return {"collection": collection, "pipeline": pipeline, "results": res}
+
+
+@tool
+async def report_query(query: str) -> dict:
+    """
+    High-level entrypoint:
+      - compiles NL -> pipeline via planner.plan_report
+      - executes with report_run_aggregation
+    """
+    compiled = plan_report(query)
+    if not compiled:
+        return {"error": "No report intent detected"}
+    if compiled.get("tool") != "report.run_aggregation":
+        return {"error": f"Unexpected tool {compiled.get('tool')}", "compiled": compiled}
+    return await report_run_aggregation(**compiled["args"])
+
 
 def normalize_mongodb_types(obj: Any) -> Any:
     """Convert MongoDB extended JSON types to regular Python types."""
@@ -1095,6 +1129,8 @@ tools = [
     rag_content_search,
     rag_answer_question,
     rag_to_mongo_workitems,
+    report_query,
+    report_run_aggregation,
 ]
 
 # import asyncio
