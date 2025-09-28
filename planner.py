@@ -78,7 +78,7 @@ class LLMIntentParser:
     """
 
     def __init__(self, model_name: Optional[str] = None):
-        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "deepseek-r1:1.5b-qwen-distill-fp16")
+        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "qwen3:0.6b-fp16")
         # Keep the model reasonably deterministic for planning
         self.llm = ChatOllama(
             model=self.model_name,
