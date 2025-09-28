@@ -791,6 +791,15 @@ class PipelineGenerator:
                 if hop not in REL.get(current_collection, {}):
                     break
                 relationship = REL[current_collection][hop]
+
+                # SAFETY: avoid writing a lookup into an existing scalar field name
+                needs_alias_fix = (
+                    relationship.get("target") == "project"
+                    and current_collection in {"cycle", "module", "page", "members", "projectState"}
+                )
+                if needs_alias_fix:
+                    # Force a safe alias to prevent clobbering embedded project field
+                    relationship = {**relationship, "as": "projectDoc"}
                 lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
                 if lookup:
                     pipeline.append(lookup)
@@ -804,6 +813,16 @@ class PipelineGenerator:
                     # Set local prefix to the alias for chaining next hop
                     local_prefix = alias_name
                 current_collection = relationship["target"]
+
+        # Normalize project fields to scalars for safe filtering/printing
+        if intent.primary_entity in {"cycle", "module", "page", "members", "projectState"}:
+            pipeline.append({
+                "$addFields": {
+                    "projectId": {"$ifNull": ["$project._id", {"$first": "$projectDoc._id"}]},
+                    "projectName": {"$ifNull": ["$project.name", {"$first": "$projectDoc.name"}]},
+                    "projectBusinessName": {"$ifNull": ["$project.business.name", {"$first": "$projectDoc.business.name"}]}
+                }
+            })
 
         # Add secondary filters (on joined collections)
         if secondary_filters:
@@ -1087,11 +1106,13 @@ class PipelineGenerator:
             s['$or'] = [
                 {'name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
+                {'projectName': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
         elif 'project_name' in filters:
             s['$or'] = [
                 {'project.name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
+                {'projectName': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
 
         # Assignee name via joined alias 'assignees' (only if relation exists)
@@ -1145,13 +1166,25 @@ class PipelineGenerator:
         if 'business_name' in filters:
             # Directly embedded business on these collections
             if collection in ('project', 'page'):
-                s['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+                s['$or'] = s.get('$or', []) + [
+                    {'business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
             # For cycle/module: prefer project join to reach project.business.name
             if collection in ('cycle', 'module'):
-                s['project.business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+                s['$or'] = s.get('$or', []) + [
+                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
             # For members: through joined project
             if collection == 'members' and 'project' in REL.get('members', {}):
-                s['project.business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+                s['$or'] = s.get('$or', []) + [
+                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
 
         # Page linked members: support name filter via joined alias when available
         if collection == 'page' and 'LinkedMembers_0_name' in filters:
@@ -1199,16 +1232,16 @@ class PipelineGenerator:
                 "createdBy.name", "lead.name", "leadMail", "defaultAsignee.name"
             ],
             "cycle": [
-                "title", "status", "startDate", "endDate"
+                "title", "status", "startDate", "endDate", "projectName", "projectId"
             ],
             "members": [
-                "name", "email", "role", "joiningDate"
+                "name", "email", "role", "joiningDate", "projectName", "projectId"
             ],
             "page": [
-                "title", "visibility", "createdAt"
+                "title", "visibility", "createdAt", "projectName", "projectId"
             ],
             "module": [
-                "title", "description", "isFavourite", "createdTimeStamp"
+                "title", "description", "isFavourite", "createdTimeStamp", "projectName", "projectId"
             ],
             "projectState": [
                 "name", "subStates.name", "subStates.order"
