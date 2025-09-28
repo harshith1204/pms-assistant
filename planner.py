@@ -495,6 +495,28 @@ class LLMIntentParser:
         allowed_group = {"cycle", "project", "assignee", "state", "priority", "module", "status"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
+        # Heuristic: Infer grouping from natural language when LLM misses it
+        # e.g., "break down tasks by priority", "group tickets by assignee", "distribution by project"
+        if not group_by:
+            oq = (original_query or "").lower()
+            try:
+                by_matches = re.findall(r"\bby\s+(priority|project|assignee|cycle|state|status|module)s?\b", oq)
+            except Exception:
+                by_matches = []
+            inferred_group: List[str] = []
+            for token in by_matches:
+                t = token.strip().lower()
+                # Map synonyms where needed
+                if primary == "workItem" and t == "status":
+                    t = "state"
+                if t in allowed_group and t not in inferred_group:
+                    inferred_group.append(t)
+            if inferred_group:
+                group_by = inferred_group
+                # Ensure aggregation aligns
+                if "group" not in aggregations:
+                    aggregations.insert(0, "group")
+
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
         cross_tokens = {"assignee", "project", "cycle", "module"}
         if any(g in cross_tokens for g in group_by):
