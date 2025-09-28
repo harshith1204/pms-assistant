@@ -250,8 +250,19 @@ class LLMIntentParser:
             "## KEY RELATIONSHIPS\n"
             "- Work items belong to projects, cycles, and modules\n"
             "- Work items are assigned to team members\n"
-            "- Projects contain cycles and modules\n"
-            "- Cycles and modules belong to projects\n\n"
+            "- Projects contain cycles and modules (one-to-many)\n"
+            "- Cycles and modules belong to projects (many-to-one)\n"
+            "- Members belong to projects\n"
+            "- Pages belong to projects\n\n"
+            
+            "## CRITICAL: PRIMARY ENTITY SELECTION RULES\n"
+            "The primary_entity should be the MAIN entity the user wants to retrieve/count/group:\n"
+            "1. If asking about 'cycles in project X' → primary_entity: 'cycle' (NOT project)\n"
+            "2. If asking about 'members of project X' → primary_entity: 'members' (NOT project)\n"
+            "3. If asking about 'tasks assigned to X' → primary_entity: 'workItem' (NOT members)\n"
+            "4. If grouping cycles by project → primary_entity: 'cycle' (NOT project)\n"
+            "5. If grouping tasks by assignee → primary_entity: 'workItem' (NOT members)\n"
+            "6. The primary entity is what you're counting/listing, NOT what you're filtering by!\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -314,7 +325,16 @@ class LLMIntentParser:
             "- 'active cycles' → cycle with cycle_status: 'ACTIVE'\n"
             "- 'what is the email address for X' → members with name filter and email projection\n"
             "- 'member X' → members entity with name filter\n"
-            "- 'project member X' → members entity with name filter\n\n"
+            "- 'project member X' → members entity with name filter\n"
+            "\n## GROUPING PATTERN RECOGNITION (CRITICAL):\n"
+            "When you see 'group X by Y' or 'X grouped by Y' or 'X per Y' or 'breakdown of X by Y':\n"
+            "- X is the PRIMARY ENTITY (what we're counting/listing)\n"
+            "- Y is the GROUP BY field\n"
+            "Examples:\n"
+            "- 'group cycles by project' → primary_entity: 'cycle', group_by: ['project']\n"
+            "- 'tasks per assignee' → primary_entity: 'workItem', group_by: ['assignee']\n"
+            "- 'members by role' → primary_entity: 'members', group_by: ['role']\n"
+            "- 'breakdown of modules by project' → primary_entity: 'module', group_by: ['project']\n\n"
             
             "## OUTPUT FORMAT\n"
             "CRITICAL: Output ONLY the JSON object, nothing else.\n"
@@ -333,13 +353,23 @@ class LLMIntentParser:
             '  "wants_count": false\n'
             "}\n\n"
 
-            "## EXAMPLES\n"
+            "## EXAMPLES (PAY ATTENTION TO PRIMARY ENTITY SELECTION)\n"
             "- 'show me tasks assigned to alice' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_name\": \"alice\"}, \"aggregations\": []}\n"
             "- 'how many bugs are there' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"count\"]}\n"
             "- 'count active projects' → {\"primary_entity\": \"project\", \"filters\": {\"project_status\": \"STARTED\"}, \"aggregations\": [\"count\"]}\n"
             "- 'group tasks by priority' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"group\"], \"group_by\": [\"priority\"]}\n"
             "- 'show archived projects' → {\"primary_entity\": \"project\", \"filters\": {\"isArchived\": true}, \"aggregations\": []}\n"
             "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
+            "\n## CROSS-ENTITY EXAMPLES (CRITICAL TO GET RIGHT):\n"
+            "- 'show cycles in project X' → {\"primary_entity\": \"cycle\", \"filters\": {\"project_name\": \"X\"}, \"aggregations\": []}\n"
+            "- 'list modules of project Y' → {\"primary_entity\": \"module\", \"filters\": {\"project_name\": \"Y\"}, \"aggregations\": []}\n"
+            "- 'group cycles by project' → {\"primary_entity\": \"cycle\", \"aggregations\": [\"group\"], \"group_by\": [\"project\"]}\n"
+            "- 'group modules by project' → {\"primary_entity\": \"module\", \"aggregations\": [\"group\"], \"group_by\": [\"project\"]}\n"
+            "- 'group members by role' → {\"primary_entity\": \"members\", \"aggregations\": [\"group\"], \"group_by\": [\"role\"]}\n"
+            "- 'group work items by cycle' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"group\"], \"group_by\": [\"cycle\"]}\n"
+            "- 'how many cycles per project' → {\"primary_entity\": \"cycle\", \"aggregations\": [\"group\"], \"group_by\": [\"project\"]}\n"
+            "- 'count members by project' → {\"primary_entity\": \"members\", \"aggregations\": [\"group\"], \"group_by\": [\"project\"]}\n"
+            "\n## MORE EXAMPLES:\n"
             "- 'show work items with bug label' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": []}\n"
             "- 'find work items with title containing component' → {\"primary_entity\": \"workItem\", \"filters\": {\"title\": \"component\"}, \"aggregations\": []}\n"
             "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n"
@@ -349,8 +379,8 @@ class LLMIntentParser:
             "- 'show upcoming cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"UPCOMING\"}, \"aggregations\": []}\n"
             "- 'count completed cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"COMPLETED\"}, \"aggregations\": [\"count\"]}\n"
             "- 'what is the email address for the project member Vikas' → {\"primary_entity\": \"members\", \"filters\": {\"name\": \"Vikas\"}, \"projections\": [\"email\"], \"aggregations\": []}\n"
-            "- 'what is the role of Vikas in Simpo Builder project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"name\": \"Vikas\", \"business_name\": \"Simpo.ai\"}, \"aggregations\": []}\n"
-            "- 'show members in Simpo project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"project_name\": \"Simpo\"}, \"aggregations\": []}\n\n"
+            "- 'what is the role of Vikas in Simpo Builder project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"name\": \"Vikas\", \"project_name\": \"Simpo Builder\"}, \"aggregations\": []}\n"
+            "- 'show members in Simpo project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"project_name\": \"Simpo\"}, \"aggregations\": []}\n"
             "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
             "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
             "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n\n"
@@ -491,10 +521,18 @@ class LLMIntentParser:
         allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
-        # If user grouped by cross-entity tokens, force workItem as base (entity lock)
-        cross_tokens = {"assignee", "project", "cycle", "module"}
-        if any(g in cross_tokens for g in group_by):
-            primary = "workItem"
+        # Smart entity selection based on grouping context
+        # Don't blindly force workItem - analyze what makes sense
+        if group_by:
+            # Check if the current primary entity can actually support the requested grouping
+            primary_can_group = self._can_entity_group_by(primary, group_by)
+            
+            if not primary_can_group:
+                # Find a better primary entity that can support this grouping
+                better_primary = self._find_best_entity_for_grouping(group_by, original_query)
+                if better_primary and better_primary != primary:
+                    print(f"DEBUG: Switching primary from {primary} to {better_primary} for grouping by {group_by}")
+                    primary = better_primary
 
         # Aggregations & group_by coherence
         if group_by and "group" not in aggregations:
@@ -642,6 +680,76 @@ class LLMIntentParser:
         except Exception:
             pass
         return 0
+
+    def _can_entity_group_by(self, entity: str, group_tokens: List[str]) -> bool:
+        """Check if an entity can support the requested grouping operations."""
+        # Define what each entity can group by (based on REL relationships)
+        groupable_by_entity = {
+            "workItem": {"project", "assignee", "cycle", "module", "state", "priority"},
+            "project": {"status", "lead", "business"},  # Can't group by cycles/modules (1-to-many)
+            "cycle": {"project", "status"},  # cycles belong to projects
+            "module": {"project", "assignee", "lead"},
+            "members": {"project", "role", "type"},
+            "page": {"project", "visibility", "createdBy"},
+            "projectState": {"project"},
+        }
+        
+        entity_capabilities = groupable_by_entity.get(entity, set())
+        
+        # Check if all requested group tokens are supported
+        for token in group_tokens:
+            if token not in entity_capabilities:
+                return False
+        return True
+    
+    def _find_best_entity_for_grouping(self, group_tokens: List[str], query: str) -> Optional[str]:
+        """Find the best primary entity that can support the requested grouping."""
+        # Score each entity based on how well it supports the grouping
+        entity_scores: Dict[str, int] = {}
+        
+        # Define relationships and scoring
+        for entity in self.entities:
+            if self._can_entity_group_by(entity, group_tokens):
+                score = 0
+                
+                # Base score for supporting all group tokens
+                score += 10
+                
+                # Bonus for entities mentioned in the query
+                entity_keywords = {
+                    "workItem": ["task", "bug", "issue", "ticket", "work item", "item"],
+                    "project": ["project"],
+                    "cycle": ["cycle", "sprint", "iteration"],
+                    "module": ["module", "component"],
+                    "members": ["member", "user", "assignee", "team"],
+                    "page": ["page", "document", "wiki"],
+                }
+                
+                query_lower = query.lower()
+                for keyword in entity_keywords.get(entity, []):
+                    if keyword in query_lower:
+                        score += 5
+                
+                # Prefer entities that are natural aggregation points
+                if entity == "workItem" and any(t in ["project", "assignee", "cycle", "module"] for t in group_tokens):
+                    score += 3  # workItem is often the best for cross-entity grouping
+                elif entity == "members" and "role" in group_tokens:
+                    score += 3  # members is natural for role-based grouping
+                elif entity == "project" and "status" in group_tokens:
+                    score += 3  # project is natural for project status grouping
+                elif entity == "cycle" and "project" in group_tokens:
+                    score += 3  # cycle grouped by project is natural
+                elif entity == "module" and "project" in group_tokens:
+                    score += 3  # module grouped by project is natural
+                
+                entity_scores[entity] = score
+        
+        # Return the highest scoring entity
+        if entity_scores:
+            return max(entity_scores.items(), key=lambda x: x[1])[0]
+        
+        # Fallback to workItem if no entity can support the grouping
+        return "workItem"
 
 class PipelineGenerator:
     """Generates MongoDB aggregation pipelines based on query intent and relationships"""
@@ -1245,15 +1353,32 @@ class PipelineGenerator:
             },
             'project': {
                 'status': 'status',  # project status unchanged
+                'lead': 'lead.name',
+                'business': 'business.name',
             },
             'cycle': {
-                'project': 'project.name',
+                'project': 'projectDoc.name',  # Use the joined alias
                 'status': 'status',  # cycle status unchanged
+            },
+            'module': {
+                'project': 'projectDoc.name',  # Use the joined alias
+                'assignee': 'assignees.name',  # Use the joined alias
+                'lead': 'lead.name',
+            },
+            'members': {
+                'project': 'projectDoc.name',  # Use the joined alias
+                'role': 'role',
+                'type': 'type',
             },
             'page': {
                 'project': 'projectDoc.name',
                 'cycle': 'linkedCycleDocs.name',
                 'module': 'linkedModuleDocs.name',
+                'visibility': 'visibility',
+                'createdBy': 'createdBy.name',
+            },
+            'projectState': {
+                'project': 'projectDoc.name',
             },
         }
         entity_map = mapping.get(primary_entity, {})
