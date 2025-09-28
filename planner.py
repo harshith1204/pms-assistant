@@ -492,7 +492,7 @@ class LLMIntentParser:
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
+        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module", "status"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
@@ -848,6 +848,12 @@ class PipelineGenerator:
 
         # Add grouping if requested
         if intent.group_by:
+            # Pre-group unwind for embedded arrays that are used as grouping keys
+            # For workItem, assignee is an array subdocument; unwind to get per-assignee buckets
+            if intent.primary_entity == 'workItem' and 'assignee' in intent.group_by:
+                pipeline.append({
+                    "$unwind": {"path": "$assignee", "preserveNullAndEmptyArrays": True}
+                })
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
             for token in intent.group_by:
