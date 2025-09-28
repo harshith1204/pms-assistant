@@ -123,7 +123,7 @@ conversation_memory = ConversationMemory()
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
     model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
-    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.1")),
+    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
     num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
     num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
     num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
