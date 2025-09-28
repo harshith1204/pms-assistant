@@ -300,6 +300,7 @@ class LLMIntentParser:
             "- 'Show me X' → list/get details (aggregations: [])\n"
             "- 'How many X' → count (aggregations: ['count'])\n"
             "- 'Breakdown by X' → group results (aggregations: ['group'])\n"
+            "- 'Breakdown by X and Y' → group results by two keys (aggregations: ['group'], group_by: ['X','Y'])\n"
             "- 'X assigned to Y' → filter by assignee name (Y = assignee_name)\n"
             "- 'X from/in/belonging to/associated with Y' → filter by project/cycle/module name (Y = project_name/cycle_name/module_name)\n"
             "- 'X in Y status' → filter by status/priority\n"
@@ -354,6 +355,10 @@ class LLMIntentParser:
             "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
             "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
             "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n\n"
+
+            # Multi-key breakdown examples
+            "- 'breakdown of vikas for workitems by the modules and cycles' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_name\": \"vikas\"}, \"aggregations\": [\"group\"], \"group_by\": [\"module\", \"cycle\"]}\n"
+            "- 'give me breakdown of tasks by project and assignee' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"group\"], \"group_by\": [\"project\", \"assignee\"]}\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -811,6 +816,17 @@ class PipelineGenerator:
 
         # Add grouping if requested
         if intent.group_by:
+            # Before grouping, ensure array fields used for grouping are unwound
+            # For workItem, 'modules' is an array; group_by 'module' should unwind it
+            if collection == 'workItem' and ('module' in (intent.group_by or [])):
+                # Unwind modules array so each module.name becomes a separate groupable value
+                pipeline.append({
+                    "$unwind": {
+                        "path": "$modules",
+                        "preserveNullAndEmptyArrays": True
+                    }
+                })
+
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
             for token in intent.group_by:
