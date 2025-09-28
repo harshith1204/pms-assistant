@@ -737,7 +737,17 @@ class MongoDBAgent:
                                     tool_span.add_event("tool_start", {"tool": tool.name})
                                 except Exception:
                                     pass
-                            result = await tool.ainvoke(tool_call["args"])
+                            # Normalize arguments for mongo_query to pass the user's query verbatim
+                            tool_args = tool_call.get("args") or {}
+                            if tool.name == "mongo_query":
+                                try:
+                                    show_all_flag = False
+                                    if isinstance(tool_args, dict) and "show_all" in tool_args:
+                                        show_all_flag = bool(tool_args.get("show_all"))
+                                    tool_args = {"query": query, "show_all": show_all_flag}
+                                except Exception:
+                                    tool_args = {"query": query, "show_all": False}
+                            result = await tool.ainvoke(tool_args)
                             if tool_span:
                                 tool_span.set_attribute("tool_success", True)
                                 try:
@@ -934,7 +944,17 @@ class MongoDBAgent:
                                         tool_span.add_event("tool_start", {"tool": tool.name})
                                     except Exception:
                                         pass
-                                result = await tool.ainvoke(tool_call["args"]) 
+                                # Normalize arguments for mongo_query to pass the user's query verbatim
+                                tool_args = tool_call.get("args") or {}
+                                if tool.name == "mongo_query":
+                                    try:
+                                        show_all_flag = False
+                                        if isinstance(tool_args, dict) and "show_all" in tool_args:
+                                            show_all_flag = bool(tool_args.get("show_all"))
+                                        tool_args = {"query": query, "show_all": show_all_flag}
+                                    except Exception:
+                                        tool_args = {"query": query, "show_all": False}
+                                result = await tool.ainvoke(tool_args) 
                                 if tool_span:
                                     tool_span.set_attribute("tool_success", True)
                                     try:
