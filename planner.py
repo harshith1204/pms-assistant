@@ -561,6 +561,17 @@ class LLMIntentParser:
         except Exception:
             skip = 0
 
+        # Heuristic: if the query says "only" and a single projection is requested,
+        # prefer fetching a single record (e.g., "email only")
+        try:
+            oq_local = (original_query or "").lower()
+            proj_list = data.get("projections") or []
+            if isinstance(proj_list, list) and len(proj_list) == 1 and (" only" in oq_local or "only " in oq_local or " just" in oq_local or "just "):
+                # When user emphasizes only one field, cap to one record by default
+                limit = 1
+        except Exception:
+            pass
+
         # Details vs count (mutually exclusive) + heuristic for "how many"
         oq = (original_query or "").lower()
         wants_details_raw = data.get("wants_details")

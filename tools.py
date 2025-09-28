@@ -670,6 +670,50 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             primary_entity = intent.get('primary_entity') if isinstance(intent, dict) else None
             filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
 
+            # If a single-field projection is requested (e.g., email only), return only that field's values
+            try:
+                projections = intent.get('projections') if isinstance(intent, dict) else None
+                fetch_one_flag = bool(intent.get('fetch_one')) if isinstance(intent, dict) else False
+            except Exception:
+                projections = None
+                fetch_one_flag = False
+
+            def extract_field_values(data_any: Any, field_name: str) -> List[str]:
+                def get_field(d: Dict[str, Any], key: str) -> Any:
+                    if key in d:
+                        return d[key]
+                    # Also allow nested path like state.name
+                    if "." in key:
+                        cur: Any = d
+                        for part in key.split("."):
+                            if isinstance(cur, dict) and part in cur:
+                                cur = cur[part]
+                            else:
+                                return None
+                        return cur
+                    return None
+                values: List[str] = []
+                if isinstance(data_any, list):
+                    for item in data_any:
+                        if isinstance(item, dict):
+                            v = get_field(item, field_name)
+                            if isinstance(v, str) and v.strip():
+                                values.append(v.strip())
+                elif isinstance(data_any, dict):
+                    v = get_field(data_any, field_name)
+                    if isinstance(v, str) and v.strip():
+                        values.append(v.strip())
+                return values
+
+            if isinstance(projections, list) and len(projections) == 1:
+                only_field = projections[0]
+                only_values = extract_field_values(filtered, only_field)
+                if only_values:
+                    if fetch_one_flag:
+                        return (only_values[0])
+                    else:
+                        return "\n".join(only_values)
+
             # Format in LLM-friendly way
             max_items = None if show_all else 20
             formatted_result = format_llm_friendly(filtered, max_items=max_items, primary_entity=primary_entity)
