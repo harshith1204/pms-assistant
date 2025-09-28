@@ -814,6 +814,10 @@ class PipelineGenerator:
                     local_prefix = alias_name
                 current_collection = relationship["target"]
 
+        # Add secondary filters (on joined collections) BEFORE normalizing fields
+        if secondary_filters:
+            pipeline.append({"$match": secondary_filters})
+
         # Normalize project fields to scalars for safe filtering/printing
         if intent.primary_entity in {"cycle", "module", "page", "members", "projectState"}:
             pipeline.append({
@@ -823,10 +827,6 @@ class PipelineGenerator:
                     "projectBusinessName": {"$ifNull": ["$project.business.name", {"$first": "$projectDoc.business.name"}]}
                 }
             })
-
-        # Add secondary filters (on joined collections)
-        if secondary_filters:
-            pipeline.append({"$match": secondary_filters})
 
         # Add grouping if requested
         if intent.group_by:
@@ -1109,10 +1109,10 @@ class PipelineGenerator:
                 {'projectName': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
         elif 'project_name' in filters:
+            # For non-project collections, match on the joined project document
             s['$or'] = [
                 {'project.name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
-                {'projectName': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
 
         # Assignee name via joined alias 'assignees' (only if relation exists)
