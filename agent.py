@@ -186,6 +186,27 @@ def _select_tools_for_query(user_query: str):
     return selected_tools, allowed_names
 
 
+def _looks_like_db_query(user_query: str) -> bool:
+    """Heuristic: detect if the query targets structured DB facts.
+
+    Used as a fallback trigger to call `mongo_query` when the LLM fails to issue any tool calls.
+    Emphasizes members-related intents in addition to general canonical fields.
+    """
+    q = (user_query or "").lower()
+    member_markers = [
+        "member", "members", "team member", "team members", "teammate", "teammates",
+        "role", "email", "joining date", "joiningdate", "type", "staff", "user", "users"
+    ]
+    general_markers = [
+        "project", "work item", "work items", "cycle", "module", "page", "projectstate",
+        "count", "list", "show", "find", "filter", "group", "sort", "state", "priority",
+        "created", "updated", "date", "id"
+    ]
+    def has_any(terms):
+        return any(term in q for term in terms)
+    return has_any(member_markers) or has_any(general_markers)
+
+
 class PhoenixSpanManager:
     """Manages Phoenix spans and tracer for the agent."""
 
@@ -624,6 +645,7 @@ class MongoDBAgent:
                 need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    start_next_iteration = False
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
@@ -692,14 +714,32 @@ class MongoDBAgent:
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
 
+                # If no tools were requested but the query looks like DB facts,
+                # proactively run mongo_query as a safety net (especially for members queries)
+                if not getattr(response, "tool_calls", None) and _looks_like_db_query(query):
+                    try:
+                        tool = next((t for t in _TOOLS_BY_NAME.values() if getattr(t, "name", "") == "mongo_query"), None)
+                        if tool:
+                            tool_result = await tool.ainvoke({"query": query})
+                            tool_message = ToolMessage(content=str(tool_result), tool_call_id="fallback_mongo_query")
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                            need_finalization = True
+                            steps += 1
+                            start_next_iteration = True
+                    except Exception:
+                        pass
+                    if not start_next_iteration:
+                        return response.content
                 # If no tools requested, we are done
                 if not getattr(response, "tool_calls", None):
                     return response.content
 
-                # Execute requested tools sequentially
-                messages.append(response)
-                did_any_tool = False
-                for tool_call in response.tool_calls:
+                # Execute requested tools sequentially (skip when fallback already advanced iteration)
+                if not start_next_iteration:
+                    messages.append(response)
+                    did_any_tool = False
+                    for tool_call in response.tool_calls:
                     if tracer is not None:
                         tool_cm = tracer.start_as_current_span(
                             "tool_execute",
@@ -709,65 +749,65 @@ class MongoDBAgent:
                     else:
                         tool_cm = None
 
-                    with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                        # Enforce router: only allow selected tools
-                        tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
-                        if not tool:
-                            error_msg = ToolMessage(
-                                content=f"Tool '{tool_call['name']}' not found.",
+                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+                            # Enforce router: only allow selected tools
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+                            if not tool:
+                                error_msg = ToolMessage(
+                                    content=f"Tool '{tool_call['name']}' not found.",
+                                    tool_call_id=tool_call["id"],
+                                )
+                                messages.append(error_msg)
+                                conversation_memory.add_message(conversation_id, error_msg)
+                                continue
+
+                            try:
+                                if tool_span:
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                                        # Tag span kind for OpenInference UI (uppercase expected)
+                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                                        # Also set generic and OpenInference input.value for Phoenix UI
+                                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                                        try:
+                                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                                        except Exception:
+                                            pass
+                                        tool_span.add_event("tool_start", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                                result = await tool.ainvoke(tool_call["args"])
+                                if tool_span:
+                                    tool_span.set_attribute("tool_success", True)
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                                        try:
+                                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                                        except Exception:
+                                            pass
+                                        tool_span.add_event("tool_end", {"tool": tool.name})
+                                    except Exception:
+                                        pass
+                            except Exception as tool_exc:
+                                result = f"Tool execution error: {tool_exc}"
+                                if tool_span:
+                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                                    try:
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
+                                    except Exception:
+                                        pass
+
+                            tool_message = ToolMessage(
+                                content=str(result),
                                 tool_call_id=tool_call["id"],
                             )
-                            messages.append(error_msg)
-                            conversation_memory.add_message(conversation_id, error_msg)
-                            continue
-
-                        try:
-                            if tool_span:
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                    # Tag span kind for OpenInference UI (uppercase expected)
-                                    tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
-                                    # Also set generic and OpenInference input.value for Phoenix UI
-                                    tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
-                                    try:
-                                        tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
-                                    except Exception:
-                                        pass
-                                    tool_span.add_event("tool_start", {"tool": tool.name})
-                                except Exception:
-                                    pass
-                            result = await tool.ainvoke(tool_call["args"])
-                            if tool_span:
-                                tool_span.set_attribute("tool_success", True)
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                    tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
-                                    try:
-                                        tool_span.set_attribute('openinference.output.value', str(result)[:1200])
-                                    except Exception:
-                                        pass
-                                    tool_span.add_event("tool_end", {"tool": tool.name})
-                                except Exception:
-                                    pass
-                        except Exception as tool_exc:
-                            result = f"Tool execution error: {tool_exc}"
-                            if tool_span:
-                                tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                    tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                except Exception:
-                                    pass
-
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"],
-                        )
-                        messages.append(tool_message)
-                        conversation_memory.add_message(conversation_id, tool_message)
-                        did_any_tool = True
-                steps += 1
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                            did_any_tool = True
+                    steps += 1
 
                 # After executing any tools, force the next LLM turn to synthesize
                 if did_any_tool:

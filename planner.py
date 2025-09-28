@@ -401,7 +401,31 @@ class LLMIntentParser:
     async def _sanitize_intent(self, data: Dict[str, Any], original_query: str = "") -> QueryIntent:
         # Primary entity - trust the LLM's choice unless it's completely invalid
         requested_primary = (data.get("primary_entity") or "").strip()
-        primary = requested_primary if requested_primary in self.entities else "workItem"
+        # Normalize common synonyms and plural/singular variants to canonical collection names
+        def _normalize_primary(s: str) -> str:
+            key = s.strip().lower().replace(" ", "")
+            mapping = {
+                # work items
+                "workitem": "workItem", "workitems": "workItem",
+                "workitemss": "workItem", "task": "workItem", "tasks": "workItem",
+                "bug": "workItem", "bugs": "workItem", "issue": "workItem", "issues": "workItem",
+                # projects
+                "project": "project", "projects": "project",
+                # cycles
+                "cycle": "cycle", "cycles": "cycle",
+                # modules
+                "module": "module", "modules": "module",
+                # pages
+                "page": "page", "pages": "page",
+                # members
+                "member": "members", "members": "members", "teammember": "members", "teammembers": "members",
+                # project states
+                "projectstate": "projectState", "projectstates": "projectState",
+            }
+            return mapping.get(key, s)
+
+        normalized_primary = _normalize_primary(requested_primary)
+        primary = normalized_primary if normalized_primary in self.entities else "workItem"
 
         # Allowed relations for primary
         allowed_rels = set(self.entity_relations.get(primary, []))
@@ -412,6 +436,11 @@ class LLMIntentParser:
 
         # Simplified filter processing - keep valid filters, expanded to cover all collections
         raw_filters = data.get("filters") or {}
+        # Normalize members-specific generic keys
+        if requested_primary.strip().lower() in {"member", "members", "teammember", "teammembers"}:
+            # Promote member_role to role for members collection
+            if "member_role" in raw_filters and "role" not in raw_filters:
+                raw_filters["role"] = raw_filters["member_role"]
         filters: Dict[str, Any] = {}
 
         # Map legacy 'status' to 'state' for workItem if present
@@ -487,8 +516,8 @@ class LLMIntentParser:
         allowed_aggs = {"count", "group", "summary"}
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
-        # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
+        # Group by tokens (include 'role' for members grouping)
+        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module", "role"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
@@ -1254,6 +1283,9 @@ class PipelineGenerator:
                 'project': 'projectDoc.name',
                 'cycle': 'linkedCycleDocs.name',
                 'module': 'linkedModuleDocs.name',
+            },
+            'members': {
+                'role': 'role',
             },
         }
         entity_map = mapping.get(primary_entity, {})
