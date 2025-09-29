@@ -54,8 +54,10 @@ class QueryIntent:
     projections: List[str]  # Fields to return
     sort_order: Optional[Dict[str, int]]  # Sort specification
     limit: Optional[int]  # Result limit
+    skip: Optional[int]  # Result offset for pagination
     wants_details: bool  # Prefer detailed documents over counts
     wants_count: bool  # Whether the user asked for a count
+    fetch_one: bool  # Whether the user wants a single specific item
 
 @dataclass
 class RelationshipPath:
@@ -88,10 +90,13 @@ class LLMIntentParser:
     def __init__(self, model_name: Optional[str] = None):
         self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "qwen3:0.6b-fp16")
         # Keep the model reasonably deterministic for planning
-        self.llm = ChatGroq(
-            api_key=groq_api_key,
-            model="llama-3.1-8b-instant",
-            streaming=False
+        self.llm = ChatOllama(
+            model=self.model_name,
+            temperature=0.2,
+            num_ctx=4096,
+            num_predict=1024,
+            top_p=0.8,
+            top_k=40,
         )
 
         # Precompute compact schema context to keep prompts short
@@ -308,10 +313,18 @@ class LLMIntentParser:
             "- 'X assigned to Y' → filter by assignee name (Y = assignee_name)\n"
             "- 'X from/in/belonging to/associated with Y' → filter by project/cycle/module name (Y = project_name/cycle_name/module_name)\n"
             "- 'X in Y status' → filter by status/priority\n"
+            "- 'work items with title containing Z' → filter by title field (Z = search term)\n"
+            "- 'work items with label Z' → filter by label field (Z = exact label value)\n"
+            "- 'find items containing X in title' → {\"primary_entity\": \"workItem\", \"filters\": {\"title\": \"X\"}, \"aggregations\": []}\n"
+            "- 'search for Y in descriptions' → {\"primary_entity\": \"workItem\", \"filters\": {\"description\": \"Y\"}, \"aggregations\": []}\n"
+            "- 'IMPORTANT: For \"containing\" queries, extract ONLY the search term (e.g., \"component\"), not the full phrase'\n"
             "- 'Y project' → if asking about work items: workItem with project_name filter\n"
             "  → Context matters: 'details of Y project' vs 'work items associated with Y project'\n"
             "- 'cycles that are active/currently active' → cycle with cycle_status: 'ACTIVE'\n"
-            "- 'active cycles' → cycle with cycle_status: 'ACTIVE'\n\n"
+            "- 'active cycles' → cycle with cycle_status: 'ACTIVE'\n"
+            "- 'what is the email address for X' → members with name filter and email projection\n"
+            "- 'member X' → members entity with name filter\n"
+            "- 'project member X' → members entity with name filter\n\n"
             
             "## OUTPUT FORMAT\n"
             "CRITICAL: Output ONLY the JSON object, nothing else.\n"
@@ -326,8 +339,10 @@ class LLMIntentParser:
             '  "projections": [],\n'
             '  "sort_order": null,\n'
             '  "limit": 20,\n'
+            '  "skip": 0,\n'
             '  "wants_details": true,\n'
-            '  "wants_count": false\n'
+            '  "wants_count": false,\n'
+            '  "fetch_one": false\n'
             "}\n\n"
 
             "## EXAMPLES\n"
@@ -338,12 +353,14 @@ class LLMIntentParser:
             "- 'show archived projects' → {\"primary_entity\": \"project\", \"filters\": {\"isArchived\": true}, \"aggregations\": []}\n"
             "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
             "- 'show work items with bug label' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": []}\n"
+            "- 'find work items with title containing component' → {\"primary_entity\": \"workItem\", \"filters\": {\"title\": \"component\"}, \"aggregations\": []}\n"
             "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n"
             "- 'find active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
             "- 'list cycles where state.active = true' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
             "- 'list all cycles that currently active' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
             "- 'show upcoming cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"UPCOMING\"}, \"aggregations\": []}\n"
             "- 'count completed cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"COMPLETED\"}, \"aggregations\": [\"count\"]}\n"
+            "- 'what is the email address for the project member Vikas' → {\"primary_entity\": \"members\", \"filters\": {\"name\": \"Vikas\"}, \"projections\": [\"email\"], \"aggregations\": []}\n"
             "- 'what is the role of Vikas in Simpo Builder project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"name\": \"Vikas\", \"business_name\": \"Simpo.ai\"}, \"aggregations\": []}\n"
             "- 'show members in Simpo project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"project_name\": \"Simpo\"}, \"aggregations\": []}\n\n"
             "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
@@ -436,7 +453,8 @@ class LLMIntentParser:
             # entity name filters (secondary lookups)
             "project_name", "cycle_name", "assignee_name", "module_name", "member_role",
             # actor/name filters
-            "createdBy_name", "lead_name", "business_name",
+            "createdBy_name", "lead_name", "leadMail", "business_name",
+            "defaultAssignee_name", "defaultAsignee_name", "staff_name",
             # members specific
             "role", "type", "joiningDate", "joiningDate_from", "joiningDate_to",
         }
@@ -542,6 +560,15 @@ class LLMIntentParser:
         except Exception:
             limit = 20
 
+        # Skip (offset)
+        skip_val = data.get("skip")
+        try:
+            skip = int(skip_val) if skip_val is not None else 0
+            if skip < 0:
+                skip = 0
+        except Exception:
+            skip = 0
+
         # Details vs count (mutually exclusive) + heuristic for "how many"
         oq = (original_query or "").lower()
         wants_details_raw = data.get("wants_details")
@@ -570,6 +597,9 @@ class LLMIntentParser:
             if inferred_sort:
                 sort_order = inferred_sort
 
+        # Fetch one heuristic
+        fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
+
         return QueryIntent(
             primary_entity=primary,
             target_entities=target_entities,
@@ -579,8 +609,10 @@ class LLMIntentParser:
             projections=projections,
             sort_order=sort_order,
             limit=limit,
+            skip=skip,
             wants_details=wants_details,
             wants_count=wants_count,
+            fetch_one=fetch_one,
         )
 
     async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
@@ -702,6 +734,7 @@ class PipelineGenerator:
                 'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
                 'cycle': 'linkedCycle',
                 'module': 'linkedModule',
+                'linkedMembers': 'linkedMembers',
             },
             'members': {
                 'project': 'project',
@@ -736,6 +769,9 @@ class PipelineGenerator:
                     # If primary lacks direct business relation, but has project relation, join project
                     if relation_alias_by_token.get('project') in REL.get(collection, {}):
                         required_relations.add(relation_alias_by_token['project'])
+                # Page linked members filter requires linkedMembers join
+                if collection == 'page' and 'LinkedMembers_0_name' in intent.filters and relation_alias_by_token.get('linkedMembers') in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token['linkedMembers'])
             if 'member_role' in intent.filters:
                 # Require member join depending on collection
                 if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
@@ -781,6 +817,15 @@ class PipelineGenerator:
                 if hop not in REL.get(current_collection, {}):
                     break
                 relationship = REL[current_collection][hop]
+
+                # SAFETY: avoid writing a lookup into an existing scalar field name
+                needs_alias_fix = (
+                    relationship.get("target") == "project"
+                    and current_collection in {"cycle", "module", "page", "members", "projectState"}
+                )
+                if needs_alias_fix:
+                    # Force a safe alias to prevent clobbering embedded project field
+                    relationship = {**relationship, "as": "projectDoc"}
                 lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
                 if lookup:
                     pipeline.append(lookup)
@@ -795,12 +840,28 @@ class PipelineGenerator:
                     local_prefix = alias_name
                 current_collection = relationship["target"]
 
-        # Add secondary filters (on joined collections)
+        # Add secondary filters (on joined collections) BEFORE normalizing fields
         if secondary_filters:
             pipeline.append({"$match": secondary_filters})
 
+        # Normalize project fields to scalars for safe filtering/printing
+        if intent.primary_entity in {"cycle", "module", "page", "members", "projectState"}:
+            pipeline.append({
+                "$addFields": {
+                    "projectId": {"$ifNull": ["$project._id", {"$first": "$projectDoc._id"}]},
+                    "projectName": {"$ifNull": ["$project.name", {"$first": "$projectDoc.name"}]},
+                    "projectBusinessName": {"$ifNull": ["$project.business.name", {"$first": "$projectDoc.business.name"}]}
+                }
+            })
+
         # Add grouping if requested
         if intent.group_by:
+            # Pre-group unwind for embedded arrays that are used as grouping keys
+            # For workItem, assignee is an array subdocument; unwind to get per-assignee buckets
+            if intent.primary_entity == 'workItem' and 'assignee' in intent.group_by:
+                pipeline.append({
+                    "$unwind": {"path": "$assignee", "preserveNullAndEmptyArrays": True}
+                })
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
             for token in intent.group_by:
@@ -921,15 +982,44 @@ class PipelineGenerator:
         if added_priority_rank:
             pipeline.append({"$unset": "_priorityRank"})
 
-        # Add limit (only for non-grouped queries; grouped handled above)
-        if intent.limit and not intent.group_by:
-            pipeline.append({"$limit": intent.limit})
+        # Add pagination: skip then limit (only for non-grouped queries; grouped handled above)
+        if not intent.group_by:
+            # Apply skip before limit
+            try:
+                if intent.skip and int(intent.skip) > 0:
+                    pipeline.append({"$skip": int(intent.skip)})
+            except Exception:
+                pass
+            effective_limit = 1 if intent.fetch_one else (intent.limit or None)
+            if effective_limit:
+                pipeline.append({"$limit": int(effective_limit)})
 
         return pipeline
 
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
         """Extract filters that apply to the primary collection"""
         primary_filters = {}
+
+        # Handle direct _id filters first using $expr with $toObjectId for safety
+        def _is_hex24(s: str) -> bool:
+            try:
+                return isinstance(s, str) and len(s) == 24 and all(c in '0123456789abcdefABCDEF' for c in s)
+            except Exception:
+                return False
+
+        if "_id" in filters:
+            val = filters.get("_id")
+            if isinstance(val, str) and _is_hex24(val):
+                primary_filters["$expr"] = {"$eq": ["$_id", {"$toObjectId": val}]}
+            elif isinstance(val, list):
+                ids = [v for v in val if isinstance(v, str) and _is_hex24(v)]
+                if ids:
+                    primary_filters["$expr"] = {
+                        "$in": [
+                            "$_id",
+                            {"$map": {"input": ids, "as": "id", "in": {"$toObjectId": "$$id"}}}
+                        ]
+                    }
 
         def _apply_date_range(target: Dict[str, Any], field: str, f: Dict[str, Any]):
             gte_key = f.get(f"{field}_from")
@@ -979,18 +1069,29 @@ class PipelineGenerator:
                 primary_filters['favourite'] = bool(filters['isFavourite'])
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
                 primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
+                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
+            if 'leadMail' in filters and isinstance(filters['leadMail'], str):
+                primary_filters['leadMail'] = {'$regex': f"^{filters['leadMail']}", '$options': 'i'}
             if 'projectDisplayId' in filters and isinstance(filters['projectDisplayId'], str):
                 primary_filters['projectDisplayId'] = {'$regex': f"^{filters['projectDisplayId']}", '$options': 'i'}
             if 'name' in filters and isinstance(filters['name'], str):
                 primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
             if 'business_name' in filters and isinstance(filters['business_name'], str):
                 primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            # default assignee (object): allow name filtering
+            if 'defaultAssignee_name' in filters and isinstance(filters['defaultAssignee_name'], str):
+                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAssignee_name'], '$options': 'i'}
+            if 'defaultAsignee_name' in filters and isinstance(filters['defaultAsignee_name'], str):
+                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAsignee_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
             _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
         elif collection == "cycle":
             if 'cycle_status' in filters:
                 primary_filters['status'] = filters['cycle_status']
+            if 'status' in filters and 'status' not in primary_filters:
+                primary_filters['status'] = filters['status']
             if 'isDefault' in filters:
                 primary_filters['isDefault'] = bool(filters['isDefault'])
             if 'isFavourite' in filters:
@@ -1025,6 +1126,13 @@ class PipelineGenerator:
                 primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
             if 'name' in filters and isinstance(filters['name'], str):
                 primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
+                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # module.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
 
         elif collection == "members":
@@ -1036,6 +1144,10 @@ class PipelineGenerator:
                 primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
             if 'email' in filters and isinstance(filters['email'], str):
                 primary_filters['email'] = {'$regex': f"^{filters['email']}", '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'staff_name' in filters and isinstance(filters['staff_name'], str):
+                primary_filters['staff.name'] = {'$regex': filters['staff_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'joiningDate', filters)
 
         elif collection == "projectState":
@@ -1055,8 +1167,10 @@ class PipelineGenerator:
             s['$or'] = [
                 {'name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
+                {'projectName': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
         elif 'project_name' in filters:
+            # For non-project collections, match on the joined project document
             s['$or'] = [
                 {'project.name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
@@ -1112,11 +1226,31 @@ class PipelineGenerator:
         # Business name via embedded or joined path
         if 'business_name' in filters:
             # Directly embedded business on these collections
-            if collection in ('project', 'cycle', 'module', 'page', 'workItem'):
-                s['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            if collection in ('project', 'page'):
+                s['$or'] = s.get('$or', []) + [
+                    {'business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
+            # For cycle/module: prefer project join to reach project.business.name
+            if collection in ('cycle', 'module'):
+                s['$or'] = s.get('$or', []) + [
+                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
             # For members: through joined project
             if collection == 'members' and 'project' in REL.get('members', {}):
-                s['project.business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+                s['$or'] = s.get('$or', []) + [
+                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
+
+        # Page linked members: support name filter via joined alias when available
+        if collection == 'page' and 'LinkedMembers_0_name' in filters:
+            # Interpret as any linked member name regex
+            s['linkedMembersDocs.name'] = {'$regex': filters['LinkedMembers_0_name'], '$options': 'i'}
 
         return s
 
@@ -1156,19 +1290,19 @@ class PipelineGenerator:
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
-                "createdBy.name"
+                "createdBy.name", "lead.name", "leadMail", "defaultAsignee.name"
             ],
             "cycle": [
-                "title", "status", "startDate", "endDate"
+                "title", "status", "startDate", "endDate", "projectName", "projectId"
             ],
             "members": [
-                "name", "email", "role", "joiningDate"
+                "name", "email", "role", "joiningDate", "projectName", "projectId"
             ],
             "page": [
-                "title", "visibility", "createdAt"
+                "title", "visibility", "createdAt", "projectName", "projectId"
             ],
             "module": [
-                "title", "description", "isFavourite", "createdTimeStamp"
+                "title", "description", "isFavourite", "createdTimeStamp", "projectName", "projectId"
             ],
             "projectState": [
                 "name", "subStates.name", "subStates.order"
