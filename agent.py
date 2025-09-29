@@ -178,6 +178,17 @@ def _select_tools_for_query(user_query: str):
         if has_any(workitem_terms) and has_any(canonical_field_terms):
             allowed_names.append("rag_to_mongo_workitems")
 
+    # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
+    multi_markers = [
+        "compare", " versus ", " vs ", "side by side", "both ", " and also ", " together ", ";"
+    ]
+    needs_composite = (
+        has_any(multi_markers)
+        or (allow_rag and has_any(canonical_field_terms))
+    )
+    if needs_composite:
+        allowed_names.append("composite_query")
+
     # Map to actual tool objects, keep only those present
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
     # Fallback safety: if mapping failed for any reason, expose mongo_query only

@@ -6,6 +6,7 @@ import json
 import re
 from glob import glob
 from datetime import datetime
+from orchestrator import Orchestrator, StepSpec, as_async
 
 # Qdrant and RAG dependencies
 try:
@@ -1089,12 +1090,158 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
         return f"❌ RAG→Mongo ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
 
+# Composite tool for multi-step/tool-chaining queries
+@tool
+async def composite_query(instruction: str) -> str:
+    """Break down a complex instruction into sub-queries, run the right tools in parallel, and consolidate.
+
+    Use when the user asks for multiple things at once (e.g., counts + lists, compare X vs Y,
+    mix of structured facts and content context). This orchestrates sub-steps and merges outputs.
+
+    Args:
+        instruction: Free-form user instruction possibly containing multiple requests.
+
+    Returns: A concise consolidated report.
+    """
+    try:
+        # Lightweight step planner via LLM; fallback to naive split
+        async def _llm_plan(text: str) -> List[Dict[str, Any]]:
+            try:
+                from langchain_ollama import ChatOllama  # Local LLM
+                llm = ChatOllama(
+                    model=os.getenv("COMPOSITE_PLANNER_MODEL", "qwen3:0.6b-fp16"),
+                    temperature=float(os.getenv("COMPOSITE_PLANNER_TEMP", "0.2")),
+                    num_ctx=4096,
+                    num_predict=1024,
+                )
+                system = (
+                    "You split a single instruction into minimal independent steps.\n"
+                    "Only use these tools: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems.\n"
+                    "Output strictly JSON with key 'steps': an array of objects with keys: 'tool', 'args', 'label'.\n"
+                    "Rules:\n"
+                    "- Use mongo_query for counts, lists, filters, groups across entities.\n"
+                    "- Use rag_answer_question to assemble short context to answer a content question.\n"
+                    "- Use rag_content_search to show snippets/examples by meaning.\n"
+                    "- Use rag_to_mongo_workitems when free-text needs canonical work item fields.\n"
+                    "- Keep steps <= 4; merge trivial overlaps.\n"
+                )
+                user = f"Plan steps for: {text}"
+                from langchain_core.messages import SystemMessage, HumanMessage
+                ai = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+                content = (ai.content or "").strip()
+                # Strip fences or think tags if present
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                if content.startswith("```"):
+                    content = content.strip("`\n").split("\n", 1)[-1]
+                    if content.startswith("json\n"):
+                        content = content[5:]
+                # Extract JSON block
+                m = re.search(r"\{[\s\S]*\}", content)
+                if m:
+                    content = m.group(0)
+                data = json.loads(content)
+                steps = data.get("steps") if isinstance(data, dict) else None
+                if isinstance(steps, list) and steps:
+                    cleaned: List[Dict[str, Any]] = []
+                    for s in steps:
+                        if not isinstance(s, dict):
+                            continue
+                        tool_name = (s.get("tool") or "").strip()
+                        if tool_name not in {"mongo_query", "rag_content_search", "rag_answer_question", "rag_to_mongo_workitems"}:
+                            continue
+                        args = s.get("args")
+                        if not isinstance(args, dict):
+                            continue
+                        label = (s.get("label") or tool_name).strip()
+                        cleaned.append({"tool": tool_name, "args": args, "label": label})
+                    if cleaned:
+                        return cleaned[:4]
+            except Exception:
+                pass
+            # Fallback: naive split by connectors and default to mongo_query
+            clauses = re.split(r"\b(?: and | plus | also | as well as | then |;|\n)\b", text, flags=re.IGNORECASE)
+            steps: List[Dict[str, Any]] = []
+            for idx, clause in enumerate([c.strip() for c in clauses if c and c.strip()]):
+                tool_name = "mongo_query"
+                lower = clause.lower()
+                if any(k in lower for k in ["content", "note", "doc", "page", "description", "snippet", "example"]):
+                    tool_name = "rag_content_search"
+                if any(k in lower for k in ["explain", "why", "summarize", "what does it say", "answer"]):
+                    tool_name = "rag_answer_question"
+                if any(k in lower for k in ["work item", "ticket", "bug", "issue"]) and any(k in lower for k in ["state", "assignee", "project", "count", "group"]):
+                    tool_name = "rag_to_mongo_workitems"
+                args = {"query": clause} if tool_name in {"mongo_query", "rag_content_search", "rag_to_mongo_workitems"} else {"question": clause}
+                steps.append({"tool": tool_name, "args": args, "label": f"Step {idx+1}"})
+            return steps[:4]
+
+        plan = await _llm_plan(instruction)
+
+        # Map tool names to callables
+        name_to_tool = {
+            "mongo_query": mongo_query,
+            "rag_content_search": rag_content_search,
+            "rag_answer_question": rag_answer_question,
+            "rag_to_mongo_workitems": rag_to_mongo_workitems,
+        }
+
+        # Build orchestrated steps (parallel independent execution)
+        orchestrator = Orchestrator(tracer_name=__name__, max_parallel=4)
+
+        async def _invoke(tool_name: str, args: Dict[str, Any]) -> str:
+            tool_obj = name_to_tool.get(tool_name)
+            if not tool_obj:
+                return f"❌ Tool not available: {tool_name}"
+            # Tools expect specific arg keys; pass through as-is
+            try:
+                res = await tool_obj.ainvoke(args)
+            except Exception as e:
+                res = f"❌ Error invoking {tool_name}: {e}"
+            return str(res)
+
+        step_specs: List[StepSpec] = []
+        for i, s in enumerate(plan):
+            tname = s.get("tool")
+            targs = s.get("args", {})
+            label = s.get("label") or f"Step {i+1}"
+
+            async def make_coro(args=targs, tool_name=tname):
+                async def _c(_ctx: Dict[str, Any]) -> str:
+                    return await _invoke(tool_name, args)
+                return _c
+            step_specs.append(
+                StepSpec(
+                    name=f"composite_step_{i+1}",
+                    coroutine=as_async(await make_coro()),
+                    requires=tuple(),
+                    provides=f"out_{i+1}",
+                    timeout_s=45.0,
+                    retries=0,
+                    parallel_group="composite",
+                )
+            )
+
+        ctx = await orchestrator.run(step_specs, initial_context={"instruction": instruction}, correlation_id=f"composite_{hash(instruction) & 0xFFFFFFFF:x}")
+
+        # Consolidate outputs in order
+        sections: List[str] = []
+        for i, s in enumerate(plan, 1):
+            out = ctx.get(f"out_{i}")
+            lab = s.get("label") or f"Step {i}"
+            sections.append(f"[{i}] {lab}\n{out}\n")
+
+        summary = "\n".join(sections)
+        header = f"🧩 COMPOSITE EXECUTION for: '{instruction}'\n\n"
+        return header + summary
+    except Exception as e:
+        return f"❌ Composite query error: {e}"
+
 # Define the tools list (no schema tool)
 tools = [
     mongo_query,
     rag_content_search,
     rag_answer_question,
     rag_to_mongo_workitems,
+    composite_query,
 ]
 
 # import asyncio
