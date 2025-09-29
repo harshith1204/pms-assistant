@@ -439,17 +439,29 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             response += "\n"
 
             # Show the generated pipeline (first few stages)
-            pipeline = result["pipeline"]
-            if pipeline:
+            pipeline = result.get("pipeline")
+            pipeline_js = result.get("pipeline_js")
+            if pipeline_js:
                 response += f"🔧 GENERATED PIPELINE:\n"
-                for i, stage in enumerate(pipeline):
-                    stage_name = list(stage.keys())[0]
-                    # Format the stage content nicely
-                    stage_content = json.dumps(stage[stage_name], indent=2)
-                    # Truncate very long content for readability but show complete structure
-                    if len(stage_content) > 200:
-                        stage_content = stage_content + "..."
-                    response += f"• {stage_name}: {stage_content}\n"
+                response += pipeline_js
+                response += "\n"
+            elif pipeline:
+                response += f"🔧 GENERATED PIPELINE:\n"
+                # Import the formatting function from planner
+                try:
+                    from planner import _format_pipeline_for_display
+                    formatted_pipeline = _format_pipeline_for_display(pipeline)
+                    response += formatted_pipeline
+                except ImportError:
+                    # Fallback to JSON format if import fails
+                    for i, stage in enumerate(pipeline):
+                        stage_name = list(stage.keys())[0]
+                        # Format the stage content nicely
+                        stage_content = json.dumps(stage[stage_name], indent=2)
+                        # Truncate very long content for readability but show complete structure
+                        if len(stage_content) > 200:
+                            stage_content = stage_content + "..."
+                        response += f"• {stage_name}: {stage_content}\n"
                 response += "\n"
 
             # Show results (compact preview)
