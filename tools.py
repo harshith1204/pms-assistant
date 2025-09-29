@@ -1210,6 +1210,26 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
             if not isinstance(targs, dict):
                 prefilled_outputs[i] = f"❌ Invalid args for {tname}: expected object"
                 continue
+            # Normalize args for known tools to avoid schema validation errors
+            if tname == "mongo_query":
+                # Map 'question' -> 'query' if provided
+                if "question" in targs and "query" not in targs:
+                    try:
+                        targs["query"] = targs.pop("question")
+                    except Exception:
+                        targs["query"] = targs.get("question")
+                # If neither pipeline/intent nor query provided, backfill from label/instruction
+                has_structured = isinstance(s, dict) and (isinstance(s.get("pipeline"), list) or ("intent" in s))
+                if "query" not in targs and not has_structured:
+                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
+                    targs["query"] = default_label or (instruction or "Query")
+            elif tname == "rag_answer_question":
+                # Map 'query' -> 'question' if step authors used the other convention
+                if "query" in targs and "question" not in targs:
+                    try:
+                        targs["question"] = targs.pop("query")
+                    except Exception:
+                        targs["question"] = targs.get("query")
             raw_step = s
             async def _curry(tool_name: str, args: Dict[str, Any], raw: Dict[str, Any]):
                 async def _run(_ctx: Dict[str, Any]) -> str:
