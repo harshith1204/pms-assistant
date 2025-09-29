@@ -1132,10 +1132,28 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
                 plan = []
 
         if not plan:
-            return (
-                "❌ composite_query requires 'steps' (list of {tool,args,label,...}) or a JSON 'instruction' containing steps. "
-                "Allowed tools: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems."
-            )
+            # If no plan found, try to create a simple fallback for basic queries
+            if instruction and instruction.strip():
+                # Try to infer a simple mongo query from the instruction
+                fallback_steps = [{
+                    "tool": "mongo_query",
+                    "args": {"query": instruction.strip()},
+                    "label": "MongoDB Query"
+                }]
+                plan = fallback_steps
+                print(f"Warning: Using fallback plan for instruction: {instruction}")
+            else:
+                # Provide more helpful error message with suggestions
+                error_msg = (
+                    "❌ composite_query requires either:\n"
+                    "1. 'steps' parameter: a list of tool steps like [{'tool': 'mongo_query', 'args': {'query': 'your query'}, 'label': 'Step description'}]\n"
+                    "2. 'instruction' parameter: a JSON string containing 'steps' field\n\n"
+                    f"Received instruction: {instruction or 'None'}\n"
+                    f"Received steps: {steps or 'None'}\n\n"
+                    "Allowed tools: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems.\n"
+                    "Example usage: composite_query(instruction='{\"steps\": [{\"tool\": \"mongo_query\", \"args\": {\"query\": \"count work items\"}, \"label\": \"Count items\"}]}')"
+                )
+                return error_msg
 
         # Map tool names to callables
         name_to_tool = {
@@ -1210,6 +1228,26 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
             if not isinstance(targs, dict):
                 prefilled_outputs[i] = f"❌ Invalid args for {tname}: expected object"
                 continue
+            # Normalize args for known tools to avoid schema validation errors
+            if tname == "mongo_query":
+                # Map 'question' -> 'query' if provided
+                if "question" in targs and "query" not in targs:
+                    try:
+                        targs["query"] = targs.pop("question")
+                    except Exception:
+                        targs["query"] = targs.get("question")
+                # If neither pipeline/intent nor query provided, backfill from label/instruction
+                has_structured = isinstance(s, dict) and (isinstance(s.get("pipeline"), list) or ("intent" in s))
+                if "query" not in targs and not has_structured:
+                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
+                    targs["query"] = default_label or (instruction or "Query")
+            elif tname == "rag_answer_question":
+                # Map 'query' -> 'question' if step authors used the other convention
+                if "query" in targs and "question" not in targs:
+                    try:
+                        targs["question"] = targs.pop("query")
+                    except Exception:
+                        targs["question"] = targs.get("query")
             raw_step = s
             async def _curry(tool_name: str, args: Dict[str, Any], raw: Dict[str, Any]):
                 async def _run(_ctx: Dict[str, Any]) -> str:
