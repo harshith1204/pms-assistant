@@ -75,11 +75,18 @@ DEFAULT_SYSTEM_PROMPT = (
     "4) Use 'rag_to_mongo_workitems' when a free-text phrase identifies work items, but you must report canonical fields (state.name, assignee, project.name).\n\n"
     "TOOL CHEATSHEET:\n"
     "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
+    "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
     "- rag_content_search(query:str, content_type:'page'|'work_item'|None, limit:int=5): Retrieve relevant snippets with scores.\n"
+    "  REQUIRED: 'query' - semantic search terms for finding relevant content.\n"
     "- rag_answer_question(question:str, content_types:list[str]|None): Provide condensed context to inform your final answer.\n"
+    "  REQUIRED: 'question' - the specific question you want answered using content.\n"
     "- rag_to_mongo_workitems(query:str, limit:int=20): Vector-match items, then fetch authoritative Mongo fields.\n"
+    "  REQUIRED: 'query' - descriptive text to match against work items.\n"
     "- composite_query(instruction:str, steps?:list): Run multiple sub-steps in parallel and consolidate.\n"
-    "  Prefer passing pre-planned steps to avoid extra planning calls. Steps items: {tool, args, label, optional: intent|pipeline|collection}.\n\n"
+    "  Use when query has multiple actions (e.g., 'compare X and list recent Y').\n"
+    "  Steps format: [{'tool': 'mongo_query', 'args': {'query': 'your query here'}, 'label': 'Step description'}, ...]\n"
+    "  Each tool in steps REQUIRES its specific arguments (see REQUIRED fields above).\n"
+    "  Allowed tools in steps: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems.\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
     "- If the question references 'content', 'notes', 'docs', 'pages', or 'descriptions' → rag_content_search or rag_answer_question.\n"
@@ -691,7 +698,10 @@ class MongoDBAgent:
                 routing_instructions = SystemMessage(content=(
                     "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
                     "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
-                    "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass minimal steps."
+                    "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass steps like: "
+                    "[{'tool': 'mongo_query', 'args': {'query': 'count open work items'}, 'label': 'Count open items'}, "
+                    "{'tool': 'mongo_query', 'args': {'query': 'list recent completed work items'}, 'label': 'Recent completed'}]. "
+                    "IMPORTANT: Each tool requires specific arguments - mongo_query needs 'query', rag tools need 'query' or 'question'."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
@@ -892,7 +902,10 @@ class MongoDBAgent:
                         routing_instructions = SystemMessage(content=(
                             "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
                             "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
-                            "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass minimal steps."
+                            "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass steps like: "
+                            "[{'tool': 'mongo_query', 'args': {'query': 'count open work items'}, 'label': 'Count open items'}, "
+                            "{'tool': 'mongo_query', 'args': {'query': 'list recent completed work items'}, 'label': 'Recent completed'}]. "
+                            "IMPORTANT: Each tool requires specific arguments - mongo_query needs 'query', rag tools need 'query' or 'question'."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
