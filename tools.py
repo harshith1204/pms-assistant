@@ -7,6 +7,12 @@ import re
 from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
+try:
+    # For structured, no-LLM execution path
+    from planner import PipelineGenerator, QueryIntent  # type: ignore
+except Exception:
+    PipelineGenerator = None  # type: ignore
+    QueryIntent = None  # type: ignore
 
 # Qdrant and RAG dependencies
 try:
@@ -1092,7 +1098,7 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
 
 # Composite tool for multi-step/tool-chaining queries
 @tool
-async def composite_query(instruction: str) -> str:
+async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, Any]]] = None) -> str:
     """Break down a complex instruction into sub-queries, run the right tools in parallel, and consolidate.
 
     Use when the user asks for multiple things at once (e.g., counts + lists, compare X vs Y,
@@ -1104,8 +1110,30 @@ async def composite_query(instruction: str) -> str:
     Returns: A concise consolidated report.
     """
     try:
-        # Lightweight step planner via LLM; fallback to naive split
-        async def _llm_plan(text: str) -> List[Dict[str, Any]]:
+        # If steps were passed in (agent already planned), use them directly
+        if steps and isinstance(steps, list):
+            plan: List[Dict[str, Any]] = steps
+        else:
+            # First, try to parse instruction as JSON containing steps
+            try:
+                maybe = instruction.strip()
+                if maybe.startswith("{") or maybe.startswith("["):
+                    data = json.loads(maybe)
+                else:
+                    # Try to extract JSON block
+                    m = re.search(r"\{[\s\S]*\}\s*$", maybe)
+                    data = json.loads(m.group(0)) if m else None
+                if isinstance(data, dict) and isinstance(data.get("steps"), list):
+                    plan = data.get("steps")  # type: ignore[assignment]
+                elif isinstance(data, list):
+                    plan = data  # type: ignore[assignment]
+                else:
+                    plan = []
+            except Exception:
+                plan = []
+
+            # Lightweight step planner via LLM; fallback to naive split
+            async def _llm_plan(text: str) -> List[Dict[str, Any]]:
             try:
                 from langchain_ollama import ChatOllama  # Local LLM
                 llm = ChatOllama(
@@ -1174,7 +1202,8 @@ async def composite_query(instruction: str) -> str:
                 steps.append({"tool": tool_name, "args": args, "label": f"Step {idx+1}"})
             return steps[:4]
 
-        plan = await _llm_plan(instruction)
+            if not plan:
+                plan = await _llm_plan(instruction)
 
         # Map tool names to callables
         name_to_tool = {
@@ -1187,11 +1216,49 @@ async def composite_query(instruction: str) -> str:
         # Build orchestrated steps (parallel independent execution)
         orchestrator = Orchestrator(tracer_name=__name__, max_parallel=4)
 
-        async def _invoke(tool_name: str, args: Dict[str, Any]) -> str:
+        async def _invoke(tool_name: str, args: Dict[str, Any], raw_step: Dict[str, Any]) -> str:
             tool_obj = name_to_tool.get(tool_name)
             if not tool_obj:
                 return f"❌ Tool not available: {tool_name}"
-            # Tools expect specific arg keys; pass through as-is
+            # Prefer structured, no-LLM execution for Mongo when intent/pipeline provided
+            if tool_name == "mongo_query":
+                try:
+                    if raw_step.get("pipeline") and isinstance(raw_step["pipeline"], list):
+                        pipeline = raw_step["pipeline"]
+                        res = await mongodb_tools.execute_tool("aggregate", {
+                            "database": DATABASE_NAME,
+                            "collection": raw_step.get("collection") or raw_step.get("primary_entity") or "workItem",
+                            "pipeline": pipeline,
+                        })
+                        return str(res)
+                    if raw_step.get("intent") and PipelineGenerator and QueryIntent:
+                        intent_dict = raw_step["intent"]
+                        # Fill defaults for QueryIntent fields
+                        qi = QueryIntent(
+                            primary_entity=intent_dict.get("primary_entity", "workItem"),
+                            target_entities=intent_dict.get("target_entities", []) or [],
+                            filters=intent_dict.get("filters", {}) or {},
+                            aggregations=intent_dict.get("aggregations", []) or [],
+                            group_by=intent_dict.get("group_by", []) or [],
+                            projections=intent_dict.get("projections", []) or [],
+                            sort_order=intent_dict.get("sort_order"),
+                            limit=intent_dict.get("limit"),
+                            skip=intent_dict.get("skip"),
+                            wants_details=bool(intent_dict.get("wants_details", False)),
+                            wants_count=bool(intent_dict.get("wants_count", False)),
+                            fetch_one=bool(intent_dict.get("fetch_one", False)),
+                        )
+                        gen = PipelineGenerator()
+                        pipeline = gen.generate_pipeline(qi)
+                        res = await mongodb_tools.execute_tool("aggregate", {
+                            "database": DATABASE_NAME,
+                            "collection": qi.primary_entity,
+                            "pipeline": pipeline,
+                        })
+                        return str(res)
+                except Exception as e:
+                    return f"❌ Error in structured Mongo exec: {e}"
+            # Otherwise, call the existing tool
             try:
                 res = await tool_obj.ainvoke(args)
             except Exception as e:
@@ -1204,9 +1271,9 @@ async def composite_query(instruction: str) -> str:
             targs = s.get("args", {})
             label = s.get("label") or f"Step {i+1}"
 
-            async def make_coro(args=targs, tool_name=tname):
+            async def make_coro(args=targs, tool_name=tname, raw_step=s):
                 async def _c(_ctx: Dict[str, Any]) -> str:
-                    return await _invoke(tool_name, args)
+                    return await _invoke(tool_name, args, raw_step)
                 return _c
             step_specs.append(
                 StepSpec(
