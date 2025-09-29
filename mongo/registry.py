@@ -235,7 +235,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
 # ---- Optional field aliases (normalize synonyms / UI names)
 ALIASES: Dict[str, Dict[str, str]] = {
     "project": {"id": "_id", "displayId": "projectDisplayId"},
-    "workItem": {"bug": "displayBugNo", "stateName": "state.name"},
+    "workItem": {"bug": "displayBugNo", "stateName": "state.name", "last_date": "updatedTimeStamp"},
     "members": {"memberId": "_id"},
     "module": {},
     "page": {},
