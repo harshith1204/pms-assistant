@@ -182,10 +182,20 @@ def _select_tools_for_query(user_query: str):
 
     # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
     multi_markers = [
-        "compare", " versus ", " vs ", "side by side", "both ", " and also ", " together ", ";"
+        "compare", " versus ", " vs ", "side by side", "both ", " and also ", " together ", ";", " then "
     ]
+    # Detect presence of multiple action intents in one query
+    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
+    action_listing = ["list", "show", "top", "recent", "titles", "items"]
+    action_content = ["summarize", "snippet", "snippets", "context", "explain"]
+    multiple_actions = (
+        (has_any(action_structured) and has_any(action_listing)) or
+        (has_any(action_structured) and has_any(action_content)) or
+        (has_any(action_listing) and has_any(action_content))
+    )
     needs_composite = (
         has_any(multi_markers)
+        or multiple_actions
         or (allow_rag and has_any(canonical_field_terms))
     )
     if needs_composite:
@@ -680,7 +690,8 @@ class MongoDBAgent:
                 # Lightweight routing hint to bias correct tool choice
                 routing_instructions = SystemMessage(content=(
                     "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
-                    "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
+                    "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
+                    "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass minimal steps."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
@@ -880,7 +891,8 @@ class MongoDBAgent:
                                 pass
                         routing_instructions = SystemMessage(content=(
                             "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
-                            "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools."
+                            "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
+                            "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass minimal steps."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
