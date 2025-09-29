@@ -1110,100 +1110,32 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
     Returns: A concise consolidated report.
     """
     try:
-        # If steps were passed in (agent already planned), use them directly
+        # If steps were passed in (agent already planned), use them directly; else try to parse JSON from instruction
         if steps and isinstance(steps, list):
             plan: List[Dict[str, Any]] = steps
         else:
-            # First, try to parse instruction as JSON containing steps
+            plan = []
             try:
-                maybe = instruction.strip()
+                maybe = (instruction or "").strip()
+                data = None
                 if maybe.startswith("{") or maybe.startswith("["):
                     data = json.loads(maybe)
                 else:
-                    # Try to extract JSON block
                     m = re.search(r"\{[\s\S]*\}\s*$", maybe)
-                    data = json.loads(m.group(0)) if m else None
+                    if m:
+                        data = json.loads(m.group(0))
                 if isinstance(data, dict) and isinstance(data.get("steps"), list):
                     plan = data.get("steps")  # type: ignore[assignment]
                 elif isinstance(data, list):
                     plan = data  # type: ignore[assignment]
-                else:
-                    plan = []
             except Exception:
                 plan = []
 
-            # Lightweight step planner via LLM; fallback to naive split
-            async def _llm_plan(text: str) -> List[Dict[str, Any]]:
-            try:
-                from langchain_ollama import ChatOllama  # Local LLM
-                llm = ChatOllama(
-                    model=os.getenv("COMPOSITE_PLANNER_MODEL", "qwen3:0.6b-fp16"),
-                    temperature=float(os.getenv("COMPOSITE_PLANNER_TEMP", "0.2")),
-                    num_ctx=4096,
-                    num_predict=1024,
-                )
-                system = (
-                    "You split a single instruction into minimal independent steps.\n"
-                    "Only use these tools: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems.\n"
-                    "Output strictly JSON with key 'steps': an array of objects with keys: 'tool', 'args', 'label'.\n"
-                    "Rules:\n"
-                    "- Use mongo_query for counts, lists, filters, groups across entities.\n"
-                    "- Use rag_answer_question to assemble short context to answer a content question.\n"
-                    "- Use rag_content_search to show snippets/examples by meaning.\n"
-                    "- Use rag_to_mongo_workitems when free-text needs canonical work item fields.\n"
-                    "- Keep steps <= 4; merge trivial overlaps.\n"
-                )
-                user = f"Plan steps for: {text}"
-                from langchain_core.messages import SystemMessage, HumanMessage
-                ai = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
-                content = (ai.content or "").strip()
-                # Strip fences or think tags if present
-                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-                if content.startswith("```"):
-                    content = content.strip("`\n").split("\n", 1)[-1]
-                    if content.startswith("json\n"):
-                        content = content[5:]
-                # Extract JSON block
-                m = re.search(r"\{[\s\S]*\}", content)
-                if m:
-                    content = m.group(0)
-                data = json.loads(content)
-                steps = data.get("steps") if isinstance(data, dict) else None
-                if isinstance(steps, list) and steps:
-                    cleaned: List[Dict[str, Any]] = []
-                    for s in steps:
-                        if not isinstance(s, dict):
-                            continue
-                        tool_name = (s.get("tool") or "").strip()
-                        if tool_name not in {"mongo_query", "rag_content_search", "rag_answer_question", "rag_to_mongo_workitems"}:
-                            continue
-                        args = s.get("args")
-                        if not isinstance(args, dict):
-                            continue
-                        label = (s.get("label") or tool_name).strip()
-                        cleaned.append({"tool": tool_name, "args": args, "label": label})
-                    if cleaned:
-                        return cleaned[:4]
-            except Exception:
-                pass
-            # Fallback: naive split by connectors and default to mongo_query
-            clauses = re.split(r"\b(?: and | plus | also | as well as | then |;|\n)\b", text, flags=re.IGNORECASE)
-            steps: List[Dict[str, Any]] = []
-            for idx, clause in enumerate([c.strip() for c in clauses if c and c.strip()]):
-                tool_name = "mongo_query"
-                lower = clause.lower()
-                if any(k in lower for k in ["content", "note", "doc", "page", "description", "snippet", "example"]):
-                    tool_name = "rag_content_search"
-                if any(k in lower for k in ["explain", "why", "summarize", "what does it say", "answer"]):
-                    tool_name = "rag_answer_question"
-                if any(k in lower for k in ["work item", "ticket", "bug", "issue"]) and any(k in lower for k in ["state", "assignee", "project", "count", "group"]):
-                    tool_name = "rag_to_mongo_workitems"
-                args = {"query": clause} if tool_name in {"mongo_query", "rag_content_search", "rag_to_mongo_workitems"} else {"question": clause}
-                steps.append({"tool": tool_name, "args": args, "label": f"Step {idx+1}"})
-            return steps[:4]
-
-            if not plan:
-                plan = await _llm_plan(instruction)
+        if not plan:
+            return (
+                "❌ composite_query requires 'steps' (list of {tool,args,label,...}) or a JSON 'instruction' containing steps. "
+                "Allowed tools: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems."
+            )
 
         # Map tool names to callables
         name_to_tool = {
@@ -1265,22 +1197,30 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
                 res = f"❌ Error invoking {tool_name}: {e}"
             return str(res)
 
+        # Validate and prepare steps. Preserve order; capture per-step errors inline.
+        allowed = {"mongo_query", "rag_content_search", "rag_answer_question", "rag_to_mongo_workitems"}
         step_specs: List[StepSpec] = []
-        for i, s in enumerate(plan):
-            tname = s.get("tool")
-            targs = s.get("args", {})
-            label = s.get("label") or f"Step {i+1}"
-
-            async def make_coro(args=targs, tool_name=tname, raw_step=s):
-                async def _c(_ctx: Dict[str, Any]) -> str:
-                    return await _invoke(tool_name, args, raw_step)
-                return _c
+        prefilled_outputs: Dict[int, str] = {}
+        for i, s in enumerate(plan, 1):
+            tname = (s.get("tool") or "").strip() if isinstance(s, dict) else ""
+            targs = s.get("args", {}) if isinstance(s, dict) else {}
+            if tname not in allowed:
+                prefilled_outputs[i] = f"❌ Invalid or unsupported step: tool='{tname or 'None'}'"
+                continue
+            if not isinstance(targs, dict):
+                prefilled_outputs[i] = f"❌ Invalid args for {tname}: expected object"
+                continue
+            raw_step = s
+            async def _curry(tool_name: str, args: Dict[str, Any], raw: Dict[str, Any]):
+                async def _run(_ctx: Dict[str, Any]) -> str:
+                    return await _invoke(tool_name, args, raw)
+                return _run
             step_specs.append(
                 StepSpec(
-                    name=f"composite_step_{i+1}",
-                    coroutine=as_async(await make_coro()),
+                    name=f"composite_step_{i}",
+                    coroutine=as_async(await _curry(tname, targs, raw_step)),
                     requires=tuple(),
-                    provides=f"out_{i+1}",
+                    provides=f"out_{i}",
                     timeout_s=45.0,
                     retries=0,
                     parallel_group="composite",
@@ -1293,8 +1233,10 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
         sections: List[str] = []
         for i, s in enumerate(plan, 1):
             out = ctx.get(f"out_{i}")
-            lab = s.get("label") or f"Step {i}"
-            sections.append(f"[{i}] {lab}\n{out}\n")
+            if out is None and i in prefilled_outputs:
+                out = prefilled_outputs[i]
+            lab = (s.get("label") or s.get("tool") or f"Step {i}") if isinstance(s, dict) else f"Step {i}"
+            sections.append(f"[{i}] {lab}\n{str(out)}\n")
 
         summary = "\n".join(sections)
         header = f"🧩 COMPOSITE EXECUTION for: '{instruction}'\n\n"
