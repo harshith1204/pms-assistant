@@ -7,10 +7,12 @@ based on the relationship registry
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
-from langchain_groq import ChatGroq
+import copy
+
 from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
 # from langchain_ollama import ChatOllama
@@ -69,6 +71,66 @@ class RelationshipPath:
     filters: Dict[str, Any]  # Filters that can be applied at each step
 
 
+def _serialize_pipeline_for_json(pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert datetime objects in pipeline to JSON-serializable format using MongoDB ISODate format"""
+    if not pipeline:
+        return pipeline
+
+    def _convert_value(value: Any) -> Any:
+        if isinstance(value, datetime):
+            # Use MongoDB ISODate format: new ISODate("2025-09-27T01:22:58Z")
+            iso_string = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if value.microsecond else value.strftime('%Y-%m-%dT%H:%M:%SZ')
+            return {"$isodate": iso_string}  # Use a special marker that can be converted to JavaScript
+        elif isinstance(value, dict):
+            return {k: _convert_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [_convert_value(item) for item in value]
+        else:
+            return value
+
+    return [_convert_value(stage) for stage in pipeline]
+
+def _format_pipeline_for_display(pipeline: List[Dict[str, Any]]) -> str:
+    """Format pipeline as JavaScript code for display in MongoDB shell format"""
+    if not pipeline:
+        return "[]"
+
+    def _format_value(value: Any) -> str:
+        if isinstance(value, dict):
+            if "$isodate" in value:
+                return f'new ISODate("{value["$isodate"]}")'
+            else:
+                items = []
+                for k, v in value.items():
+                    formatted_value = _format_value(v)
+                    # Don't quote string values that are not meant to be strings
+                    if isinstance(v, str) and v in ("true", "false", "null"):
+                        items.append(f'"{k}": {formatted_value}')
+                    else:
+                        items.append(f'"{k}": {formatted_value}')
+                return "{" + ", ".join(items) + "}"
+        elif isinstance(value, list):
+            items = [_format_value(item) for item in value]
+            return "[" + ", ".join(items) + "]"
+        elif isinstance(value, str):
+            return f'"{value}"'
+        else:
+            return str(value)
+
+    def _format_stage(stage: Dict[str, Any]) -> str:
+        stage_name = list(stage.keys())[0]
+        stage_value = stage[stage_name]
+        stage_content = _format_value(stage_value)
+        return f'  {stage_name}: {stage_content}'
+
+    formatted_stages = []
+    for i, stage in enumerate(pipeline):
+        formatted_stages.append(_format_stage(stage))
+        if i < len(pipeline) - 1:
+            formatted_stages.append("")
+
+    return "[\n" + ",\n".join(formatted_stages) + "\n]"
+
 class LLMIntentParser:
     """LLM-backed intent parser that produces a structured plan compatible with QueryIntent.
 
@@ -92,7 +154,7 @@ class LLMIntentParser:
         # Keep the model reasonably deterministic for planning
         self.llm = ChatOllama(
             model=self.model_name,
-            temperature=0.2,
+            temperature=0.1,
             num_ctx=4096,
             num_predict=1024,
             top_p=0.8,
@@ -324,7 +386,11 @@ class LLMIntentParser:
             "- 'active cycles' → cycle with cycle_status: 'ACTIVE'\n"
             "- 'what is the email address for X' → members with name filter and email projection\n"
             "- 'member X' → members entity with name filter\n"
-            "- 'project member X' → members entity with name filter\n\n"
+            "- 'project member X' → members entity with name filter\n"
+            "- 'work items updated in the last 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}}\n"
+            "- 'tasks created since last week' → {\"primary_entity\": \"workItem\", \"filters\": {\"createdTimeStamp_from\": \"last_week\"}}\n"
+            "- 'issues modified after 2024-01-01' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"2024-01-01\"}}\n"
+            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}}\n\n"
             
             "## OUTPUT FORMAT\n"
             "CRITICAL: Output ONLY the JSON object, nothing else.\n"
@@ -365,7 +431,11 @@ class LLMIntentParser:
             "- 'show members in Simpo project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"project_name\": \"Simpo\"}, \"aggregations\": []}\n\n"
             "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
             "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
-            "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n\n"
+            "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
+            "- 'work items updated in the last 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
+            "- 'tasks created since yesterday' → {\"primary_entity\": \"workItem\", \"filters\": {\"createdTimeStamp_from\": \"yesterday\"}, \"aggregations\": []}\n"
+            "- 'issues from the last week' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"last_week\"}, \"aggregations\": []}\n"
+            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -1022,17 +1092,149 @@ class PipelineGenerator:
                     }
 
         def _apply_date_range(target: Dict[str, Any], field: str, f: Dict[str, Any]):
+            # Resolve field aliases first
+            from mongo.registry import resolve_field_alias
+            resolved_field = resolve_field_alias(collection, field)
+
+            # Support additional keys:
+            # - {field}_within / {field}_duration: relative window like "last_7_days", "7d", {"last": {"days": 7}}
+            # - allow {field}_from / {field}_to values like "now-7d" or ISO timestamps
+
+            def _parse_relative_window(spec: Any) -> Optional[Dict[str, datetime]]:
+                now = datetime.now(timezone.utc)
+                start: Optional[datetime] = None
+                end: datetime = now
+
+                def _start_of_week(dt: datetime) -> datetime:
+                    dow = dt.weekday()  # Monday=0
+                    sod = datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc)
+                    return sod - timedelta(days=dow)
+
+                def _start_of_month(dt: datetime) -> datetime:
+                    return datetime(dt.year, dt.month, 1, tzinfo=timezone.utc)
+
+                def _end_of_month(dt: datetime) -> datetime:
+                    if dt.month == 12:
+                        next_month = datetime(dt.year + 1, 1, 1, tzinfo=timezone.utc)
+                    else:
+                        next_month = datetime(dt.year, dt.month + 1, 1, tzinfo=timezone.utc)
+                    return next_month - timedelta(microseconds=1)
+
+                if isinstance(spec, dict) and spec.get("last"):
+                    last_obj = spec.get("last") or {}
+                    days = float(last_obj.get("days", 0) or 0)
+                    hours = float(last_obj.get("hours", 0) or 0)
+                    delta = timedelta(days=days, hours=hours)
+                    if delta.total_seconds() > 0:
+                        start = now - delta
+                        return {"from": start, "to": end}
+                    return None
+
+                if not isinstance(spec, str):
+                    return None
+
+                s = spec.strip().lower().replace("-", "_")
+                if s == "today":
+                    sod = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+                    return {"from": sod, "to": end}
+                if s == "yesterday":
+                    sod_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+                    sod_y = sod_today - timedelta(days=1)
+                    eod_y = sod_today - timedelta(microseconds=1)
+                    return {"from": sod_y, "to": eod_y}
+                if s == "this_week":
+                    return {"from": _start_of_week(now), "to": end}
+                if s == "last_week":
+                    sow_this = _start_of_week(now)
+                    sow_last = sow_this - timedelta(days=7)
+                    eow_last = sow_this - timedelta(microseconds=1)
+                    return {"from": sow_last, "to": eow_last}
+                if s == "this_month":
+                    return {"from": _start_of_month(now), "to": end}
+                if s == "last_month":
+                    som_this = _start_of_month(now)
+                    if som_this.month == 1:
+                        som_last = datetime(som_this.year - 1, 12, 1, tzinfo=timezone.utc)
+                    else:
+                        som_last = datetime(som_this.year, som_this.month - 1, 1, tzinfo=timezone.utc)
+                    eom_last = _end_of_month(som_last)
+                    return {"from": som_last, "to": eom_last}
+
+                m = re.search(r"(last|past)?\s*([0-9]+)\s*(day|days|d|week|weeks|w|month|months|mo|hour|hours|h|year|years|y)", s)
+                if m:
+                    n = int(m.group(2))
+                    unit = m.group(3)
+                    if unit in {"day", "days", "d"}:
+                        start = now - timedelta(days=n)
+                    elif unit in {"week", "weeks", "w"}:
+                        start = now - timedelta(weeks=n)
+                    elif unit in {"month", "months", "mo"}:
+                        start = now - timedelta(days=30 * n)
+                    elif unit in {"hour", "hours", "h"}:
+                        start = now - timedelta(hours=n)
+                    elif unit in {"year", "years", "y"}:
+                        start = now - timedelta(days=365 * n)
+                    if start:
+                        return {"from": start, "to": end}
+
+                m2 = re.fullmatch(r"([0-9]+)\s*(d|h)", s)
+                if m2:
+                    n = int(m2.group(1))
+                    unit = m2.group(2)
+                    if unit == "d":
+                        start = now - timedelta(days=n)
+                    elif unit == "h":
+                        start = now - timedelta(hours=n)
+                    if start:
+                        return {"from": start, "to": end}
+                return None
+
+            def _normalize_bound(val: Any) -> Any:
+                if isinstance(val, (int, float)):
+                    try:
+                        if float(val) > 1e11:
+                            return datetime.fromtimestamp(float(val) / 1000.0, tz=timezone.utc)
+                        return datetime.fromtimestamp(float(val), tz=timezone.utc)
+                    except Exception:
+                        return val
+                if isinstance(val, str):
+                    s = val.strip().lower()
+                    if s == "now":
+                        return datetime.now(timezone.utc)
+                    m = re.fullmatch(r"now\s*[-+]\s*([0-9]+)\s*(d|day|days|h|hour|hours)", s)
+                    if m:
+                        n = int(m.group(1))
+                        unit = m.group(2)
+                        if unit in {"d", "day", "days"}:
+                            return datetime.now(timezone.utc) - timedelta(days=n)
+                        if unit in {"h", "hour", "hours"}:
+                            return datetime.now(timezone.utc) - timedelta(hours=n)
+                    try:
+                        return datetime.fromisoformat(val)
+                    except Exception:
+                        return val
+                return val
+
+            # Look for date range keys using the original field name
+            within = f.get(f"{field}_within") or f.get(f"{field}_duration")
             gte_key = f.get(f"{field}_from")
             lte_key = f.get(f"{field}_to")
+
+            if within is not None:
+                rng = _parse_relative_window(within)
+                if rng:
+                    gte_key = gte_key or rng.get("from")
+                    lte_key = lte_key or rng.get("to")
+
             if gte_key is None and lte_key is None:
                 return
             range_expr: Dict[str, Any] = {}
             if gte_key is not None:
-                range_expr["$gte"] = gte_key
+                range_expr["$gte"] = _normalize_bound(gte_key)
             if lte_key is not None:
-                range_expr["$lte"] = lte_key
+                range_expr["$lte"] = _normalize_bound(lte_key)
             if range_expr:
-                target[field] = range_expr
+                target[resolved_field] = range_expr
 
         if collection == "workItem":
             if 'status' in filters:
@@ -1102,6 +1304,40 @@ class PipelineGenerator:
             _apply_date_range(primary_filters, 'endDate', filters)
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
             _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+
+            # Optional duration-based filtering in days: duration_days_from/to
+            dur_from = filters.get('duration_days_from')
+            dur_to = filters.get('duration_days_to')
+            if dur_from is not None or dur_to is not None:
+                dur_bounds: List[Dict[str, Any]] = []
+                dur_expr = {
+                    "$divide": [
+                        {"$subtract": [
+                            {"$ifNull": ["$endDate", "$$NOW"]},
+                            "$startDate"
+                        ]},
+                        86400000
+                    ]
+                }
+                try:
+                    if dur_from is not None:
+                        dur_from_val = float(dur_from)
+                        dur_bounds.append({"$gte": [dur_expr, dur_from_val]})
+                except Exception:
+                    pass
+                try:
+                    if dur_to is not None:
+                        dur_to_val = float(dur_to)
+                        dur_bounds.append({"$lte": [dur_expr, dur_to_val]})
+                except Exception:
+                    pass
+                if dur_bounds:
+                    expr = {"$and": dur_bounds} if len(dur_bounds) > 1 else dur_bounds[0]
+                    if "$expr" in primary_filters:
+                        existing = primary_filters["$expr"]
+                        primary_filters["$expr"] = {"$and": [existing, expr]}
+                    else:
+                        primary_filters["$expr"] = expr
 
         elif collection == "page":
             if 'page_visibility' in filters:
@@ -1435,7 +1671,8 @@ class Planner:
             return {
                 "success": True,
                 "intent": intent.__dict__,
-                "pipeline": pipeline,
+                "pipeline": _serialize_pipeline_for_json(pipeline),
+                "pipeline_js": _format_pipeline_for_display(pipeline),
                 "result": result,
                 "planner": "llm",
             }
