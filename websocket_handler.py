@@ -185,6 +185,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             "success": plan_result.get("success", False),
                             "intent": plan_result.get("intent"),
                             "pipeline": plan_result.get("pipeline"),
+                            "pipeline_js": plan_result.get("pipeline_js"),
                             "result": plan_result.get("result"),
                             "timestamp": datetime.now().isoformat()
                         })
