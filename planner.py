@@ -161,6 +161,15 @@ class LLMIntentParser:
         self.allowed_fields: Dict[str, List[str]] = {
             entity: sorted(list(ALLOWED_FIELDS.get(entity, set()))) for entity in self.entities
         }
+        # Supported group_by tokens per entity for primary selection decisions
+        # Keep this aligned with PipelineGenerator._resolve_group_field
+        self._group_tokens_by_entity: Dict[str, Set[str]] = {
+            "workItem": {"project", "assignee", "cycle", "module", "state", "priority"},
+            "project": {"status"},
+            "cycle": {"project", "status"},
+            "page": {"project", "cycle", "module"},
+            # 'members', 'module', 'projectState' do not currently support grouping tokens directly
+        }
         # Map common synonyms to canonical entity names to reduce LLM mistakes
         self.entity_synonyms = {
             "member": "members",
@@ -562,13 +571,21 @@ class LLMIntentParser:
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
+        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module", "status"}
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
-        # If user grouped by cross-entity tokens, force workItem as base (entity lock)
-        cross_tokens = {"assignee", "project", "cycle", "module"}
-        if any(g in cross_tokens for g in group_by):
-            primary = "workItem"
+        # Choose the best primary for the requested grouping tokens without blindly forcing workItem
+        if group_by:
+            # Entities that can satisfy ALL requested group tokens
+            candidate_entities = [
+                e for e in self.entities
+                if all(
+                    g in self._group_tokens_by_entity.get(e, set())
+                    for g in group_by
+                )
+            ]
+            if candidate_entities and primary not in candidate_entities:
+                primary = self._choose_best_primary_for_grouping(candidate_entities, group_by, filters, requested_primary, original_query)
 
         # Aggregations & group_by coherence
         if group_by and "group" not in aggregations:
@@ -676,6 +693,164 @@ class LLMIntentParser:
             wants_count=wants_count,
             fetch_one=fetch_one,
         )
+
+    def _score_entity_for_filters(self, entity: str, filters: Dict[str, Any]) -> int:
+        """Score how well an entity fits the provided filters.
+        Higher score indicates a better fit as primary for grouping context.
+        """
+        score = 0
+        f = filters or {}
+
+        entity_signals: Dict[str, Set[str]] = {
+            "workItem": {"state", "priority", "label", "assignee_name", "project_name", "cycle_name", "module_name", "title", "displayBugNo"},
+            "project": {"project_status", "isActive", "isArchived", "access", "projectDisplayId", "lead_name", "leadMail", "business_name", "name"},
+            "cycle": {"cycle_status", "isDefault", "title", "project_name"},
+            "page": {"page_visibility", "visibility", "locked", "title", "project_name", "cycle_name", "module_name"},
+        }
+
+        signals = entity_signals.get(entity, set())
+        for key in f.keys():
+            if key in signals:
+                score += 2
+
+        # Mild bonus if most filters are actual allowed fields of the entity
+        allowed = set(self.allowed_fields.get(entity, []))
+        for key in f.keys():
+            if key in allowed or any(key.startswith(prefix) for prefix in ("created", "updated")):
+                score += 1
+        return score
+
+    def _choose_best_primary_for_grouping(
+        self,
+        candidates: List[str],
+        group_by: List[str],
+        filters: Dict[str, Any],
+        requested_primary: str,
+        query_text: str,
+    ) -> str:
+        """Pick the most appropriate primary among candidates for grouping.
+
+        Heuristics:
+        - Prefer requested_primary if it can satisfy all tokens (already filtered out).
+        - Prefer entities whose filters strongly match (higher score).
+        - If grouping includes 'assignee'/'state'/'priority', prefer 'workItem'.
+        - If grouping is only ['status'] and filters include project/cycle status, prefer those entities.
+        - Ties broken by stable order ['workItem','project','cycle','page','module','members','projectState'].
+        """
+        # Hard preferences based on group tokens
+        tokens = set(group_by)
+        if {"assignee", "state", "priority"} & tokens:
+            if "workItem" in candidates:
+                return "workItem"
+
+        # If grouping only by status, prefer project/cycle based on filters
+        if tokens == {"status"}:
+            if "project" in candidates and ("project_status" in (filters or {})):
+                return "project"
+            if "cycle" in candidates and ("cycle_status" in (filters or {})):
+                return "cycle"
+
+        # Score candidates by filter fit, query mentions, and estimate lookup costs (lower is better)
+        mention_weights = self._entity_mention_weights(query_text)
+        scored = []
+        for c in candidates:
+            fit_score = self._score_entity_for_filters(c, filters)
+            mention_score = mention_weights.get(c, 0)
+            lookup_cost = self._estimate_lookup_cost(c, filters)
+            total_score = fit_score + (2 * mention_score) - lookup_cost
+            scored.append((c, total_score))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        top_score = scored[0][1] if scored else -1
+        top = [c for c, s in scored if s == top_score]
+
+        if len(top) == 1:
+            return top[0]
+
+        # Tie-breaker by stable preference
+        preference_order = ["workItem", "project", "cycle", "page", "module", "members", "projectState"]
+        for pref in preference_order:
+            if pref in top:
+                return pref
+        # Fallback to first candidate
+        return candidates[0]
+
+    def _entity_mention_weights(self, query_text: str) -> Dict[str, int]:
+        """Extract rough entity mention weights from the query using synonym mapping.
+        Returns a small integer weight per entity (0..N).
+        """
+        if not query_text:
+            return {}
+        text = query_text.lower()
+        # Build token -> entity map
+        token_to_entity: Dict[str, str] = {}
+        # Include synonyms
+        for k, v in self.entity_synonyms.items():
+            token_to_entity[k.lower()] = v
+        # Include canonical names
+        for e in self.entities:
+            token_to_entity[e.lower()] = e
+
+        weights: Dict[str, int] = {}
+        for token, entity in token_to_entity.items():
+            # whole-word match
+            try:
+                if re.search(rf"\b{re.escape(token)}s?\b", text):
+                    weights[entity] = weights.get(entity, 0) + 1
+            except Exception:
+                # Be robust to regex failures on odd tokens
+                pass
+
+        # Slightly boost entities that co-occur with grouping phrases
+        if re.search(r"group\s+by\s+project", text):
+            weights["workItem"] = weights.get("workItem", 0) + 1
+        if re.search(r"group\s+by\s+assignee|assigned\s+to", text):
+            weights["workItem"] = weights.get("workItem", 0) + 1
+        if re.search(r"group\s+by\s+status", text):
+            # Ambiguous; defer to filters but give mild boost to project/cycle
+            for e in ("project", "cycle"):
+                weights[e] = weights.get(e, 0) + 1
+        return weights
+
+    def _estimate_lookup_cost(self, entity: str, filters: Dict[str, Any]) -> int:
+        """Estimate approximate number of lookups required to satisfy filters from a given primary.
+        Lower is better. This is a heuristic, not exact.
+        """
+        if not filters:
+            return 0
+        f = filters or {}
+        cost = 0
+
+        # Helper for incrementing cost if a filter is likely to require a join for this entity
+        def add_if(condition: bool, inc: int = 1):
+            nonlocal cost
+            if condition:
+                cost += inc
+
+        # Name filters
+        if "project_name" in f:
+            add_if(entity in {"cycle", "module", "page", "members"})  # via project
+        if "cycle_name" in f:
+            add_if(entity in {"project", "page"})  # cycles or linkedCycle
+        if "module_name" in f:
+            add_if(entity in {"project", "page"})  # modules or linkedModule
+        if "assignee_name" in f:
+            add_if(entity in {"project"})  # via members; workItem/module are embedded
+
+        # Business name
+        if "business_name" in f:
+            add_if(entity in {"cycle", "module", "members"})  # via project
+
+        # Entity-specific enums when not native to the entity
+        if "state" in f:
+            add_if(entity != "workItem")
+        if "priority" in f:
+            add_if(entity != "workItem")
+        if "project_status" in f:
+            add_if(entity != "project")
+        if "cycle_status" in f:
+            add_if(entity != "cycle")
+
+        return cost
 
     async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
         """Use DB counts across collections to decide which name filter is most plausible.
