@@ -10,7 +10,7 @@ from agent import MongoDBAgent, phoenix_span_manager
 from traces.setup import EvaluationPipeline
 from traces.upload_dataset import PhoenixDatasetUploader
 from websocket_handler import handle_chat_websocket, ws_manager
-
+from qdrant_initializer import RAGTool
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
     message: str
@@ -49,7 +49,8 @@ async def lifespan(app: FastAPI):
     await mongodb_agent.initialize_tracing()
     await mongodb_agent.connect()
     print("MongoDB Agent connected successfully!")
-
+    await RAGTool.initialize()
+    print("RAGTool initialized successfully!")
     yield
 
     # Shutdown
