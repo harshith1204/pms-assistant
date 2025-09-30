@@ -13,17 +13,17 @@ try:
 except Exception:
     PipelineGenerator = None  # type: ignore
     QueryIntent = None  # type: ignore
-
+from qdrant_initializer import RAGTool
 # Qdrant and RAG dependencies
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
-    from sentence_transformers import SentenceTransformer
-    import numpy as np
-except ImportError:
-    QdrantClient = None
-    SentenceTransformer = None
-    np = None
+# try:
+#     from qdrant_client import QdrantClient
+#     from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+#     from sentence_transformers import SentenceTransformer
+#     import numpy as np
+# except ImportError:
+#     QdrantClient = None
+#     SentenceTransformer = None
+#     np = None
 
 mongodb_tools = mongo.constants.mongodb_tools
 DATABASE_NAME = mongo.constants.DATABASE_NAME
@@ -707,116 +707,6 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     except Exception as e:
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
-# RAG Tool for page and work item content
-class RAGTool:
-    """RAG tool for querying page and work item content from Qdrant"""
-
-    def __init__(self):
-        self.qdrant_client = None
-        self.embedding_model = None
-        self.connected = False
-
-    async def connect(self):
-        """Initialize connection to Qdrant and embedding model"""
-        if self.connected:
-            return
-
-        if not QdrantClient or not SentenceTransformer:
-            raise ImportError("Qdrant client or sentence transformer not available. Please install qdrant-client and sentence-transformers.")
-
-        try:
-            self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL,api_key=mongo.constants.QDRANT_API_KEY)
-
-            self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
-            self.connected = True
-            print(f"Connected to Qdrant at {mongo.constants.QDRANT_URL}")
-        except Exception as e:
-            print(f"Failed to connect to Qdrant: {e}")
-            raise
-
-    async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant content in Qdrant based on the query"""
-        if not self.connected:
-            await self.connect()
-
-        try:
-            # Generate embedding for the query
-            query_embedding = self.embedding_model.encode(query).tolist()
-            # h
-            print("Query embedding generated")
-            # Build filter if content_type is specified
-            search_filter = None
-            if content_type:
-                search_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="content_type",
-                            match=MatchValue(value=content_type)
-                        )
-                    ]
-                )
-
-            # Search in Qdrant
-            search_results = self.qdrant_client.search(
-                collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
-                query_vector=query_embedding,
-                query_filter=search_filter,
-                limit=limit,
-                with_payload=True
-            )
-
-            # Format results
-            results = []
-            # print(f"total results",search_results)
-            for result in search_results:
-                payload = result.payload or {}
-                results.append({
-                    "id": result.id,
-                    "score": result.score,
-                    "title": payload.get("title", "Untitled"),
-                    "content": payload.get("content", ""),
-                    "content_type": payload.get("content_type", "unknown"),
-                    "mongo_id": payload.get("mongo_id"),
-                    "parent_id": payload.get("parent_id"),
-                    "chunk_index": payload.get("chunk_index"),
-                    "chunk_count": payload.get("chunk_count"),
-                    # "metadata": payload.get("metadata", {})
-                })
-
-            return results
-
-        except Exception as e:
-            print(f"Error searching Qdrant: {e}")
-            return []
-
-    async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
-        """Get relevant context for answering questions about page and work item content"""
-        if not content_types:
-            content_types = ["page", "work_item", "project", "cycle", "module"]
-
-        all_results = []
-        for content_type in content_types:
-            results = await self.search_content(query, content_type=content_type, limit=3)
-            all_results.extend(results)
-
-        # Sort by relevance score
-        all_results.sort(key=lambda x: x["score"], reverse=True)
-
-        # Format context
-        context_parts = []
-        # print(all_results)
-        for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
-            chunk_info = ""
-            if result.get("chunk_index") is not None and result.get("chunk_count"):
-                chunk_info = f" (chunk {int(result['chunk_index'])+1}/{int(result['chunk_count'])})"
-            context_parts.append(
-                f"[{i}] {result['content_type'].upper()}: {result['title']}{chunk_info}\n"
-                f"Content: {result['content'][:500]}{'...' if len(result['content']) > 500 else ''}\n"
-                f"Relevance Score: {result['score']:.3f}\n"
-            )
-
-        return "\n".join(context_parts) if context_parts else "No relevant content found."
-
 
 @tool
 async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
@@ -840,7 +730,8 @@ async def rag_content_search(query: str, content_type: str = None, limit: int = 
     Returns: Snippets with scores to inform subsequent reasoning.
     """
     try:
-        rag_tool = RAGTool()
+        # rag_tool = RAGTool()
+        rag_tool = RAGTool.get_instance()
         results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
 
         if not results:
@@ -890,7 +781,7 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
     Returns: Concise context snippets for the agent to read and then answer.
     """
     try:
-        rag_tool = RAGTool()
+        rag_tool = RAGTool.get_instance()
         context = await rag_tool.get_content_context(question, content_types)
 
         if not context or "No relevant content found" in context:
@@ -930,7 +821,7 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
     """
     try:
         # Step 1: RAG search for work items only
-        rag_tool = RAGTool()
+        rag_tool = RAGTool.get_instance()
         rag_results = await rag_tool.search_content(query, content_type="work_item", limit=max(limit, 5))
 
         # Extract unique Mongo IDs and titles from RAG results (point id is mongo_id)
