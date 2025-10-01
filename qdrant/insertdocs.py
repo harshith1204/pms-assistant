@@ -173,7 +173,12 @@ def index_pages_to_qdrant():
             else:
                 print(f"⚠️ Failed to ensure index: {e}")
 
-        documents = page_collection.find({}, {"_id": 1, "content": 1, "title": 1})
+        # Fetch pages with rich metadata
+        documents = page_collection.find({}, {
+            "_id": 1, "content": 1, "title": 1, "visibility": 1, "isFavourite": 1,
+            "createdAt": 1, "updatedAt": 1, "createdTimeStamp": 1, "updatedTimeStamp": 1,
+            "project": 1, "business": 1, "createdBy": 1
+        })
         points = []
 
         for doc in documents:
@@ -183,6 +188,28 @@ def index_pages_to_qdrant():
             if not blocks and not combined_text:
                 continue
 
+            # Extract metadata for filtering/grouping
+            metadata = {
+                "visibility": doc.get("visibility"),
+                "isFavourite": doc.get("isFavourite", False),
+                "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
+                "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+            }
+            
+            # Extract nested references
+            if doc.get("project"):
+                if isinstance(doc["project"], dict):
+                    metadata["project_name"] = doc["project"].get("name")
+                    metadata["project_id"] = normalize_mongo_id(doc["project"].get("_id")) if doc["project"].get("_id") else None
+            
+            if doc.get("business"):
+                if isinstance(doc["business"], dict):
+                    metadata["business_name"] = doc["business"].get("name")
+            
+            if doc.get("createdBy"):
+                if isinstance(doc["createdBy"], dict):
+                    metadata["created_by_name"] = doc["createdBy"].get("name")
+
             # Chunk combined text for better retrieval
             chunks = chunk_text(combined_text, max_words=320, overlap_words=80)
             if not chunks:
@@ -190,20 +217,24 @@ def index_pages_to_qdrant():
 
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": title,
+                    "content": chunk,
+                    # Provide a concatenated text field for full-text search
+                    "full_text": f"{title} {chunk}".strip(),
+                    "content_type": "page"
+                }
+                # Add metadata, filtering out None values
+                payload.update({k: v for k, v in metadata.items() if v is not None})
+                
                 point = PointStruct(
                     id=point_id_from_seed(f"{mongo_id}/page/{idx}"),
                     vector=vector,
-                    payload={
-                        "mongo_id": mongo_id,
-                        "parent_id": mongo_id,
-                        "chunk_index": idx,
-                        "chunk_count": len(chunks),
-                        "title": title,
-                        "content": chunk,
-                        # Provide a concatenated text field for full-text search
-                        "full_text": f"{title} {chunk}".strip(),
-                        "content_type": "page"
-                    }
+                    payload=payload
                 )
                 points.append(point)
 
@@ -240,7 +271,13 @@ def index_workitems_to_qdrant():
             else:
                 print(f"⚠️ Failed to ensure index: {e}")
 
-        documents = workitem_collection.find({}, {"_id": 1, "title": 1, "description": 1})
+        # Fetch work items with rich metadata
+        documents = workitem_collection.find({}, {
+            "_id": 1, "title": 1, "description": 1, "displayBugNo": 1,
+            "priority": 1, "status": 1, "state": 1, "assignee": 1,
+            "createdAt": 1, "updatedAt": 1, "createdTimeStamp": 1, "updatedTimeStamp": 1,
+            "project": 1, "cycle": 1, "modules": 1, "business": 1, "createdBy": 1
+        })
         points = []
 
         for doc in documents:
@@ -249,18 +286,65 @@ def index_workitems_to_qdrant():
             if not combined_text:
                 continue
 
+            # Extract metadata for filtering/grouping
+            metadata = {
+                "displayBugNo": doc.get("displayBugNo"),
+                "priority": doc.get("priority"),
+                "status": doc.get("status"),
+                "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
+                "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+            }
+            
+            # Extract nested references
+            if doc.get("state"):
+                if isinstance(doc["state"], dict):
+                    metadata["state_name"] = doc["state"].get("name")
+            
+            if doc.get("project"):
+                if isinstance(doc["project"], dict):
+                    metadata["project_name"] = doc["project"].get("name")
+                    metadata["project_id"] = normalize_mongo_id(doc["project"].get("_id")) if doc["project"].get("_id") else None
+            
+            if doc.get("cycle"):
+                if isinstance(doc["cycle"], dict):
+                    metadata["cycle_name"] = doc["cycle"].get("name")
+            
+            if doc.get("modules"):
+                if isinstance(doc["modules"], dict):
+                    metadata["module_name"] = doc["modules"].get("name")
+            
+            if doc.get("business"):
+                if isinstance(doc["business"], dict):
+                    metadata["business_name"] = doc["business"].get("name")
+            
+            # Handle assignee (can be array or single object)
+            if doc.get("assignee"):
+                assignee = doc["assignee"]
+                if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
+                    metadata["assignee_name"] = assignee[0].get("name")
+                elif isinstance(assignee, dict):
+                    metadata["assignee_name"] = assignee.get("name")
+            
+            if doc.get("createdBy"):
+                if isinstance(doc["createdBy"], dict):
+                    metadata["created_by_name"] = doc["createdBy"].get("name")
+
             vector = embedder.encode(combined_text).tolist()
+
+            payload = {
+                "mongo_id": mongo_id,
+                "title": doc.get("title", ""),
+                "content": doc.get("description", ""),
+                "full_text": combined_text,
+                "content_type": "work_item"
+            }
+            # Add metadata, filtering out None values
+            payload.update({k: v for k, v in metadata.items() if v is not None})
 
             point = PointStruct(
                 id=point_id_from_seed(f"{mongo_id}/work_item"),
                 vector=vector,
-                payload={
-                    "mongo_id": mongo_id,
-                    "title": doc.get("title", ""),
-                    "content": doc.get("description", ""),
-                    "full_text": combined_text,
-                    "content_type": "work_item"
-                }
+                payload=payload
             )
             points.append(point)
 

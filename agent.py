@@ -68,24 +68,22 @@ DEFAULT_SYSTEM_PROMPT = (
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
     "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
     "   - Do NOT answer from memory; run a query.\n"
-    "2) Use 'rag_content_search' to find content snippets for pages/work items by semantic meaning.\n"
-    "   - Example: 'find notes about OAuth errors' or 'search design doc for navigation'.\n"
-    "3) Use 'rag_answer_question' to assemble short context for answering a content question.\n"
-    "   - Use when the user asks a question that needs reading content first.\n"
-    "4) Use 'rag_to_mongo_workitems' when a free-text phrase identifies work items, but you must report canonical fields (state.name, assignee, project.name).\n\n"
+    "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
+    "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
+    "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
+    "3) Use 'rag_to_mongo_workitems' when free-text describes work items AND you need canonical Mongo fields (state, assignee, project).\n\n"
     "TOOL CHEATSHEET:\n"
     "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
-    "- rag_content_search(query:str, content_type:'page'|'work_item'|None, limit:int=5): Retrieve relevant snippets with scores.\n"
-    "  REQUIRED: 'query' - semantic search terms for finding relevant content.\n"
-    "- rag_answer_question(question:str, content_types:list[str]|None): Provide condensed context to inform your final answer.\n"
-    "  REQUIRED: 'question' - the specific question you want answered using content.\n"
-    "- rag_to_mongo_workitems(query:str, limit:int=20): Vector-match items, then fetch authoritative Mongo fields.\n"
+    "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
+    "  REQUIRED: 'query' - semantic search terms.\n"
+    "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n"
+    "- rag_to_mongo_workitems(query:str, limit:int=20): Vector-match work items, then fetch authoritative Mongo fields.\n"
     "  REQUIRED: 'query' - descriptive text to match against work items.\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
-    "- If the question references 'content', 'notes', 'docs', 'pages', or 'descriptions' → rag_content_search or rag_answer_question.\n"
-    "- If the user wants tickets by phrase AND their state/assignee → rag_to_mongo_workitems.\n\n"
+    "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
+    "- If the user wants work items by phrase AND their state/assignee → rag_to_mongo_workitems.\n\n"
     "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
 
@@ -215,8 +213,8 @@ def _select_tools_for_query(user_query: str):
 
     allowed_names = ["mongo_query"]
     if allow_rag:
-        # Allow content-oriented RAG tools
-        allowed_names.extend(["rag_content_search", "rag_answer_question"])
+        # Allow universal RAG search tool
+        allowed_names.append("rag_search")
         # Only allow rag_to_mongo_workitems when user mentions work items AND canonical fields
         if has_any(workitem_terms) and has_any(canonical_field_terms):
             allowed_names.append("rag_to_mongo_workitems")
@@ -730,10 +728,9 @@ class MongoDBAgent:
                     "- For each sub-step, pick exactly one tool using the Decision Guide.\n\n"
                     "DECISION GUIDE:\n"
                     "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
-                    "- Use 'rag_content_search' to find content snippets (pages/work items) by meaning.\n"
-                    "- Use 'rag_answer_question' to gather compact context to answer a content question.\n"
+                    "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
                     "- Use 'rag_to_mongo_workitems' to map a free-text description to canonical work items.\n\n"
-                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_content_search needs 'query'; rag_answer_question needs 'question'."
+                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_to_mongo_workitems needs 'query'."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
@@ -937,10 +934,9 @@ class MongoDBAgent:
                             "- Choose exactly one tool per sub-step.\n\n"
                             "DECISION GUIDE:\n"
                             "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
-                            "- 'rag_content_search' → locate content snippets by meaning.\n"
-                            "- 'rag_answer_question' → gather context to answer a content question.\n"
+                            "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
                             "- 'rag_to_mongo_workitems' → map free text to canonical work items.\n\n"
-                            "IMPORTANT: Use valid args for each tool."
+                            "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_to_mongo_workitems needs 'query'."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
