@@ -799,6 +799,163 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
 
 
 @tool
+async def rag_grouped_search(query: str, group_by: List[str] = None, content_types: List[str] = None, limit: int = 50, filters: Dict[str, Any] = None) -> str:
+    """Semantic search with grouping by metadata buckets.
+
+    Use when the user asks for a breakdown/distribution of semantically matched content
+    (docs, pages, work item descriptions) by content type, project, or last modified.
+
+    Args:
+        query: Free-text query to retrieve relevant content snippets.
+        group_by: One or more of ["content_type", "project", "project_name",
+                  "updated_day", "updated_week", "updated_month"]. If omitted,
+                  will infer from phrasing in `query` (e.g., "by content type").
+        content_types: Optional list like ["page", "work_item"]. Defaults to both.
+        limit: Max total hits to consider (across content types); keep modest (<=100).
+        filters: Optional metadata filters, e.g. {"project_name": "PMS", "content_type": "page"}.
+
+    Returns: A compact summary of groups with counts, optionally showing examples per group.
+    """
+    try:
+        rag_tool = RAGTool.get_instance()
+
+        # Normalize args
+        group_by = group_by or []
+        filters = filters or {}
+        if not content_types:
+            content_types = ["page", "work_item", "project", "cycle", "module"]
+
+        # Heuristic: infer group_by when not specified
+        ql = (query or "").lower()
+        if not group_by:
+            if "by content type" in ql or "by type" in ql or "by kind" in ql:
+                group_by.append("content_type")
+            if "by project" in ql or "per project" in ql:
+                group_by.append("project_name")
+            # Date buckets
+            if "by day" in ql or "daily" in ql or "last modified date" in ql or "updated date" in ql:
+                group_by.append("updated_day")
+            elif "by week" in ql or "weekly" in ql:
+                group_by.append("updated_week")
+            elif "by month" in ql or "monthly" in ql:
+                group_by.append("updated_month")
+        # Default if still empty
+        if not group_by:
+            group_by = ["content_type"]
+
+        # Fetch results per content type up to the limit (round-robin cap)
+        per_type_limit = max(1, int(limit / max(1, len(content_types))))
+        hits: List[Dict[str, Any]] = []
+        for ct in content_types:
+            # Honor an explicit filter for content_type, if present
+            ct_filter = filters.get("content_type")
+            if ct_filter and ct != ct_filter:
+                continue
+            results = await rag_tool.search_content(query, content_type=ct, limit=per_type_limit)
+            hits.extend(results or [])
+
+        # Apply client-side filters beyond content_type
+        def passes_filters(item: Dict[str, Any]) -> bool:
+            # project_name substring match
+            pn = filters.get("project_name")
+            if pn:
+                if not isinstance(item.get("project_name"), str) or pn.lower() not in item.get("project_name", "").lower():
+                    return False
+            # Future: date range filters can be added here
+            return True
+
+        filtered_hits = [h for h in hits if passes_filters(h)]
+
+        # Grouping helpers
+        from datetime import datetime
+
+        def parse_dt(val: Any) -> Optional[datetime]:
+            if isinstance(val, datetime):
+                return val
+            if isinstance(val, str) and val:
+                try:
+                    # Accept ISO-like strings
+                    return datetime.fromisoformat(val.replace("Z", "+00:00"))
+                except Exception:
+                    return None
+            return None
+
+        def bucket_value(item: Dict[str, Any], key: str) -> Any:
+            k = key.lower()
+            if k in ("project", "project_name"):
+                return item.get("project_name") or "(unknown project)"
+            if k == "content_type":
+                return item.get("content_type") or "unknown"
+            if k in ("updated_day", "updated_week", "updated_month"):
+                dt = parse_dt(item.get("updated_at"))
+                if not dt:
+                    return "(no date)"
+                if k == "updated_day":
+                    return dt.date().isoformat()
+                if k == "updated_week":
+                    # ISO week-year-Www
+                    return f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
+                if k == "updated_month":
+                    return f"{dt.year}-{dt.month:02d}"
+            # Fallback: direct field
+            return item.get(key) or f"({key} missing)"
+
+        # Build nested grouping (supports 1-2 keys realistically)
+        from collections import defaultdict
+        counts = defaultdict(int)
+        samples: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
+
+        for h in filtered_hits:
+            if not group_by:
+                gkey = ("all",)
+            else:
+                gkey = tuple(bucket_value(h, gb) for gb in group_by)
+            counts[gkey] += 1
+            if len(samples[gkey]) < 3:
+                samples[gkey].append(h)
+
+        # Render summary
+        total = sum(counts.values())
+        if total == 0:
+            return f"❌ No RAG hits for '{query}' after filters."
+
+        label = ", ".join(group_by)
+        response = f"📊 RAG BREAKDOWN by {label} (n={total}):\n\n"
+        # Sort by count desc
+        for gkey, cnt in sorted(counts.items(), key=lambda kv: kv[1], reverse=True):
+            # Pretty label
+            if isinstance(gkey, tuple):
+                parts = [str(p) for p in gkey]
+                group_label = ", ".join(parts)
+            else:
+                group_label = str(gkey)
+            response += f"• {group_label}: {cnt}\n"
+        response += "\n"
+
+        # Add a few examples for the top 3 groups
+        top_groups = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:3]
+        for gkey, _ in top_groups:
+            exs = samples.get(gkey, [])
+            if not exs:
+                continue
+            if isinstance(gkey, tuple):
+                group_label = ", ".join([str(p) for p in gkey])
+            else:
+                group_label = str(gkey)
+            response += f"Examples for {group_label}:\n"
+            for ex in exs:
+                title = ex.get("title") or "Untitled"
+                ctype = ex.get("content_type") or "unknown"
+                preview = (ex.get("content") or "")[:140]
+                response += f"  - [{ctype}] {title}: {preview}{'...' if len(preview) == 140 else ''}\n"
+            response += "\n"
+
+        return response
+
+    except Exception as e:
+        return f"❌ RAG GROUPED SEARCH ERROR:\nQuery: '{query}'\nError: {str(e)}"
+
+@tool
 async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
     """Bridge free-text to canonical work item records (RAG → Mongo).
 
@@ -1005,6 +1162,7 @@ tools = [
     mongo_query,
     rag_content_search,
     rag_answer_question,
+    rag_grouped_search,
     rag_to_mongo_workitems,
 ]
 

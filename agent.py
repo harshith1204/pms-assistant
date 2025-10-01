@@ -216,7 +216,7 @@ def _select_tools_for_query(user_query: str):
     allowed_names = ["mongo_query"]
     if allow_rag:
         # Allow content-oriented RAG tools
-        allowed_names.extend(["rag_content_search", "rag_answer_question"])
+        allowed_names.extend(["rag_content_search", "rag_answer_question", "rag_grouped_search"])
         # Only allow rag_to_mongo_workitems when user mentions work items AND canonical fields
         if has_any(workitem_terms) and has_any(canonical_field_terms):
             allowed_names.append("rag_to_mongo_workitems")
