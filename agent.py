@@ -549,6 +549,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             payload = {
                 "type": "tool_end",
                 "output": output,
+                "tool_name": kwargs.get("tool_name"),
+                "tool_call_id": kwargs.get("tool_call_id"),
                 "timestamp": datetime.now().isoformat()
             }
             await self.websocket.send_json(payload)
@@ -1034,15 +1036,20 @@ class MongoDBAgent:
                                 await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                         
                         # Execute all tools in parallel
+                        tool_calls = list(response.tool_calls)
                         tool_tasks = [
-                            self._execute_single_tool(None, tool_call, selected_tools, tracer)
-                            for tool_call in response.tool_calls
+                            self._execute_single_tool(None, tc, selected_tools, tracer)
+                            for tc in tool_calls
                         ]
                         tool_results = await asyncio.gather(*tool_tasks)
                         
                         # Process results and send tool_end events
-                        for tool_message, success in tool_results:
-                            await callback_handler.on_tool_end(tool_message.content)
+                        for (tool_message, success), tc in zip(tool_results, tool_calls):
+                            await callback_handler.on_tool_end(
+                                tool_message.content,
+                                tool_name=tc.get("name"),
+                                tool_call_id=tc.get("id"),
+                            )
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
                             if success:
@@ -1057,7 +1064,11 @@ class MongoDBAgent:
                             tool_message, success = await self._execute_single_tool(
                                 None, tool_call, selected_tools, tracer
                             )
-                            await callback_handler.on_tool_end(tool_message.content)
+                            await callback_handler.on_tool_end(
+                                tool_message.content,
+                                tool_name=tool_call.get("name"),
+                                tool_call_id=tool_call.get("id"),
+                            )
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
                             if success:
