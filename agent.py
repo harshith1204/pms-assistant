@@ -81,12 +81,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "- rag_answer_question(question:str, content_types:list[str]|None): Provide condensed context to inform your final answer.\n"
     "  REQUIRED: 'question' - the specific question you want answered using content.\n"
     "- rag_to_mongo_workitems(query:str, limit:int=20): Vector-match items, then fetch authoritative Mongo fields.\n"
-    "  REQUIRED: 'query' - descriptive text to match against work items.\n"
-    "- composite_query(instruction:str, steps?:list): Run multiple sub-steps in parallel and consolidate.\n"
-    "  Use when query has multiple actions (e.g., 'compare X and list recent Y').\n"
-    "  Steps format: [{'tool': 'mongo_query', 'args': {'query': 'your query here'}, 'label': 'Step description'}, ...]\n"
-    "  Each tool in steps REQUIRES its specific arguments (see REQUIRED fields above).\n"
-    "  Allowed tools in steps: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems.\n\n"
+    "  REQUIRED: 'query' - descriptive text to match against work items.\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
     "- If the question references 'content', 'notes', 'docs', 'pages', or 'descriptions' → rag_content_search or rag_answer_question.\n"
@@ -240,14 +235,7 @@ def _select_tools_for_query(user_query: str):
         (has_any(action_structured) and has_any(action_content)) or
         (has_any(action_listing) and has_any(action_content))
     )
-    needs_composite = (
-        has_any(multi_markers)
-        or multiple_actions
-        or _detect_multistep(user_query)
-        or (allow_rag and has_any(canonical_field_terms) and (" and " in q or ";" in q))
-    )
-    if needs_composite:
-        allowed_names.append("composite_query")
+    # composite_query removed; agent will chain tools internally via planning
 
     # Map to actual tool objects, keep only those present
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
@@ -739,17 +727,12 @@ class MongoDBAgent:
                 routing_instructions = SystemMessage(content=(
                     "PLANNING & ROUTING:\n"
                     "- First, break the user request into minimal sub-steps.\n"
-                    "- For each sub-step, pick exactly one tool using the Decision Guide.\n"
-                    "- If the request has multiple distinct actions (e.g., count + list + search), construct steps and use 'composite_query'.\n\n"
+                    "- For each sub-step, pick exactly one tool using the Decision Guide.\n\n"
                     "DECISION GUIDE:\n"
                     "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
                     "- Use 'rag_content_search' to find content snippets (pages/work items) by meaning.\n"
                     "- Use 'rag_answer_question' to gather compact context to answer a content question.\n"
                     "- Use 'rag_to_mongo_workitems' to map a free-text description to canonical work items.\n\n"
-                    "COMPOSITE EXECUTION:\n"
-                    "- If multi-part, produce a short JSON steps plan with tool + args + label.\n"
-                    "- Then call 'composite_query' with that steps list.\n"
-                    "Example steps: [{""tool"": ""mongo_query"", ""args"": {""query"": ""count open work items""}, ""label"": ""Count open""}, {""tool"": ""rag_content_search"", ""args"": {""query"": ""deployment issues"", ""content_type"": ""page""}, ""label"": ""Find docs""}]\n\n"
                     "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_content_search needs 'query'; rag_answer_question needs 'question'."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
@@ -951,15 +934,12 @@ class MongoDBAgent:
                         routing_instructions = SystemMessage(content=(
                             "PLANNING & ROUTING:\n"
                             "- Decompose the task into ordered sub-steps.\n"
-                            "- Choose exactly one tool per sub-step.\n"
-                            "- If multi-part, assemble a steps array and invoke 'composite_query'.\n\n"
+                            "- Choose exactly one tool per sub-step.\n\n"
                             "DECISION GUIDE:\n"
                             "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
                             "- 'rag_content_search' → locate content snippets by meaning.\n"
                             "- 'rag_answer_question' → gather context to answer a content question.\n"
                             "- 'rag_to_mongo_workitems' → map free text to canonical work items.\n\n"
-                            "COMPOSITE EXAMPLE:\n"
-                            "[{""tool"": ""mongo_query"", ""args"": {""query"": ""count open work items""}, ""label"": ""Count open""}, {""tool"": ""mongo_query"", ""args"": {""query"": ""group tasks by priority""}, ""label"": ""Breakdown by priority""}]\n\n"
                             "IMPORTANT: Use valid args for each tool."
                         ))
                         invoke_messages = messages + [routing_instructions]
