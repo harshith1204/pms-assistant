@@ -706,96 +706,151 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
 
 
 @tool
-async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
-    """Retrieve relevant content snippets for inspection (not final answers).
-
-    Use to locate semantically relevant `page` or `work_item` snippets via RAG
-    when the user asks to "search/find/show examples" or when you need context
-    BEFORE answering. Prefer `rag_answer_question` when the user asks a direct
-    question that needs synthesized context.
-
-    Do NOT use this for:
-    - Structured database facts (use `mongo_query`).
-    - Producing the final answer. This returns excerpts to read, not conclusions.
-    - Large limits by default; keep `limit` small (<= 5) unless the user asks.
-
+async def rag_search(
+    query: str,
+    content_type: str = None,
+    group_by: str = None,
+    limit: int = 10,
+    show_content: bool = True
+) -> str:
+    """Universal RAG search tool with filtering, grouping, and rich metadata.
+    
+    Use this for ANY content-based search or analysis needs:
+    - Find relevant pages, work items, projects, cycles, modules
+    - Search by semantic meaning (not just keywords)
+    - Group/breakdown results by any dimension
+    - Get context for answering questions
+    - Analyze content patterns and distributions
+    
+    **When to use:**
+    - "Find/search/show me pages about X"
+    - "What content discusses Y?"
+    - "Break down results by project/date/priority/etc."
+    - "Which work items mention authentication?"
+    - "Show me recent documentation about APIs"
+    
+    **Do NOT use for:**
+    - Structured database queries (counts, filters on structured fields) → use `mongo_query`
+    - Work items when you need authoritative Mongo fields → use `rag_to_mongo_workitems`
+    
     Args:
-        query: Search phrase to find related content.
-        content_type: 'page' | 'work_item' | None (both).
-        limit: How many snippets to show (default 5).
-
-    Returns: Snippets with scores to inform subsequent reasoning.
+        query: Search query (semantic meaning, not just keywords)
+        content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', or None (all)
+        group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
+                 'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
+        limit: Max results to retrieve (default 10, increase for broader searches)
+        show_content: If True, shows content previews; if False, shows only metadata (for summaries)
+    
+    Returns: Search results with rich metadata, optionally grouped and aggregated
+    
+    Examples:
+        query="authentication", group_by="content_type" → breakdown by type
+        query="API documentation", content_type="page", group_by="project_name" → pages by project
+        query="bugs", content_type="work_item", group_by="priority" → work items by priority
     """
     try:
-        # rag_tool = RAGTool()
+        from collections import defaultdict
+        
         rag_tool = RAGTool.get_instance()
         results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
-
+        
         if not results:
-            return f"❌ No relevant content found for query: '{query}'"
-
-        # Format response
-        response = f"🔍 RAG SEARCH RESULTS for '{query}':\n\n"
-        response += f"Found {len(results)} relevant content pieces:\n\n"
-
-        for i, result in enumerate(results, 1):
-            response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
-            response += f"Relevance Score: {result['score']:.3f}\n"
-            response += f"Content Preview: {result['content'][:300]}{'...' if len(result['content']) > 300 else ''}\n"
-
-            # if result['metadata']:
-            #     response += f"Metadata: {json.dumps(result['metadata'], indent=2)}\n"
-
-            response += "\n" + "="*50 + "\n"
-
+            return f"❌ No results found for query: '{query}'"
+        
+        # Build response header
+        response = f"🔍 RAG SEARCH: '{query}'\n"
+        response += f"Found {len(results)} result(s)"
+        if content_type:
+            response += f" (type: {content_type})"
+        response += "\n\n"
+        
+        # NO GROUPING - Show detailed list with metadata
+        if not group_by:
+            response += "📋 RESULTS:\n\n"
+            for i, result in enumerate(results[:15], 1):
+                response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                response += f"    Score: {result['score']:.3f}\n"
+                
+                # Show metadata compactly
+                meta = []
+                if result.get('project_name'):
+                    meta.append(f"Project: {result['project_name']}")
+                if result.get('priority'):
+                    meta.append(f"Priority: {result['priority']}")
+                if result.get('state_name'):
+                    meta.append(f"State: {result['state_name']}")
+                if result.get('assignee_name'):
+                    meta.append(f"Assignee: {result['assignee_name']}")
+                if result.get('displayBugNo'):
+                    meta.append(f"Bug#: {result['displayBugNo']}")
+                if result.get('updatedAt'):
+                    date_str = str(result['updatedAt']).split('T')[0] if 'T' in str(result['updatedAt']) else str(result['updatedAt'])[:10]
+                    meta.append(f"Updated: {date_str}")
+                if result.get('visibility'):
+                    meta.append(f"Visibility: {result['visibility']}")
+                
+                if meta:
+                    response += f"    {' | '.join(meta)}\n"
+                
+                # Show content preview if requested
+                if show_content and result.get('content'):
+                    preview = result['content'][:200]
+                    if len(result['content']) > 200:
+                        preview += "..."
+                    response += f"    Preview: {preview}\n"
+                
+                response += "\n"
+            
+            if len(results) > 15:
+                response += f"... and {len(results) - 15} more results (increase limit to see more)\n"
+            
+            return response
+        
+        # GROUPING - Aggregate and show distribution
+        groups = defaultdict(list)
+        
+        for result in results:
+            group_val = result.get(group_by)
+            
+            # Handle date grouping
+            if group_by in ['createdAt', 'updatedAt'] and group_val:
+                if isinstance(group_val, str):
+                    group_val = group_val.split('T')[0] if 'T' in group_val else group_val[:10]
+            
+            # Handle None/empty
+            if group_val is None or group_val == "":
+                group_val = "Unknown"
+            
+            groups[str(group_val)].append(result)
+        
+        # Sort groups by count
+        sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
+        
+        response += f"📊 GROUPED BY '{group_by}':\n"
+        response += f"Total groups: {len(sorted_groups)}\n\n"
+        
+        for group_key, items in sorted_groups[:20]:
+            response += f"▸ {group_key}: {len(items)} item(s)\n"
+            
+            # Show sample items
+            for item in items[:3]:
+                title = item['title'][:55] + "..." if len(item['title']) > 55 else item['title']
+                response += f"  • {title} (score: {item['score']:.2f})\n"
+            
+            if len(items) > 3:
+                response += f"  ... and {len(items) - 3} more\n"
+            response += "\n"
+        
+        if len(sorted_groups) > 20:
+            remaining_items = sum(len(items) for _, items in sorted_groups[20:])
+            response += f"... and {len(sorted_groups) - 20} more groups ({remaining_items} items)\n"
+        
         return response
-
+        
     except ImportError:
-        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+        return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
     except Exception as e:
-        return f"❌ RAG SEARCH ERROR:\nQuery: '{query}'\nError: {str(e)}"
-
-
-@tool
-async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
-    """Assemble compact context to answer a content question (RAG-first).
-
-    Use when the user asks a direct question about content in `page`/`work_item`
-    data and you need short, high-signal context to support your answer.
-
-    Do NOT use this for:
-    - Structured facts like counts/groupings (use `mongo_query`).
-    - Broad content discovery (use `rag_content_search`).
-
-    Behavior:
-    - Gathers a few high-relevance snippets and returns them as context to read.
-    - Keep the final answer in the agent message; this tool returns only context.
-
-    Args:
-        question: The specific content question to answer.
-        content_types: Optional list of ['page','work_item']; defaults to both.
-
-    Returns: Concise context snippets for the agent to read and then answer.
-    """
-    try:
-        rag_tool = RAGTool.get_instance()
-        context = await rag_tool.get_content_context(question, content_types)
-
-        if not context or "No relevant content found" in context:
-            return f"❌ No relevant context found for question: '{question}'"
-
-        response = f"📖 CONTEXT FOR QUESTION: '{question}'\n\n"
-        response += "Relevant content found:\n\n"
-        response += context
-        response += "\n" + "="*50 + "\n"
-        response += "Use this context to answer the question about page and work item content."
-
-        return response
-
-    except ImportError:
-        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
-    except Exception as e:
-        return f"❌ RAG QUESTION ERROR:\nQuestion: '{question}'\nError: {str(e)}"
+        return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
 @tool
@@ -1000,12 +1055,11 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
     except Exception as e:
         return f"❌ Composite query error: {e}"
 
-# Define the tools list (no schema tool)
+# Define the tools list - streamlined and powerful
 tools = [
-    mongo_query,
-    rag_content_search,
-    rag_answer_question,
-    rag_to_mongo_workitems,
+    mongo_query,              # Structured MongoDB queries with intelligent planning
+    rag_search,               # Universal RAG search with filtering, grouping, and metadata
+    rag_to_mongo_workitems,   # Bridge RAG semantic search to authoritative Mongo work items
 ]
 
 # import asyncio
