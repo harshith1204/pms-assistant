@@ -734,18 +734,35 @@ async def rag_content_search(query: str, content_type: str = None, limit: int = 
         if not results:
             return f"❌ No relevant content found for query: '{query}'"
 
-        # Format response
+        # Format response with enhanced metadata
         response = f"🔍 RAG SEARCH RESULTS for '{query}':\n\n"
         response += f"Found {len(results)} relevant content pieces:\n\n"
 
         for i, result in enumerate(results, 1):
             response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
             response += f"Relevance Score: {result['score']:.3f}\n"
+            
+            # Show metadata if available
+            metadata_parts = []
+            if result.get('project_name'):
+                metadata_parts.append(f"Project: {result['project_name']}")
+            if result.get('priority'):
+                metadata_parts.append(f"Priority: {result['priority']}")
+            if result.get('state_name'):
+                metadata_parts.append(f"State: {result['state_name']}")
+            if result.get('assignee_name'):
+                metadata_parts.append(f"Assignee: {result['assignee_name']}")
+            if result.get('updatedAt'):
+                metadata_parts.append(f"Updated: {result['updatedAt']}")
+            if result.get('visibility'):
+                metadata_parts.append(f"Visibility: {result['visibility']}")
+            if result.get('displayBugNo'):
+                metadata_parts.append(f"Bug#: {result['displayBugNo']}")
+            
+            if metadata_parts:
+                response += f"Metadata: {' | '.join(metadata_parts)}\n"
+            
             response += f"Content Preview: {result['content'][:300]}{'...' if len(result['content']) > 300 else ''}\n"
-
-            # if result['metadata']:
-            #     response += f"Metadata: {json.dumps(result['metadata'], indent=2)}\n"
-
             response += "\n" + "="*50 + "\n"
 
         return response
@@ -796,6 +813,137 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
         return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
     except Exception as e:
         return f"❌ RAG QUESTION ERROR:\nQuestion: '{question}'\nError: {str(e)}"
+
+
+@tool
+async def rag_search_with_aggregation(
+    query: str, 
+    content_type: str = None,
+    group_by: str = None,
+    limit: int = 20
+) -> str:
+    """Advanced RAG search with metadata aggregation and grouping.
+    
+    Use this when the user wants to:
+    - Break down/group RAG results by dimensions (project, date, content_type, priority, state, etc.)
+    - See distributions/summaries of search results
+    - Analyze content patterns across metadata fields
+    
+    Examples:
+    - "Break down pages by last modified date" → group_by="updatedAt"
+    - "Show work items by project" → group_by="project_name"
+    - "Group authentication results by content type" → group_by="content_type"
+    - "Show high priority items by assignee" → group_by="assignee_name"
+    
+    Args:
+        query: Search query to find relevant content
+        content_type: Filter by 'page', 'work_item', 'project', 'cycle', 'module', or None (all)
+        group_by: Field to group results by (e.g., 'project_name', 'updatedAt', 'priority', 'state_name', 'content_type')
+        limit: Max results to retrieve before grouping (default 20)
+    
+    Returns: Grouped/aggregated summary with counts and sample items per group
+    """
+    try:
+        from datetime import datetime
+        from collections import defaultdict
+        
+        rag_tool = RAGTool.get_instance()
+        results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
+        
+        if not results:
+            return f"❌ No results found for query: '{query}'"
+        
+        response = f"🔍 RAG AGGREGATION RESULTS for '{query}':\n"
+        response += f"Found {len(results)} total results"
+        if content_type:
+            response += f" (filtered to {content_type})"
+        response += "\n\n"
+        
+        # If no grouping requested, return enhanced list with metadata
+        if not group_by:
+            response += "📊 RESULTS WITH METADATA:\n\n"
+            for i, result in enumerate(results[:10], 1):
+                response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                response += f"   Score: {result['score']:.3f}\n"
+                
+                # Show relevant metadata
+                metadata_fields = []
+                if result.get('project_name'):
+                    metadata_fields.append(f"Project: {result['project_name']}")
+                if result.get('priority'):
+                    metadata_fields.append(f"Priority: {result['priority']}")
+                if result.get('state_name'):
+                    metadata_fields.append(f"State: {result['state_name']}")
+                if result.get('assignee_name'):
+                    metadata_fields.append(f"Assignee: {result['assignee_name']}")
+                if result.get('updatedAt'):
+                    metadata_fields.append(f"Updated: {result['updatedAt']}")
+                if result.get('visibility'):
+                    metadata_fields.append(f"Visibility: {result['visibility']}")
+                
+                if metadata_fields:
+                    response += f"   {' | '.join(metadata_fields)}\n"
+                
+                # Show content preview
+                content_preview = result['content'][:150]
+                if len(result['content']) > 150:
+                    content_preview += "..."
+                response += f"   Preview: {content_preview}\n\n"
+            
+            if len(results) > 10:
+                response += f"... and {len(results) - 10} more results\n"
+            return response
+        
+        # Grouping logic
+        groups = defaultdict(list)
+        
+        for result in results:
+            group_value = result.get(group_by)
+            
+            # Handle date grouping - convert to date string
+            if group_by in ['createdAt', 'updatedAt'] and group_value:
+                try:
+                    # Try to parse various date formats
+                    if isinstance(group_value, str):
+                        # Extract just the date part if it's a datetime string
+                        group_value = group_value.split('T')[0] if 'T' in group_value else group_value[:10]
+                except Exception:
+                    pass
+            
+            # Use "Unknown" for missing values
+            if group_value is None or group_value == "":
+                group_value = "Unknown"
+            
+            groups[str(group_value)].append(result)
+        
+        # Sort groups by count (descending)
+        sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
+        
+        response += f"📊 GROUPED BY '{group_by}':\n\n"
+        response += f"Total groups: {len(sorted_groups)}\n\n"
+        
+        for group_key, items in sorted_groups[:15]:  # Show top 15 groups
+            response += f"▸ {group_key}: {len(items)} item(s)\n"
+            
+            # Show top 2 items from each group as examples
+            for item in items[:2]:
+                response += f"  • {item['title'][:60]}{'...' if len(item['title']) > 60 else ''}"
+                response += f" (score: {item['score']:.2f})\n"
+            
+            if len(items) > 2:
+                response += f"  ... and {len(items) - 2} more\n"
+            response += "\n"
+        
+        if len(sorted_groups) > 15:
+            remaining = sum(len(items) for _, items in sorted_groups[15:])
+            response += f"... and {len(sorted_groups) - 15} more groups with {remaining} items\n"
+        
+        return response
+        
+    except ImportError:
+        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+    except Exception as e:
+        return f"❌ RAG AGGREGATION ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
 
 @tool
@@ -1005,6 +1153,7 @@ tools = [
     mongo_query,
     rag_content_search,
     rag_answer_question,
+    rag_search_with_aggregation,
     rag_to_mongo_workitems,
 ]
 
