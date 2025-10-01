@@ -711,7 +711,8 @@ async def rag_search(
     content_type: str = None,
     group_by: str = None,
     limit: int = 10,
-    show_content: bool = True
+    show_content: bool = True,
+    use_chunk_aware: bool = True
 ) -> str:
     """Universal RAG search tool with filtering, grouping, and rich metadata.
     
@@ -740,6 +741,7 @@ async def rag_search(
                  'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
         limit: Max results to retrieve (default 10, increase for broader searches)
         show_content: If True, shows content previews; if False, shows only metadata (for summaries)
+        use_chunk_aware: If True, uses chunk-aware retrieval for better context (default True)
     
     Returns: Search results with rich metadata, optionally grouped and aggregated
     
@@ -752,6 +754,38 @@ async def rag_search(
         from collections import defaultdict
         
         rag_tool = RAGTool.get_instance()
+        
+        # Use chunk-aware retrieval if enabled and not grouping
+        if use_chunk_aware and not group_by:
+            from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
+            
+            retriever = ChunkAwareRetriever(
+                qdrant_client=rag_tool.qdrant_client,
+                embedding_model=rag_tool.embedding_model
+            )
+            
+            from mongo.constants import QDRANT_COLLECTION_NAME
+            
+            reconstructed_docs = await retriever.search_with_context(
+                query=query,
+                collection_name=QDRANT_COLLECTION_NAME,
+                content_type=content_type,
+                limit=limit,
+                chunks_per_doc=3,
+                include_adjacent=True,
+                min_score=0.5
+            )
+            
+            if not reconstructed_docs:
+                return f"❌ No results found for query: '{query}'"
+            
+            return format_reconstructed_results(
+                docs=reconstructed_docs,
+                show_full_content=show_content,
+                show_chunk_details=True
+            )
+        
+        # Fallback to standard retrieval
         results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
         
         if not results:
@@ -792,12 +826,12 @@ async def rag_search(
                 if meta:
                     response += f"    {' | '.join(meta)}\n"
                 
-                # Show content preview if requested
+                # Show content preview if requested (increased from 200 to 1000 chars)
                 if show_content and result.get('content'):
-                    preview = result['content'][:200]
-                    if len(result['content']) > 200:
-                        preview += "..."
-                    response += f"    Preview: {preview}\n"
+                    preview = result['content'][:1000]
+                    if len(result['content']) > 1000:
+                        preview += f"... [+{len(result['content']) - 1000} chars]"
+                    response += f"    Content: {preview}\n"
                 
                 response += "\n"
             
