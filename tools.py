@@ -6,17 +6,18 @@ import json
 import re
 from glob import glob
 from datetime import datetime
-
+from orchestrator import Orchestrator, StepSpec, as_async
+from qdrant.qdrant_initializer import RAGTool
 # Qdrant and RAG dependencies
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
-    from sentence_transformers import SentenceTransformer
-    import numpy as np
-except ImportError:
-    QdrantClient = None
-    SentenceTransformer = None
-    np = None
+# try:
+#     from qdrant_client import QdrantClient
+#     from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+#     from sentence_transformers import SentenceTransformer
+#     import numpy as np
+# except ImportError:
+#     QdrantClient = None
+#     SentenceTransformer = None
+#     np = None
 
 mongodb_tools = mongo.constants.mongodb_tools
 DATABASE_NAME = mongo.constants.DATABASE_NAME
@@ -90,7 +91,8 @@ def filter_meaningful_content(data: Any) -> Any:
     # Fields to always exclude (metadata)
     EXCLUDE_FIELDS = {
         '_id', 'createdTimeStamp', 'updatedTimeStamp',
-        '_priorityRank'  # Helper field added by pipeline
+        '_priorityRank',  # Helper field added by pipeline
+        '_class',  # Drop Java class metadata
     }
 
     def is_meaningful_field(key: str, value: Any) -> bool:
@@ -117,10 +119,15 @@ def filter_meaningful_content(data: Any) -> Any:
             # Recursively check nested objects
             return any(is_meaningful_field(k, v) for k, v in value.items())
         elif isinstance(value, list) and value:
-            # Check if list contains meaningful content
-            return any(isinstance(item, (str, int, float, bool)) and
-                      (isinstance(item, str) and item.strip() or True)
-                      for item in value if isinstance(item, (str, int, float, bool, dict)))
+            # Check if list contains meaningful content, including dict items
+            for item in value:
+                if isinstance(item, (str, int, float, bool)):
+                    if not isinstance(item, str) or item.strip():
+                        return True
+                elif isinstance(item, dict):
+                    if any(is_meaningful_field(k, v) for k, v in item.items()):
+                        return True
+            return False
 
         return False
 
@@ -153,21 +160,262 @@ def filter_meaningful_content(data: Any) -> Any:
     return clean_document(normalized_data)
 
 
+def _is_hex_object_id(value: str) -> bool:
+    try:
+        return isinstance(value, str) and len(value) == 24 and all(c in '0123456789abcdefABCDEF' for c in value)
+    except Exception:
+        return False
+
+
+def _is_binary_placeholder(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("<binary:")
+
+
+def _is_uuid_string(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    # Simple UUID v4-like pattern check
+    if len(value) != 36:
+        return False
+    parts = value.split("-")
+    if len(parts) != 5:
+        return False
+    expected_lengths = [8, 4, 4, 4, 12]
+    for part, L in zip(parts, expected_lengths):
+        if len(part) != L:
+            return False
+        if not all(c in '0123456789abcdefABCDEF' for c in part):
+            return False
+    return True
+
+
+def _is_id_like_key(key: str) -> bool:
+    # Allowlist display ids
+    ALLOWLIST = {"projectDisplayId"}
+    if key in ALLOWLIST:
+        return False
+    lowered = key.lower()
+    return (
+        key == "_id"
+        or lowered == "id"
+        or lowered.endswith("id")  # memberId, projectId, defaultAsigneeId, etc.
+        or lowered.endswith("_id")
+        or lowered.endswith("uuid")
+    )
+
+
+def _strip_ids(value: Any) -> Any:
+    """Recursively remove id/uuid-like fields and raw id values from documents."""
+    if isinstance(value, dict):
+        cleaned: Dict[str, Any] = {}
+        for k, v in value.items():
+            if _is_id_like_key(k):
+                # drop id-like keys entirely
+                continue
+            # Recurse first
+            v2 = _strip_ids(v)
+            # Drop values that are just IDs or binary placeholders
+            if isinstance(v2, str) and (_is_hex_object_id(v2) or _is_uuid_string(v2) or _is_binary_placeholder(v2)):
+                continue
+            if v2 is None:
+                continue
+            # Drop empty containers
+            if isinstance(v2, (dict, list)) and not v2:
+                continue
+            cleaned[k] = v2
+        return cleaned
+    if isinstance(value, list):
+        items = [_strip_ids(x) for x in value]
+        items = [x for x in items if x not in (None, {}) and not (isinstance(x, str) and (_is_hex_object_id(x) or _is_uuid_string(x) or _is_binary_placeholder(x)))]
+        return items
+    return value
+
+
+def _ensure_list_of_names(obj: Any) -> List[str]:
+    names: List[str] = []
+    if isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("title")
+                if isinstance(name, str) and name.strip():
+                    names.append(name)
+            elif isinstance(item, str) and item.strip() and not _is_hex_object_id(item) and not _is_binary_placeholder(item):
+                names.append(item)
+    elif isinstance(obj, dict):
+        name = obj.get("name") or obj.get("title")
+        if isinstance(name, str) and name.strip():
+            names.append(name)
+    elif isinstance(obj, str) and obj.strip():
+        names.append(obj)
+    return names
+
+
+def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> Dict[str, Any]:
+    if not isinstance(doc, dict):
+        return doc  # type: ignore[return-value]
+
+    collection = (collection or "").strip()
+    out: Dict[str, Any] = {}
+
+    def copy_if_present(key: str, alias: Optional[str] = None):
+        val = doc.get(key)
+        if val is not None:
+            out[alias or key] = val
+
+    # Common flatteners
+    def set_name(source_key: str, target_key: str):
+        val = doc.get(source_key)
+        if isinstance(val, dict):
+            name = val.get("name") or val.get("title")
+            if name:
+                out[target_key] = name
+
+    def set_names_list(source_key: str, target_key: str):
+        val = doc.get(source_key)
+        names = _ensure_list_of_names(val)
+        if names:
+            out[target_key] = names
+
+    # Always useful common keys
+    for k in ["title", "name", "description", "status", "priority", "label",
+              "visibility", "access", "imageUrl", "icon",
+              "favourite", "isFavourite", "isActive", "isArchived",
+              "content", "displayBugNo", "projectDisplayId",
+              "startDate", "endDate", "createdAt", "updatedAt"]:
+        if k in doc:
+            out[k] = doc[k]
+
+    # Per collection enrichments
+    if collection == "workItem":
+        set_name("project", "projectName")
+        set_name("state", "stateName")
+        set_name("stateMaster", "stateMasterName")
+        set_name("cycle", "cycleName")
+        # modules in schema is a single subdoc despite plural key
+        set_name("modules", "moduleName")
+        set_name("business", "businessName")
+        set_name("createdBy", "createdByName")
+        set_names_list("assignee", "assignees")
+        set_names_list("updatedBy", "updatedByNames")
+
+    elif collection == "project":
+        set_name("business", "businessName")
+        set_name("lead", "leadName")
+        set_name("defaultAsignee", "defaultAssigneeName")
+        set_name("createdBy", "createdByName")
+        copy_if_present("leadMail")
+
+    elif collection == "cycle":
+        # Project may only contain id; we skip if name isn't present
+        set_name("project", "projectName")
+        set_name("business", "businessName")
+
+    elif collection == "module":
+        set_name("project", "projectName")
+        set_name("lead", "leadName")
+        set_name("business", "businessName")
+        set_names_list("assignee", "assignees")
+
+    elif collection == "members":
+        set_name("project", "projectName")
+        set_name("staff", "staffName")
+
+    elif collection == "page":
+        set_name("project", "projectName")
+        set_name("createdBy", "createdByName")
+        set_name("business", "businessName")
+        # Linked arrays could contain ids only; surface counts
+        if isinstance(doc.get("linkedCycle"), list):
+            out["linkedCycleCount"] = len(doc["linkedCycle"])  # type: ignore[index]
+        if isinstance(doc.get("linkedModule"), list):
+            out["linkedModuleCount"] = len(doc["linkedModule"])  # type: ignore[index]
+        # Also surface names if available
+        set_names_list("linkedCycle", "linkedCycleNames")
+        set_names_list("linkedModule", "linkedModuleNames")
+
+    elif collection == "projectState":
+        # Keep core fields and slim subStates
+        substates = doc.get("subStates")
+        if isinstance(substates, list):
+            slim: List[Dict[str, Any]] = []
+            for s in substates:
+                if isinstance(s, dict):
+                    entry: Dict[str, Any] = {}
+                    if isinstance(s.get("name"), str):
+                        entry["name"] = s["name"]
+                    if isinstance(s.get("order"), (int, float)):
+                        entry["order"] = s["order"]
+                    if entry:
+                        slim.append(entry)
+            if slim:
+                out["subStates"] = slim
+
+    # Drop empty/None values and metadata keys
+    out = {k: v for k, v in out.items() if v not in (None, "", [], {}) and k != "_class"}
+    return out
+
+
+def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None) -> Any:
+    """Preserve meaningful fields, strip IDs/UUIDs, and flatten references per collection.
+
+    Steps:
+    1) Use existing filter to keep meaningful content fields.
+    2) Strip any remaining id/uuid-like keys/values.
+    3) Apply per-collection flatteners to surface human-friendly names.
+    """
+    base = filter_meaningful_content(data)
+    stripped = _strip_ids(base)
+
+    def enrich(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            # Merge base with collection-specific projection
+            extra = _transform_by_collection(obj, primary_entity)
+            # Overlay extra on top of obj (extra wins)
+            merged = {**obj, **extra}
+            return {k: v for k, v in merged.items() if v not in (None, "", [], {})}
+        return obj
+
+    if isinstance(stripped, list):
+        return [enrich(x) for x in stripped]
+    if isinstance(stripped, dict):
+        return enrich(stripped)
+    return stripped
+
+
 @tool
-async def mongo_query(query: str, show_all: bool = False) -> str:
-    """Execute natural language queries against the Project Management database.
+async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = True) -> str:
+    """Plan-first Mongo query executor for structured, factual questions.
+
+    Use this ONLY when the user asks for authoritative data that must come from
+    MongoDB (counts, lists, filters, group-by, state/assignee/project details)
+    across collections: `project`, `workItem`, `cycle`, `module`, `members`,
+    `page`, `projectState`.
+
+    Do NOT use this for:
+    - Free-form content questions (use `rag_answer_question` or `rag_content_search`).
+    - Pure summarization or opinion without data retrieval.
+    - When you already have the exact answer in prior tool results.
+
+    Behavior:
+    - Follows a planner to generate a safe aggregation pipeline; avoids
+      hallucinated fields.
+    - Can generate complex aggregation pipelines with multiple joins when
+      enable_complex_joins=True (default), reducing need for tool chaining.
+    - Return concise summaries by default; pass `show_all=True` only when the
+      user explicitly requests full records.
 
     Args:
-        query: Natural language query about projects, work items, cycles, members, pages, modules, or project states.
-        show_all: If True, show all results instead of a summary (may be verbose for large datasets).
+        query: Natural language, structured data request about PM entities.
+        show_all: If True, output full details instead of a summary. Use sparingly.
+        enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
 
-    Returns: Query results formatted for easy reading.
+    Returns: A compact result suitable for direct user display.
     """
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
 
     try:
-        result = await plan_and_execute_query(query)
+        result = await plan_and_execute_query(query, enable_complex_joins=enable_complex_joins)
 
         if result["success"]:
             response = f"🎯 INTELLIGENT QUERY RESULT:\n"
@@ -188,17 +436,29 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             response += "\n"
 
             # Show the generated pipeline (first few stages)
-            pipeline = result["pipeline"]
-            if pipeline:
+            pipeline = result.get("pipeline")
+            pipeline_js = result.get("pipeline_js")
+            if pipeline_js:
                 response += f"🔧 GENERATED PIPELINE:\n"
-                for i, stage in enumerate(pipeline):
-                    stage_name = list(stage.keys())[0]
-                    # Format the stage content nicely
-                    stage_content = json.dumps(stage[stage_name], indent=2)
-                    # Truncate very long content for readability but show complete structure
-                    if len(stage_content) > 200:
-                        stage_content = stage_content + "..."
-                    response += f"• {stage_name}: {stage_content}\n"
+                response += pipeline_js
+                response += "\n"
+            elif pipeline:
+                response += f"🔧 GENERATED PIPELINE:\n"
+                # Import the formatting function from planner
+                try:
+                    from planner import _format_pipeline_for_display
+                    formatted_pipeline = _format_pipeline_for_display(pipeline)
+                    response += formatted_pipeline
+                except ImportError:
+                    # Fallback to JSON format if import fails
+                    for i, stage in enumerate(pipeline):
+                        stage_name = list(stage.keys())[0]
+                        # Format the stage content nicely
+                        stage_content = json.dumps(stage[stage_name], indent=2)
+                        # Truncate very long content for readability but show complete structure
+                        if len(stage_content) > 200:
+                            stage_content = stage_content + "..."
+                        response += f"• {stage_name}: {stage_content}\n"
                 response += "\n"
 
             # Show results (compact preview)
@@ -238,14 +498,103 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                     filtered = documents
                 else:
                     # Regular list, filter as before
-                    filtered = filter_meaningful_content(parsed)
+                    filtered = parsed
             else:
                 # Not a list, filter as before
-                filtered = filter_meaningful_content(parsed)
+                filtered = parsed
 
 
-            def format_llm_friendly(data, max_items=20):
+            def format_llm_friendly(data, max_items=20, primary_entity: Optional[str] = None):
                 """Format data in a more LLM-friendly way to avoid hallucinations."""
+                def get_nested(d: Dict[str, Any], key: str) -> Any:
+                    if key in d:
+                        return d[key]
+                    if "." in key:
+                        cur: Any = d
+                        for part in key.split("."):
+                            if isinstance(cur, dict) and part in cur:
+                                cur = cur[part]
+                            else:
+                                return None
+                        return cur
+                    return None
+
+                def ensure_list_str(val: Any) -> List[str]:
+                    if isinstance(val, list):
+                        res: List[str] = []
+                        for x in val:
+                            if isinstance(x, str) and x.strip():
+                                res.append(x)
+                            elif isinstance(x, dict):
+                                n = x.get("name") or x.get("title")
+                                if isinstance(n, str) and n.strip():
+                                    res.append(n)
+                        return res
+                    if isinstance(val, dict):
+                        n = val.get("name") or val.get("title")
+                        return [n] if isinstance(n, str) and n.strip() else []
+                    if isinstance(val, str) and val.strip():
+                        return [val]
+                    return []
+
+                def truncate_str(s: Any, limit: int = 120) -> str:
+                    if not isinstance(s, str):
+                        return str(s)
+                    return s if len(s) <= limit else s[:limit] + "..."
+
+                def render_line(entity: Dict[str, Any]) -> str:
+                    e = (primary_entity or "").lower()
+                    if e == "workitem":
+                        bug = entity.get("displayBugNo") or entity.get("title") or "Item"
+                        title = entity.get("title") or entity.get("name") or ""
+                        state = entity.get("stateName") or get_nested(entity, "state.name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        priority = entity.get("priority")
+                        return f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                    if e == "project":
+                        pid = entity.get("projectDisplayId")
+                        name = entity.get("name") or entity.get("title")
+                        status_v = entity.get("status")
+                        lead = entity.get("leadName") or get_nested(entity, "lead.name")
+                        business = entity.get("businessName") or get_nested(entity, "business.name")
+                        return f"• {pid or name}: {name or ''} — status={status_v or 'N/A'}, lead={lead or 'N/A'}, business={business or 'N/A'}"
+                    if e == "cycle":
+                        title = entity.get("title") or entity.get("name")
+                        status_v = entity.get("status")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        sd = entity.get("startDate")
+                        ed = entity.get("endDate")
+                        dates = f"{sd} → {ed}" if sd or ed else "N/A"
+                        return f"• {truncate_str(title or 'Cycle', 80)} — status={status_v or 'N/A'}, project={project or 'N/A'}, dates={dates}"
+                    if e == "module":
+                        title = entity.get("title") or entity.get("name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        business = entity.get("businessName") or get_nested(entity, "business.name")
+                        return f"• {truncate_str(title or 'Module', 80)} — project={project or 'N/A'}, assignees={(len(assignees) if assignees else 0)}, business={business or 'N/A'}"
+                    if e == "members":
+                        name = entity.get("name")
+                        email = entity.get("email")
+                        role = entity.get("role")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        type_v = entity.get("type")
+                        return f"• {name or 'Member'} — role={role or 'N/A'}, email={email or 'N/A'}, type={type_v or 'N/A'}, project={project or 'N/A'}"
+                    if e == "page":
+                        title = entity.get("title") or entity.get("name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        visibility = entity.get("visibility")
+                        fav = entity.get("isFavourite")
+                        return f"• {truncate_str(title or 'Page', 80)} — visibility={visibility or 'N/A'}, favourite={fav if fav is not None else 'N/A'}, project={project or 'N/A'}"
+                    if e == "projectstate":
+                        name = entity.get("name")
+                        icon = entity.get("icon")
+                        subs = entity.get("subStates")
+                        sub_count = len(subs) if isinstance(subs, list) else 0
+                        return f"• {name or 'State'} — icon={icon or 'N/A'}, substates={sub_count}"
+                    # Default fallback
+                    title = entity.get("title") or entity.get("name") or "Item"
+                    return f"• {truncate_str(title, 80)}"
                 if isinstance(data, list):
                     # Handle count-only results
                     if len(data) == 1 and isinstance(data[0], dict) and "total" in data[0]:
@@ -289,69 +638,63 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                     if max_items is not None and len(data) > max_items:
                         response = f"📊 RESULTS SUMMARY:\n"
                         response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
-
-                        # Group by priority if available
-                        priority_counts = {}
-                        for item in data[:max_items]:
-                            if isinstance(item, dict) and 'priority' in item:
-                                priority = item['priority']
-                                priority_counts[priority] = priority_counts.get(priority, 0) + 1
-
-                        if priority_counts:
-                            response += "Priority breakdown:\n"
-                            for priority, count in sorted(priority_counts.items()):
-                                response += f"• {priority}: {count} items\n"
-                            response += "\n"
-
-                        # Show sample items in a readable format
-                        response += "Sample items:\n"
-                        for i, item in enumerate(data[:5], 1):  # Show 5 samples instead of 3
+                        # Show sample items in a collection-aware way
+                        for i, item in enumerate(data[:max_items], 1):
                             if isinstance(item, dict):
-                                title = item.get('title', 'No title')[:50] + "..." if len(item.get('title', '')) > 50 else item.get('title', 'No title')
-                                priority = item.get('priority', 'No priority')
-                                display_no = item.get('displayBugNo', f'Item {i}')
-                                response += f"• {display_no}: {title} ({priority})\n"
-
-                        if len(data) > 5:
-                            response += f"• ... and {len(data) - 5} more items\n"
-                        print(response)
+                                response += render_line(item) + "\n"
+                        if len(data) > max_items:
+                            response += f"• ... and {len(data) - max_items} more items\n"
                         return response
                     else:
                         # Show all items or small list - show in formatted way
                         response = "📊 RESULTS:\n"
-                        for i, item in enumerate(data, 1):
+                        for item in data:
                             if isinstance(item, dict):
-                                title = item.get('title', 'No title')[:30] + "..." if len(item.get('title', '')) > 30 else item.get('title', 'No title')
-                                priority = item.get('priority', 'No priority')
-                                display_no = item.get('displayBugNo', f'Item {i}')
-                                response += f"• {display_no}: {title} ({priority})\n"
-                        print(response)
+                                response += render_line(item) + "\n"
                         return response
 
                 # Single document or other data
                 if isinstance(data, dict):
                     # Format single document in a readable way
                     response = "📊 RESULT:\n"
+                    # Prefer a single-line summary first
+                    if isinstance(data, dict):
+                        response += render_line(data) + "\n\n"
+                    # Then show key fields compactly (truncate long strings)
                     for key, value in data.items():
                         if isinstance(value, (str, int, float, bool)):
-                            response += f"• {key}: {value}\n"
+                            response += f"• {key}: {truncate_str(value, 140)}\n"
                         elif isinstance(value, dict):
-                            response += f"• {key}:\n"
-                            for sub_key, sub_value in value.items():
-                                response += f"  - {sub_key}: {sub_value}\n"
-                        elif isinstance(value, list) and len(value) <= 3:
-                            response += f"• {key}: {value}\n"
-                        else:
-                            response += f"• {key}: [{len(value)} items]\n"
-                    print(response)
+                            # Show only shallow summary for dict
+                            name_val = value.get('name') or value.get('title')
+                            if name_val:
+                                response += f"• {key}: {truncate_str(name_val, 120)}\n"
+                            else:
+                                child_keys = ", ".join(list(value.keys())[:5])
+                                response += f"• {key}: {{ {child_keys} }}\n"
+                        elif isinstance(value, list):
+                            if len(value) <= 5:
+                                response += f"• {key}: {truncate_str(str(value), 160)}\n"
+                            else:
+                                response += f"• {key}: [{len(value)} items]\n"
                     return response
                 else:
                     # Fallback to JSON for other data types
                     return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
 
+            # Apply strong filter/transform now that we know the primary entity
+            primary_entity = intent.get('primary_entity') if isinstance(intent, dict) else None
+            filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
+
             # Format in LLM-friendly way
             max_items = None if show_all else 20
-            formatted_result = format_llm_friendly(filtered, max_items=max_items)
+            formatted_result = format_llm_friendly(filtered, max_items=max_items, primary_entity=primary_entity)
+            # If members primary entity and no rows, proactively hint about filters
+            try:
+                if isinstance(result.get("intent"), dict) and result["intent"].get("primary_entity") == "members" and not filtered:
+                    formatted_result += "\n(No members matched. Try filtering by name, role, type, or project.)"
+            except Exception:
+                pass
             response += formatted_result
             print(response)
             return response
@@ -361,192 +704,395 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     except Exception as e:
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
-# RAG Tool for page and work item content
-class RAGTool:
-    """RAG tool for querying page and work item content from Qdrant"""
-
-    def __init__(self):
-        self.qdrant_client = None
-        self.embedding_model = None
-        self.connected = False
-
-    async def connect(self):
-        """Initialize connection to Qdrant and embedding model"""
-        if self.connected:
-            return
-
-        if not QdrantClient or not SentenceTransformer:
-            raise ImportError("Qdrant client or sentence transformer not available. Please install qdrant-client and sentence-transformers.")
-
-        try:
-            self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL,api_key=mongo.constants.QDRANT_API_KEY)
-
-            self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
-            self.connected = True
-            print(f"Connected to Qdrant at {mongo.constants.QDRANT_URL}")
-        except Exception as e:
-            print(f"Failed to connect to Qdrant: {e}")
-            raise
-
-    async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant content in Qdrant based on the query"""
-        if not self.connected:
-            await self.connect()
-
-        try:
-            # Generate embedding for the query
-            query_embedding = self.embedding_model.encode(query).tolist()
-            # h
-            print("Query embedding generated")
-            # Build filter if content_type is specified
-            search_filter = None
-            if content_type:
-                search_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="content_type",
-                            match=MatchValue(value=content_type)
-                        )
-                    ]
-                )
-
-            # Search in Qdrant
-            search_results = self.qdrant_client.search(
-                collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
-                query_vector=query_embedding,
-                query_filter=search_filter,
-                limit=limit,
-                with_payload=True
-            )
-
-            # Format results
-            results = []
-            # print(f"total results",search_results)
-            for result in search_results:
-                payload = result.payload or {}
-                results.append({
-                    "id": result.id,
-                    "score": result.score,
-                    "title": payload.get("title", "Untitled"),
-                    "content": payload.get("content", ""),
-                    "content_type": payload.get("content_type", "unknown"),
-                    # "metadata": payload.get("metadata", {})
-                })
-
-            return results
-
-        except Exception as e:
-            print(f"Error searching Qdrant: {e}")
-            return []
-
-    async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
-        """Get relevant context for answering questions about page and work item content"""
-        if not content_types:
-            content_types = ["page", "work_item"]
-
-        all_results = []
-        for content_type in content_types:
-            results = await self.search_content(query, content_type=content_type, limit=3)
-            all_results.extend(results)
-
-        # Sort by relevance score
-        all_results.sort(key=lambda x: x["score"], reverse=True)
-
-        # Format context
-        context_parts = []
-        # print(all_results)
-        for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
-            context_parts.append(
-                f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
-                f"Content: {result['content'][:500]}{'...' if len(result['content']) > 500 else ''}\n"
-                f"Relevance Score: {result['score']:.3f}\n"
-            )
-
-        return "\n".join(context_parts) if context_parts else "No relevant content found."
-
 
 @tool
-async def rag_content_search(query: str, content_type: str = None, limit: int = 5) -> str:
-    """Search for page and work item content using RAG (Retrieval-Augmented Generation).
-
-    This tool searches through stored page and work item content in Qdrant vector database
-    to find relevant information for answering questions about specific content.
-
+async def rag_search(
+    query: str,
+    content_type: str = None,
+    group_by: str = None,
+    limit: int = 10,
+    show_content: bool = True
+) -> str:
+    """Universal RAG search tool with filtering, grouping, and rich metadata.
+    
+    Use this for ANY content-based search or analysis needs:
+    - Find relevant pages, work items, projects, cycles, modules
+    - Search by semantic meaning (not just keywords)
+    - Group/breakdown results by any dimension
+    - Get context for answering questions
+    - Analyze content patterns and distributions
+    
+    **When to use:**
+    - "Find/search/show me pages about X"
+    - "What content discusses Y?"
+    - "Break down results by project/date/priority/etc."
+    - "Which work items mention authentication?"
+    - "Show me recent documentation about APIs"
+    
+    **Do NOT use for:**
+    - Structured database queries (counts, filters on structured fields) → use `mongo_query`
+    - Work items when you need authoritative Mongo fields → use `rag_mongo_workitems`
+    
     Args:
-        query: Natural language question or search terms about page or work item content.
-        content_type: Type of content to search ('page', 'work_item', or None for both).
-        limit: Maximum number of results to return (default: 5).
-
-    Returns: Formatted search results with relevant content snippets and relevance scores.
+        query: Search query (semantic meaning, not just keywords)
+        content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', or None (all)
+        group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
+                 'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
+        limit: Max results to retrieve (default 10, increase for broader searches)
+        show_content: If True, shows content previews; if False, shows only metadata (for summaries)
+    
+    Returns: Search results with rich metadata, optionally grouped and aggregated
+    
+    Examples:
+        query="authentication", group_by="content_type" → breakdown by type
+        query="API documentation", content_type="page", group_by="project_name" → pages by project
+        query="bugs", content_type="work_item", group_by="priority" → work items by priority
     """
     try:
-        rag_tool = RAGTool()
+        from collections import defaultdict
+        
+        rag_tool = RAGTool.get_instance()
         results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
-
+        
         if not results:
-            return f"❌ No relevant content found for query: '{query}'"
-
-        # Format response
-        response = f"🔍 RAG SEARCH RESULTS for '{query}':\n\n"
-        response += f"Found {len(results)} relevant content pieces:\n\n"
-
-        for i, result in enumerate(results, 1):
-            response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
-            response += f"Relevance Score: {result['score']:.3f}\n"
-            response += f"Content Preview: {result['content'][:300]}{'...' if len(result['content']) > 300 else ''}\n"
-
-            # if result['metadata']:
-            #     response += f"Metadata: {json.dumps(result['metadata'], indent=2)}\n"
-
-            response += "\n" + "="*50 + "\n"
-
+            return f"❌ No results found for query: '{query}'"
+        
+        # Build response header
+        response = f"🔍 RAG SEARCH: '{query}'\n"
+        response += f"Found {len(results)} result(s)"
+        if content_type:
+            response += f" (type: {content_type})"
+        response += "\n\n"
+        
+        # NO GROUPING - Show detailed list with metadata
+        if not group_by:
+            response += "📋 RESULTS:\n\n"
+            for i, result in enumerate(results[:15], 1):
+                response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                response += f"    Score: {result['score']:.3f}\n"
+                
+                # Show metadata compactly
+                meta = []
+                if result.get('project_name'):
+                    meta.append(f"Project: {result['project_name']}")
+                if result.get('priority'):
+                    meta.append(f"Priority: {result['priority']}")
+                if result.get('state_name'):
+                    meta.append(f"State: {result['state_name']}")
+                if result.get('assignee_name'):
+                    meta.append(f"Assignee: {result['assignee_name']}")
+                if result.get('displayBugNo'):
+                    meta.append(f"Bug#: {result['displayBugNo']}")
+                if result.get('updatedAt'):
+                    date_str = str(result['updatedAt']).split('T')[0] if 'T' in str(result['updatedAt']) else str(result['updatedAt'])[:10]
+                    meta.append(f"Updated: {date_str}")
+                if result.get('visibility'):
+                    meta.append(f"Visibility: {result['visibility']}")
+                
+                if meta:
+                    response += f"    {' | '.join(meta)}\n"
+                
+                # Show content preview if requested
+                if show_content and result.get('content'):
+                    preview = result['content'][:200]
+                    if len(result['content']) > 200:
+                        preview += "..."
+                    response += f"    Preview: {preview}\n"
+                
+                response += "\n"
+            
+            if len(results) > 15:
+                response += f"... and {len(results) - 15} more results (increase limit to see more)\n"
+            
+            return response
+        
+        # GROUPING - Aggregate and show distribution
+        groups = defaultdict(list)
+        
+        for result in results:
+            group_val = result.get(group_by)
+            
+            # Handle date grouping
+            if group_by in ['createdAt', 'updatedAt'] and group_val:
+                if isinstance(group_val, str):
+                    group_val = group_val.split('T')[0] if 'T' in group_val else group_val[:10]
+            
+            # Handle None/empty
+            if group_val is None or group_val == "":
+                group_val = "Unknown"
+            
+            groups[str(group_val)].append(result)
+        
+        # Sort groups by count
+        sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
+        
+        response += f"📊 GROUPED BY '{group_by}':\n"
+        response += f"Total groups: {len(sorted_groups)}\n\n"
+        
+        for group_key, items in sorted_groups[:20]:
+            response += f"▸ {group_key}: {len(items)} item(s)\n"
+            
+            # Show sample items
+            for item in items[:3]:
+                title = item['title'][:55] + "..." if len(item['title']) > 55 else item['title']
+                response += f"  • {title} (score: {item['score']:.2f})\n"
+            
+            if len(items) > 3:
+                response += f"  ... and {len(items) - 3} more\n"
+            response += "\n"
+        
+        if len(sorted_groups) > 20:
+            remaining_items = sum(len(items) for _, items in sorted_groups[20:])
+            response += f"... and {len(sorted_groups) - 20} more groups ({remaining_items} items)\n"
+        
         return response
-
+        
     except ImportError:
-        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+        return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
     except Exception as e:
-        return f"❌ RAG SEARCH ERROR:\nQuery: '{query}'\nError: {str(e)}"
+        return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
 @tool
-async def rag_answer_question(question: str, content_types: List[str] = None) -> str:
-    """Answer questions about page and work item content using RAG.
+async def rag_mongo(
+    query: str,
+    entity_type: str,
+    limit: int = 15
+) -> str:
+    """Bridge semantic search to authoritative MongoDB records (RAG → Mongo).
 
-    This tool retrieves relevant context from the Qdrant vector database
-    and provides context for answering questions about specific content.
+    Use when the user searches by meaning/content and needs COMPLETE, AUTHORITATIVE 
+    records from MongoDB with all structured fields. This tool:
+    1. Uses RAG to find semantically relevant items by content
+    2. Fetches full records from MongoDB with all canonical fields
+    3. Returns BOTH semantic context (what matched, relevance) AND structured data
+
+    **When to use:**
+    - "Find work items about authentication and show their status/assignee"
+    - "Search for security documentation pages and show project/dates"
+    - "Which projects discuss microservices architecture?"
+    - "Find cycles related to Q4 planning with their dates"
+    
+    **Benefits over pure RAG:**
+    - Get authoritative MongoDB fields (state, assignee, dates, counts, etc.)
+    - See WHY items matched (content preview + score)
+    - More reliable than RAG metadata (direct from source)
+    
+    **Benefits over pure mongo_query:**
+    - Search by semantic meaning, not just keywords
+    - Find items by description/content, not just structured fields
 
     Args:
-        question: Natural language question about page or work item content.
-        content_types: List of content types to search ('page', 'work_item', or None for both).
-
-    Returns: Relevant context and content snippets for answering the question.
+        query: Free-text semantic search (describes what you're looking for)
+        entity_type: Type to search - 'work_item', 'page', 'project', 'cycle', 'module'
+        limit: Max records to return (default 15)
+    
+    Returns: Matched items with RAG context + complete MongoDB fields
+    
+    Examples:
+        query="authentication bugs", entity_type="work_item" → work items with state/assignee
+        query="API documentation", entity_type="page" → pages with project/dates
+        query="microservices", entity_type="project" → projects with lead/status
     """
     try:
-        rag_tool = RAGTool()
-        context = await rag_tool.get_content_context(question, content_types)
-
-        if not context or "No relevant content found" in context:
-            return f"❌ No relevant context found for question: '{question}'"
-
-        response = f"📖 CONTEXT FOR QUESTION: '{question}'\n\n"
-        response += "Relevant content found:\n\n"
-        response += context
-        response += "\n" + "="*50 + "\n"
-        response += "Use this context to answer the question about page and work item content."
-
+        # Map entity types to collections and content types
+        entity_config = {
+            "work_item": {"collection": "workItem", "content_type": "work_item", "title_field": "title"},
+            "page": {"collection": "page", "content_type": "page", "title_field": "title"},
+            "project": {"collection": "project", "content_type": "project", "title_field": "name"},
+            "cycle": {"collection": "cycle", "content_type": "cycle", "title_field": "title"},
+            "module": {"collection": "module", "content_type": "module", "title_field": "title"},
+        }
+        
+        if entity_type not in entity_config:
+            return f"❌ Invalid entity_type: '{entity_type}'. Must be one of: {', '.join(entity_config.keys())}"
+        
+        config = entity_config[entity_type]
+        collection_name = config["collection"]
+        content_type = config["content_type"]
+        title_field = config["title_field"]
+        
+        # Step 1: RAG search to find semantically relevant items
+        rag_tool = RAGTool.get_instance()
+        rag_results = await rag_tool.search_content(query, content_type=content_type, limit=min(limit * 2, 30))
+        
+        if not rag_results:
+            return f"❌ No RAG results found for query: '{query}' (type: {entity_type})"
+        
+        # Step 2: Extract IDs and titles from RAG results
+        mongo_ids: List[str] = []
+        rag_context: List[Dict[str, Any]] = []
+        
+        for r in rag_results:
+            mongo_id = str(r.get("mongo_id") or "").strip()
+            if mongo_id and len(mongo_id) == 24:  # Valid ObjectId
+                mongo_ids.append(mongo_id)
+                rag_context.append({
+                    "id": mongo_id,
+                    "title": r.get("title", ""),
+                    "score": r.get("score", 0),
+                    "content_preview": r.get("content", "")[:150]
+                })
+        
+        if not mongo_ids:
+            return f"❌ No valid MongoDB IDs found in RAG results for '{query}'"
+        
+        # Step 3: Fetch full records from MongoDB
+        id_array_expr = {
+            "$map": {
+                "input": mongo_ids[:limit],  # Limit IDs
+                "as": "id",
+                "in": {"$toObjectId": "$$id"}
+            }
+        }
+        
+        pipeline = [
+            {"$match": {"$expr": {"$in": ["$_id", id_array_expr]}}},
+            {"$limit": limit}
+        ]
+        
+        rows = await mongodb_tools.execute_tool("aggregate", {
+            "database": DATABASE_NAME,
+            "collection": collection_name,
+            "pipeline": pipeline,
+        })
+        
+        # Parse MongoDB response
+        def parse_mcp_rows(rows_any: Any) -> List[Dict[str, Any]]:
+            try:
+                parsed = json.loads(rows_any) if isinstance(rows_any, str) else rows_any
+            except Exception:
+                parsed = rows_any
+            
+            docs: List[Dict[str, Any]] = []
+            if isinstance(parsed, list) and parsed:
+                if isinstance(parsed[0], str) and parsed[0].startswith("Found"):
+                    for item in parsed[1:]:
+                        if isinstance(item, str):
+                            try:
+                                doc = json.loads(item)
+                                if isinstance(doc, dict):
+                                    docs.append(doc)
+                            except Exception:
+                                continue
+                        elif isinstance(item, dict):
+                            docs.append(item)
+                else:
+                    docs = [d for d in parsed if isinstance(d, dict)]
+            elif isinstance(parsed, dict):
+                docs = [parsed]
+            return docs
+        
+        mongo_docs = parse_mcp_rows(rows)
+        
+        if not mongo_docs:
+            return f"❌ No MongoDB records found for RAG-matched IDs of '{query}'"
+        
+        # Step 4: Filter and transform MongoDB data
+        cleaned_docs = filter_and_transform_content(mongo_docs, primary_entity=entity_type)
+        
+        # Step 5: Merge RAG context with MongoDB data
+        # Create ID lookup for RAG context
+        rag_lookup = {r["id"]: r for r in rag_context}
+        
+        # Build response showing BOTH RAG context AND Mongo data
+        response = f"🔗 RAG→MONGO RESULTS: '{query}' ({entity_type})\n"
+        response += f"Found {len(cleaned_docs)} record(s) via semantic search\n\n"
+        
+        for i, doc in enumerate(cleaned_docs[:limit], 1):
+            # Get MongoDB ID
+            doc_id = normalize_mongodb_types(doc.get("_id")) if "_id" in doc else None
+            
+            # Get RAG context for this doc
+            rag_info = rag_lookup.get(doc_id, {})
+            score = rag_info.get("score", 0)
+            content_preview = rag_info.get("content_preview", "")
+            
+            response += f"[{i}] "
+            
+            # Entity-specific formatting
+            if entity_type == "work_item":
+                bug_no = doc.get("displayBugNo") or f"WI-{i}"
+                title = doc.get("title", "Untitled")
+                response += f"{bug_no}: {title}\n"
+                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
+                
+                # MongoDB fields
+                if doc.get("stateName"):
+                    response += f"    State: {doc['stateName']}"
+                if doc.get("priority"):
+                    response += f" | Priority: {doc['priority']}"
+                if doc.get("assignees"):
+                    response += f" | Assignee: {', '.join(doc['assignees'][:2])}"
+                if doc.get("projectName"):
+                    response += f" | Project: {doc['projectName']}"
+                response += "\n"
+                
+            elif entity_type == "page":
+                title = doc.get("title", "Untitled")
+                response += f"PAGE: {title}\n"
+                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
+                
+                # MongoDB fields
+                meta = []
+                if doc.get("projectName"):
+                    meta.append(f"Project: {doc['projectName']}")
+                if doc.get("visibility"):
+                    meta.append(f"Visibility: {doc['visibility']}")
+                if doc.get("updatedAt"):
+                    date_str = str(doc['updatedAt']).split('T')[0] if 'T' in str(doc['updatedAt']) else str(doc['updatedAt'])[:10]
+                    meta.append(f"Updated: {date_str}")
+                if meta:
+                    response += f"    {' | '.join(meta)}\n"
+                    
+            elif entity_type == "project":
+                name = doc.get("name", "Unnamed")
+                pid = doc.get("projectDisplayId", "")
+                response += f"PROJECT: {pid or name}\n"
+                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
+                
+                # MongoDB fields
+                meta = []
+                if doc.get("leadName"):
+                    meta.append(f"Lead: {doc['leadName']}")
+                if doc.get("status"):
+                    meta.append(f"Status: {doc['status']}")
+                if doc.get("businessName"):
+                    meta.append(f"Business: {doc['businessName']}")
+                if meta:
+                    response += f"    {' | '.join(meta)}\n"
+                    
+            elif entity_type in ["cycle", "module"]:
+                title = doc.get("title") or doc.get("name", "Untitled")
+                response += f"{entity_type.upper()}: {title}\n"
+                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
+                
+                # MongoDB fields
+                meta = []
+                if doc.get("projectName"):
+                    meta.append(f"Project: {doc['projectName']}")
+                if doc.get("status"):
+                    meta.append(f"Status: {doc['status']}")
+                if doc.get("startDate") and doc.get("endDate"):
+                    meta.append(f"Dates: {doc['startDate']} → {doc['endDate']}")
+                if meta:
+                    response += f"    {' | '.join(meta)}\n"
+            
+            response += "\n"
+        
         return response
 
     except ImportError:
-        return "❌ RAG functionality not available. Please install qdrant-client and sentence-transformers."
+        return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
     except Exception as e:
-        return f"❌ RAG QUESTION ERROR:\nQuestion: '{question}'\nError: {str(e)}"
+        import traceback
+        return f"❌ RAG→MONGO ERROR: {str(e)}\n{traceback.format_exc()}"
 
-
-# Define the tools list (no schema tool)
+# Define the tools list - streamlined and powerful
 tools = [
-    mongo_query,
-    rag_content_search,
-    rag_answer_question,
+    mongo_query,              # Structured MongoDB queries with intelligent planning
+    rag_search,               # Universal RAG search with filtering, grouping, and metadata
+    rag_mongo,             # Bridge RAG semantic search to authoritative MongoDB records (any entity type)
 ]
 
 # import asyncio

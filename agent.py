@@ -2,16 +2,14 @@ from langchain_ollama import ChatOllama
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_mcp_adapters.client import MultiServerMCPClient
-import json
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
-from pydantic import BaseModel
 import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
+import os
 
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
@@ -25,7 +23,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 import pandas as pd
 import threading
 import time
-from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor, SpanExportResult
+from opentelemetry.sdk.trace.export import SpanProcessor
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 
 # OpenInference semantic conventions (optional)
@@ -60,8 +58,35 @@ except AttributeError:
 from mongo.constants import DATABASE_NAME, mongodb_tools
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a Project Management System assistant. Use tools to answer questions about projects, work items, cycles, members, pages, modules, and project states."
-    "\n\nAvailable tool: mongo_query - Use this for any questions requiring data from the database."
+    "You are a precise, non-speculative Project Management assistant.\n\n"
+    "GENERAL RULES:\n"
+    "- Never guess facts about the database or content. Prefer invoking a tool.\n"
+    "- If a tool is appropriate, always call it before answering.\n"
+    "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
+    "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
+    "DECISION GUIDE:\n"
+    "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
+    "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
+    "   - Do NOT answer from memory; run a query.\n"
+    "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
+    "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
+    "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
+    "3) Use 'rag_mongo' when searching by content/meaning AND need complete MongoDB records with all fields.\n"
+    "   - Combines semantic search with authoritative Mongo data.\n"
+    "   - Examples: 'find auth bugs with their status', 'security pages with project info', 'microservices projects'.\n\n"
+    "TOOL CHEATSHEET:\n"
+    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
+    "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
+    "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
+    "  REQUIRED: 'query' - semantic search terms.\n"
+    "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n"
+    "- rag_mongo(query:str, entity_type:str, limit:int=15): Semantic search → MongoDB records with full fields.\n"
+    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n\n"
+    "WHEN UNSURE WHICH TOOL:\n"
+    "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
+    "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
+    "- If the user searches by content BUT needs complete MongoDB fields (state, assignee, dates, etc.) → rag_mongo.\n\n"
+    "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
 
 class ConversationMemory:
@@ -101,19 +126,124 @@ conversation_memory = ConversationMemory()
 
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
-    model="qwen3:0.6b-fp16",
-    temperature=0.3,
-    num_ctx=4096,  # Increased context for better understanding
-    num_predict=1024,  # Allow longer responses for detailed insights
-    num_thread=8,  # Use multiple threads for speed
-    streaming=True,  # Enable streaming for real-time responses
+    model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
+    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
+    num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
+    num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
+    num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
+    streaming=True,
     verbose=False,
-    top_p=0.9,  # Better response diversity
-    top_k=40,  # Focus on high-probability tokens
+    top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
+    top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
 )
 
-# Bind tools to the LLM for tool calling
-llm_with_tools = llm.bind_tools(tools_list)
+# Simple per-query tool router: restrict RAG unless content/context is requested
+_TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
+
+
+def _detect_multistep(user_query: str) -> bool:
+    """Detect whether a query likely requires multiple steps/tools.
+
+    Signals include: explicit sequencing terms, multiple distinct intents
+    (e.g., count + list + search), or requests to run in parallel/batch.
+    """
+    q = (user_query or "").lower()
+    # Obvious multi-step markers
+    multi_markers = [
+        " compare ", " versus ", " vs ", " side by side ", " and also ",
+        " together ", ";", " then ", " in parallel", " simultaneously",
+        " at the same time", " both ", " batch ", " run multiple", " multi-step",
+    ]
+    if any(m in q for m in multi_markers):
+        return True
+
+    # Multiple action categories in one sentence
+    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
+    action_listing = ["list", "show", "top", "recent", "titles", "items"]
+    action_content = ["summarize", "snippet", "snippets", "context", "explain", "search"]
+
+    def has_any(terms):
+        return any(term in q for term in terms)
+
+    multiple_actions = (
+        (has_any(action_structured) and has_any(action_listing)) or
+        (has_any(action_structured) and has_any(action_content)) or
+        (has_any(action_listing) and has_any(action_content))
+    )
+    if multiple_actions:
+        return True
+
+    # Heuristic: presence of multiple entity types hints multi-step
+    entity_terms = ["project", "work item", "work items", "cycle", "module", "members", "page", "pages", "documentation", "docs"]
+    if sum(1 for t in entity_terms if t in q) >= 2 and ("and" in q or ";" in q):
+        return True
+    return False
+
+def _select_tools_for_query(user_query: str):
+    """Return a subset of tools to expose to the LLM for this query.
+
+    Policy:
+    - Default to mongo_query for structured field questions.
+    - Only enable RAG tools when the query clearly asks for content/context.
+    - Enable rag_mongo_workitems only when content-like AND canonical fields are requested.
+    """
+    q = (user_query or "").lower()
+    content_markers = [
+        "content", "note", "notes", "doc", "docs", "documentation", "page", "pages",
+        "description", "context", "summarize", "summary", "snippet", "snippets",
+        "search", "find examples", "show examples", "browse"
+    ]
+    workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
+    # Member-related structured queries should always go to mongo_query (avoid RAG)
+    member_terms = [
+        "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
+        "user", "users", "staff", "people", "personnel"
+    ]
+    canonical_field_terms = [
+        "state", "assignee", "project", "count", "group", "filter", "sort",
+        "created", "updated", "date", "due", "id", "displaybugno", "priority"
+    ]
+
+    def has_any(terms):
+        return any(term in q for term in terms)
+
+    # Strict default: Mongo for everything unless content/context explicitly requested
+    allow_rag = has_any(content_markers)
+    # Override: if the query is about members/assignees/team, force Mongo only
+    if has_any(member_terms):
+        allow_rag = False
+
+    allowed_names = ["mongo_query"]
+    if allow_rag:
+        # Allow universal RAG search tool
+        allowed_names.append("rag_search")
+        # Allow rag_mongo when user needs semantic search + authoritative Mongo fields
+        # This works for any entity type (work_item, page, project, cycle, module)
+        if has_any(canonical_field_terms):
+            allowed_names.append("rag_mongo")
+
+    # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
+    multi_markers = [
+        " compare ", " versus ", " vs ", " side by side ", " both ", " and also ", " together ", ";", " then ",
+        " in parallel", " simultaneously", " at the same time", " batch ", " run multiple"
+    ]
+    # Detect presence of multiple action intents in one query
+    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
+    action_listing = ["list", "show", "top", "recent", "titles", "items"]
+    action_content = ["summarize", "snippet", "snippets", "context", "explain"]
+    multiple_actions = (
+        (has_any(action_structured) and has_any(action_listing)) or
+        (has_any(action_structured) and has_any(action_content)) or
+        (has_any(action_listing) and has_any(action_content))
+    )
+    # composite_query removed; agent will chain tools internally via planning
+
+    # Map to actual tool objects, keep only those present
+    selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
+    # Fallback safety: if mapping failed for any reason, expose mongo_query only
+    if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
+        selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
+    return selected_tools, allowed_names
 
 
 class PhoenixSpanManager:
@@ -364,12 +494,13 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
-class PhoenixSpanManager(AsyncCallbackHandler):
-    """Manages Phoenix tracing configuration"""
+class PhoenixCallbackHandler(AsyncCallbackHandler):
+    """WebSocket streaming callback handler for Phoenix events"""
 
     def __init__(self, websocket=None):
         self.websocket = websocket
         self.start_time = None
+        # Tool outputs are now always streamed to the frontend for better visibility
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -413,11 +544,13 @@ class PhoenixSpanManager(AsyncCallbackHandler):
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
         if self.websocket:
-            await self.websocket.send_json({
+            # Always send full tool outputs to frontend for better visibility
+            payload = {
                 "type": "tool_end",
                 "output": output,
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            await self.websocket.send_json(payload)
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
@@ -429,14 +562,31 @@ class PhoenixSpanManager(AsyncCallbackHandler):
             print(f"Warning: Error stopping Phoenix span collector: {e}")
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling"""
+    """MongoDB Agent using Tool Calling with Parallel Execution Support
+    
+    Features:
+    - Parallel tool execution: When multiple tools are requested by the LLM, they are executed
+      concurrently using asyncio.gather() for improved performance.
+    - Sequential fallback: Single tool calls or when parallel execution is disabled, tools
+      execute sequentially.
+    - Full tracing support: All tool executions (parallel or sequential) are properly traced
+      with Phoenix/OpenTelemetry.
+    - Conversation memory: Maintains context across multiple turns.
+    
+    Args:
+        max_steps: Maximum number of reasoning steps (default: 8)
+        system_prompt: Custom system prompt or None to use default
+        enable_parallel_tools: Enable parallel tool execution (default: True)
+    """
 
-    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
-        self.llm_with_tools = llm_with_tools
+    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT, enable_parallel_tools: bool = True):
+        # Base LLM; tools will be bound per-query via router
+        self.llm_base = llm
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
         self.tracing_enabled = False
+        self.enable_parallel_tools = enable_parallel_tools
 
     async def initialize_tracing(self):
         """Enable Phoenix tracing for this agent."""
@@ -466,6 +616,82 @@ class MongoDBAgent:
             span.end()
         except Exception as e:
             print(f"Tracing error ending span: {e}")
+
+    async def _execute_single_tool(
+        self, 
+        tool, 
+        tool_call: Dict[str, Any], 
+        selected_tools: List[Any],
+        tracer=None
+    ) -> tuple[ToolMessage, bool]:
+        """Execute a single tool with tracing support.
+        
+        Returns:
+            tuple: (ToolMessage, success_flag)
+        """
+        tool_cm = None
+        if tracer is not None:
+            tool_cm = tracer.start_as_current_span(
+                "tool_execute",
+                kind=trace.SpanKind.INTERNAL,
+                attributes={"tool_name": tool_call["name"]},
+            )
+        
+        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+            # Enforce router: only allow selected tools
+            actual_tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+            if not actual_tool:
+                error_msg = ToolMessage(
+                    content=f"Tool '{tool_call['name']}' not found.",
+                    tool_call_id=tool_call["id"],
+                )
+                return error_msg, False
+
+            try:
+                if tool_span:
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), actual_tool.name)
+                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                        try:
+                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                        except Exception:
+                            pass
+                        tool_span.add_event("tool_start", {"tool": actual_tool.name})
+                    except Exception:
+                        pass
+                
+                result = await actual_tool.ainvoke(tool_call["args"])
+                
+                if tool_span:
+                    tool_span.set_attribute("tool_success", True)
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                        try:
+                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                        except Exception:
+                            pass
+                        tool_span.add_event("tool_end", {"tool": actual_tool.name})
+                    except Exception:
+                        pass
+                        
+            except Exception as tool_exc:
+                result = f"Tool execution error: {tool_exc}"
+                if tool_span:
+                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
+                    except Exception:
+                        pass
+
+            tool_message = ToolMessage(
+                content=str(result),
+                tool_call_id=tool_call["id"],
+            )
+            return tool_message, True
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
@@ -546,8 +772,13 @@ class MongoDBAgent:
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
+                need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Choose tools for this query iteration
+                    selected_tools, allowed_names = _select_tools_for_query(query)
+                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
+
                     if tracer is not None:
                         llm_cm = tracer.start_as_current_span(
                             "llm_invoke",
@@ -584,109 +815,94 @@ class MongoDBAgent:
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
-                        response = await self.llm_with_tools.ainvoke(messages)
-                        if llm_span and getattr(response, "content", None):
-                            try:
-                                preview = str(response.content)[:500]
-                                llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                                llm_span.add_event("llm_response", {"preview_len": len(preview)})
-                            except Exception:
-                                pass
-                    last_response = response
+                # Lightweight routing hint to bias correct tool choice
+                routing_instructions = SystemMessage(content=(
+                    "PLANNING & ROUTING:\n"
+                    "- First, break the user request into minimal sub-steps.\n"
+                    "- For each sub-step, pick exactly one tool using the Decision Guide.\n\n"
+                    "DECISION GUIDE:\n"
+                    "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
+                    "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
+                    "- Use 'rag_mongo' to find items by semantic search AND get complete MongoDB fields.\n\n"
+                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                ))
+                # In non-streaming mode, also support a synthesis pass after tools
+                invoke_messages = messages + [routing_instructions]
+                if need_finalization:
+                    finalization_instructions = SystemMessage(content=(
+                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                        "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
+                    ))
+                    invoke_messages = messages + [routing_instructions, finalization_instructions]
+                    need_finalization = False
 
-                    # Persist assistant message
-                    conversation_memory.add_message(conversation_id, response)
-
-                    # If no tools requested, we are done
-                    if not getattr(response, "tool_calls", None):
-                        return response.content
-
-                    # Execute requested tools sequentially
-                    messages.append(response)
-                    for tool_call in response.tool_calls:
-                        if tracer is not None:
-                            tool_cm = tracer.start_as_current_span(
-                                "tool_execute",
-                                kind=trace.SpanKind.INTERNAL,
-                                attributes={"tool_name": tool_call["name"]},
-                            )
-                        else:
-                            tool_cm = None
-
-                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                            tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                            if not tool:
-                                error_msg = ToolMessage(
-                                    content=f"Tool '{tool_call['name']}' not found.",
-                                    tool_call_id=tool_call["id"],
-                                )
-                                messages.append(error_msg)
-                                conversation_memory.add_message(conversation_id, error_msg)
-                                continue
-
-                            try:
-                                if tool_span:
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                        # Tag span kind for OpenInference UI (uppercase expected)
-                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
-                                        # Also set generic and OpenInference input.value for Phoenix UI
-                                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
-                                        try:
-                                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
-                                        except Exception:
-                                            pass
-                                        tool_span.add_event("tool_start", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                result = await tool.ainvoke(tool_call["args"])
-                                if tool_span:
-                                    tool_span.set_attribute("tool_success", True)
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
-                                        try:
-                                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
-                                        except Exception:
-                                            pass
-                                        tool_span.add_event("tool_end", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                            except Exception as tool_exc:
-                                result = f"Tool execution error: {tool_exc}"
-                                if tool_span:
-                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                    except Exception:
-                                        pass
-
-                            tool_message = ToolMessage(
-                                content=str(result),
-                                tool_call_id=tool_call["id"],
-                            )
-                            messages.append(tool_message)
-                            conversation_memory.add_message(conversation_id, tool_message)
-                    steps += 1
-
-                # Step cap reached; return best available answer
-                if last_response is not None:
-                    if run_span:
+                response = await llm_with_tools.ainvoke(invoke_messages)
+                if llm_span and getattr(response, "content", None):
                         try:
-                            preview = str(last_response.content)[:500]
-                            run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                            run_span.add_event("agent_end", {"steps": steps})
+                            preview = str(response.content)[:500]
+                            llm_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                            llm_span.add_event("llm_response", {"preview_len": len(preview)})
                         except Exception:
                             pass
-                    return last_response.content
-                if run_span:
-                    try:
-                        run_span.add_event("agent_end", {"steps": steps, "reason": "max_steps"})
-                    except Exception:
-                        pass
-                return "Reached maximum reasoning steps without a final answer."
+                last_response = response
+
+                # Persist assistant message
+                conversation_memory.add_message(conversation_id, response)
+
+                # If no tools requested, we are done
+                if not getattr(response, "tool_calls", None):
+                    return response.content
+
+                # Execute requested tools (parallel or sequential based on configuration)
+                messages.append(response)
+                did_any_tool = False
+                
+                if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                    # Parallel execution for multiple tools
+                    tool_tasks = [
+                        self._execute_single_tool(None, tool_call, selected_tools, tracer)
+                        for tool_call in response.tool_calls
+                    ]
+                    tool_results = await asyncio.gather(*tool_tasks)
+                    
+                    # Process results in order
+                    for tool_message, success in tool_results:
+                        messages.append(tool_message)
+                        conversation_memory.add_message(conversation_id, tool_message)
+                        if success:
+                            did_any_tool = True
+                else:
+                    # Sequential execution (fallback or single tool)
+                    for tool_call in response.tool_calls:
+                        tool_message, success = await self._execute_single_tool(
+                            None, tool_call, selected_tools, tracer
+                        )
+                        messages.append(tool_message)
+                        conversation_memory.add_message(conversation_id, tool_message)
+                        if success:
+                            did_any_tool = True
+                
+                steps += 1
+
+                # After executing any tools, force the next LLM turn to synthesize
+                if did_any_tool:
+                    need_finalization = True
+                else:
+                    # If no tools were executed, return the latest response
+                    if last_response is not None:
+                        if run_span:
+                            try:
+                                preview = str(last_response.content)[:500]
+                                run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
+                                run_span.add_event("agent_end", {"steps": steps})
+                            except Exception:
+                                pass
+                        return last_response.content
+
+            # If we exit the loop due to step cap, return the best available answer
+            if last_response is not None:
+                return last_response.content
+            return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
             return f"Error running agent: {str(e)}"
@@ -729,15 +945,19 @@ class MongoDBAgent:
                 human_message = HumanMessage(content=query)
                 messages.append(human_message)
 
-                callback_handler = PhoenixSpanManager(websocket)
+                callback_handler = PhoenixCallbackHandler(websocket)
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
+                need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Choose tools for this query iteration
+                    selected_tools, allowed_names = _select_tools_for_query(query)
+                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
                     if tracer is not None:
                         llm_cm = tracer.start_as_current_span(
                             "llm_invoke",
@@ -760,8 +980,28 @@ class MongoDBAgent:
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
-                        response = await self.llm_with_tools.ainvoke(
-                            messages,
+                        routing_instructions = SystemMessage(content=(
+                            "PLANNING & ROUTING:\n"
+                            "- Decompose the task into ordered sub-steps.\n"
+                            "- Choose exactly one tool per sub-step.\n\n"
+                            "DECISION GUIDE:\n"
+                            "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
+                            "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
+                            "- 'rag_mongo' → semantic search + complete MongoDB fields (any entity type).\n\n"
+                            "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                        ))
+                        invoke_messages = messages + [routing_instructions]
+                        if need_finalization:
+                            finalization_instructions = SystemMessage(content=(
+                                "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
+                                "Do not paste tool outputs verbatim or include banners/emojis. "
+                                "If the user asked to browse or see examples, summarize briefly and offer to expand. "
+                                "For work items, present canonical fields succinctly."
+                            ))
+                            invoke_messages = messages + [routing_instructions, finalization_instructions]
+                            need_finalization = False
+                        response = await llm_with_tools.ainvoke(
+                            invoke_messages,
                             config={"callbacks": [callback_handler]},
                         )
                         if llm_span and getattr(response, "content", None):
@@ -780,66 +1020,53 @@ class MongoDBAgent:
                         yield response.content
                         return
 
-                    # Execute requested tools sequentially with streaming callbacks
+                    # Execute requested tools (parallel or sequential) with streaming callbacks
                     messages.append(response)
-                    for tool_call in response.tool_calls:
-                        if tracer is not None:
-                            tool_cm = tracer.start_as_current_span(
-                                "tool_execute",
-                                kind=trace.SpanKind.INTERNAL,
-                                attributes={"tool_name": tool_call["name"]},
-                            )
-                        else:
-                            tool_cm = None
-
-                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                            tool = next((t for t in tools_list if t.name == tool_call["name"]), None)
-                            if not tool:
-                                error_msg = ToolMessage(
-                                    content=f"Tool '{tool_call['name']}' not found.",
-                                    tool_call_id=tool_call["id"],
-                                )
-                                messages.append(error_msg)
-                                conversation_memory.add_message(conversation_id, error_msg)
-                                continue
-
-                            await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
-                            try:
-                                if tool_span:
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
-                                        tool_span.add_event("tool_start", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                result = await tool.ainvoke(tool_call["args"]) 
-                                if tool_span:
-                                    tool_span.set_attribute("tool_success", True)
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                        tool_span.add_event("tool_end", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                await callback_handler.on_tool_end(str(result))
-                            except Exception as tool_exc:
-                                result = f"Tool execution error: {tool_exc}"
-                                if tool_span:
-                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                    except Exception:
-                                        pass
-                                await callback_handler.on_tool_end(str(result))
-
-                            tool_message = ToolMessage(
-                                content=str(result),
-                                tool_call_id=tool_call["id"],
-                            )
+                    did_any_tool = False
+                    
+                    if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                        # Parallel execution for multiple tools with streaming
+                        # Send tool_start events for all tools first
+                        for tool_call in response.tool_calls:
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+                            if tool:
+                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                        
+                        # Execute all tools in parallel
+                        tool_tasks = [
+                            self._execute_single_tool(None, tool_call, selected_tools, tracer)
+                            for tool_call in response.tool_calls
+                        ]
+                        tool_results = await asyncio.gather(*tool_tasks)
+                        
+                        # Process results and send tool_end events
+                        for tool_message, success in tool_results:
+                            await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
+                            if success:
+                                did_any_tool = True
+                    else:
+                        # Sequential execution (fallback or single tool)
+                        for tool_call in response.tool_calls:
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+                            if tool:
+                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                            
+                            tool_message, success = await self._execute_single_tool(
+                                None, tool_call, selected_tools, tracer
+                            )
+                            await callback_handler.on_tool_end(tool_message.content)
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                            if success:
+                                did_any_tool = True
+                    
                     steps += 1
+
+                    # After executing any tools, force the next LLM turn to synthesize
+                    if did_any_tool:
+                        need_finalization = True
 
                 # Step cap reached; send best available response
                 if last_response is not None:
@@ -856,6 +1083,7 @@ async def main():
     """Example usage of the ProjectManagement Insights Agent"""
     agent = MongoDBAgent()
     await agent.connect()
+    await agent.disconnect()
 
 
 if __name__ == "__main__":

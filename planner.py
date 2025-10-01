@@ -7,9 +7,11 @@ based on the relationship registry
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
+import copy
 
 from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
@@ -17,6 +19,9 @@ from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+
+# Orchestration utilities
+from orchestrator import Orchestrator, StepSpec, as_async
 
 # OpenInference semantic conventions (optional)
 try:
@@ -43,8 +48,10 @@ class QueryIntent:
     projections: List[str]  # Fields to return
     sort_order: Optional[Dict[str, int]]  # Sort specification
     limit: Optional[int]  # Result limit
+    skip: Optional[int]  # Result offset for pagination
     wants_details: bool  # Prefer detailed documents over counts
     wants_count: bool  # Whether the user asked for a count
+    fetch_one: bool  # Whether the user wants a single specific item
 
 @dataclass
 class RelationshipPath:
@@ -55,6 +62,66 @@ class RelationshipPath:
     cost: int  # Computational cost of this path
     filters: Dict[str, Any]  # Filters that can be applied at each step
 
+
+def _serialize_pipeline_for_json(pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert datetime objects in pipeline to JSON-serializable format using MongoDB ISODate format"""
+    if not pipeline:
+        return pipeline
+
+    def _convert_value(value: Any) -> Any:
+        if isinstance(value, datetime):
+            # Use MongoDB ISODate format: new ISODate("2025-09-27T01:22:58Z")
+            iso_string = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if value.microsecond else value.strftime('%Y-%m-%dT%H:%M:%SZ')
+            return {"$isodate": iso_string}  # Use a special marker that can be converted to JavaScript
+        elif isinstance(value, dict):
+            return {k: _convert_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [_convert_value(item) for item in value]
+        else:
+            return value
+
+    return [_convert_value(stage) for stage in pipeline]
+
+def _format_pipeline_for_display(pipeline: List[Dict[str, Any]]) -> str:
+    """Format pipeline as JavaScript code for display in MongoDB shell format"""
+    if not pipeline:
+        return "[]"
+
+    def _format_value(value: Any) -> str:
+        if isinstance(value, dict):
+            if "$isodate" in value:
+                return f'new ISODate("{value["$isodate"]}")'
+            else:
+                items = []
+                for k, v in value.items():
+                    formatted_value = _format_value(v)
+                    # Don't quote string values that are not meant to be strings
+                    if isinstance(v, str) and v in ("true", "false", "null"):
+                        items.append(f'"{k}": {formatted_value}')
+                    else:
+                        items.append(f'"{k}": {formatted_value}')
+                return "{" + ", ".join(items) + "}"
+        elif isinstance(value, list):
+            items = [_format_value(item) for item in value]
+            return "[" + ", ".join(items) + "]"
+        elif isinstance(value, str):
+            return f'"{value}"'
+        else:
+            return str(value)
+
+    def _format_stage(stage: Dict[str, Any]) -> str:
+        stage_name = list(stage.keys())[0]
+        stage_value = stage[stage_name]
+        stage_content = _format_value(stage_value)
+        return f'  {stage_name}: {stage_content}'
+
+    formatted_stages = []
+    for i, stage in enumerate(pipeline):
+        formatted_stages.append(_format_stage(stage))
+        if i < len(pipeline) - 1:
+            formatted_stages.append("")
+
+    return "[\n" + ",\n".join(formatted_stages) + "\n]"
 
 class LLMIntentParser:
     """LLM-backed intent parser that produces a structured plan compatible with QueryIntent.
@@ -81,8 +148,8 @@ class LLMIntentParser:
             model=self.model_name,
             temperature=0.1,
             num_ctx=4096,
-            num_predict=768,
-            top_p=0.9,
+            num_predict=1024,
+            top_p=0.8,
             top_k=40,
         )
 
@@ -93,6 +160,28 @@ class LLMIntentParser:
         }
         self.allowed_fields: Dict[str, List[str]] = {
             entity: sorted(list(ALLOWED_FIELDS.get(entity, set()))) for entity in self.entities
+        }
+        # Map common synonyms to canonical entity names to reduce LLM mistakes
+        self.entity_synonyms = {
+            "member": "members",
+            "members": "members",
+            "team": "members",
+            "teammate": "members",
+            "teammates": "members",
+            "assignee": "members",
+            "assignees": "members",
+            "user": "members",
+            "users": "members",
+            "staff": "members",
+            "personnel": "members",
+            "task": "workItem",
+            "tasks": "workItem",
+            "bug": "workItem",
+            "bugs": "workItem",
+            "issue": "workItem",
+            "issues": "workItem",
+            "tickets": "workItem",
+            "ticket": "workItem",
         }
 
     def _is_placeholder(self, v) -> bool:
@@ -183,22 +272,37 @@ class LLMIntentParser:
         return None
 
     def _infer_sort_order_from_query(self, query_text: str) -> Optional[Dict[str, int]]:
-        """Infer time-based sorting preferences from free-form query text.
+        """Infer sorting preferences from free-form query text.
 
-        Recognizes phrases like 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
-        and 'oldest', 'earliest' → createdTimeStamp asc (1). Also handles
-        'ascending/descending' when mentioned alongside time/date/created keywords.
+        Recognizes phrases like:
+        - 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
+        - 'oldest', 'earliest' → createdTimeStamp asc (1)
+        - 'top N priority' → priority desc (-1)
+        - 'highest priority' → priority desc (-1)
+        - 'top N' with time context → createdTimeStamp desc (-1)
         """
         if not query_text:
             return None
 
         text = query_text.lower()
 
+        # Priority-based sorting cues (highest priority first)
+        if re.search(r'\b(?:top|highest|most|high)\s+\d*\s*priority\b', text):
+            return {"priority": -1}
+        if re.search(r'\bpriority\s+(?:top|highest|desc|descending)\b', text):
+            return {"priority": -1}
+        if re.search(r'\b(?:lowest|low)\s+priority\b', text):
+            return {"priority": 1}
+            
         # Direct recency/age cues
         if re.search(r"\b(recent|latest|newest|most\s+recent|newer\s+first)\b", text):
             return {"createdTimeStamp": -1}
         if re.search(r"\b(oldest|earliest|older\s+first)\b", text):
             return {"createdTimeStamp": 1}
+            
+        # "Top N" without explicit field → assume recent (most common use case)
+        if re.search(r'\btop\s+\d+\b', text) and not re.search(r'\bpriority\b', text):
+            return {"createdTimeStamp": -1}
 
         # Asc/Desc cues when paired with time/date/created terms
         mentions_time = re.search(r"\b(time|date|created|creation|timestamp|recent)\b", text) is not None
@@ -209,6 +313,7 @@ class LLMIntentParser:
                 return {"createdTimeStamp": 1}
 
         return None
+
 
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
@@ -230,12 +335,12 @@ class LLMIntentParser:
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
-            "- state: Open|Completed|Backlog|Re-Raised|In-Progress|Verified\n"
-            "- priority: URGENT|HIGH|MEDIUM|LOW|NONE\n"
+            "- state: Open|Completed|Backlog|Re-Raised|In-Progress|Verified (for workItem)\n"
+            "- priority: URGENT|HIGH|MEDIUM|LOW|NONE (for workItem)\n"
             "- status: (varies by collection - use appropriate values)\n"
-            "- project_status: NOT_STARTED|STARTED|COMPLETED|OVERDUE\n"
-            "- cycle_status: ACTIVE|UPCOMING|COMPLETED\n"
-            "- page_visibility: PUBLIC|PRIVATE|ARCHIVED\n"
+            "- project_status: NOT_STARTED|STARTED|COMPLETED|OVERDUE (for project)\n"
+            "- cycle_status: ACTIVE|UPCOMING|COMPLETED (for cycle)\n"
+            "- page_visibility: PUBLIC|PRIVATE|ARCHIVED (for page)\n"
             "- access: (project access levels)\n"
             "- isActive: true|false (for projects)\n"
             "- isArchived: true|false (for projects)\n"
@@ -255,6 +360,19 @@ class LLMIntentParser:
             "- If 'ascending/descending' is mentioned with created/time/date/timestamp, map to 1/-1 respectively on 'createdTimeStamp'.\n"
             "Only include sort_order when relevant; otherwise set it to null.\n\n"
 
+            "## LIMIT EXTRACTION (CRITICAL)\n"
+            "Extract the result limit intelligently from the user's query:\n"
+            "- 'top N' / 'first N' / 'N items' → limit: N (e.g., 'top 5' → limit: 5)\n"
+            "- 'all' / 'every' / 'list all' → limit: 1000 (high limit to get all results)\n"
+            "- 'a few' / 'some' → limit: 5\n"
+            "- 'several' → limit: 10\n"
+            "- 'one' / 'single' / 'find X' (singular) → limit: 1, fetch_one: true\n"
+            "- No specific mention → limit: 20 (reasonable default)\n"
+            "- For count/aggregation queries → limit: null (no limit needed)\n"
+            "IMPORTANT: When 'top N' is used, also infer appropriate sorting:\n"
+            "  - 'top N' with priority context → sort_order: {\"priority\": -1}\n"
+            "  - 'top N' with date/recent context → sort_order: {\"createdTimeStamp\": -1}\n\n"
+
             "## NAME EXTRACTION RULES - CRITICAL\n"
             "ALWAYS extract ONLY the core entity name, NEVER include descriptive phrases:\n"
             "- Query: 'work items within PMS project' → project_name: 'PMS' (NOT 'PMS project')\n"
@@ -264,6 +382,13 @@ class LLMIntentParser:
             "❌ WRONG: {'project_name': 'PMS project'} - this breaks regex matching!\n"
             "✅ CORRECT: {'project_name': 'PMS'} - this works with regex matching\n\n"
 
+            "## COMPOUND FILTER PARSING\n"
+            "When users write queries like 'cycles where state.active = true':\n"
+            "- 'state.active = true' should map to cycle_status: 'ACTIVE' for cycle entities\n"
+            "- 'state.open = true' should map to state: 'Open' for workItem entities\n"
+            "- 'status.completed = true' should map to project_status: 'COMPLETED' for project entities\n"
+            "- Parse 'entity.field = value' patterns and map to appropriate filter keys\n\n"
+
             "## COMMON QUERY PATTERNS\n"
             "- 'Show me X' → list/get details (aggregations: [])\n"
             "- 'How many X' → count (aggregations: ['count'])\n"
@@ -271,8 +396,22 @@ class LLMIntentParser:
             "- 'X assigned to Y' → filter by assignee name (Y = assignee_name)\n"
             "- 'X from/in/belonging to/associated with Y' → filter by project/cycle/module name (Y = project_name/cycle_name/module_name)\n"
             "- 'X in Y status' → filter by status/priority\n"
+            "- 'work items with title containing Z' → filter by title field (Z = search term)\n"
+            "- 'work items with label Z' → filter by label field (Z = exact label value)\n"
+            "- 'find items containing X in title' → {\"primary_entity\": \"workItem\", \"filters\": {\"title\": \"X\"}, \"aggregations\": []}\n"
+            "- 'search for Y in descriptions' → {\"primary_entity\": \"workItem\", \"filters\": {\"description\": \"Y\"}, \"aggregations\": []}\n"
+            "- 'IMPORTANT: For \"containing\" queries, extract ONLY the search term (e.g., \"component\"), not the full phrase'\n"
             "- 'Y project' → if asking about work items: workItem with project_name filter\n"
-            "  → Context matters: 'details of Y project' vs 'work items associated with Y project'\n\n"
+            "  → Context matters: 'details of Y project' vs 'work items associated with Y project'\n"
+            "- 'cycles that are active/currently active' → cycle with cycle_status: 'ACTIVE'\n"
+            "- 'active cycles' → cycle with cycle_status: 'ACTIVE'\n"
+            "- 'what is the email address for X' → members with name filter and email projection\n"
+            "- 'member X' → members entity with name filter\n"
+            "- 'project member X' → members entity with name filter\n"
+            "- 'work items updated in the last 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}}\n"
+            "- 'tasks created since last week' → {\"primary_entity\": \"workItem\", \"filters\": {\"createdTimeStamp_from\": \"last_week\"}}\n"
+            "- 'issues modified after 2024-01-01' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"2024-01-01\"}}\n"
+            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}}\n\n"
             
             "## OUTPUT FORMAT\n"
             "CRITICAL: Output ONLY the JSON object, nothing else.\n"
@@ -287,8 +426,10 @@ class LLMIntentParser:
             '  "projections": [],\n'
             '  "sort_order": null,\n'
             '  "limit": 20,\n'
+            '  "skip": 0,\n'
             '  "wants_details": true,\n'
-            '  "wants_count": false\n'
+            '  "wants_count": false,\n'
+            '  "fetch_one": false\n'
             "}\n\n"
 
             "## EXAMPLES\n"
@@ -299,10 +440,28 @@ class LLMIntentParser:
             "- 'show archived projects' → {\"primary_entity\": \"project\", \"filters\": {\"isArchived\": true}, \"aggregations\": []}\n"
             "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
             "- 'show work items with bug label' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": []}\n"
-            "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n\n"
+            "- 'find work items with title containing component' → {\"primary_entity\": \"workItem\", \"filters\": {\"title\": \"component\"}, \"aggregations\": []}\n"
+            "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n"
+            "- 'find active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
+            "- 'list cycles where state.active = true' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
+            "- 'list all cycles that currently active' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
+            "- 'show upcoming cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"UPCOMING\"}, \"aggregations\": []}\n"
+            "- 'count completed cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"COMPLETED\"}, \"aggregations\": [\"count\"]}\n"
+            "- 'what is the email address for the project member Vikas' → {\"primary_entity\": \"members\", \"filters\": {\"name\": \"Vikas\"}, \"projections\": [\"email\"], \"aggregations\": []}\n"
+            "- 'what is the role of Vikas in Simpo Builder project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"name\": \"Vikas\", \"business_name\": \"Simpo.ai\"}, \"aggregations\": []}\n"
+            "- 'show members in Simpo project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"project_name\": \"Simpo\"}, \"aggregations\": []}\n\n"
             "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
             "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
-            "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n\n"
+            "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
+            "- 'work items updated in the last 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
+            "- 'tasks created since yesterday' → {\"primary_entity\": \"workItem\", \"filters\": {\"createdTimeStamp_from\": \"yesterday\"}, \"aggregations\": []}\n"
+            "- 'issues from the last week' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"last_week\"}, \"aggregations\": []}\n"
+            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
+            "- 'top 5 priority work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"priority\": -1}, \"limit\": 5}\n"
+            "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
+            "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
+            "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
+            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -338,6 +497,11 @@ class LLMIntentParser:
             return None
 
         try:
+            # Normalize primary entity synonyms before sanitization
+            if isinstance(data, dict):
+                pe = (data.get("primary_entity") or "").strip()
+                if pe:
+                    data["primary_entity"] = self.entity_synonyms.get(pe.lower(), pe)
             return await self._sanitize_intent(data, query)
         except Exception:
             return None
@@ -354,7 +518,7 @@ class LLMIntentParser:
             if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
                 target_entities.append(rel)
 
-        # Simplified filter processing - keep only valid filters
+        # Simplified filter processing - keep valid filters, expanded to cover all collections
         raw_filters = data.get("filters") or {}
         filters: Dict[str, Any] = {}
 
@@ -362,44 +526,115 @@ class LLMIntentParser:
         if primary == "workItem" and "status" in raw_filters and "state" not in raw_filters:
             raw_filters["state"] = raw_filters.pop("status")
 
-        # Keep only known filter keys and clean them
+        # Allow plain 'status' for project/cycle as their canonical status
+        if primary in ("project", "cycle") and "status" in raw_filters:
+            if primary == "project" and "project_status" not in raw_filters:
+                raw_filters["project_status"] = raw_filters["status"]
+            if primary == "cycle" and "cycle_status" not in raw_filters:
+                raw_filters["cycle_status"] = raw_filters["status"]
+
+        # Build dynamic known keys from allow-listed fields and common tokens
+        allowed_primary_fields = set(self.allowed_fields.get(primary, []))
+        # Recognize date-like fields for range filters
+        date_like_fields = {f for f in allowed_primary_fields if any(t in f.lower() for t in ["date", "timestamp", "createdat", "updatedat"]) }
+
+        # Base normalized keys across collections
         known_filter_keys = {
+            # normalized enums/booleans
             "state", "priority", "project_status", "cycle_status", "page_visibility",
             "status", "access", "isActive", "isArchived", "isDefault", "isFavourite",
-            "type", "role", "visibility", "label",
+            "visibility", "locked",
+            # name/title/id style queries
+            "label", "title", "name", "displayBugNo", "projectDisplayId", "email",
+            # entity name filters (secondary lookups)
             "project_name", "cycle_name", "assignee_name", "module_name", "member_role",
-            "createdBy_name"
+            # actor/name filters
+            "createdBy_name", "lead_name", "leadMail", "business_name",
+            "defaultAssignee_name", "defaultAsignee_name", "staff_name",
+            # members specific
+            "role", "type", "joiningDate", "joiningDate_from", "joiningDate_to",
         }
 
+        # Also accept any allow-listed primary fields directly
+        known_filter_keys |= allowed_primary_fields
+        # Add dynamic range keys for each date-like field
+        for f in date_like_fields:
+            known_filter_keys.add(f + "_from")
+            known_filter_keys.add(f + "_to")
+
         for k, v in raw_filters.items():
-            if k in known_filter_keys and not self._is_placeholder(v):
-                # Validate and normalize filter values
-                if k == "state" and isinstance(v, str):
-                    # Normalize state values
-                    normalized_state = self._normalize_state_value(v.strip())
-                    if normalized_state:
-                        filters[k] = normalized_state
-                elif k == "priority" and isinstance(v, str):
-                    # Normalize priority values
-                    normalized_priority = self._normalize_priority_value(v.strip())
-                    if normalized_priority:
-                        filters[k] = normalized_priority
-                elif k in ["project_status", "cycle_status", "page_visibility"] and isinstance(v, str):
-                    # Normalize status enum values
-                    normalized_status = self._normalize_status_value(k, v.strip())
-                    if normalized_status:
-                        filters[k] = normalized_status
-                elif k in ["isActive", "isArchived", "isDefault", "isFavourite"]:
-                    # Handle boolean values
-                    normalized_bool = self._normalize_boolean_value_from_any(v)
-                    if normalized_bool is not None:
-                        filters[k] = normalized_bool
-                # Keep name-based filter values as provided by LLM
-                elif k in ["project_name", "cycle_name", "module_name", "assignee_name", "createdBy_name"] and isinstance(v, str):
-                    filters[k] = v.strip()
-                else:
-                    # For other valid filters, keep as-is
-                    filters[k] = v
+            if k not in known_filter_keys or self._is_placeholder(v):
+                continue
+            # Normalize values where appropriate
+            if k == "state" and isinstance(v, str):
+                normalized_state = self._normalize_state_value(v.strip())
+                if normalized_state:
+                    filters[k] = normalized_state
+            elif k == "priority" and isinstance(v, str):
+                normalized_priority = self._normalize_priority_value(v.strip())
+                if normalized_priority:
+                    filters[k] = normalized_priority
+            elif k in ["project_status", "cycle_status", "page_visibility"] and isinstance(v, str):
+                normalized_status = self._normalize_status_value(k, v.strip())
+                if normalized_status:
+                    filters[k] = normalized_status
+            elif k in ["isActive", "isArchived", "isDefault", "isFavourite", "locked"]:
+                normalized_bool = self._normalize_boolean_value_from_any(v)
+                if normalized_bool is not None:
+                    filters[k] = normalized_bool
+            elif k in ["project_name", "cycle_name", "module_name", "assignee_name", "createdBy_name", "lead_name", "business_name"] and isinstance(v, str):
+                filters[k] = v.strip()
+            elif isinstance(v, str) and k in {"title", "name", "displayBugNo", "projectDisplayId", "email"}:
+                filters[k] = v.strip()
+            else:
+                # Keep other valid filters (including direct field filters and date range tokens)
+                filters[k] = v
+
+        # Heuristic enrichments from original query text (generalized)
+        oq_text = (original_query or "").lower()
+
+        # 1) Infer grouping from phrasing: "by X", "group by X", "breakdown by X", "per X"
+        inferred_group_by: List[str] = []
+        def _maybe_add_group(token: str):
+            if token in {"project", "priority", "assignee", "cycle", "module", "state", "status", "business"}:
+                if token not in inferred_group_by:
+                    inferred_group_by.append(token)
+
+        # Common phrasings
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+priority\b", oq_text):
+            _maybe_add_group("priority")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+project\b", oq_text):
+            _maybe_add_group("project")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+assignee\b", oq_text):
+            _maybe_add_group("assignee")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+cycle\b", oq_text):
+            _maybe_add_group("cycle")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+module\b", oq_text):
+            _maybe_add_group("module")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+(state|status)\b", oq_text):
+            _maybe_add_group("state")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+business\b", oq_text):
+            _maybe_add_group("business")
+
+        # Merge with LLM-provided group_by if any
+        if inferred_group_by:
+            existing_group_by = [g for g in (data.get("group_by") or [])]
+            # keep order: inferred first, then any unique extras
+            merged = inferred_group_by + [g for g in existing_group_by if g not in inferred_group_by]
+            data["group_by"] = merged
+
+            # If grouping by priority explicitly, drop conflicting exact priority filters to avoid collapsing buckets
+            if "priority" in merged and "by priority" in oq_text and "priority" in filters:
+                filters.pop("priority", None)
+
+        # 2) Overdue semantics for work items: dueDate < now and not in done-like states
+        if primary == "workItem" and re.search(r"\boverdue\b|\bpast\s+due\b|\blate\b", oq_text):
+            # Only add if user didn't already specify a dueDate bound
+            if "dueDate_to" not in filters:
+                filters["dueDate_to"] = "now"
+            # Exclude commonly done/closed states if user didn't explicitly filter state
+            if "state" not in filters and "state_not" not in filters:
+                filters["state_not"] = ["Completed", "Verified"]
 
 
         # Aggregations
@@ -407,11 +642,17 @@ class LLMIntentParser:
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
+        # Extended to support status/visibility/business and date buckets
+        allowed_group = {
+            "cycle", "project", "assignee", "state", "priority", "module",
+            "status", "visibility", "business",
+            "created_day", "created_week", "created_month",
+            "updated_day", "updated_week", "updated_month",
+        }
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
-        cross_tokens = {"assignee", "project", "cycle", "module"}
+        cross_tokens = {"assignee", "project", "cycle", "module", "business"}
         if any(g in cross_tokens for g in group_by):
             primary = "workItem"
 
@@ -457,15 +698,33 @@ class LLMIntentParser:
             if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
                 sort_order = {norm_key: norm_dir}
 
-        # Limit
+        # Limit - intelligent handling based on query type
         limit_val = data.get("limit")
         try:
-            limit = int(limit_val) if limit_val is not None else 20
-            if limit <= 0:
+            # For count/aggregation-only queries, no limit needed unless specifically requested
+            if aggregations and not wants_details and limit_val is None:
+                limit = None
+            elif limit_val is None or limit_val == 20:
+                # Use default limit when LLM doesn't provide a specific limit
                 limit = 20
-            limit = min(limit, 100)
+            else:
+                limit = int(limit_val)
+                if limit <= 0:
+                    limit = 20
+                # Cap at 1000 to prevent runaway queries (instead of 100)
+                limit = min(limit, 1000)
         except Exception:
+            # Last resort fallback: use default limit
             limit = 20
+
+        # Skip (offset)
+        skip_val = data.get("skip")
+        try:
+            skip = int(skip_val) if skip_val is not None else 0
+            if skip < 0:
+                skip = 0
+        except Exception:
+            skip = 0
 
         # Details vs count (mutually exclusive) + heuristic for "how many"
         oq = (original_query or "").lower()
@@ -495,6 +754,9 @@ class LLMIntentParser:
             if inferred_sort:
                 sort_order = inferred_sort
 
+        # Fetch one heuristic
+        fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
+
         return QueryIntent(
             primary_entity=primary,
             target_entities=target_entities,
@@ -504,8 +766,10 @@ class LLMIntentParser:
             projections=projections,
             sort_order=sort_order,
             limit=limit,
+            skip=skip,
             wants_details=wants_details,
             wants_count=wants_count,
+            fetch_one=fetch_one,
         )
 
     async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
@@ -568,7 +832,59 @@ class PipelineGenerator:
     def __init__(self):
         self.relationship_cache = {}  # Cache for computed relationship paths
 
-    def generate_pipeline(self, intent: QueryIntent) -> List[Dict[str, Any]]:
+    def _add_comprehensive_lookups(self, pipeline: List[Dict[str, Any]], collection: str, intent: QueryIntent, required_relations: Set[str]):
+        """Add comprehensive lookups for better performance on complex multi-step operations"""
+        # Define comprehensive relationship maps for each collection
+        comprehensive_relations = {
+            'workItem': {
+                # Always include project and assignee for work items (most commonly needed)
+                'project': True,
+                'assignee': True,
+                # Conditionally include others based on query complexity
+                'cycle': intent.wants_details or len(intent.group_by or []) > 0,
+                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+            },
+            'project': {
+                # Always include business for projects
+                'business': True,
+                # Include commonly accessed relations
+                'members': intent.wants_details or 'assignee' in (intent.group_by or []),
+                'cycles': intent.wants_details or 'cycle' in (intent.group_by or []),
+                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+            },
+            'cycle': {
+                'project': True,  # Always needed for cycle context
+                'business': True,  # Often needed for business context
+            },
+            'module': {
+                'project': True,  # Always needed for module context
+                'assignee': intent.wants_details or 'assignee' in (intent.group_by or []),
+                'business': True,  # Often needed for business context
+            },
+            'members': {
+                'project': True,  # Always needed for member context
+                'business': True,  # Often needed for business context
+            },
+            'page': {
+                'project': True,  # Always needed for page context
+                'linkedCycle': intent.wants_details,
+                'linkedModule': intent.wants_details,
+                'business': True,  # Often needed for business context
+            }
+        }
+
+        # Get the comprehensive relations for this collection
+        relations_to_add = comprehensive_relations.get(collection, {})
+
+        # Add each comprehensive relation if it's available in the relationship registry
+        for relation_name, should_add in relations_to_add.items():
+            if should_add and relation_name in REL.get(collection, {}):
+                # Add to required_relations so it gets processed in the main lookup loop
+                if relation_name not in required_relations:
+                    # Add the relation directly - the lookup logic will handle array vs single relations
+                    required_relations.add(relation_name)
+
+    def generate_pipeline(self, intent: QueryIntent, enable_complex_joins: bool = True) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
         pipeline: List[Dict[str, Any]] = []
 
@@ -608,6 +924,8 @@ class PipelineGenerator:
                 'assignee': None,
                 'module': None,
                 'cycle': None,
+                # For business grouping we may need a project join to ensure business name
+                'business': 'project',
             },
             'project': {
                 'cycle': 'cycles',
@@ -618,21 +936,27 @@ class PipelineGenerator:
             },
             'cycle': {
                 'project': 'project',
+                'business': 'project',
             },
             'module': {
                 'project': 'project',
                 'assignee': 'assignee',
+                'business': 'project',
             },
             'page': {
                 'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
                 'cycle': 'linkedCycle',
                 'module': 'linkedModule',
+                'business': 'project',
+                'linkedMembers': 'linkedMembers',
             },
             'members': {
                 'project': 'project',
+                'business': 'project',
             },
             'projectState': {
                 'project': 'project',
+                'business': 'project',
             },
         }.get(collection, {})
 
@@ -656,6 +980,14 @@ class PipelineGenerator:
                     required_relations.add(relation_alias_by_token['assignee'])
                 if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
                     required_relations.add(relation_alias_by_token['module'])
+                # Business name may require project hop for collections without embedded business
+                if 'business_name' in intent.filters:
+                    # If primary lacks direct business relation, but has project relation, join project
+                    if relation_alias_by_token.get('project') in REL.get(collection, {}):
+                        required_relations.add(relation_alias_by_token['project'])
+                # Page linked members filter requires linkedMembers join
+                if collection == 'page' and 'LinkedMembers_0_name' in intent.filters and relation_alias_by_token.get('linkedMembers') in REL.get(collection, {}):
+                    required_relations.add(relation_alias_by_token['linkedMembers'])
             if 'member_role' in intent.filters:
                 # Require member join depending on collection
                 if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
@@ -691,6 +1023,11 @@ class PipelineGenerator:
                     required_relations.add('project')
                     required_relations.add('project.modules')
 
+        # When complex joins are enabled, proactively add comprehensive lookups
+        # for better performance on multi-step operations
+        if enable_complex_joins:
+            self._add_comprehensive_lookups(pipeline, collection, intent, required_relations)
+
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in sorted(required_relations):
             # Allow multi-hop relation names like "project.cycles"
@@ -701,6 +1038,15 @@ class PipelineGenerator:
                 if hop not in REL.get(current_collection, {}):
                     break
                 relationship = REL[current_collection][hop]
+
+                # SAFETY: avoid writing a lookup into an existing scalar field name
+                needs_alias_fix = (
+                    relationship.get("target") == "project"
+                    and current_collection in {"cycle", "module", "page", "members", "projectState"}
+                )
+                if needs_alias_fix:
+                    # Force a safe alias to prevent clobbering embedded project field
+                    relationship = {**relationship, "as": "projectDoc"}
                 lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
                 if lookup:
                     pipeline.append(lookup)
@@ -715,18 +1061,38 @@ class PipelineGenerator:
                     local_prefix = alias_name
                 current_collection = relationship["target"]
 
-        # Add secondary filters (on joined collections)
+        # Add secondary filters (on joined collections) BEFORE normalizing fields
         if secondary_filters:
             pipeline.append({"$match": secondary_filters})
 
+        # Normalize project fields to scalars for safe filtering/printing
+        if intent.primary_entity in {"cycle", "module", "page", "members", "projectState"}:
+            pipeline.append({
+                "$addFields": {
+                    "projectId": {"$ifNull": ["$project._id", {"$first": "$projectDoc._id"}]},
+                    "projectName": {"$ifNull": ["$project.name", {"$first": "$projectDoc.name"}]},
+                    "projectBusinessName": {"$ifNull": ["$project.business.name", {"$first": "$projectDoc.business.name"}]}
+                }
+            })
+
         # Add grouping if requested
         if intent.group_by:
+            # Pre-group unwind for embedded arrays that are used as grouping keys
+            # For workItem, assignee is an array subdocument; unwind to get per-assignee buckets
+            if intent.primary_entity == 'workItem' and 'assignee' in intent.group_by:
+                pipeline.append({
+                    "$unwind": {"path": "$assignee", "preserveNullAndEmptyArrays": True}
+                })
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
             for token in intent.group_by:
-                field_path = self._resolve_group_field(intent.primary_entity, token)
-                if field_path:
-                    id_fields[token] = f"${field_path}"
+                resolved = self._resolve_group_field(intent.primary_entity, token)
+                if resolved:
+                    # Accept either a field path (str) or a full expression (dict)
+                    if isinstance(resolved, str):
+                        id_fields[token] = f"${resolved}"
+                    else:
+                        id_fields[token] = resolved
             if not id_fields:
                 # Fallback: do nothing if we can't resolve
                 pass
@@ -841,15 +1207,189 @@ class PipelineGenerator:
         if added_priority_rank:
             pipeline.append({"$unset": "_priorityRank"})
 
-        # Add limit (only for non-grouped queries; grouped handled above)
-        if intent.limit and not intent.group_by:
-            pipeline.append({"$limit": intent.limit})
+        # Add pagination: skip then limit (only for non-grouped queries; grouped handled above)
+        if not intent.group_by:
+            # Apply skip before limit
+            try:
+                if intent.skip and int(intent.skip) > 0:
+                    pipeline.append({"$skip": int(intent.skip)})
+            except Exception:
+                pass
+            effective_limit = 1 if intent.fetch_one else (intent.limit or None)
+            if effective_limit:
+                pipeline.append({"$limit": int(effective_limit)})
 
         return pipeline
 
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
         """Extract filters that apply to the primary collection"""
         primary_filters = {}
+
+        # Handle direct _id filters first using $expr with $toObjectId for safety
+        def _is_hex24(s: str) -> bool:
+            try:
+                return isinstance(s, str) and len(s) == 24 and all(c in '0123456789abcdefABCDEF' for c in s)
+            except Exception:
+                return False
+
+        if "_id" in filters:
+            val = filters.get("_id")
+            if isinstance(val, str) and _is_hex24(val):
+                primary_filters["$expr"] = {"$eq": ["$_id", {"$toObjectId": val}]}
+            elif isinstance(val, list):
+                ids = [v for v in val if isinstance(v, str) and _is_hex24(v)]
+                if ids:
+                    primary_filters["$expr"] = {
+                        "$in": [
+                            "$_id",
+                            {"$map": {"input": ids, "as": "id", "in": {"$toObjectId": "$$id"}}}
+                        ]
+                    }
+
+        def _apply_date_range(target: Dict[str, Any], field: str, f: Dict[str, Any]):
+            # Resolve field aliases first
+            from mongo.registry import resolve_field_alias
+            resolved_field = resolve_field_alias(collection, field)
+
+            # Support additional keys:
+            # - {field}_within / {field}_duration: relative window like "last_7_days", "7d", {"last": {"days": 7}}
+            # - allow {field}_from / {field}_to values like "now-7d" or ISO timestamps
+
+            def _parse_relative_window(spec: Any) -> Optional[Dict[str, datetime]]:
+                now = datetime.now(timezone.utc)
+                start: Optional[datetime] = None
+                end: datetime = now
+
+                def _start_of_week(dt: datetime) -> datetime:
+                    dow = dt.weekday()  # Monday=0
+                    sod = datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc)
+                    return sod - timedelta(days=dow)
+
+                def _start_of_month(dt: datetime) -> datetime:
+                    return datetime(dt.year, dt.month, 1, tzinfo=timezone.utc)
+
+                def _end_of_month(dt: datetime) -> datetime:
+                    if dt.month == 12:
+                        next_month = datetime(dt.year + 1, 1, 1, tzinfo=timezone.utc)
+                    else:
+                        next_month = datetime(dt.year, dt.month + 1, 1, tzinfo=timezone.utc)
+                    return next_month - timedelta(microseconds=1)
+
+                if isinstance(spec, dict) and spec.get("last"):
+                    last_obj = spec.get("last") or {}
+                    days = float(last_obj.get("days", 0) or 0)
+                    hours = float(last_obj.get("hours", 0) or 0)
+                    delta = timedelta(days=days, hours=hours)
+                    if delta.total_seconds() > 0:
+                        start = now - delta
+                        return {"from": start, "to": end}
+                    return None
+
+                if not isinstance(spec, str):
+                    return None
+
+                s = spec.strip().lower().replace("-", "_")
+                if s == "today":
+                    sod = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+                    return {"from": sod, "to": end}
+                if s == "yesterday":
+                    sod_today = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+                    sod_y = sod_today - timedelta(days=1)
+                    eod_y = sod_today - timedelta(microseconds=1)
+                    return {"from": sod_y, "to": eod_y}
+                if s == "this_week":
+                    return {"from": _start_of_week(now), "to": end}
+                if s == "last_week":
+                    sow_this = _start_of_week(now)
+                    sow_last = sow_this - timedelta(days=7)
+                    eow_last = sow_this - timedelta(microseconds=1)
+                    return {"from": sow_last, "to": eow_last}
+                if s == "this_month":
+                    return {"from": _start_of_month(now), "to": end}
+                if s == "last_month":
+                    som_this = _start_of_month(now)
+                    if som_this.month == 1:
+                        som_last = datetime(som_this.year - 1, 12, 1, tzinfo=timezone.utc)
+                    else:
+                        som_last = datetime(som_this.year, som_this.month - 1, 1, tzinfo=timezone.utc)
+                    eom_last = _end_of_month(som_last)
+                    return {"from": som_last, "to": eom_last}
+
+                m = re.search(r"(last|past)?\s*([0-9]+)\s*(day|days|d|week|weeks|w|month|months|mo|hour|hours|h|year|years|y)", s)
+                if m:
+                    n = int(m.group(2))
+                    unit = m.group(3)
+                    if unit in {"day", "days", "d"}:
+                        start = now - timedelta(days=n)
+                    elif unit in {"week", "weeks", "w"}:
+                        start = now - timedelta(weeks=n)
+                    elif unit in {"month", "months", "mo"}:
+                        start = now - timedelta(days=30 * n)
+                    elif unit in {"hour", "hours", "h"}:
+                        start = now - timedelta(hours=n)
+                    elif unit in {"year", "years", "y"}:
+                        start = now - timedelta(days=365 * n)
+                    if start:
+                        return {"from": start, "to": end}
+
+                m2 = re.fullmatch(r"([0-9]+)\s*(d|h)", s)
+                if m2:
+                    n = int(m2.group(1))
+                    unit = m2.group(2)
+                    if unit == "d":
+                        start = now - timedelta(days=n)
+                    elif unit == "h":
+                        start = now - timedelta(hours=n)
+                    if start:
+                        return {"from": start, "to": end}
+                return None
+
+            def _normalize_bound(val: Any) -> Any:
+                if isinstance(val, (int, float)):
+                    try:
+                        if float(val) > 1e11:
+                            return datetime.fromtimestamp(float(val) / 1000.0, tz=timezone.utc)
+                        return datetime.fromtimestamp(float(val), tz=timezone.utc)
+                    except Exception:
+                        return val
+                if isinstance(val, str):
+                    s = val.strip().lower()
+                    if s == "now":
+                        return datetime.now(timezone.utc)
+                    m = re.fullmatch(r"now\s*[-+]\s*([0-9]+)\s*(d|day|days|h|hour|hours)", s)
+                    if m:
+                        n = int(m.group(1))
+                        unit = m.group(2)
+                        if unit in {"d", "day", "days"}:
+                            return datetime.now(timezone.utc) - timedelta(days=n)
+                        if unit in {"h", "hour", "hours"}:
+                            return datetime.now(timezone.utc) - timedelta(hours=n)
+                    try:
+                        return datetime.fromisoformat(val)
+                    except Exception:
+                        return val
+                return val
+
+            # Look for date range keys using the original field name
+            within = f.get(f"{field}_within") or f.get(f"{field}_duration")
+            gte_key = f.get(f"{field}_from")
+            lte_key = f.get(f"{field}_to")
+
+            if within is not None:
+                rng = _parse_relative_window(within)
+                if rng:
+                    gte_key = gte_key or rng.get("from")
+                    lte_key = lte_key or rng.get("to")
+
+            if gte_key is None and lte_key is None:
+                return
+            range_expr: Dict[str, Any] = {}
+            if gte_key is not None:
+                range_expr["$gte"] = _normalize_bound(gte_key)
+            if lte_key is not None:
+                range_expr["$lte"] = _normalize_bound(lte_key)
+            if range_expr:
+                target[resolved_field] = range_expr
 
         if collection == "workItem":
             if 'status' in filters:
@@ -859,18 +1399,163 @@ class PipelineGenerator:
             if 'state' in filters:
                 # Map logical state filter to embedded field
                 primary_filters['state.name'] = filters['state']
+            # Exclude states (array) support, mapped to state.name not-in
+            if 'state_not' in filters and isinstance(filters['state_not'], list) and filters['state_not']:
+                primary_filters['state.name'] = primary_filters.get('state.name') or {}
+                # If previously set to a scalar via 'state', turn into $nin with preservation
+                if isinstance(primary_filters['state.name'], str):
+                    primary_filters['state.name'] = {"$in": [primary_filters['state.name']]}
+                # Merge not-in
+                primary_filters['state.name']["$nin"] = filters['state_not']
+            if 'label' in filters and isinstance(filters['label'], str):
+                primary_filters['label'] = {'$regex': filters['label'], '$options': 'i'}
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'displayBugNo' in filters and isinstance(filters['displayBugNo'], str):
+                primary_filters['displayBugNo'] = {'$regex': f"^{filters['displayBugNo']}", '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+            # Support dueDate ranges uniformly
+            _apply_date_range(primary_filters, 'dueDate', filters)
 
         elif collection == "project":
             if 'project_status' in filters:
                 primary_filters['status'] = filters['project_status']
+            if 'status' in filters and 'status' not in primary_filters:
+                primary_filters['status'] = filters['status']
+            if 'isActive' in filters:
+                primary_filters['isActive'] = bool(filters['isActive'])
+            if 'isArchived' in filters:
+                primary_filters['isArchived'] = bool(filters['isArchived'])
+            if 'access' in filters:
+                primary_filters['access'] = filters['access']
+            if 'isFavourite' in filters:
+                # Some schemas use 'favourite' on projects
+                primary_filters['favourite'] = bool(filters['isFavourite'])
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
+                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
+            if 'leadMail' in filters and isinstance(filters['leadMail'], str):
+                primary_filters['leadMail'] = {'$regex': f"^{filters['leadMail']}", '$options': 'i'}
+            if 'projectDisplayId' in filters and isinstance(filters['projectDisplayId'], str):
+                primary_filters['projectDisplayId'] = {'$regex': f"^{filters['projectDisplayId']}", '$options': 'i'}
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            # default assignee (object): allow name filtering
+            if 'defaultAssignee_name' in filters and isinstance(filters['defaultAssignee_name'], str):
+                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAssignee_name'], '$options': 'i'}
+            if 'defaultAsignee_name' in filters and isinstance(filters['defaultAsignee_name'], str):
+                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAsignee_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
         elif collection == "cycle":
             if 'cycle_status' in filters:
                 primary_filters['status'] = filters['cycle_status']
+            if 'status' in filters and 'status' not in primary_filters:
+                primary_filters['status'] = filters['status']
+            if 'isDefault' in filters:
+                primary_filters['isDefault'] = bool(filters['isDefault'])
+            if 'isFavourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['isFavourite'])
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'startDate', filters)
+            _apply_date_range(primary_filters, 'endDate', filters)
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+
+            # Optional duration-based filtering in days: duration_days_from/to
+            dur_from = filters.get('duration_days_from')
+            dur_to = filters.get('duration_days_to')
+            if dur_from is not None or dur_to is not None:
+                dur_bounds: List[Dict[str, Any]] = []
+                dur_expr = {
+                    "$divide": [
+                        {"$subtract": [
+                            {"$ifNull": ["$endDate", "$$NOW"]},
+                            "$startDate"
+                        ]},
+                        86400000
+                    ]
+                }
+                try:
+                    if dur_from is not None:
+                        dur_from_val = float(dur_from)
+                        dur_bounds.append({"$gte": [dur_expr, dur_from_val]})
+                except Exception:
+                    pass
+                try:
+                    if dur_to is not None:
+                        dur_to_val = float(dur_to)
+                        dur_bounds.append({"$lte": [dur_expr, dur_to_val]})
+                except Exception:
+                    pass
+                if dur_bounds:
+                    expr = {"$and": dur_bounds} if len(dur_bounds) > 1 else dur_bounds[0]
+                    if "$expr" in primary_filters:
+                        existing = primary_filters["$expr"]
+                        primary_filters["$expr"] = {"$and": [existing, expr]}
+                    else:
+                        primary_filters["$expr"] = expr
 
         elif collection == "page":
             if 'page_visibility' in filters:
                 primary_filters['visibility'] = filters['page_visibility']
+            if 'visibility' in filters:
+                primary_filters['visibility'] = filters['visibility']
+            if 'isFavourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['isFavourite'])
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'locked' in filters:
+                primary_filters['locked'] = bool(filters['locked'])
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdAt', filters)
+            _apply_date_range(primary_filters, 'updatedAt', filters)
+
+        elif collection == "module":
+            if 'isFavourite' in filters:
+                primary_filters['isFavourite'] = bool(filters['isFavourite'])
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
+                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # module.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+
+        elif collection == "members":
+            if 'role' in filters and isinstance(filters['role'], str):
+                primary_filters['role'] = {'$regex': f"^{filters['role']}$", '$options': 'i'}
+            if 'type' in filters and isinstance(filters['type'], str):
+                primary_filters['type'] = {'$regex': f"^{filters['type']}$", '$options': 'i'}
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'email' in filters and isinstance(filters['email'], str):
+                primary_filters['email'] = {'$regex': f"^{filters['email']}", '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'staff_name' in filters and isinstance(filters['staff_name'], str):
+                primary_filters['staff.name'] = {'$regex': filters['staff_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'joiningDate', filters)
+
+        elif collection == "projectState":
+            if 'name' in filters and isinstance(filters['name'], str):
+                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
+            if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
+                primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
 
         return primary_filters
 
@@ -883,8 +1568,10 @@ class PipelineGenerator:
             s['$or'] = [
                 {'name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
+                {'projectName': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
         elif 'project_name' in filters:
+            # For non-project collections, match on the joined project document
             s['$or'] = [
                 {'project.name': {'$regex': filters['project_name'], '$options': 'i'}},
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
@@ -937,6 +1624,35 @@ class PipelineGenerator:
             elif collection == 'page' and 'linkedModule' in REL.get('page', {}):
                 s['linkedModuleDocs.name'] = {'$regex': filters['module_name'], '$options': 'i'}
 
+        # Business name via embedded or joined path
+        if 'business_name' in filters:
+            # Directly embedded business on these collections
+            if collection in ('project', 'page'):
+                s['$or'] = s.get('$or', []) + [
+                    {'business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
+            # For cycle/module: prefer project join to reach project.business.name
+            if collection in ('cycle', 'module'):
+                s['$or'] = s.get('$or', []) + [
+                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
+            # For members: through joined project
+            if collection == 'members' and 'project' in REL.get('members', {}):
+                s['$or'] = s.get('$or', []) + [
+                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
+                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
+                ]
+
+        # Page linked members: support name filter via joined alias when available
+        if collection == 'page' and 'LinkedMembers_0_name' in filters:
+            # Interpret as any linked member name regex
+            s['linkedMembersDocs.name'] = {'$regex': filters['LinkedMembers_0_name'], '$options': 'i'}
+
         return s
 
     def _generate_lookup_stage(self, from_collection: str, target_entity: str, filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -975,19 +1691,19 @@ class PipelineGenerator:
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
-                "createdBy.name"
+                "createdBy.name", "lead.name", "leadMail", "defaultAsignee.name"
             ],
             "cycle": [
-                "title", "status", "startDate", "endDate"
+                "title", "status", "startDate", "endDate", "projectName", "projectId"
             ],
             "members": [
-                "name", "email", "role", "joiningDate"
+                "name", "email", "role", "joiningDate", "projectName", "projectId"
             ],
             "page": [
-                "title", "visibility", "createdAt"
+                "title", "visibility", "createdAt", "projectName", "projectId"
             ],
             "module": [
-                "title", "description", "isFavourite", "createdTimeStamp"
+                "title", "description", "isFavourite", "createdTimeStamp", "projectName", "projectId"
             ],
             "projectState": [
                 "name", "subStates.name", "subStates.order"
@@ -1011,32 +1727,102 @@ class PipelineGenerator:
         return validated
 
     def _resolve_group_field(self, primary_entity: str, token: str) -> Optional[str]:
-        """Map a grouping token to a concrete field path in the current pipeline."""
-        mapping = {
+        """Map a grouping token to a concrete field path or Mongo expression.
+
+        Returns either a string field path (relative to current doc) or a dict representing
+        a MongoDB aggregation expression (e.g., for date bucketing).
+        """
+        # Date bucket helper
+        def date_field_for(entity: str, which: str) -> Optional[str]:
+            # which: 'created' | 'updated'
+            if entity == 'page':
+                return 'createdAt' if which == 'created' else 'updatedAt'
+            # Default to *TimeStamp for other entities
+            return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
+
+        def bucket_expr(entity: str, which: str, unit: str):
+            field = date_field_for(entity, which)
+            if not field:
+                return None
+            # Prefer $dateTrunc for week/month; for day we can also truncate
+            if unit in {'week', 'month', 'day'}:
+                return {"$dateTrunc": {"date": f"${field}", "unit": unit}}
+            return None
+
+        # Base mappings
+        mapping: Dict[str, Dict[str, Any]] = {
             'workItem': {
-                # Only relations that exist in REL for workItem
                 'project': 'project.name',
                 'assignee': 'assignee.name',
                 'cycle': 'cycle.name',
                 'module': 'modules.name',
                 'state': 'state.name',
+                'status': 'state.name',  # accept 'status' as synonym for state
                 'priority': 'priority',
+                'business': 'projectDoc.business.name',  # ensure join if needed
+                'created_day': bucket_expr('workItem', 'created', 'day'),
+                'created_week': bucket_expr('workItem', 'created', 'week'),
+                'created_month': bucket_expr('workItem', 'created', 'month'),
+                'updated_day': bucket_expr('workItem', 'updated', 'day'),
+                'updated_week': bucket_expr('workItem', 'updated', 'week'),
+                'updated_month': bucket_expr('workItem', 'updated', 'month'),
             },
             'project': {
-                'status': 'status',  # project status unchanged
+                'status': 'status',
+                'business': 'business.name',
+                'created_day': bucket_expr('project', 'created', 'day'),
+                'created_week': bucket_expr('project', 'created', 'week'),
+                'created_month': bucket_expr('project', 'created', 'month'),
+                'updated_day': bucket_expr('project', 'updated', 'day'),
+                'updated_week': bucket_expr('project', 'updated', 'week'),
+                'updated_month': bucket_expr('project', 'updated', 'month'),
             },
             'cycle': {
                 'project': 'project.name',
-                'status': 'status',  # cycle status unchanged
+                'status': 'status',
+                'created_day': bucket_expr('cycle', 'created', 'day'),
+                'created_week': bucket_expr('cycle', 'created', 'week'),
+                'created_month': bucket_expr('cycle', 'created', 'month'),
+                'updated_day': bucket_expr('cycle', 'updated', 'day'),
+                'updated_week': bucket_expr('cycle', 'updated', 'week'),
+                'updated_month': bucket_expr('cycle', 'updated', 'month'),
             },
             'page': {
                 'project': 'projectDoc.name',
                 'cycle': 'linkedCycleDocs.name',
                 'module': 'linkedModuleDocs.name',
+                'visibility': 'visibility',
+                'business': 'projectDoc.business.name',
+                'created_day': bucket_expr('page', 'created', 'day'),
+                'created_week': bucket_expr('page', 'created', 'week'),
+                'created_month': bucket_expr('page', 'created', 'month'),
+                'updated_day': bucket_expr('page', 'updated', 'day'),
+                'updated_week': bucket_expr('page', 'updated', 'week'),
+                'updated_month': bucket_expr('page', 'updated', 'month'),
+            },
+            'module': {
+                'project': 'project.name',
+                'business': 'project.business.name',
+                'created_day': bucket_expr('module', 'created', 'day'),
+                'created_week': bucket_expr('module', 'created', 'week'),
+                'created_month': bucket_expr('module', 'created', 'month'),
+            },
+            'members': {
+                'project': 'project.name',
+                'business': 'project.business.name',
+                'created_day': bucket_expr('members', 'created', 'day'),
+                'created_week': bucket_expr('members', 'created', 'week'),
+                'created_month': bucket_expr('members', 'created', 'month'),
+            },
+            'projectState': {
+                'project': 'project.name',
+                'business': 'project.business.name',
             },
         }
         entity_map = mapping.get(primary_entity, {})
-        return entity_map.get(token)
+        val = entity_map.get(token)
+        # Some bucket_expr entries may be None if field not applicable
+        return val if val is not None else None
 
 class Planner:
     """Main query planner that orchestrates the entire process"""
@@ -1044,101 +1830,88 @@ class Planner:
     def __init__(self):
         self.generator = PipelineGenerator()
         self.llm_parser = LLMIntentParser()
+        self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
-    async def plan_and_execute(self, query: str) -> Dict[str, Any]:
-        """Plan and execute a natural language query"""
-        tracer = trace.get_tracer(__name__)
+    async def plan_and_execute(self, query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
+        """Plan and execute a natural language query using the Orchestrator."""
         try:
-            # Ensure MongoDB connection
-            with tracer.start_as_current_span(
-                "planner.ensure_connection", kind=trace.SpanKind.INTERNAL
-            ) as conn_span:
-                try:
-                    await mongodb_tools.connect()
-                    if conn_span:
-                        conn_span.set_attribute("database.name", DATABASE_NAME)
-                except Exception as e:
-                    if conn_span:
-                        conn_span.set_status(Status(StatusCode.ERROR, str(e)))
-                        try:
-                            conn_span.set_attribute(OI.ERROR_TYPE, e.__class__.__name__)
-                            conn_span.set_attribute(OI.ERROR_MESSAGE, str(e))
-                        except Exception:
-                            pass
-                    raise
+            # Define step coroutines as closures to capture self and enable_complex_joins
+            async def _ensure_connection(ctx: Dict[str, Any]) -> bool:
+                await mongodb_tools.connect()
+                return True
 
-            # Parse intent via LLM
-            with tracer.start_as_current_span(
-                "planner.parse_intent",
-                kind=trace.SpanKind.INTERNAL,
-                attributes={getattr(OI, 'INPUT_VALUE', 'input.value'): (query or "")[:1000]},
-            ) as parse_span:
-                intent: Optional[QueryIntent] = await self.llm_parser.parse(query)
-                if parse_span:
-                    try:
-                        parse_span.set_attribute("intent.success", bool(intent))
-                    except Exception:
-                        pass
-            if not intent:
-                return {
-                    "success": False,
-                    "error": "Failed to parse query intent",
-                    "query": query
-                }
+            async def _parse_intent(ctx: Dict[str, Any]) -> Optional[QueryIntent]:
+                return await self.llm_parser.parse(ctx["query"])  # type: ignore[index]
 
-            # Generate the pipeline
-            with tracer.start_as_current_span(
-                "planner.generate_pipeline",
-                kind=trace.SpanKind.INTERNAL,
-            ) as gen_span:
-                pipeline = self.generator.generate_pipeline(intent)
-                if gen_span:
-                    try:
-                        gen_span.set_attribute("pipeline.stage_count", len(pipeline or []))
-                        preview = str(pipeline)[:1500]
-                        gen_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                    except Exception:
-                        pass
+            def _parse_validator(result: Any, _ctx: Dict[str, Any]) -> bool:
+                return result is not None
 
-            # Execute the query
-            with tracer.start_as_current_span(
-                "planner.execute_query",
-                kind=trace.SpanKind.INTERNAL,
-                attributes={
-                    "collection": intent.primary_entity,
-                    "database.name": DATABASE_NAME,
-                },
-            ) as exec_span:
+            def _generate_pipeline(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+                return self.generator.generate_pipeline(ctx["intent"], enable_complex_joins=enable_complex_joins)  # type: ignore[index]
+
+            async def _execute(ctx: Dict[str, Any]) -> Any:
+                intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
                 args = {
                     "database": DATABASE_NAME,
                     "collection": intent.primary_entity,
-                    "pipeline": pipeline,
+                    "pipeline": ctx["pipeline"],
                 }
-                if exec_span:
-                    try:
-                        exec_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str({**args, "pipeline": "<omitted>"})[:1000])
-                        exec_span.set_attribute("pipeline.stage_count", len(pipeline or []))
-                    except Exception:
-                        pass
-                result = await mongodb_tools.execute_tool("aggregate", args)
-                if exec_span:
-                    try:
-                        size = len(result) if isinstance(result, list) else 1 if result is not None else 0
-                        exec_span.set_attribute("result.size", size)
-                        exec_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), (str(result)[:1200] if not isinstance(result, list) else f"list[{size}]") )
-                    except Exception:
-                        pass
+                return await mongodb_tools.execute_tool("aggregate", args)
+
+            steps: List[StepSpec] = [
+                StepSpec(
+                    name="ensure_connection",
+                    coroutine=as_async(_ensure_connection),
+                    requires=(),
+                    provides="connected",
+                    retries=2,
+                    timeout_s=8.0,
+                ),
+                StepSpec(
+                    name="parse_intent",
+                    coroutine=as_async(_parse_intent),
+                    requires=("query",),
+                    provides="intent",
+                    timeout_s=15.0,
+                    retries=1,
+                    validator=_parse_validator,
+                ),
+                StepSpec(
+                    name="generate_pipeline",
+                    coroutine=as_async(_generate_pipeline),
+                    requires=("intent",),
+                    provides="pipeline",
+                    timeout_s=5.0,
+                ),
+                StepSpec(
+                    name="execute_query",
+                    coroutine=as_async(_execute),
+                    requires=("intent", "pipeline"),
+                    provides="result",
+                    timeout_s=20.0,
+                    retries=1,
+                ),
+            ]
+
+            ctx = await self.orchestrator.run(
+                steps,
+                initial_context={"query": query},
+                correlation_id=f"planner_{hash(query) & 0xFFFFFFFF:x}",
+            )
+
+            intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
+            pipeline: List[Dict[str, Any]] = ctx["pipeline"]  # type: ignore[assignment]
+            result = ctx.get("result")
 
             return {
                 "success": True,
                 "intent": intent.__dict__,
-                "pipeline": pipeline,
+                "pipeline": _serialize_pipeline_for_json(pipeline),
+                "pipeline_js": _format_pipeline_for_display(pipeline),
                 "result": result,
-                "planner": "llm"
+                "planner": "llm",
             }
-
         except Exception as e:
-            # Attach error details to a span if one is current
             try:
                 current_span = trace.get_current_span()
                 if current_span:
@@ -1153,12 +1926,12 @@ class Planner:
             return {
                 "success": False,
                 "error": str(e),
-                "query": query
+                "query": query,
             }
 
 # Global instance
 query_planner = Planner()
 
-async def plan_and_execute_query(query: str) -> Dict[str, Any]:
+async def plan_and_execute_query(query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
     return await query_planner.plan_and_execute(query)
