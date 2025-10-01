@@ -694,6 +694,37 @@ class MongoDBAgent:
             )
             return tool_message, True
 
+    def _should_run_parallel(self, query: str, tool_calls: List[Dict[str, Any]]) -> bool:
+        """Heuristically decide if tool calls should run in parallel based on query context.
+
+        Rules:
+        - If there's 0 or 1 tool call → sequential.
+        - If the query has explicit sequencing markers (e.g., "then", "after") → sequential.
+        - If the query has explicit parallelism/comparison markers (e.g., "compare", "vs") → parallel.
+        - Otherwise, if there are multiple tool calls, default to parallel to reduce latency.
+        """
+        if not tool_calls or len(tool_calls) <= 1:
+            return False
+
+        q = (query or "").lower()
+
+        sequential_markers = [
+            " then ", " after ", " step by step", " first ", " next ",
+            " subsequently", " followed by", " in order", " sequence"
+        ]
+        if any(marker in q for marker in sequential_markers):
+            return False
+
+        parallel_markers = [
+            " compare ", " versus ", " vs ", " side by side ", " both ",
+            " together ", " in parallel", " simultaneously", " at the same time"
+        ]
+        if any(marker in q for marker in parallel_markers):
+            return True
+
+        # Default: if multiple tool calls and no sequencing hints, prefer parallel
+        return True
+
     async def connect(self):
         """Connect to MongoDB MCP server"""
         # Ensure tracing is initialized so spans include attributes/events
@@ -858,7 +889,8 @@ class MongoDBAgent:
                 messages.append(response)
                 did_any_tool = False
                 
-                if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                use_parallel = self.enable_parallel_tools and self._should_run_parallel(query, response.tool_calls)
+                if use_parallel:
                     # Parallel execution for multiple tools
                     tool_tasks = [
                         self._execute_single_tool(None, tool_call, selected_tools, tracer)
@@ -1025,7 +1057,8 @@ class MongoDBAgent:
                     messages.append(response)
                     did_any_tool = False
                     
-                    if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                    use_parallel = self.enable_parallel_tools and self._should_run_parallel(query, response.tool_calls)
+                    if use_parallel:
                         # Parallel execution for multiple tools with streaming
                         # Send tool_start events for all tools first
                         for tool_call in response.tool_calls:
