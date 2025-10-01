@@ -67,25 +67,44 @@ DEFAULT_SYSTEM_PROMPT = (
     "DECISION GUIDE:\n"
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
     "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
+    "   - Supports MULTI-DIMENSIONAL breakdowns: 'break down by priority and status', 'group by assignee and project'.\n"
     "   - Do NOT answer from memory; run a query.\n"
     "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
     "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
     "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
     "3) Use 'rag_mongo' when searching by content/meaning AND need complete MongoDB records with all fields.\n"
     "   - Combines semantic search with authoritative Mongo data.\n"
-    "   - Examples: 'find auth bugs with their status', 'security pages with project info', 'microservices projects'.\n\n"
+    "   - Examples: 'find auth bugs with their status', 'security pages with project info', 'microservices projects'.\n"
+    "4) Use 'composite_query' for PARALLEL execution of multiple INDEPENDENT operations.\n"
+    "   - When user asks for multiple unrelated things simultaneously: 'compare X and show Y', 'get A and also search B'.\n"
+    "   - DO NOT use for sequential operations where one depends on another.\n"
+    "   - Examples: 'breakdown by status AND search for docs', 'count bugs AND analyze team workload'.\n\n"
     "TOOL CHEATSHEET:\n"
     "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
+    "  SUPPORTS: Multi-dimensional grouping ('break down by X and Y'), complex joins, aggregations.\n"
     "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
     "  REQUIRED: 'query' - semantic search terms.\n"
     "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n"
     "- rag_mongo(query:str, entity_type:str, limit:int=15): Semantic search → MongoDB records with full fields.\n"
-    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n\n"
+    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n"
+    "- composite_query(queries:List[Dict], combine_strategy:str='separate'): Execute multiple tools in parallel.\n"
+    "  REQUIRED: 'queries' - list of {tool, params, label} dicts for each independent operation.\n"
+    "  OPTIONAL: combine_strategy ('separate'|'merged').\n\n"
+    "BREAKDOWN QUERY PATTERNS:\n"
+    "- Single dimension: 'break down by priority' → mongo_query('group work items by priority')\n"
+    "- Multi-dimensional: 'break down by priority and status' → mongo_query('group work items by priority and status')\n"
+    "- With filters: 'break down active bugs by assignee' → mongo_query('group active work items by assignee')\n"
+    "- Content breakdown: 'break down API docs by project' → rag_search(query='API', group_by='project_name')\n\n"
+    "PARALLEL QUERY PATTERNS:\n"
+    "- Independent ops: 'show status breakdown AND search for docs' → composite_query with both queries\n"
+    "- Comparison: 'compare team workload and project health' → composite_query with separate analyses\n"
+    "- Multi-analysis: 'count bugs, list projects, search docs' → composite_query with 3 independent queries\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
     "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
-    "- If the user searches by content BUT needs complete MongoDB fields (state, assignee, dates, etc.) → rag_mongo.\n\n"
+    "- If the user searches by content BUT needs complete MongoDB fields (state, assignee, dates, etc.) → rag_mongo.\n"
+    "- If query has 'AND also', 'simultaneously', 'in parallel', or multiple independent parts → composite_query.\n\n"
     "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
 
@@ -185,7 +204,8 @@ def _select_tools_for_query(user_query: str):
     Policy:
     - Default to mongo_query for structured field questions.
     - Only enable RAG tools when the query clearly asks for content/context.
-    - Enable rag_mongo_workitems only when content-like AND canonical fields are requested.
+    - Enable rag_mongo when content-like AND canonical fields are requested.
+    - Enable composite_query for parallel/multi-part queries.
     """
     q = (user_query or "").lower()
     content_markers = [
@@ -222,21 +242,26 @@ def _select_tools_for_query(user_query: str):
         if has_any(canonical_field_terms):
             allowed_names.append("rag_mongo")
 
-    # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
+    # Heuristic: enable composite_query when the query likely needs multi-part parallel handling
     multi_markers = [
-        " compare ", " versus ", " vs ", " side by side ", " both ", " and also ", " together ", ";", " then ",
+        " compare ", " versus ", " vs ", " side by side ", " both ", " and also ", " together ", ";",
         " in parallel", " simultaneously", " at the same time", " batch ", " run multiple"
     ]
     # Detect presence of multiple action intents in one query
-    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
+    action_structured = ["count", "group", "breakdown", "distribution"]
     action_listing = ["list", "show", "top", "recent", "titles", "items"]
-    action_content = ["summarize", "snippet", "snippets", "context", "explain"]
-    multiple_actions = (
-        (has_any(action_structured) and has_any(action_listing)) or
-        (has_any(action_structured) and has_any(action_content)) or
-        (has_any(action_listing) and has_any(action_content))
-    )
-    # composite_query removed; agent will chain tools internally via planning
+    action_content = ["summarize", "snippet", "snippets", "context", "explain", "search", "find"]
+    
+    # Enable composite_query if explicit parallel markers or multiple distinct actions
+    enable_composite = False
+    if has_any(multi_markers):
+        enable_composite = True
+    elif (has_any(action_structured) and has_any(action_content)):
+        # Breakdown + search content pattern
+        enable_composite = True
+    
+    if enable_composite and "composite_query" in _TOOLS_BY_NAME:
+        allowed_names.append("composite_query")
 
     # Map to actual tool objects, keep only those present
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]

@@ -608,27 +608,79 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
                         # Determine what type of grouping this is
                         first_item = data[0]
                         group_keys = [k for k in first_item.keys() if k not in ['count', 'items']]
+                        
+                        # Check if this is multi-dimensional grouping (nested group object)
+                        is_multidimensional = False
+                        if 'group' in first_item and isinstance(first_item['group'], dict):
+                            is_multidimensional = True
+                            group_keys = list(first_item['group'].keys())
 
                         if group_keys:
-                            response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
+                            dimension_label = "dimensions" if len(group_keys) > 1 else "dimension"
+                            response += f"Found {total_items} items grouped by {len(group_keys)} {dimension_label} ({', '.join(group_keys)}):\n\n"
 
                             # Sort by count (highest first) and show more groups
                             sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
 
                             # Show all groups if max_items is None, otherwise limit
-                            display_limit = len(sorted_data) if max_items is None else 15
-                            for item in sorted_data[:display_limit]:
-                                group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
-                                group_label = ', '.join(group_values)
-                                count = item.get('count', 0)
-                                response += f"• {group_label}: {count} items\n"
+                            display_limit = len(sorted_data) if max_items is None else 20
+                            
+                            # Format multi-dimensional breakdowns with better structure
+                            if is_multidimensional and len(group_keys) > 1:
+                                # Create hierarchical display for multi-dimensional data
+                                hierarchy: Dict[str, Dict[str, int]] = {}
+                                for item in sorted_data:
+                                    group_obj = item.get('group', {})
+                                    count = item.get('count', 0)
+                                    
+                                    # Use first dimension as primary grouping
+                                    primary_key = group_keys[0]
+                                    primary_val = str(group_obj.get(primary_key, 'Unknown'))
+                                    
+                                    # Build secondary label from remaining dimensions
+                                    secondary_parts = [f"{k}={group_obj.get(k, 'N/A')}" for k in group_keys[1:]]
+                                    secondary_label = ', '.join(secondary_parts)
+                                    
+                                    if primary_val not in hierarchy:
+                                        hierarchy[primary_val] = {}
+                                    hierarchy[primary_val][secondary_label] = count
+                                
+                                # Display hierarchical breakdown
+                                shown = 0
+                                for primary_val in sorted(hierarchy.keys(), key=lambda k: sum(hierarchy[k].values()), reverse=True):
+                                    if shown >= display_limit:
+                                        break
+                                    
+                                    subtotal = sum(hierarchy[primary_val].values())
+                                    response += f"▸ {group_keys[0]}={primary_val}: {subtotal} total\n"
+                                    
+                                    # Show breakdown within this primary group
+                                    for secondary_label, count in sorted(hierarchy[primary_val].items(), key=lambda x: x[1], reverse=True)[:5]:
+                                        response += f"  └─ {secondary_label}: {count}\n"
+                                        shown += 1
+                                    
+                                    if len(hierarchy[primary_val]) > 5:
+                                        response += f"  └─ ... and {len(hierarchy[primary_val]) - 5} more combinations\n"
+                                    response += "\n"
+                            else:
+                                # Standard single-dimension or flat multi-dimension display
+                                for item in sorted_data[:display_limit]:
+                                    if is_multidimensional:
+                                        group_obj = item.get('group', {})
+                                        group_values = [f"{k}={group_obj.get(k, 'N/A')}" for k in group_keys]
+                                    else:
+                                        group_values = [f"{k}: {item.get(k, item.get('group', {}).get(k, 'N/A'))}" for k in group_keys]
+                                    
+                                    group_label = ', '.join(group_values)
+                                    count = item.get('count', 0)
+                                    response += f"• {group_label}: {count} items\n"
 
-                            if max_items is not None and len(data) > 15:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[15:])
-                                response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
+                            if max_items is not None and len(data) > display_limit:
+                                remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
+                                response += f"\n• ... and {len(data) - display_limit} other combinations: {remaining} items\n"
                             elif max_items is None and len(data) > display_limit:
                                 remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
-                                response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
+                                response += f"\n• ... and {len(data) - display_limit} other combinations: {remaining} items\n"
                         else:
                             response += f"Found {total_items} items\n"
                         print(response)
@@ -851,6 +903,118 @@ async def rag_search(
         return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
     except Exception as e:
         return f"❌ RAG SEARCH ERROR: {str(e)}"
+
+
+@tool
+async def composite_query(
+    queries: List[Dict[str, Any]],
+    combine_strategy: str = "separate"
+) -> str:
+    """Execute multiple independent queries in parallel for complex analysis.
+    
+    Use this when the user requests multiple independent operations that can run 
+    simultaneously (no dependencies between them). This tool uses the Orchestrator
+    to execute queries in parallel for better performance.
+    
+    **When to use:**
+    - "Compare X and show Y simultaneously"
+    - "Get breakdown of A and also search for B"
+    - "Run multiple queries: count X, find Y, analyze Z"
+    - "Show me both status breakdown AND search documentation"
+    - "Parallel analysis of team workload and project health"
+    
+    **Do NOT use for:**
+    - Single queries (use appropriate single tool instead)
+    - Dependent operations (where one depends on result of another)
+    
+    Args:
+        queries: List of query specifications, each with:
+            - tool: Tool name ('mongo_query', 'rag_search', 'rag_mongo')
+            - params: Dictionary of parameters for that tool
+            - label: Optional human-readable label for this query
+        combine_strategy: How to combine results:
+            - "separate": Show each result in its own section (default)
+            - "merged": Attempt to merge/correlate results
+    
+    Returns: Combined results from all parallel queries
+    
+    Examples:
+        queries=[
+            {"tool": "mongo_query", "params": {"query": "count by status"}, "label": "Status Breakdown"},
+            {"tool": "rag_search", "params": {"query": "API docs"}, "label": "Documentation"}
+        ]
+    """
+    try:
+        from orchestrator import Orchestrator, StepSpec, as_async
+        
+        # Validate and prepare queries
+        if not queries or not isinstance(queries, list):
+            return "❌ Invalid queries format. Expected list of query specifications."
+        
+        # Get tool references
+        tool_map = {
+            "mongo_query": mongo_query,
+            "rag_search": rag_search,
+            "rag_mongo": rag_mongo,
+        }
+        
+        orchestrator = Orchestrator(tracer_name="composite_query", max_parallel=len(queries))
+        steps = []
+        
+        # Create parallel steps for each query
+        for i, q_spec in enumerate(queries):
+            tool_name = q_spec.get("tool")
+            params = q_spec.get("params", {})
+            label = q_spec.get("label", f"Query {i+1}")
+            
+            if tool_name not in tool_map:
+                return f"❌ Invalid tool name '{tool_name}'. Must be one of: {', '.join(tool_map.keys())}"
+            
+            tool_fn = tool_map[tool_name]
+            
+            # Create async wrapper for this query
+            async def _query_wrapper(ctx: Dict[str, Any], fn=tool_fn, args=params) -> str:
+                return await fn.ainvoke(args)
+            
+            # All queries in same parallel group since they're independent
+            steps.append(StepSpec(
+                name=f"query_{i}",
+                coroutine=_query_wrapper,
+                provides=f"result_{i}",
+                parallel_group="parallel_queries",  # All run together
+                timeout_s=60.0,
+                retries=1
+            ))
+        
+        # Execute all queries in parallel
+        context = await orchestrator.run(steps, initial_context={})
+        
+        # Format combined results
+        response = "🔀 COMPOSITE QUERY RESULTS (Parallel Execution)\n"
+        response += f"Executed {len(queries)} queries simultaneously\n\n"
+        
+        if combine_strategy == "separate":
+            for i, q_spec in enumerate(queries):
+                label = q_spec.get("label", f"Query {i+1}")
+                result = context.get(f"result_{i}", "No result")
+                
+                response += f"{'='*60}\n"
+                response += f"📌 {label}\n"
+                response += f"{'='*60}\n\n"
+                response += f"{result}\n\n"
+        else:  # merged
+            # For merged strategy, show results side by side or correlated
+            response += "📊 MERGED RESULTS:\n\n"
+            for i, q_spec in enumerate(queries):
+                label = q_spec.get("label", f"Query {i+1}")
+                result = context.get(f"result_{i}", "No result")
+                response += f"▸ {label}:\n{result}\n\n"
+        
+        return response
+        
+    except Exception as e:
+        import traceback
+        return f"❌ COMPOSITE QUERY ERROR: {str(e)}\n{traceback.format_exc()}"
 
 
 @tool
@@ -1092,7 +1256,8 @@ async def rag_mongo(
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
-    rag_mongo,             # Bridge RAG semantic search to authoritative MongoDB records (any entity type)
+    rag_mongo,                # Bridge RAG semantic search to authoritative MongoDB records (any entity type)
+    composite_query,          # Execute multiple independent queries in parallel for complex analysis
 ]
 
 # import asyncio
