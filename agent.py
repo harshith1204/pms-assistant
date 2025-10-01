@@ -246,6 +246,51 @@ def _select_tools_for_query(user_query: str):
     return selected_tools, allowed_names
 
 
+def _should_run_tools_in_parallel(user_query: str, tool_calls: List[Dict[str, Any]]) -> bool:
+    """Decide per-query whether to run multiple tool calls in parallel.
+
+    Policy:
+    - Never parallelize if there is <= 1 tool call.
+    - Prefer sequential when the query implies ordering/dependency (then/after/before/first/next/followed by).
+    - Prefer parallel when the query explicitly asks for side-by-side/compare/together/parallel/simultaneous.
+    - Otherwise, allow parallel if multiple distinct action categories are present (likely independent sub-steps).
+    """
+    if not tool_calls or len(tool_calls) <= 1:
+        return False
+
+    q = (user_query or "").lower()
+
+    # Strong signals for sequential execution (ordered, dependent steps)
+    sequential_markers = [
+        " then ", " after ", " before ", " first ", " second ", " next ", " followed by ", " step "
+    ]
+    if any(marker in q for marker in sequential_markers):
+        return False
+
+    # Strong signals for parallel execution (independent, side-by-side)
+    parallel_markers = [
+        " compare ", " versus ", " vs ", " side by side ", " both ",
+        " together ", " in parallel", " simultaneously", " at the same time", " batch ", " run multiple"
+    ]
+    if any(marker in q for marker in parallel_markers):
+        return True
+
+    # Heuristic: multiple distinct action categories usually indicate independence
+    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
+    action_listing = ["list", "show", "top", "recent", "titles", "items"]
+    action_content = ["summarize", "snippet", "snippets", "context", "explain", "search"]
+
+    def has_any(terms: List[str]) -> bool:
+        return any(term in q for term in terms)
+
+    multiple_actions = (
+        (has_any(action_structured) and has_any(action_listing)) or
+        (has_any(action_structured) and has_any(action_content)) or
+        (has_any(action_listing) and has_any(action_content))
+    )
+    return multiple_actions
+
+
 class PhoenixSpanManager:
     """Manages Phoenix spans and tracer for the agent."""
 
@@ -542,13 +587,14 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "timestamp": datetime.now().isoformat()
             })
 
-    async def on_tool_end(self, output: str, **kwargs):
+    async def on_tool_end(self, output: str, tool_name: Optional[str] = None, **kwargs):
         """Called when a tool finishes executing"""
         if self.websocket:
             # Always send full tool outputs to frontend for better visibility
             payload = {
                 "type": "tool_end",
                 "output": output,
+                "tool_name": tool_name or "",
                 "timestamp": datetime.now().isoformat()
             }
             await self.websocket.send_json(payload)
@@ -854,11 +900,12 @@ class MongoDBAgent:
                 if not getattr(response, "tool_calls", None):
                     return response.content
 
-                # Execute requested tools (parallel or sequential based on configuration)
+                # Execute requested tools (parallel or sequential based on query intent)
                 messages.append(response)
                 did_any_tool = False
-                
-                if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                should_parallel = self.enable_parallel_tools and _should_run_tools_in_parallel(query, response.tool_calls)
+
+                if should_parallel:
                     # Parallel execution for multiple tools
                     tool_tasks = [
                         self._execute_single_tool(None, tool_call, selected_tools, tracer)
@@ -1024,8 +1071,9 @@ class MongoDBAgent:
                     # Execute requested tools (parallel or sequential) with streaming callbacks
                     messages.append(response)
                     did_any_tool = False
-                    
-                    if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                    should_parallel = self.enable_parallel_tools and _should_run_tools_in_parallel(query, response.tool_calls)
+
+                    if should_parallel:
                         # Parallel execution for multiple tools with streaming
                         # Send tool_start events for all tools first
                         for tool_call in response.tool_calls:
@@ -1034,15 +1082,17 @@ class MongoDBAgent:
                                 await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                         
                         # Execute all tools in parallel
-                        tool_tasks = [
-                            self._execute_single_tool(None, tool_call, selected_tools, tracer)
-                            for tool_call in response.tool_calls
-                        ]
+                        tool_tasks = []
+                        tool_names_ordered = []
+                        for tool_call in response.tool_calls:
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+                            tool_names_ordered.append(tool.name if tool else "")
+                            tool_tasks.append(self._execute_single_tool(None, tool_call, selected_tools, tracer))
                         tool_results = await asyncio.gather(*tool_tasks)
                         
                         # Process results and send tool_end events
-                        for tool_message, success in tool_results:
-                            await callback_handler.on_tool_end(tool_message.content)
+                        for (tool_message, success), tool_name in zip(tool_results, tool_names_ordered):
+                            await callback_handler.on_tool_end(tool_message.content, tool_name=tool_name)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
                             if success:
@@ -1057,7 +1107,7 @@ class MongoDBAgent:
                             tool_message, success = await self._execute_single_tool(
                                 None, tool_call, selected_tools, tracer
                             )
-                            await callback_handler.on_tool_end(tool_message.content)
+                            await callback_handler.on_tool_end(tool_message.content, tool_name=(tool.name if tool else ""))
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
                             if success:
