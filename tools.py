@@ -7,12 +7,6 @@ import re
 from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
-try:
-    # For structured, no-LLM execution path
-    from planner import PipelineGenerator, QueryIntent  # type: ignore
-except Exception:
-    PipelineGenerator = None  # type: ignore
-    QueryIntent = None  # type: ignore
 from qdrant.qdrant_initializer import RAGTool
 # Qdrant and RAG dependencies
 # try:
@@ -1001,204 +995,8 @@ async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
     except Exception as e:
         return f"❌ RAG→Mongo ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
-
-# Composite tool for multi-step/tool-chaining queries
-@tool
-async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, Any]]] = None) -> str:
-    """Break down a complex instruction into sub-queries, run the right tools in parallel, and consolidate.
-
-    Use when the user asks for multiple things at once (e.g., counts + lists, compare X vs Y,
-    mix of structured facts and content context). This orchestrates sub-steps and merges outputs.
-
-    Args:
-        instruction: Free-form user instruction possibly containing multiple requests.
-
-    Returns: A concise consolidated report.
-    """
-    try:
-        # If steps were passed in (agent already planned), use them directly; else try to parse JSON from instruction
-        if steps and isinstance(steps, list):
-            plan: List[Dict[str, Any]] = steps
-        else:
-            plan = []
-            try:
-                maybe = (instruction or "").strip()
-                data = None
-                if maybe.startswith("{") or maybe.startswith("["):
-                    data = json.loads(maybe)
-                else:
-                    m = re.search(r"\{[\s\S]*\}\s*$", maybe)
-                    if m:
-                        data = json.loads(m.group(0))
-                if isinstance(data, dict) and isinstance(data.get("steps"), list):
-                    plan = data.get("steps")  # type: ignore[assignment]
-                elif isinstance(data, list):
-                    plan = data  # type: ignore[assignment]
-            except Exception:
-                plan = []
-
-        if not plan:
-            # If no plan found, try to create a simple fallback for basic queries
-            if instruction and instruction.strip():
-                # Try to infer a simple mongo query from the instruction
-                fallback_steps = [{
-                    "tool": "mongo_query",
-                    "args": {"query": instruction.strip()},
-                    "label": "MongoDB Query"
-                }]
-                plan = fallback_steps
-                print(f"Warning: Using fallback plan for instruction: {instruction}")
-            else:
-                # Provide more helpful error message with suggestions
-                error_msg = (
-                    "❌ composite_query requires either:\n"
-                    "1. 'steps' parameter: a list of tool steps like [{'tool': 'mongo_query', 'args': {'query': 'your query'}, 'label': 'Step description'}]\n"
-                    "2. 'instruction' parameter: a JSON string containing 'steps' field\n\n"
-                    f"Received instruction: {instruction or 'None'}\n"
-                    f"Received steps: {steps or 'None'}\n\n"
-                    "Allowed tools: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems.\n"
-                    "Example usage: composite_query(instruction='{\"steps\": [{\"tool\": \"mongo_query\", \"args\": {\"query\": \"count work items\"}, \"label\": \"Count items\"}]}')"
-                )
-                return error_msg
-
-        # Map tool names to callables
-        name_to_tool = {
-            "mongo_query": mongo_query,
-            "rag_content_search": rag_content_search,
-            "rag_answer_question": rag_answer_question,
-            "rag_to_mongo_workitems": rag_to_mongo_workitems,
-        }
-
-        # Build orchestrated steps (parallel independent execution)
-        orchestrator = Orchestrator(tracer_name=__name__, max_parallel=4)
-
-        async def _invoke(tool_name: str, args: Dict[str, Any], raw_step: Dict[str, Any]) -> str:
-            tool_obj = name_to_tool.get(tool_name)
-            if not tool_obj:
-                return f"❌ Tool not available: {tool_name}"
-            # Prefer structured, no-LLM execution for Mongo when intent/pipeline provided
-            if tool_name == "mongo_query":
-                try:
-                    if raw_step.get("pipeline") and isinstance(raw_step["pipeline"], list):
-                        pipeline = raw_step["pipeline"]
-                        res = await mongodb_tools.execute_tool("aggregate", {
-                            "database": DATABASE_NAME,
-                            "collection": raw_step.get("collection") or raw_step.get("primary_entity") or "workItem",
-                            "pipeline": pipeline,
-                        })
-                        return str(res)
-                    if raw_step.get("intent") and PipelineGenerator and QueryIntent:
-                        intent_dict = raw_step["intent"]
-                        # Fill defaults for QueryIntent fields
-                        qi = QueryIntent(
-                            primary_entity=intent_dict.get("primary_entity", "workItem"),
-                            target_entities=intent_dict.get("target_entities", []) or [],
-                            filters=intent_dict.get("filters", {}) or {},
-                            aggregations=intent_dict.get("aggregations", []) or [],
-                            group_by=intent_dict.get("group_by", []) or [],
-                            projections=intent_dict.get("projections", []) or [],
-                            sort_order=intent_dict.get("sort_order"),
-                            limit=intent_dict.get("limit"),
-                            skip=intent_dict.get("skip"),
-                            wants_details=bool(intent_dict.get("wants_details", False)),
-                            wants_count=bool(intent_dict.get("wants_count", False)),
-                            fetch_one=bool(intent_dict.get("fetch_one", False)),
-                        )
-                        gen = PipelineGenerator()
-                        pipeline = gen.generate_pipeline(qi)
-                        res = await mongodb_tools.execute_tool("aggregate", {
-                            "database": DATABASE_NAME,
-                            "collection": qi.primary_entity,
-                            "pipeline": pipeline,
-                        })
-                        return str(res)
-                except Exception as e:
-                    return f"❌ Error in structured Mongo exec: {e}"
-            # Otherwise, call the existing tool
-            try:
-                res = await tool_obj.ainvoke(args)
-            except Exception as e:
-                res = f"❌ Error invoking {tool_name}: {e}"
-            return str(res)
-
-        # Validate and prepare steps. Preserve order; capture per-step errors inline.
-        allowed = {"mongo_query", "rag_content_search", "rag_answer_question", "rag_to_mongo_workitems"}
-        step_specs: List[StepSpec] = []
-        prefilled_outputs: Dict[int, str] = {}
-        for i, s in enumerate(plan, 1):
-            tname = (s.get("tool") or "").strip() if isinstance(s, dict) else ""
-            targs = s.get("args", {}) if isinstance(s, dict) else {}
-            if tname not in allowed:
-                prefilled_outputs[i] = f"❌ Invalid or unsupported step: tool='{tname or 'None'}'"
-                continue
-            if not isinstance(targs, dict):
-                prefilled_outputs[i] = f"❌ Invalid args for {tname}: expected object"
-                continue
-            # Normalize args for known tools to avoid schema validation errors
-            if tname == "mongo_query":
-                # Map 'question' -> 'query' if provided
-                if "question" in targs and "query" not in targs:
-                    try:
-                        targs["query"] = targs.pop("question")
-                    except Exception:
-                        targs["query"] = targs.get("question")
-                # If neither pipeline/intent nor query provided, backfill from label/instruction
-                has_structured = isinstance(s, dict) and (isinstance(s.get("pipeline"), list) or ("intent" in s))
-                if "query" not in targs and not has_structured:
-                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
-                    targs["query"] = default_label or (instruction or "Query")
-            elif tname == "rag_content_search":
-                # Ensure 'query' is present
-                if "query" not in targs:
-                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
-                    targs["query"] = default_label or (instruction or "Search")
-            elif tname == "rag_answer_question":
-                # Map 'query' -> 'question' if step authors used the other convention
-                if "query" in targs and "question" not in targs:
-                    try:
-                        targs["question"] = targs.pop("query")
-                    except Exception:
-                        targs["question"] = targs.get("query")
-                # Ensure 'question' is present
-                if "question" not in targs:
-                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
-                    targs["question"] = default_label or (instruction or "Question")
-            elif tname == "rag_to_mongo_workitems":
-                # Ensure 'query' is present
-                if "query" not in targs:
-                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
-                    targs["query"] = default_label or (instruction or "Work items")
-            raw_step = s
-            def _curry(tool_name: str, args: Dict[str, Any], raw: Dict[str, Any]):
-                async def _run(_ctx: Dict[str, Any]) -> str:
-                    return await _invoke(tool_name, args, raw)
-                return _run
-            step_specs.append(
-                StepSpec(
-                    name=f"composite_step_{i}",
-                    coroutine=as_async(_curry(tname, targs, raw_step)),
-                    requires=tuple(),
-                    provides=f"out_{i}",
-                    timeout_s=45.0,
-                    retries=0,
-                    parallel_group="composite",
-                )
-            )
-
-        ctx = await orchestrator.run(step_specs, initial_context={"instruction": instruction}, correlation_id=f"composite_{hash(instruction) & 0xFFFFFFFF:x}")
-
-        # Consolidate outputs in order
-        sections: List[str] = []
-        for i, s in enumerate(plan, 1):
-            out = ctx.get(f"out_{i}")
-            if out is None and i in prefilled_outputs:
-                out = prefilled_outputs[i]
-            lab = (s.get("label") or s.get("tool") or f"Step {i}") if isinstance(s, dict) else f"Step {i}"
-            sections.append(f"[{i}] {lab}\n{str(out)}\n")
-
-        summary = "\n".join(sections)
-        header = f"🧩 COMPOSITE EXECUTION for: '{instruction}'\n\n"
-        return header + summary
+        # This function has been removed. Keep a stub to avoid import-time surprises.
+        return "❌ composite_query has been removed. Use mongo_query and agent routing instead."
     except Exception as e:
         return f"❌ Composite query error: {e}"
 
@@ -1208,7 +1006,6 @@ tools = [
     rag_content_search,
     rag_answer_question,
     rag_to_mongo_workitems,
-    composite_query,
 ]
 
 # import asyncio
