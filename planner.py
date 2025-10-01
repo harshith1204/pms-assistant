@@ -556,6 +556,52 @@ class LLMIntentParser:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
 
+        # Heuristic enrichments from original query text (generalized)
+        oq_text = (original_query or "").lower()
+
+        # 1) Infer grouping from phrasing: "by X", "group by X", "breakdown by X", "per X"
+        inferred_group_by: List[str] = []
+        def _maybe_add_group(token: str):
+            if token in {"project", "priority", "assignee", "cycle", "module", "state", "status", "business"}:
+                if token not in inferred_group_by:
+                    inferred_group_by.append(token)
+
+        # Common phrasings
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+priority\b", oq_text):
+            _maybe_add_group("priority")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+project\b", oq_text):
+            _maybe_add_group("project")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+assignee\b", oq_text):
+            _maybe_add_group("assignee")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+cycle\b", oq_text):
+            _maybe_add_group("cycle")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+module\b", oq_text):
+            _maybe_add_group("module")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+(state|status)\b", oq_text):
+            _maybe_add_group("state")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+business\b", oq_text):
+            _maybe_add_group("business")
+
+        # Merge with LLM-provided group_by if any
+        if inferred_group_by:
+            existing_group_by = [g for g in (data.get("group_by") or [])]
+            # keep order: inferred first, then any unique extras
+            merged = inferred_group_by + [g for g in existing_group_by if g not in inferred_group_by]
+            data["group_by"] = merged
+
+            # If grouping by priority explicitly, drop conflicting exact priority filters to avoid collapsing buckets
+            if "priority" in merged and "by priority" in oq_text and "priority" in filters:
+                filters.pop("priority", None)
+
+        # 2) Overdue semantics for work items: dueDate < now and not in done-like states
+        if primary == "workItem" and re.search(r"\boverdue\b|\bpast\s+due\b|\blate\b", oq_text):
+            # Only add if user didn't already specify a dueDate bound
+            if "dueDate_to" not in filters:
+                filters["dueDate_to"] = "now"
+            # Exclude commonly done/closed states if user didn't explicitly filter state
+            if "state" not in filters and "state_not" not in filters:
+                filters["state_not"] = ["Completed", "Verified"]
+
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
@@ -1310,6 +1356,14 @@ class PipelineGenerator:
             if 'state' in filters:
                 # Map logical state filter to embedded field
                 primary_filters['state.name'] = filters['state']
+            # Exclude states (array) support, mapped to state.name not-in
+            if 'state_not' in filters and isinstance(filters['state_not'], list) and filters['state_not']:
+                primary_filters['state.name'] = primary_filters.get('state.name') or {}
+                # If previously set to a scalar via 'state', turn into $nin with preservation
+                if isinstance(primary_filters['state.name'], str):
+                    primary_filters['state.name'] = {"$in": [primary_filters['state.name']]}
+                # Merge not-in
+                primary_filters['state.name']["$nin"] = filters['state_not']
             if 'label' in filters and isinstance(filters['label'], str):
                 primary_filters['label'] = {'$regex': filters['label'], '$options': 'i'}
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
@@ -1320,6 +1374,8 @@ class PipelineGenerator:
                 primary_filters['displayBugNo'] = {'$regex': f"^{filters['displayBugNo']}", '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
             _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+            # Support dueDate ranges uniformly
+            _apply_date_range(primary_filters, 'dueDate', filters)
 
         elif collection == "project":
             if 'project_status' in filters:
