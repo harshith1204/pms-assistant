@@ -799,6 +799,310 @@ async def rag_answer_question(question: str, content_types: List[str] = None) ->
 
 
 @tool
+async def rag_grouped_search(query: str, group_by: List[str] = None, content_types: List[str] = None, limit: int = 50, filters: Dict[str, Any] = None) -> str:
+    """Semantic search with grouping by metadata buckets.
+
+    Use when the user asks for a breakdown/distribution of semantically matched content
+    (docs, pages, work item descriptions) by content type, project, or last modified.
+
+    Args:
+        query: Free-text query to retrieve relevant content snippets.
+        group_by: One or more of ["content_type", "project", "project_name",
+                  "updated_day", "updated_week", "updated_month"]. If omitted,
+                  will infer from phrasing in `query` (e.g., "by content type").
+        content_types: Optional list like ["page", "work_item"]. Defaults to both.
+        limit: Max total hits to consider (across content types); keep modest (<=100).
+        filters: Optional metadata filters, e.g. {"project_name": "PMS", "content_type": "page"}.
+
+    Returns: A compact summary of groups with counts, optionally showing examples per group.
+    """
+    try:
+        rag_tool = RAGTool.get_instance()
+
+        # Normalize args
+        group_by = group_by or []
+        filters = filters or {}
+        if not content_types:
+            content_types = ["page", "work_item", "project", "cycle", "module"]
+
+        # Heuristic: infer group_by when not specified
+        ql = (query or "").lower()
+        if not group_by:
+            if "by content type" in ql or "by type" in ql or "by kind" in ql:
+                group_by.append("content_type")
+            if "by project" in ql or "per project" in ql:
+                group_by.append("project_name")
+            # Date buckets
+            if "by day" in ql or "daily" in ql or "last modified date" in ql or "updated date" in ql or "last modified" in ql:
+                group_by.append("updated_day")
+            elif "by week" in ql or "weekly" in ql:
+                group_by.append("updated_week")
+            elif "by month" in ql or "monthly" in ql:
+                group_by.append("updated_month")
+        # Default if still empty
+        if not group_by:
+            group_by = ["content_type"]
+
+        # Normalize group_by synonyms → canonical keys
+        def normalize_group_key(k: str) -> str:
+            s = (k or "").strip().lower()
+            if s in {"type", "contenttype"}:
+                return "content_type"
+            if s in {"project", "projectname"}:
+                return "project_name"
+            if s in {"updated_at", "updatedat", "modified", "modified_at", "modifiedat", "last_modified", "last_modified_date"}:
+                return "updated_day"
+            if s in {"updated_day", "updatedday", "day"}:
+                return "updated_day"
+            if s in {"updated_week", "updatedweek", "week"}:
+                return "updated_week"
+            if s in {"updated_month", "updatedmonth", "month"}:
+                return "updated_month"
+            return k
+        group_by = [normalize_group_key(k) for k in group_by]
+
+        # Fetch results per content type up to the limit (round-robin cap)
+        per_type_limit = max(1, int(limit / max(1, len(content_types))))
+        hits: List[Dict[str, Any]] = []
+        for ct in content_types:
+            # Honor an explicit filter for content_type, if present
+            ct_filter = filters.get("content_type")
+            if ct_filter and ct != ct_filter:
+                continue
+            results = await rag_tool.search_content(query, content_type=ct, limit=per_type_limit)
+            hits.extend(results or [])
+
+        # Apply client-side filters beyond content_type
+        def passes_filters(item: Dict[str, Any]) -> bool:
+            # project_name substring match
+            pn = filters.get("project_name")
+            if pn:
+                if not isinstance(item.get("project_name"), str) or pn.lower() not in item.get("project_name", "").lower():
+                    return False
+            # Future: date range filters can be added here
+            return True
+
+        filtered_hits = [h for h in hits if passes_filters(h)]
+
+        # Enrich missing metadata (updated_at, project_name) from Mongo as a fallback
+        try:
+            # Group ids by collection type
+            by_type: Dict[str, List[str]] = {}
+            for h in filtered_hits:
+                ct = (h.get("content_type") or "").strip()
+                mid = str(h.get("mongo_id") or "").strip()
+                if not mid:
+                    continue
+                by_type.setdefault(ct, []).append(mid)
+
+            async def fetch_updates(collection: str, ids: List[str]) -> Dict[str, Dict[str, Any]]:
+                # Build $expr $in with $toObjectId for 24-hex ids; ignore non-hex ids
+                hex_ids = [i for i in ids if isinstance(i, str) and len(i) == 24 and all(c in '0123456789abcdefABCDEF' for c in i)]
+                if not hex_ids:
+                    return {}
+                if collection == "page":
+                    project_stage = {
+                        "$project": {
+                            "_id": 1,
+                            "updatedAt": 1,
+                            "project.name": 1,
+                        }
+                    }
+                elif collection == "workItem":
+                    project_stage = {
+                        "$project": {
+                            "_id": 1,
+                            "updatedTimeStamp": 1,
+                            "createdTimeStamp": 1,
+                            "project.name": 1,
+                        }
+                    }
+                else:
+                    return {}
+
+                pipeline = [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$in": [
+                                    "$_id",
+                                    {"$map": {"input": hex_ids, "as": "id", "in": {"$toObjectId": "$$id"}}}
+                                ]
+                            }
+                        }
+                    },
+                    project_stage,
+                ]
+                rows = await mongodb_tools.execute_tool("aggregate", {
+                    "database": DATABASE_NAME,
+                    "collection": collection,
+                    "pipeline": pipeline,
+                })
+                # Parse Mongo MCP format
+                try:
+                    parsed = json.loads(rows) if isinstance(rows, str) else rows
+                except Exception:
+                    parsed = rows
+                docs: List[Dict[str, Any]] = []
+                if isinstance(parsed, list) and parsed:
+                    if isinstance(parsed[0], str) and parsed[0].startswith("Found"):
+                        for it in parsed[1:]:
+                            try:
+                                if isinstance(it, str):
+                                    docs.append(json.loads(it))
+                                elif isinstance(it, dict):
+                                    docs.append(it)
+                            except Exception:
+                                continue
+                    else:
+                        docs = [d for d in parsed if isinstance(d, dict)]
+                elif isinstance(parsed, dict):
+                    docs = [parsed]
+                # Build map by stringified id
+                def str_id(d: Dict[str, Any]) -> str:
+                    _id = d.get("_id")
+                    if isinstance(_id, dict) and "$oid" in _id:
+                        return str(_id.get("$oid"))
+                    return str(_id)
+                out: Dict[str, Dict[str, Any]] = {}
+                for d in docs:
+                    out[str_id(d)] = d
+                return out
+
+            # Fetch for pages and work items only
+            page_ids = by_type.get("page", [])
+            wi_ids = by_type.get("work_item", [])
+            page_map: Dict[str, Dict[str, Any]] = {}
+            wi_map: Dict[str, Dict[str, Any]] = {}
+            if page_ids:
+                page_map = await fetch_updates("page", page_ids)
+            if wi_ids:
+                wi_map = await fetch_updates("workItem", wi_ids)
+
+            # Apply enrichment
+            for h in filtered_hits:
+                if h.get("updated_at") and h.get("project_name"):
+                    continue
+                ct = h.get("content_type")
+                mid = str(h.get("mongo_id") or "")
+                if not mid:
+                    continue
+                source = page_map if ct == "page" else (wi_map if ct == "work_item" else None)
+                if not source:
+                    continue
+                doc = source.get(mid)
+                if not isinstance(doc, dict):
+                    continue
+                # updated
+                upd = doc.get("updatedAt") or doc.get("updatedTimeStamp") or doc.get("createdTimeStamp")
+                if upd is not None and not h.get("updated_at"):
+                    h["updated_at"] = upd if not isinstance(upd, dict) else upd.get("$date")
+                # project name
+                if not h.get("project_name"):
+                    proj = doc.get("project") if isinstance(doc.get("project"), dict) else None
+                    pname = (proj.get("name") if isinstance(proj, dict) else None)
+                    if pname:
+                        h["project_name"] = pname
+        except Exception:
+            # Best-effort; continue without enrichment on errors
+            pass
+
+        # Grouping helpers
+        from datetime import datetime
+
+        def parse_dt(val: Any) -> Optional[datetime]:
+            if isinstance(val, datetime):
+                return val
+            if isinstance(val, str) and val:
+                try:
+                    # Accept ISO-like strings
+                    return datetime.fromisoformat(val.replace("Z", "+00:00"))
+                except Exception:
+                    return None
+            return None
+
+        def bucket_value(item: Dict[str, Any], key: str) -> Any:
+            k = key.lower()
+            if k in ("project", "project_name"):
+                return item.get("project_name") or "(unknown project)"
+            if k == "content_type":
+                return item.get("content_type") or "unknown"
+            if k in ("updated_day", "updated_week", "updated_month"):
+                dt = parse_dt(item.get("updated_at"))
+                if not dt:
+                    return "(no date)"
+                if k == "updated_day":
+                    return dt.date().isoformat()
+                if k == "updated_week":
+                    # ISO week-year-Www
+                    return f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
+                if k == "updated_month":
+                    return f"{dt.year}-{dt.month:02d}"
+            # Fallback: direct field
+            return item.get(key) or f"({key} missing)"
+
+        # Build nested grouping (supports 1-2 keys realistically)
+        from collections import defaultdict
+        counts = defaultdict(int)
+        samples: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
+
+        for h in filtered_hits:
+            if not group_by:
+                gkey = ("all",)
+            else:
+                gkey = tuple(bucket_value(h, gb) for gb in group_by)
+            counts[gkey] += 1
+            if len(samples[gkey]) < 3:
+                samples[gkey].append(h)
+
+        # Render summary
+        total = sum(counts.values())
+        if total == 0:
+            return f"❌ No RAG hits for '{query}' after filters."
+
+        # Friendlier label if grouping by updated buckets
+        label_keys = {
+            "updated_day": "last_modified_date (day)",
+            "updated_week": "last_modified_date (week)",
+            "updated_month": "last_modified_date (month)",
+        }
+        label = ", ".join([label_keys.get(k, k) for k in group_by])
+        response = f"📊 RAG BREAKDOWN by {label} (n={total}):\n\n"
+        # Sort by count desc
+        for gkey, cnt in sorted(counts.items(), key=lambda kv: kv[1], reverse=True):
+            # Pretty label
+            if isinstance(gkey, tuple):
+                parts = [str(p) for p in gkey]
+                group_label = ", ".join(parts)
+            else:
+                group_label = str(gkey)
+            response += f"• {group_label}: {cnt}\n"
+        response += "\n"
+
+        # Add a few examples for the top 3 groups
+        top_groups = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:3]
+        for gkey, _ in top_groups:
+            exs = samples.get(gkey, [])
+            if not exs:
+                continue
+            if isinstance(gkey, tuple):
+                group_label = ", ".join([str(p) for p in gkey])
+            else:
+                group_label = str(gkey)
+            response += f"Examples for {group_label}:\n"
+            for ex in exs:
+                title = ex.get("title") or "Untitled"
+                ctype = ex.get("content_type") or "unknown"
+                preview = (ex.get("content") or "")[:140]
+                response += f"  - [{ctype}] {title}: {preview}{'...' if len(preview) == 140 else ''}\n"
+            response += "\n"
+
+        return response
+
+    except Exception as e:
+        return f"❌ RAG GROUPED SEARCH ERROR:\nQuery: '{query}'\nError: {str(e)}"
+
+@tool
 async def rag_to_mongo_workitems(query: str, limit: int = 20) -> str:
     """Bridge free-text to canonical work item records (RAG → Mongo).
 
@@ -1005,6 +1309,7 @@ tools = [
     mongo_query,
     rag_content_search,
     rag_answer_question,
+    rag_grouped_search,
     rag_to_mongo_workitems,
 ]
 

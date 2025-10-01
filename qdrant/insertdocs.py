@@ -173,7 +173,7 @@ def index_pages_to_qdrant():
             else:
                 print(f"⚠️ Failed to ensure index: {e}")
 
-        documents = page_collection.find({}, {"_id": 1, "content": 1, "title": 1})
+        documents = page_collection.find({}, {"_id": 1, "content": 1, "title": 1, "updatedAt": 1, "project.name": 1})
         points = []
 
         for doc in documents:
@@ -187,6 +187,11 @@ def index_pages_to_qdrant():
             chunks = chunk_text(combined_text, max_words=320, overlap_words=80)
             if not chunks:
                 chunks = [combined_text]
+
+            # Extract simple metadata
+            updated_at = doc.get("updatedAt")
+            proj = doc.get("project") if isinstance(doc.get("project"), dict) else None
+            project_name = (proj.get("name") if isinstance(proj, dict) else None)
 
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
@@ -202,7 +207,10 @@ def index_pages_to_qdrant():
                         "content": chunk,
                         # Provide a concatenated text field for full-text search
                         "full_text": f"{title} {chunk}".strip(),
-                        "content_type": "page"
+                        "content_type": "page",
+                        # Additional metadata for grouping/filters
+                        "updated_at": str(updated_at) if updated_at is not None else None,
+                        "project_name": project_name,
                     }
                 )
                 points.append(point)
@@ -240,7 +248,7 @@ def index_workitems_to_qdrant():
             else:
                 print(f"⚠️ Failed to ensure index: {e}")
 
-        documents = workitem_collection.find({}, {"_id": 1, "title": 1, "description": 1})
+        documents = workitem_collection.find({}, {"_id": 1, "title": 1, "description": 1, "updatedTimeStamp": 1, "createdTimeStamp": 1, "project.name": 1})
         points = []
 
         for doc in documents:
@@ -251,6 +259,11 @@ def index_workitems_to_qdrant():
 
             vector = embedder.encode(combined_text).tolist()
 
+            # Extract simple metadata
+            updated_ts = doc.get("updatedTimeStamp") or doc.get("createdTimeStamp")
+            proj = doc.get("project") if isinstance(doc.get("project"), dict) else None
+            project_name = (proj.get("name") if isinstance(proj, dict) else None)
+
             point = PointStruct(
                 id=point_id_from_seed(f"{mongo_id}/work_item"),
                 vector=vector,
@@ -259,7 +272,10 @@ def index_workitems_to_qdrant():
                     "title": doc.get("title", ""),
                     "content": doc.get("description", ""),
                     "full_text": combined_text,
-                    "content_type": "work_item"
+                    "content_type": "work_item",
+                    # Additional metadata for grouping/filters
+                    "updated_at": str(updated_ts) if updated_ts is not None else None,
+                    "project_name": project_name,
                 }
             )
             points.append(point)
