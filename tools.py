@@ -13,7 +13,7 @@ try:
 except Exception:
     PipelineGenerator = None  # type: ignore
     QueryIntent = None  # type: ignore
-from qdrant_initializer import RAGTool
+from qdrant.qdrant_initializer import RAGTool
 # Qdrant and RAG dependencies
 # try:
 #     from qdrant_client import QdrantClient
@@ -1144,6 +1144,11 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
                 if "query" not in targs and not has_structured:
                     default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
                     targs["query"] = default_label or (instruction or "Query")
+            elif tname == "rag_content_search":
+                # Ensure 'query' is present
+                if "query" not in targs:
+                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
+                    targs["query"] = default_label or (instruction or "Search")
             elif tname == "rag_answer_question":
                 # Map 'query' -> 'question' if step authors used the other convention
                 if "query" in targs and "question" not in targs:
@@ -1151,15 +1156,24 @@ async def composite_query(instruction: str = "", steps: Optional[List[Dict[str, 
                         targs["question"] = targs.pop("query")
                     except Exception:
                         targs["question"] = targs.get("query")
+                # Ensure 'question' is present
+                if "question" not in targs:
+                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
+                    targs["question"] = default_label or (instruction or "Question")
+            elif tname == "rag_to_mongo_workitems":
+                # Ensure 'query' is present
+                if "query" not in targs:
+                    default_label = (s.get("label") or s.get("name") or "").strip() if isinstance(s, dict) else ""
+                    targs["query"] = default_label or (instruction or "Work items")
             raw_step = s
-            async def _curry(tool_name: str, args: Dict[str, Any], raw: Dict[str, Any]):
+            def _curry(tool_name: str, args: Dict[str, Any], raw: Dict[str, Any]):
                 async def _run(_ctx: Dict[str, Any]) -> str:
                     return await _invoke(tool_name, args, raw)
                 return _run
             step_specs.append(
                 StepSpec(
                     name=f"composite_step_{i}",
-                    coroutine=as_async(await _curry(tname, targs, raw_step)),
+                    coroutine=as_async(_curry(tname, targs, raw_step)),
                     requires=tuple(),
                     provides=f"out_{i}",
                     timeout_s=45.0,
