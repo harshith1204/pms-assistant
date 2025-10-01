@@ -389,7 +389,7 @@ def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None
 
 
 @tool
-async def mongo_query(query: str, show_all: bool = False) -> str:
+async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = True) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
 
     Use this ONLY when the user asks for authoritative data that must come from
@@ -405,12 +405,15 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     Behavior:
     - Follows a planner to generate a safe aggregation pipeline; avoids
       hallucinated fields.
+    - Can generate complex aggregation pipelines with multiple joins when
+      enable_complex_joins=True (default), reducing need for tool chaining.
     - Return concise summaries by default; pass `show_all=True` only when the
       user explicitly requests full records.
 
     Args:
         query: Natural language, structured data request about PM entities.
         show_all: If True, output full details instead of a summary. Use sparingly.
+        enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
 
     Returns: A compact result suitable for direct user display.
     """
@@ -418,7 +421,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
 
     try:
-        result = await plan_and_execute_query(query)
+        result = await plan_and_execute_query(query, enable_complex_joins=enable_complex_joins)
 
         if result["success"]:
             response = f"🎯 INTELLIGENT QUERY RESULT:\n"

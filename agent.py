@@ -145,6 +145,45 @@ llm = ChatOllama(
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
+
+def _detect_multistep(user_query: str) -> bool:
+    """Detect whether a query likely requires multiple steps/tools.
+
+    Signals include: explicit sequencing terms, multiple distinct intents
+    (e.g., count + list + search), or requests to run in parallel/batch.
+    """
+    q = (user_query or "").lower()
+    # Obvious multi-step markers
+    multi_markers = [
+        " compare ", " versus ", " vs ", " side by side ", " and also ",
+        " together ", ";", " then ", " in parallel", " simultaneously",
+        " at the same time", " both ", " batch ", " run multiple", " multi-step",
+    ]
+    if any(m in q for m in multi_markers):
+        return True
+
+    # Multiple action categories in one sentence
+    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
+    action_listing = ["list", "show", "top", "recent", "titles", "items"]
+    action_content = ["summarize", "snippet", "snippets", "context", "explain", "search"]
+
+    def has_any(terms):
+        return any(term in q for term in terms)
+
+    multiple_actions = (
+        (has_any(action_structured) and has_any(action_listing)) or
+        (has_any(action_structured) and has_any(action_content)) or
+        (has_any(action_listing) and has_any(action_content))
+    )
+    if multiple_actions:
+        return True
+
+    # Heuristic: presence of multiple entity types hints multi-step
+    entity_terms = ["project", "work item", "work items", "cycle", "module", "members", "page", "pages", "documentation", "docs"]
+    if sum(1 for t in entity_terms if t in q) >= 2 and ("and" in q or ";" in q):
+        return True
+    return False
+
 def _select_tools_for_query(user_query: str):
     """Return a subset of tools to expose to the LLM for this query.
 
@@ -189,7 +228,8 @@ def _select_tools_for_query(user_query: str):
 
     # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
     multi_markers = [
-        "compare", " versus ", " vs ", "side by side", "both ", " and also ", " together ", ";", " then "
+        " compare ", " versus ", " vs ", " side by side ", " both ", " and also ", " together ", ";", " then ",
+        " in parallel", " simultaneously", " at the same time", " batch ", " run multiple"
     ]
     # Detect presence of multiple action intents in one query
     action_structured = ["count", "group", "breakdown", "distribution", "compare"]
@@ -203,7 +243,8 @@ def _select_tools_for_query(user_query: str):
     needs_composite = (
         has_any(multi_markers)
         or multiple_actions
-        or (allow_rag and has_any(canonical_field_terms))
+        or _detect_multistep(user_query)
+        or (allow_rag and has_any(canonical_field_terms) and (" and " in q or ";" in q))
     )
     if needs_composite:
         allowed_names.append("composite_query")
@@ -696,12 +737,20 @@ class MongoDBAgent:
                                 pass
                 # Lightweight routing hint to bias correct tool choice
                 routing_instructions = SystemMessage(content=(
-                    "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
-                    "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
-                    "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass steps like: "
-                    "[{'tool': 'mongo_query', 'args': {'query': 'count open work items'}, 'label': 'Count open items'}, "
-                    "{'tool': 'mongo_query', 'args': {'query': 'list recent completed work items'}, 'label': 'Recent completed'}]. "
-                    "IMPORTANT: Each tool requires specific arguments - mongo_query needs 'query', rag tools need 'query' or 'question'."
+                    "PLANNING & ROUTING:\n"
+                    "- First, break the user request into minimal sub-steps.\n"
+                    "- For each sub-step, pick exactly one tool using the Decision Guide.\n"
+                    "- If the request has multiple distinct actions (e.g., count + list + search), construct steps and use 'composite_query'.\n\n"
+                    "DECISION GUIDE:\n"
+                    "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
+                    "- Use 'rag_content_search' to find content snippets (pages/work items) by meaning.\n"
+                    "- Use 'rag_answer_question' to gather compact context to answer a content question.\n"
+                    "- Use 'rag_to_mongo_workitems' to map a free-text description to canonical work items.\n\n"
+                    "COMPOSITE EXECUTION:\n"
+                    "- If multi-part, produce a short JSON steps plan with tool + args + label.\n"
+                    "- Then call 'composite_query' with that steps list.\n"
+                    "Example steps: [{""tool"": ""mongo_query"", ""args"": {""query"": ""count open work items""}, ""label"": ""Count open""}, {""tool"": ""rag_content_search"", ""args"": {""query"": ""deployment issues"", ""content_type"": ""page""}, ""label"": ""Find docs""}]\n\n"
+                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_content_search needs 'query'; rag_answer_question needs 'question'."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
@@ -900,12 +949,18 @@ class MongoDBAgent:
                             except Exception:
                                 pass
                         routing_instructions = SystemMessage(content=(
-                            "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
-                            "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
-                            "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass steps like: "
-                            "[{'tool': 'mongo_query', 'args': {'query': 'count open work items'}, 'label': 'Count open items'}, "
-                            "{'tool': 'mongo_query', 'args': {'query': 'list recent completed work items'}, 'label': 'Recent completed'}]. "
-                            "IMPORTANT: Each tool requires specific arguments - mongo_query needs 'query', rag tools need 'query' or 'question'."
+                            "PLANNING & ROUTING:\n"
+                            "- Decompose the task into ordered sub-steps.\n"
+                            "- Choose exactly one tool per sub-step.\n"
+                            "- If multi-part, assemble a steps array and invoke 'composite_query'.\n\n"
+                            "DECISION GUIDE:\n"
+                            "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
+                            "- 'rag_content_search' → locate content snippets by meaning.\n"
+                            "- 'rag_answer_question' → gather context to answer a content question.\n"
+                            "- 'rag_to_mongo_workitems' → map free text to canonical work items.\n\n"
+                            "COMPOSITE EXAMPLE:\n"
+                            "[{""tool"": ""mongo_query"", ""args"": {""query"": ""count open work items""}, ""label"": ""Count open""}, {""tool"": ""mongo_query"", ""args"": {""query"": ""group tasks by priority""}, ""label"": ""Breakdown by priority""}]\n\n"
+                            "IMPORTANT: Use valid args for each tool."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
