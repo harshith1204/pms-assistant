@@ -522,97 +522,22 @@ def index_modules_to_qdrant():
         print(f"❌ Error during module indexing: {e}")
         return {"status": "error", "message": str(e)}
 
-# ------------------ Re-indexing with Chunking ------------------
-def reindex_all_with_chunks(clear_existing=True):
-    """
-    Re-index all content types with proper chunking.
-    
-    All content types now use chunking:
-    - Pages: 320 words/chunk, 80-word overlap
-    - Work Items: 300 words/chunk, 60-word overlap
-    - Projects: 300 words/chunk, 60-word overlap
-    - Cycles: 300 words/chunk, 60-word overlap
-    - Modules: 300 words/chunk, 60-word overlap
-    
-    Each chunk includes: parent_id, chunk_index, chunk_count, content
-    """
-    print("="*60)
-    print("QDRANT RE-INDEXING WITH CHUNKING")
-    print("="*60)
-    
-    # Clear existing collection if requested
-    if clear_existing:
-        print("\n🗑️  Clearing existing Qdrant collection...")
-        try:
-            qdrant_client.delete_collection(collection_name=QDRANT_COLLECTION)
-            print(f"✅ Deleted collection: {QDRANT_COLLECTION}")
-        except Exception as e:
-            print(f"⚠️  Collection may not exist or error: {e}")
-    
-    print("\n🔄 Starting full re-indexing with chunking...\n")
-    
-    results = []
-    
-    # Index all content types
-    print("1/5 Indexing pages...")
-    results.append(("Pages", index_pages_to_qdrant()))
-    
-    print("\n2/5 Indexing work items...")
-    results.append(("Work Items", index_workitems_to_qdrant()))
-    
-    print("\n3/5 Indexing projects...")
-    results.append(("Projects", index_projects_to_qdrant()))
-    
-    print("\n4/5 Indexing cycles...")
-    results.append(("Cycles", index_cycles_to_qdrant()))
-    
-    print("\n5/5 Indexing modules...")
-    results.append(("Modules", index_modules_to_qdrant()))
-    
-    # Print summary
-    print("\n" + "="*60)
-    print("INDEXING SUMMARY")
-    print("="*60)
-    
-    total_indexed = 0
-    for content_type, result in results:
-        status = result.get("status", "unknown")
-        count = result.get("indexed_documents", 0)
-        status_icon = "✅" if status == "success" else "⚠️" if status == "warning" else "❌"
-        print(f"{status_icon} {content_type:15s}: {count:6d} chunks indexed")
-        if status == "success":
-            total_indexed += count
-    
-    print("="*60)
-    print(f"TOTAL: {total_indexed} chunks indexed")
-    print("="*60)
-    print("\n✅ All content now has chunk metadata (parent_id, chunk_index, chunk_count)")
-    print("🚀 Chunk-aware retrieval is ready to use!\n")
-    
-    return results
-
-
 # ------------------ Usage ------------------
 if __name__ == "__main__":
-    import sys
+    print("🚀 Starting Qdrant indexing with chunking...")
+    print("\nAll content types now use chunking:")
+    print("  - Pages: 320 words/chunk, 80-word overlap")
+    print("  - Work Items: 300 words/chunk, 60-word overlap")
+    print("  - Projects: 300 words/chunk, 60-word overlap")
+    print("  - Cycles: 300 words/chunk, 60-word overlap")
+    print("  - Modules: 300 words/chunk, 60-word overlap\n")
     
-    print("Choose indexing mode:")
-    print("1. Full re-index with chunking (deletes existing collection)")
-    print("2. Incremental index (keeps existing data)")
+    index_pages_to_qdrant()
+    index_workitems_to_qdrant()
+    index_projects_to_qdrant()
+    index_cycles_to_qdrant()
+    index_modules_to_qdrant()
     
-    choice = input("\nEnter choice (1 or 2): ").strip()
-    
-    if choice == "1":
-        print("\n⚠️  This will DELETE the existing Qdrant collection and re-index everything.")
-        confirm = input("Continue? (yes/no): ").strip().lower()
-        if confirm in ["yes", "y"]:
-            reindex_all_with_chunks(clear_existing=True)
-        else:
-            print("❌ Aborted")
-            sys.exit(0)
-    elif choice == "2":
-        print("\n🔄 Running incremental indexing...")
-        reindex_all_with_chunks(clear_existing=False)
-    else:
-        print("❌ Invalid choice")
-        sys.exit(1)
+    print("\n✅ Qdrant indexing complete!")
+    print("🚀 All documents now have chunk metadata (parent_id, chunk_index, chunk_count)")
+    print("🚀 Chunk-aware retrieval is ready to use!")
