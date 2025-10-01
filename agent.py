@@ -563,15 +563,31 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             print(f"Warning: Error stopping Phoenix span collector: {e}")
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling"""
+    """MongoDB Agent using Tool Calling with Parallel Execution Support
+    
+    Features:
+    - Parallel tool execution: When multiple tools are requested by the LLM, they are executed
+      concurrently using asyncio.gather() for improved performance.
+    - Sequential fallback: Single tool calls or when parallel execution is disabled, tools
+      execute sequentially.
+    - Full tracing support: All tool executions (parallel or sequential) are properly traced
+      with Phoenix/OpenTelemetry.
+    - Conversation memory: Maintains context across multiple turns.
+    
+    Args:
+        max_steps: Maximum number of reasoning steps (default: 8)
+        system_prompt: Custom system prompt or None to use default
+        enable_parallel_tools: Enable parallel tool execution (default: True)
+    """
 
-    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
+    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT, enable_parallel_tools: bool = True):
         # Base LLM; tools will be bound per-query via router
         self.llm_base = llm
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
         self.tracing_enabled = False
+        self.enable_parallel_tools = enable_parallel_tools
 
     async def initialize_tracing(self):
         """Enable Phoenix tracing for this agent."""
@@ -601,6 +617,82 @@ class MongoDBAgent:
             span.end()
         except Exception as e:
             print(f"Tracing error ending span: {e}")
+
+    async def _execute_single_tool(
+        self, 
+        tool, 
+        tool_call: Dict[str, Any], 
+        selected_tools: List[Any],
+        tracer=None
+    ) -> tuple[ToolMessage, bool]:
+        """Execute a single tool with tracing support.
+        
+        Returns:
+            tuple: (ToolMessage, success_flag)
+        """
+        tool_cm = None
+        if tracer is not None:
+            tool_cm = tracer.start_as_current_span(
+                "tool_execute",
+                kind=trace.SpanKind.INTERNAL,
+                attributes={"tool_name": tool_call["name"]},
+            )
+        
+        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+            # Enforce router: only allow selected tools
+            actual_tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+            if not actual_tool:
+                error_msg = ToolMessage(
+                    content=f"Tool '{tool_call['name']}' not found.",
+                    tool_call_id=tool_call["id"],
+                )
+                return error_msg, False
+
+            try:
+                if tool_span:
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), actual_tool.name)
+                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                        try:
+                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                        except Exception:
+                            pass
+                        tool_span.add_event("tool_start", {"tool": actual_tool.name})
+                    except Exception:
+                        pass
+                
+                result = await actual_tool.ainvoke(tool_call["args"])
+                
+                if tool_span:
+                    tool_span.set_attribute("tool_success", True)
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                        try:
+                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                        except Exception:
+                            pass
+                        tool_span.add_event("tool_end", {"tool": actual_tool.name})
+                    except Exception:
+                        pass
+                        
+            except Exception as tool_exc:
+                result = f"Tool execution error: {tool_exc}"
+                if tool_span:
+                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
+                    except Exception:
+                        pass
+
+            tool_message = ToolMessage(
+                content=str(result),
+                tool_call_id=tool_call["id"],
+            )
+            return tool_message, True
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
@@ -762,77 +854,35 @@ class MongoDBAgent:
                 if not getattr(response, "tool_calls", None):
                     return response.content
 
-                # Execute requested tools sequentially
+                # Execute requested tools (parallel or sequential based on configuration)
                 messages.append(response)
                 did_any_tool = False
-                for tool_call in response.tool_calls:
-                    if tracer is not None:
-                        tool_cm = tracer.start_as_current_span(
-                            "tool_execute",
-                            kind=trace.SpanKind.INTERNAL,
-                            attributes={"tool_name": tool_call["name"]},
-                        )
-                    else:
-                        tool_cm = None
-
-                    with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                        # Enforce router: only allow selected tools
-                        tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
-                        if not tool:
-                            error_msg = ToolMessage(
-                                content=f"Tool '{tool_call['name']}' not found.",
-                                tool_call_id=tool_call["id"],
-                            )
-                            messages.append(error_msg)
-                            conversation_memory.add_message(conversation_id, error_msg)
-                            continue
-
-                        try:
-                            if tool_span:
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                    # Tag span kind for OpenInference UI (uppercase expected)
-                                    tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
-                                    # Also set generic and OpenInference input.value for Phoenix UI
-                                    tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
-                                    try:
-                                        tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
-                                    except Exception:
-                                        pass
-                                    tool_span.add_event("tool_start", {"tool": tool.name})
-                                except Exception:
-                                    pass
-                            result = await tool.ainvoke(tool_call["args"])
-                            if tool_span:
-                                tool_span.set_attribute("tool_success", True)
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                    tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
-                                    try:
-                                        tool_span.set_attribute('openinference.output.value', str(result)[:1200])
-                                    except Exception:
-                                        pass
-                                    tool_span.add_event("tool_end", {"tool": tool.name})
-                                except Exception:
-                                    pass
-                        except Exception as tool_exc:
-                            result = f"Tool execution error: {tool_exc}"
-                            if tool_span:
-                                tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                    tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                except Exception:
-                                    pass
-
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"],
+                
+                if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                    # Parallel execution for multiple tools
+                    tool_tasks = [
+                        self._execute_single_tool(None, tool_call, selected_tools, tracer)
+                        for tool_call in response.tool_calls
+                    ]
+                    tool_results = await asyncio.gather(*tool_tasks)
+                    
+                    # Process results in order
+                    for tool_message, success in tool_results:
+                        messages.append(tool_message)
+                        conversation_memory.add_message(conversation_id, tool_message)
+                        if success:
+                            did_any_tool = True
+                else:
+                    # Sequential execution (fallback or single tool)
+                    for tool_call in response.tool_calls:
+                        tool_message, success = await self._execute_single_tool(
+                            None, tool_call, selected_tools, tracer
                         )
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        did_any_tool = True
+                        if success:
+                            did_any_tool = True
+                
                 steps += 1
 
                 # After executing any tools, force the next LLM turn to synthesize
@@ -971,68 +1021,48 @@ class MongoDBAgent:
                         yield response.content
                         return
 
-                    # Execute requested tools sequentially with streaming callbacks
+                    # Execute requested tools (parallel or sequential) with streaming callbacks
                     messages.append(response)
                     did_any_tool = False
-                    for tool_call in response.tool_calls:
-                        if tracer is not None:
-                            tool_cm = tracer.start_as_current_span(
-                                "tool_execute",
-                                kind=trace.SpanKind.INTERNAL,
-                                attributes={"tool_name": tool_call["name"]},
-                            )
-                        else:
-                            tool_cm = None
-
-                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                            # Enforce router: only allow selected tools
+                    
+                    if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                        # Parallel execution for multiple tools with streaming
+                        # Send tool_start events for all tools first
+                        for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
-                            if not tool:
-                                error_msg = ToolMessage(
-                                    content=f"Tool '{tool_call['name']}' not found.",
-                                    tool_call_id=tool_call["id"],
-                                )
-                                messages.append(error_msg)
-                                conversation_memory.add_message(conversation_id, error_msg)
-                                continue
-
-                            await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
-                            try:
-                                if tool_span:
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
-                                        tool_span.add_event("tool_start", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                result = await tool.ainvoke(tool_call["args"])
-                                if tool_span:
-                                    tool_span.set_attribute("tool_success", True)
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                        tool_span.add_event("tool_end", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                await callback_handler.on_tool_end(str(result))
-                            except Exception as tool_exc:
-                                result = f"Tool execution error: {tool_exc}"
-                                if tool_span:
-                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                    except Exception:
-                                        pass
-                                await callback_handler.on_tool_end(str(result))
-
-                            tool_message = ToolMessage(
-                                content=str(result),
-                                tool_call_id=tool_call["id"],
-                            )
+                            if tool:
+                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                        
+                        # Execute all tools in parallel
+                        tool_tasks = [
+                            self._execute_single_tool(None, tool_call, selected_tools, tracer)
+                            for tool_call in response.tool_calls
+                        ]
+                        tool_results = await asyncio.gather(*tool_tasks)
+                        
+                        # Process results and send tool_end events
+                        for tool_message, success in tool_results:
+                            await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            did_any_tool = True
+                            if success:
+                                did_any_tool = True
+                    else:
+                        # Sequential execution (fallback or single tool)
+                        for tool_call in response.tool_calls:
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+                            if tool:
+                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                            
+                            tool_message, success = await self._execute_single_tool(
+                                None, tool_call, selected_tools, tracer
+                            )
+                            await callback_handler.on_tool_end(tool_message.content)
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                            if success:
+                                did_any_tool = True
+                    
                     steps += 1
 
                     # After executing any tools, force the next LLM turn to synthesize
