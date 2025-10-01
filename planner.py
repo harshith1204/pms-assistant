@@ -562,11 +562,17 @@ class LLMIntentParser:
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
+        # Extended to support status/visibility/business and date buckets
+        allowed_group = {
+            "cycle", "project", "assignee", "state", "priority", "module",
+            "status", "visibility", "business",
+            "created_day", "created_week", "created_month",
+            "updated_day", "updated_week", "updated_month",
+        }
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
-        cross_tokens = {"assignee", "project", "cycle", "module"}
+        cross_tokens = {"assignee", "project", "cycle", "module", "business"}
         if any(g in cross_tokens for g in group_by):
             primary = "workItem"
 
@@ -777,6 +783,8 @@ class PipelineGenerator:
                 'assignee': None,
                 'module': None,
                 'cycle': None,
+                # For business grouping we may need a project join to ensure business name
+                'business': 'project',
             },
             'project': {
                 'cycle': 'cycles',
@@ -787,22 +795,27 @@ class PipelineGenerator:
             },
             'cycle': {
                 'project': 'project',
+                'business': 'project',
             },
             'module': {
                 'project': 'project',
                 'assignee': 'assignee',
+                'business': 'project',
             },
             'page': {
                 'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
                 'cycle': 'linkedCycle',
                 'module': 'linkedModule',
+                'business': 'project',
                 'linkedMembers': 'linkedMembers',
             },
             'members': {
                 'project': 'project',
+                'business': 'project',
             },
             'projectState': {
                 'project': 'project',
+                'business': 'project',
             },
         }.get(collection, {})
 
@@ -927,9 +940,13 @@ class PipelineGenerator:
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
             for token in intent.group_by:
-                field_path = self._resolve_group_field(intent.primary_entity, token)
-                if field_path:
-                    id_fields[token] = f"${field_path}"
+                resolved = self._resolve_group_field(intent.primary_entity, token)
+                if resolved:
+                    # Accept either a field path (str) or a full expression (dict)
+                    if isinstance(resolved, str):
+                        id_fields[token] = f"${resolved}"
+                    else:
+                        id_fields[token] = resolved
             if not id_fields:
                 # Fallback: do nothing if we can't resolve
                 pass
@@ -1554,32 +1571,102 @@ class PipelineGenerator:
         return validated
 
     def _resolve_group_field(self, primary_entity: str, token: str) -> Optional[str]:
-        """Map a grouping token to a concrete field path in the current pipeline."""
-        mapping = {
+        """Map a grouping token to a concrete field path or Mongo expression.
+
+        Returns either a string field path (relative to current doc) or a dict representing
+        a MongoDB aggregation expression (e.g., for date bucketing).
+        """
+        # Date bucket helper
+        def date_field_for(entity: str, which: str) -> Optional[str]:
+            # which: 'created' | 'updated'
+            if entity == 'page':
+                return 'createdAt' if which == 'created' else 'updatedAt'
+            # Default to *TimeStamp for other entities
+            return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
+
+        def bucket_expr(entity: str, which: str, unit: str):
+            field = date_field_for(entity, which)
+            if not field:
+                return None
+            # Prefer $dateTrunc for week/month; for day we can also truncate
+            if unit in {'week', 'month', 'day'}:
+                return {"$dateTrunc": {"date": f"${field}", "unit": unit}}
+            return None
+
+        # Base mappings
+        mapping: Dict[str, Dict[str, Any]] = {
             'workItem': {
-                # Only relations that exist in REL for workItem
                 'project': 'project.name',
                 'assignee': 'assignee.name',
                 'cycle': 'cycle.name',
                 'module': 'modules.name',
                 'state': 'state.name',
+                'status': 'state.name',  # accept 'status' as synonym for state
                 'priority': 'priority',
+                'business': 'projectDoc.business.name',  # ensure join if needed
+                'created_day': bucket_expr('workItem', 'created', 'day'),
+                'created_week': bucket_expr('workItem', 'created', 'week'),
+                'created_month': bucket_expr('workItem', 'created', 'month'),
+                'updated_day': bucket_expr('workItem', 'updated', 'day'),
+                'updated_week': bucket_expr('workItem', 'updated', 'week'),
+                'updated_month': bucket_expr('workItem', 'updated', 'month'),
             },
             'project': {
-                'status': 'status',  # project status unchanged
+                'status': 'status',
+                'business': 'business.name',
+                'created_day': bucket_expr('project', 'created', 'day'),
+                'created_week': bucket_expr('project', 'created', 'week'),
+                'created_month': bucket_expr('project', 'created', 'month'),
+                'updated_day': bucket_expr('project', 'updated', 'day'),
+                'updated_week': bucket_expr('project', 'updated', 'week'),
+                'updated_month': bucket_expr('project', 'updated', 'month'),
             },
             'cycle': {
                 'project': 'project.name',
-                'status': 'status',  # cycle status unchanged
+                'status': 'status',
+                'created_day': bucket_expr('cycle', 'created', 'day'),
+                'created_week': bucket_expr('cycle', 'created', 'week'),
+                'created_month': bucket_expr('cycle', 'created', 'month'),
+                'updated_day': bucket_expr('cycle', 'updated', 'day'),
+                'updated_week': bucket_expr('cycle', 'updated', 'week'),
+                'updated_month': bucket_expr('cycle', 'updated', 'month'),
             },
             'page': {
                 'project': 'projectDoc.name',
                 'cycle': 'linkedCycleDocs.name',
                 'module': 'linkedModuleDocs.name',
+                'visibility': 'visibility',
+                'business': 'projectDoc.business.name',
+                'created_day': bucket_expr('page', 'created', 'day'),
+                'created_week': bucket_expr('page', 'created', 'week'),
+                'created_month': bucket_expr('page', 'created', 'month'),
+                'updated_day': bucket_expr('page', 'updated', 'day'),
+                'updated_week': bucket_expr('page', 'updated', 'week'),
+                'updated_month': bucket_expr('page', 'updated', 'month'),
+            },
+            'module': {
+                'project': 'project.name',
+                'business': 'project.business.name',
+                'created_day': bucket_expr('module', 'created', 'day'),
+                'created_week': bucket_expr('module', 'created', 'week'),
+                'created_month': bucket_expr('module', 'created', 'month'),
+            },
+            'members': {
+                'project': 'project.name',
+                'business': 'project.business.name',
+                'created_day': bucket_expr('members', 'created', 'day'),
+                'created_week': bucket_expr('members', 'created', 'week'),
+                'created_month': bucket_expr('members', 'created', 'month'),
+            },
+            'projectState': {
+                'project': 'project.name',
+                'business': 'project.business.name',
             },
         }
         entity_map = mapping.get(primary_entity, {})
-        return entity_map.get(token)
+        val = entity_map.get(token)
+        # Some bucket_expr entries may be None if field not applicable
+        return val if val is not None else None
 
 class Planner:
     """Main query planner that orchestrates the entire process"""
