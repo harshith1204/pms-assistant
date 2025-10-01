@@ -560,27 +560,55 @@ class LLMIntentParser:
         oq_text = (original_query or "").lower()
 
         # 1) Infer grouping from phrasing: "by X", "group by X", "breakdown by X", "per X"
+        # Enhanced to support multi-dimensional: "by X and Y", "by X, Y, and Z"
         inferred_group_by: List[str] = []
         def _maybe_add_group(token: str):
             if token in {"project", "priority", "assignee", "cycle", "module", "state", "status", "business"}:
                 if token not in inferred_group_by:
                     inferred_group_by.append(token)
 
-        # Common phrasings
-        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+priority\b", oq_text):
-            _maybe_add_group("priority")
-        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+project\b", oq_text):
-            _maybe_add_group("project")
-        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+assignee\b", oq_text):
-            _maybe_add_group("assignee")
-        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+cycle\b", oq_text):
-            _maybe_add_group("cycle")
-        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+module\b", oq_text):
-            _maybe_add_group("module")
-        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+(state|status)\b", oq_text):
-            _maybe_add_group("state")
-        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+business\b", oq_text):
-            _maybe_add_group("business")
+        # Extract group_by tokens from multi-dimensional patterns
+        # Pattern: "by X and Y" or "by X, Y and Z"
+        group_phrase_pattern = r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+([a-z, ]+(?:\s+and\s+[a-z]+)?)"
+        matches = re.findall(group_phrase_pattern, oq_text)
+        if matches:
+            for _, dimensions in matches:
+                # Split by "and" and commas to extract individual dimensions
+                dimension_parts = re.split(r'\s+and\s+|,\s*', dimensions)
+                for part in dimension_parts:
+                    part = part.strip()
+                    # Map common terms to our tokens
+                    if part in ["priority", "priorities"]:
+                        _maybe_add_group("priority")
+                    elif part in ["assignee", "assignees"]:
+                        _maybe_add_group("assignee")
+                    elif part in ["project", "projects"]:
+                        _maybe_add_group("project")
+                    elif part in ["cycle", "cycles"]:
+                        _maybe_add_group("cycle")
+                    elif part in ["module", "modules"]:
+                        _maybe_add_group("module")
+                    elif part in ["state", "states", "status", "statuses"]:
+                        _maybe_add_group("state")
+                    elif part in ["business", "businesses"]:
+                        _maybe_add_group("business")
+        
+        # Fallback: individual single-dimension patterns (if multi-pattern didn't match)
+        if not inferred_group_by:
+            if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+priority\b", oq_text):
+                _maybe_add_group("priority")
+            if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+project\b", oq_text):
+                _maybe_add_group("project")
+            if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+assignee\b", oq_text):
+                _maybe_add_group("assignee")
+            if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+cycle\b", oq_text):
+                _maybe_add_group("cycle")
+            if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+module\b", oq_text):
+                _maybe_add_group("module")
+            if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+(state|status)\b", oq_text):
+                _maybe_add_group("state")
+            if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+business\b", oq_text):
+                _maybe_add_group("business")
 
         # Merge with LLM-provided group_by if any
         if inferred_group_by:
