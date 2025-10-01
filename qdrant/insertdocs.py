@@ -329,24 +329,33 @@ def index_workitems_to_qdrant():
                 if isinstance(doc["createdBy"], dict):
                     metadata["created_by_name"] = doc["createdBy"].get("name")
 
-            vector = embedder.encode(combined_text).tolist()
+            # Chunk work items with long descriptions (similar to pages)
+            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            if not chunks:
+                chunks = [combined_text]
+            
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": doc.get("title", ""),
+                    "content": chunk,
+                    "full_text": f"{doc.get('title', '')} {chunk}".strip(),
+                    "content_type": "work_item"
+                }
+                # Add metadata, filtering out None values
+                payload.update({k: v for k, v in metadata.items() if v is not None})
 
-            payload = {
-                "mongo_id": mongo_id,
-                "title": doc.get("title", ""),
-                "content": doc.get("description", ""),
-                "full_text": combined_text,
-                "content_type": "work_item"
-            }
-            # Add metadata, filtering out None values
-            payload.update({k: v for k, v in metadata.items() if v is not None})
-
-            point = PointStruct(
-                id=point_id_from_seed(f"{mongo_id}/work_item"),
-                vector=vector,
-                payload=payload
-            )
-            points.append(point)
+                point = PointStruct(
+                    id=point_id_from_seed(f"{mongo_id}/work_item/{idx}"),
+                    vector=vector,
+                    payload=payload
+                )
+                points.append(point)
 
         if not points:
             print("⚠️ No valid work items to index.")
@@ -377,19 +386,28 @@ def index_projects_to_qdrant():
             if not combined_text:
                 continue
 
-            vector = embedder.encode(combined_text).tolist()
-            point = PointStruct(
-                id=point_id_from_seed(f"{mongo_id}/project"),
-                vector=vector,
-                payload={
-                    "mongo_id": mongo_id,
-                    "title": name,
-                    "content": description or name,
-                    "full_text": combined_text,
-                    "content_type": "project"
-                }
-            )
-            points.append(point)
+            # Chunk projects with long descriptions
+            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            if not chunks:
+                chunks = [combined_text]
+            
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                point = PointStruct(
+                    id=point_id_from_seed(f"{mongo_id}/project/{idx}"),
+                    vector=vector,
+                    payload={
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": name,
+                        "content": chunk,
+                        "full_text": f"{name} {chunk}".strip(),
+                        "content_type": "project"
+                    }
+                )
+                points.append(point)
 
         if not points:
             print("ℹ️ No projects with descriptions to index.")
@@ -419,19 +437,28 @@ def index_cycles_to_qdrant():
             if not combined_text:
                 continue
 
-            vector = embedder.encode(combined_text).tolist()
-            point = PointStruct(
-                id=point_id_from_seed(f"{mongo_id}/cycle"),
-                vector=vector,
-                payload={
-                    "mongo_id": mongo_id,
-                    "title": name,
-                    "content": description or name,
-                    "full_text": combined_text,
-                    "content_type": "cycle"
-                }
-            )
-            points.append(point)
+            # Chunk cycles with long descriptions
+            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            if not chunks:
+                chunks = [combined_text]
+            
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                point = PointStruct(
+                    id=point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
+                    vector=vector,
+                    payload={
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": name,
+                        "content": chunk,
+                        "full_text": f"{name} {chunk}".strip(),
+                        "content_type": "cycle"
+                    }
+                )
+                points.append(point)
 
         if not points:
             print("ℹ️ No cycles with descriptions to index.")
@@ -461,19 +488,28 @@ def index_modules_to_qdrant():
             if not combined_text:
                 continue
 
-            vector = embedder.encode(combined_text).tolist()
-            point = PointStruct(
-                id=point_id_from_seed(f"{mongo_id}/module"),
-                vector=vector,
-                payload={
-                    "mongo_id": mongo_id,
-                    "title": name,
-                    "content": description or name,
-                    "full_text": combined_text,
-                    "content_type": "module"
-                }
-            )
-            points.append(point)
+            # Chunk modules with long descriptions
+            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            if not chunks:
+                chunks = [combined_text]
+            
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                point = PointStruct(
+                    id=point_id_from_seed(f"{mongo_id}/module/{idx}"),
+                    vector=vector,
+                    payload={
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": name,
+                        "content": chunk,
+                        "full_text": f"{name} {chunk}".strip(),
+                        "content_type": "module"
+                    }
+                )
+                points.append(point)
 
         if not points:
             print("ℹ️ No modules with descriptions to index.")
