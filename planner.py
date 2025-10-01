@@ -743,7 +743,59 @@ class PipelineGenerator:
     def __init__(self):
         self.relationship_cache = {}  # Cache for computed relationship paths
 
-    def generate_pipeline(self, intent: QueryIntent) -> List[Dict[str, Any]]:
+    def _add_comprehensive_lookups(self, pipeline: List[Dict[str, Any]], collection: str, intent: QueryIntent, required_relations: Set[str]):
+        """Add comprehensive lookups for better performance on complex multi-step operations"""
+        # Define comprehensive relationship maps for each collection
+        comprehensive_relations = {
+            'workItem': {
+                # Always include project and assignee for work items (most commonly needed)
+                'project': True,
+                'assignee': True,
+                # Conditionally include others based on query complexity
+                'cycle': intent.wants_details or len(intent.group_by or []) > 0,
+                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+            },
+            'project': {
+                # Always include business for projects
+                'business': True,
+                # Include commonly accessed relations
+                'members': intent.wants_details or 'assignee' in (intent.group_by or []),
+                'cycles': intent.wants_details or 'cycle' in (intent.group_by or []),
+                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+            },
+            'cycle': {
+                'project': True,  # Always needed for cycle context
+                'business': True,  # Often needed for business context
+            },
+            'module': {
+                'project': True,  # Always needed for module context
+                'assignee': intent.wants_details or 'assignee' in (intent.group_by or []),
+                'business': True,  # Often needed for business context
+            },
+            'members': {
+                'project': True,  # Always needed for member context
+                'business': True,  # Often needed for business context
+            },
+            'page': {
+                'project': True,  # Always needed for page context
+                'linkedCycle': intent.wants_details,
+                'linkedModule': intent.wants_details,
+                'business': True,  # Often needed for business context
+            }
+        }
+
+        # Get the comprehensive relations for this collection
+        relations_to_add = comprehensive_relations.get(collection, {})
+
+        # Add each comprehensive relation if it's available in the relationship registry
+        for relation_name, should_add in relations_to_add.items():
+            if should_add and relation_name in REL.get(collection, {}):
+                # Add to required_relations so it gets processed in the main lookup loop
+                if relation_name not in required_relations:
+                    # Add the relation directly - the lookup logic will handle array vs single relations
+                    required_relations.add(relation_name)
+
+    def generate_pipeline(self, intent: QueryIntent, enable_complex_joins: bool = True) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
         pipeline: List[Dict[str, Any]] = []
 
@@ -881,6 +933,11 @@ class PipelineGenerator:
                 if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
                     required_relations.add('project')
                     required_relations.add('project.modules')
+
+        # When complex joins are enabled, proactively add comprehensive lookups
+        # for better performance on multi-step operations
+        if enable_complex_joins:
+            self._add_comprehensive_lookups(pipeline, collection, intent, required_relations)
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in sorted(required_relations):
@@ -1676,10 +1733,10 @@ class Planner:
         self.llm_parser = LLMIntentParser()
         self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
-    async def plan_and_execute(self, query: str) -> Dict[str, Any]:
+    async def plan_and_execute(self, query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
         """Plan and execute a natural language query using the Orchestrator."""
         try:
-            # Define step coroutines as closures to capture self
+            # Define step coroutines as closures to capture self and enable_complex_joins
             async def _ensure_connection(ctx: Dict[str, Any]) -> bool:
                 await mongodb_tools.connect()
                 return True
@@ -1691,7 +1748,7 @@ class Planner:
                 return result is not None
 
             def _generate_pipeline(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
-                return self.generator.generate_pipeline(ctx["intent"])  # type: ignore[index]
+                return self.generator.generate_pipeline(ctx["intent"], enable_complex_joins=enable_complex_joins)  # type: ignore[index]
 
             async def _execute(ctx: Dict[str, Any]) -> Any:
                 intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
@@ -1776,6 +1833,6 @@ class Planner:
 # Global instance
 query_planner = Planner()
 
-async def plan_and_execute_query(query: str) -> Dict[str, Any]:
+async def plan_and_execute_query(query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
     return await query_planner.plan_and_execute(query)
