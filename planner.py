@@ -272,22 +272,37 @@ class LLMIntentParser:
         return None
 
     def _infer_sort_order_from_query(self, query_text: str) -> Optional[Dict[str, int]]:
-        """Infer time-based sorting preferences from free-form query text.
+        """Infer sorting preferences from free-form query text.
 
-        Recognizes phrases like 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
-        and 'oldest', 'earliest' → createdTimeStamp asc (1). Also handles
-        'ascending/descending' when mentioned alongside time/date/created keywords.
+        Recognizes phrases like:
+        - 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
+        - 'oldest', 'earliest' → createdTimeStamp asc (1)
+        - 'top N priority' → priority desc (-1)
+        - 'highest priority' → priority desc (-1)
+        - 'top N' with time context → createdTimeStamp desc (-1)
         """
         if not query_text:
             return None
 
         text = query_text.lower()
 
+        # Priority-based sorting cues (highest priority first)
+        if re.search(r'\b(?:top|highest|most|high)\s+\d*\s*priority\b', text):
+            return {"priority": -1}
+        if re.search(r'\bpriority\s+(?:top|highest|desc|descending)\b', text):
+            return {"priority": -1}
+        if re.search(r'\b(?:lowest|low)\s+priority\b', text):
+            return {"priority": 1}
+            
         # Direct recency/age cues
         if re.search(r"\b(recent|latest|newest|most\s+recent|newer\s+first)\b", text):
             return {"createdTimeStamp": -1}
         if re.search(r"\b(oldest|earliest|older\s+first)\b", text):
             return {"createdTimeStamp": 1}
+            
+        # "Top N" without explicit field → assume recent (most common use case)
+        if re.search(r'\btop\s+\d+\b', text) and not re.search(r'\bpriority\b', text):
+            return {"createdTimeStamp": -1}
 
         # Asc/Desc cues when paired with time/date/created terms
         mentions_time = re.search(r"\b(time|date|created|creation|timestamp|recent)\b", text) is not None
@@ -298,6 +313,7 @@ class LLMIntentParser:
                 return {"createdTimeStamp": 1}
 
         return None
+
 
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
@@ -343,6 +359,19 @@ class LLMIntentParser:
             "- 'oldest', 'earliest', 'older first' → {\"createdTimeStamp\": 1}\n"
             "- If 'ascending/descending' is mentioned with created/time/date/timestamp, map to 1/-1 respectively on 'createdTimeStamp'.\n"
             "Only include sort_order when relevant; otherwise set it to null.\n\n"
+
+            "## LIMIT EXTRACTION (CRITICAL)\n"
+            "Extract the result limit intelligently from the user's query:\n"
+            "- 'top N' / 'first N' / 'N items' → limit: N (e.g., 'top 5' → limit: 5)\n"
+            "- 'all' / 'every' / 'list all' → limit: 1000 (high limit to get all results)\n"
+            "- 'a few' / 'some' → limit: 5\n"
+            "- 'several' → limit: 10\n"
+            "- 'one' / 'single' / 'find X' (singular) → limit: 1, fetch_one: true\n"
+            "- No specific mention → limit: 20 (reasonable default)\n"
+            "- For count/aggregation queries → limit: null (no limit needed)\n"
+            "IMPORTANT: When 'top N' is used, also infer appropriate sorting:\n"
+            "  - 'top N' with priority context → sort_order: {\"priority\": -1}\n"
+            "  - 'top N' with date/recent context → sort_order: {\"createdTimeStamp\": -1}\n\n"
 
             "## NAME EXTRACTION RULES - CRITICAL\n"
             "ALWAYS extract ONLY the core entity name, NEVER include descriptive phrases:\n"
@@ -427,7 +456,12 @@ class LLMIntentParser:
             "- 'work items updated in the last 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
             "- 'tasks created since yesterday' → {\"primary_entity\": \"workItem\", \"filters\": {\"createdTimeStamp_from\": \"yesterday\"}, \"aggregations\": []}\n"
             "- 'issues from the last week' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"last_week\"}, \"aggregations\": []}\n"
-            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n\n"
+            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
+            "- 'top 5 priority work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"priority\": -1}, \"limit\": 5}\n"
+            "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
+            "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
+            "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
+            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -664,14 +698,23 @@ class LLMIntentParser:
             if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
                 sort_order = {norm_key: norm_dir}
 
-        # Limit
+        # Limit - intelligent handling based on query type
         limit_val = data.get("limit")
         try:
-            limit = int(limit_val) if limit_val is not None else 20
-            if limit <= 0:
+            # For count/aggregation-only queries, no limit needed unless specifically requested
+            if aggregations and not wants_details and limit_val is None:
+                limit = None
+            elif limit_val is None or limit_val == 20:
+                # Use default limit when LLM doesn't provide a specific limit
                 limit = 20
-            limit = min(limit, 100)
+            else:
+                limit = int(limit_val)
+                if limit <= 0:
+                    limit = 20
+                # Cap at 1000 to prevent runaway queries (instead of 100)
+                limit = min(limit, 1000)
         except Exception:
+            # Last resort fallback: use default limit
             limit = 20
 
         # Skip (offset)
