@@ -29,16 +29,27 @@ class DirectMongoClient:
         self._connect_lock = asyncio.Lock()
 
     async def connect(self):
-        """Initialize direct MongoDB connection"""
+        """Initialize direct MongoDB connection with persistent connection pool"""
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("direct_mongo.connect", kind=trace.SpanKind.INTERNAL) as span:
             try:
                 async with self._connect_lock:
                     if self.connected and self.client:
+                        print("✅ MongoDB already connected (reusing persistent connection)")
                         return
                     
-                    # Create Motor client (async PyMongo)
-                    self.client = AsyncIOMotorClient(MONGODB_CONNECTION_STRING)
+                    # Create Motor client with optimized connection pool settings
+                    # Motor maintains persistent connections automatically
+                    self.client = AsyncIOMotorClient(
+                        MONGODB_CONNECTION_STRING,
+                        maxPoolSize=50,          # Max connections in pool
+                        minPoolSize=10,          # Keep minimum connections alive
+                        maxIdleTimeMS=45000,     # Keep idle connections for 45s
+                        waitQueueTimeoutMS=5000, # Faster timeout for queue
+                        serverSelectionTimeoutMS=5000,  # Faster server selection
+                        connectTimeoutMS=10000,  # Connection timeout
+                        socketTimeoutMS=20000,   # Socket timeout
+                    )
                     
                     # Test connection
                     await self.client.admin.command('ping')
@@ -47,12 +58,15 @@ class DirectMongoClient:
                     
                     if span:
                         try:
-                            span.set_attribute("connection.type", "direct_pymongo")
+                            span.set_attribute("connection.type", "direct_motor")
+                            span.set_attribute("connection.persistent", True)
+                            span.set_attribute("connection.pool_size", 50)
                             span.set_attribute("database.name", DATABASE_NAME)
                         except Exception:
                             pass
                     
-                    print(f"✅ Connected to MongoDB directly (bypassing MCP/Smithery)")
+                    print(f"✅ MongoDB connected with persistent connection pool (50 connections)")
+                    print(f"   Direct connection - no MCP/Smithery overhead!")
                     
             except Exception as e:
                 if span:
@@ -101,14 +115,13 @@ class DirectMongoClient:
             except Exception:
                 pass
             
-            if not self.connected:
-                await self.connect()
-            
+            # Motor maintains persistent connection pool automatically
+            # No need to check connection status on every query - massive latency savings!
             if not self.client:
-                raise RuntimeError("MongoDB client not initialized")
+                raise RuntimeError("MongoDB client not initialized. Call connect() first.")
             
             try:
-                # Execute aggregation
+                # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
                 coll = db[collection]
                 cursor = coll.aggregate(pipeline)
