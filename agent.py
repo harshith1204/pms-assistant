@@ -324,6 +324,9 @@ class QdrantMemoryStore:
         except Exception:
             return []
 
+# Global long-term memory instance
+qdrant_memory_store = QdrantMemoryStore()
+
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
@@ -635,6 +638,24 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
+async def _store_in_long_term_memory(query: str, response: str, conversation_id: str):
+    """Store conversation in QdrantMemoryStore asynchronously."""
+    try:
+        conversation_text = f"User: {query}\n\nAssistant: {response}"
+        qdrant_memory_store.upsert(
+            text=conversation_text,
+            payload={
+                "conversation_id": conversation_id,
+                "timestamp": time.time(),
+                "query": query,
+                "response": response,
+                "type": "conversation_exchange"
+            }
+        )
+    except Exception as e:
+        print(f"Error storing in long-term memory: {e}")
+
+
 class PhoenixCallbackHandler(AsyncCallbackHandler):
     """WebSocket streaming callback handler for Phoenix events"""
 
@@ -904,10 +925,38 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
+                # Retrieve relevant long-term memories
+                past_memories = []
+                if qdrant_memory_store.enabled:
+                    try:
+                        past_memories = qdrant_memory_store.search(query, top_k=3)
+                    except Exception as e:
+                        print(f"Warning: Failed to retrieve long-term memories: {e}")
+
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
+
+                # Add relevant long-term memories if available
+                if past_memories:
+                    memory_snippets = []
+                    for i, mem in enumerate(past_memories):
+                        payload = mem.get('payload', {})
+                        score = mem.get('score', 0.0)
+                        if score > 0.5:  # Only high-relevance memories
+                            memory_snippets.append(
+                                f"[Past Context {i+1}]\n"
+                                f"Q: {payload.get('query', '')[:150]}\n"
+                                f"A: {payload.get('response', '')[:150]}"
+                            )
+                    
+                    if memory_snippets:
+                        memory_context = "\n\n".join(memory_snippets)
+                        messages.append(SystemMessage(
+                            content=f"Relevant past conversations:\n{memory_context}"
+                        ))
+
                 messages.extend(conversation_context)
 
                 # Add current user message
@@ -1063,6 +1112,25 @@ class MongoDBAgent:
 
             # If we exit the loop due to step cap, return the best available answer
             if last_response is not None:
+                # Register turn and update summary if needed
+                conversation_memory.register_turn(conversation_id)
+                if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                    try:
+                        asyncio.create_task(
+                            conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to update summary: {e}")
+                
+                # Store in long-term memory (non-blocking)
+                if qdrant_memory_store.enabled:
+                    try:
+                        asyncio.create_task(
+                            _store_in_long_term_memory(query, last_response.content, conversation_id)
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to store in long-term memory: {e}")
+                
                 return last_response.content
             return "Reached maximum reasoning steps without a final answer."
 
@@ -1097,10 +1165,38 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
+                # Retrieve relevant long-term memories
+                past_memories = []
+                if qdrant_memory_store.enabled:
+                    try:
+                        past_memories = qdrant_memory_store.search(query, top_k=3)
+                    except Exception as e:
+                        print(f"Warning: Failed to retrieve long-term memories: {e}")
+
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
+
+                # Add relevant long-term memories if available
+                if past_memories:
+                    memory_snippets = []
+                    for i, mem in enumerate(past_memories):
+                        payload = mem.get('payload', {})
+                        score = mem.get('score', 0.0)
+                        if score > 0.5:  # Only high-relevance memories
+                            memory_snippets.append(
+                                f"[Past Context {i+1}]\n"
+                                f"Q: {payload.get('query', '')[:150]}\n"
+                                f"A: {payload.get('response', '')[:150]}"
+                            )
+                    
+                    if memory_snippets:
+                        memory_context = "\n\n".join(memory_snippets)
+                        messages.append(SystemMessage(
+                            content=f"Relevant past conversations:\n{memory_context}"
+                        ))
+
                 messages.extend(conversation_context)
 
                 # Add current user message
@@ -1239,6 +1335,25 @@ class MongoDBAgent:
 
                 # Step cap reached; send best available response
                 if last_response is not None:
+                    # Register turn and update summary if needed
+                    conversation_memory.register_turn(conversation_id)
+                    if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                        try:
+                            asyncio.create_task(
+                                conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to update summary: {e}")
+                    
+                    # Store in long-term memory (non-blocking)
+                    if qdrant_memory_store.enabled:
+                        try:
+                            asyncio.create_task(
+                                _store_in_long_term_memory(query, last_response.content, conversation_id)
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to store in long-term memory: {e}")
+                    
                     yield last_response.content
                 else:
                     yield "Reached maximum reasoning steps without a final answer."
