@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import asyncio
@@ -74,6 +75,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve exported files (Excel/Markdown/CSV)
+app.mount("/exports", StaticFiles(directory="exports"), name="exports")
 
 @app.get("/")
 async def root():
