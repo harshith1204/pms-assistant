@@ -341,8 +341,6 @@ def _select_tools_for_query(user_query: str):
         "description", "context", "summarize", "summary", "snippet", "snippets",
         "search", "find examples", "show examples", "browse"
     ]
-    workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
-    # Member-related structured queries should always go to mongo_query (avoid RAG)
     member_terms = [
         "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
         "user", "users", "staff", "people", "personnel"
@@ -370,11 +368,6 @@ def _select_tools_for_query(user_query: str):
         if has_any(canonical_field_terms):
             allowed_names.append("rag_mongo")
 
-    # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
-    multi_markers = [
-        " compare ", " versus ", " vs ", " side by side ", " both ", " and also ", " together ", ";", " then ",
-        " in parallel", " simultaneously", " at the same time", " batch ", " run multiple"
-    ]
     # Detect presence of multiple action intents in one query
     action_structured = ["count", "group", "breakdown", "distribution", "compare"]
     action_listing = ["list", "show", "top", "recent", "titles", "items"]

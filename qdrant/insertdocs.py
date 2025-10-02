@@ -7,6 +7,7 @@ from bson.binary import Binary
 from bson.objectid import ObjectId
 from qdrant_client.http.models import PointStruct, PayloadSchemaType, Distance, VectorParams
 from sentence_transformers import SentenceTransformer
+from collections import defaultdict
 
 # Add the parent directory to sys.path so we can import from qdrant
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,6 +32,88 @@ login(hf_token)
 
 # Load embedding model once
 embedder = SentenceTransformer("google/embeddinggemma-300m")
+
+# ------------------ Chunking Statistics ------------------
+
+class ChunkingStats:
+    """Track and display chunking statistics during indexing."""
+    
+    def __init__(self):
+        self.by_type = defaultdict(lambda: {
+            "total_docs": 0,
+            "single_chunk": 0,
+            "multi_chunk": 0,
+            "total_chunks": 0,
+            "chunk_distribution": defaultdict(int),
+            "total_words": 0,
+            "max_chunks": 0,
+            "max_chunks_doc": None,
+        })
+    
+    def record(self, content_type: str, doc_id: str, title: str, chunk_count: int, word_count: int):
+        """Record chunking info for a document."""
+        stats = self.by_type[content_type]
+        stats["total_docs"] += 1
+        stats["total_chunks"] += chunk_count
+        stats["total_words"] += word_count
+        stats["chunk_distribution"][chunk_count] += 1
+        
+        if chunk_count == 1:
+            stats["single_chunk"] += 1
+        else:
+            stats["multi_chunk"] += 1
+        
+        if chunk_count > stats["max_chunks"]:
+            stats["max_chunks"] = chunk_count
+            stats["max_chunks_doc"] = (doc_id, title[:50])
+    
+    def print_summary(self):
+        """Print comprehensive chunking statistics."""
+        print("\n" + "=" * 80)
+        print("📊 CHUNKING STATISTICS SUMMARY")
+        print("=" * 80)
+        
+        total_docs = 0
+        total_chunks = 0
+        
+        for content_type, stats in sorted(self.by_type.items()):
+            total_docs += stats["total_docs"]
+            total_chunks += stats["total_chunks"]
+            
+            if stats["total_docs"] == 0:
+                continue
+            
+            print(f"\n▸ {content_type.upper()}")
+            print(f"  Documents: {stats['total_docs']}")
+            print(f"  Total chunks: {stats['total_chunks']}")
+            print(f"  Avg chunks/doc: {stats['total_chunks'] / stats['total_docs']:.2f}")
+            print(f"  Avg words/doc: {stats['total_words'] / stats['total_docs']:.0f}")
+            print(f"  Single-chunk: {stats['single_chunk']} ({stats['single_chunk']/stats['total_docs']*100:.1f}%)")
+            print(f"  Multi-chunk: {stats['multi_chunk']} ({stats['multi_chunk']/stats['total_docs']*100:.1f}%)")
+            
+            if stats["max_chunks"] > 1:
+                doc_id, title = stats["max_chunks_doc"]
+                print(f"  Max chunks: {stats['max_chunks']} (in '{title}...')")
+            
+            # Show distribution for multi-chunk documents
+            if stats["multi_chunk"] > 0:
+                print(f"  Chunk distribution:")
+                multi_chunks = [k for k in stats["chunk_distribution"].keys() if k > 1]
+                for chunk_count in sorted(multi_chunks)[:5]:  # Show top 5
+                    count = stats["chunk_distribution"][chunk_count]
+                    print(f"    - {chunk_count} chunks: {count} docs")
+        
+        if total_docs > 0:
+            print(f"\n{'─' * 80}")
+            print(f"📈 OVERALL TOTALS:")
+            print(f"  Total documents: {total_docs}")
+            print(f"  Total chunks (points): {total_chunks}")
+            print(f"  Average chunks per document: {total_chunks / total_docs:.2f}")
+            print(f"  Chunking expansion: {(total_chunks / total_docs - 1) * 100:.1f}%")
+        print("=" * 80 + "\n")
+
+# Global stats instance
+_stats = ChunkingStats()
 
 # ------------------ Helpers ------------------
 
@@ -105,22 +188,69 @@ def point_id_from_seed(seed: str) -> str:
     """Create a deterministic UUID from a seed string for Qdrant point IDs."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
 
-def chunk_text(text: str, max_words: int = 300, overlap_words: int = 60):
+# ------------------ Chunking Configuration ------------------
+
+# Chunking settings per content type
+# Adjust these values to control chunking behavior
+CHUNKING_CONFIG = {
+    "page": {
+        "max_words": 320,
+        "overlap_words": 80,
+        "min_words_to_chunk": 320,  # Only chunk if text is longer than this
+    },
+    "work_item": {
+        "max_words": 300,
+        "overlap_words": 60,
+        "min_words_to_chunk": 300,
+    },
+    "project": {
+        "max_words": 300,
+        "overlap_words": 60,
+        "min_words_to_chunk": 300,
+    },
+    "cycle": {
+        "max_words": 300,
+        "overlap_words": 60,
+        "min_words_to_chunk": 300,
+    },
+    "module": {
+        "max_words": 300,
+        "overlap_words": 60,
+        "min_words_to_chunk": 300,
+    },
+}
+
+# For more aggressive chunking (more multi-chunk documents), use:
+# CHUNKING_CONFIG = {
+#     "page": {"max_words": 200, "overlap_words": 40, "min_words_to_chunk": 100},
+#     "work_item": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+#     "project": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+#     "cycle": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+#     "module": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+# }
+
+def chunk_text(text: str, max_words: int = 300, overlap_words: int = 60, min_words_to_chunk: int = None):
     """Split long text into overlapping word chunks suitable for embeddings.
 
     Args:
         text: Input text to chunk.
         max_words: Target words per chunk.
         overlap_words: Overlap words between consecutive chunks.
+        min_words_to_chunk: Minimum words needed to trigger chunking (default: max_words).
 
     Returns:
         List of chunk strings.
     """
     if not text:
         return []
+    
     words = text.split()
-    if len(words) <= max_words:
+    min_threshold = min_words_to_chunk if min_words_to_chunk is not None else max_words
+    
+    # Don't chunk if below minimum threshold
+    if len(words) <= min_threshold:
         return [text]
+    
     chunks = []
     step = max(1, max_words - overlap_words)
     for start in range(0, len(words), step):
@@ -131,6 +261,24 @@ def chunk_text(text: str, max_words: int = 300, overlap_words: int = 60):
         if end == len(words):
             break
     return chunks
+
+def get_chunks_for_content(text: str, content_type: str):
+    """Get chunks for a specific content type using its configuration.
+    
+    Args:
+        text: Text to chunk
+        content_type: Type of content (page, work_item, etc.)
+        
+    Returns:
+        List of chunk strings
+    """
+    config = CHUNKING_CONFIG.get(content_type, CHUNKING_CONFIG["work_item"])
+    return chunk_text(
+        text,
+        max_words=config["max_words"],
+        overlap_words=config["overlap_words"],
+        min_words_to_chunk=config.get("min_words_to_chunk", config["max_words"])
+    )
 
 def batch_iterable(iterable, batch_size):
     """Yield successive batches from a list or iterable."""
@@ -211,9 +359,13 @@ def index_pages_to_qdrant():
                     metadata["created_by_name"] = doc["createdBy"].get("name")
 
             # Chunk combined text for better retrieval
-            chunks = chunk_text(combined_text, max_words=320, overlap_words=80)
+            chunks = get_chunks_for_content(combined_text, "page")
             if not chunks:
                 chunks = [combined_text]
+            
+            # Record statistics
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("page", mongo_id, title, len(chunks), word_count)
 
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
@@ -330,9 +482,13 @@ def index_workitems_to_qdrant():
                     metadata["created_by_name"] = doc["createdBy"].get("name")
 
             # Chunk work items with long descriptions (similar to pages)
-            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            chunks = get_chunks_for_content(combined_text, "work_item")
             if not chunks:
                 chunks = [combined_text]
+            
+            # Record statistics
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("work_item", mongo_id, doc.get("title", ""), len(chunks), word_count)
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
@@ -387,9 +543,13 @@ def index_projects_to_qdrant():
                 continue
 
             # Chunk projects with long descriptions
-            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            chunks = get_chunks_for_content(combined_text, "project")
             if not chunks:
                 chunks = [combined_text]
+            
+            # Record statistics
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("project", mongo_id, name, len(chunks), word_count)
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
@@ -438,9 +598,13 @@ def index_cycles_to_qdrant():
                 continue
 
             # Chunk cycles with long descriptions
-            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            chunks = get_chunks_for_content(combined_text, "cycle")
             if not chunks:
                 chunks = [combined_text]
+            
+            # Record statistics
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("cycle", mongo_id, name, len(chunks), word_count)
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
@@ -489,9 +653,13 @@ def index_modules_to_qdrant():
                 continue
 
             # Chunk modules with long descriptions
-            chunks = chunk_text(combined_text, max_words=300, overlap_words=60)
+            chunks = get_chunks_for_content(combined_text, "module")
             if not chunks:
                 chunks = [combined_text]
+            
+            # Record statistics
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("module", mongo_id, name, len(chunks), word_count)
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
@@ -524,20 +692,31 @@ def index_modules_to_qdrant():
 
 # ------------------ Usage ------------------
 if __name__ == "__main__":
-    print("🚀 Starting Qdrant indexing with chunking...")
-    print("\nAll content types now use chunking:")
-    print("  - Pages: 320 words/chunk, 80-word overlap")
-    print("  - Work Items: 300 words/chunk, 60-word overlap")
-    print("  - Projects: 300 words/chunk, 60-word overlap")
-    print("  - Cycles: 300 words/chunk, 60-word overlap")
-    print("  - Modules: 300 words/chunk, 60-word overlap\n")
+    print("=" * 80)
+    print("🚀 STARTING QDRANT INDEXING WITH CONFIGURABLE CHUNKING")
+    print("=" * 80)
     
+    print("\n📋 Active Chunking Configuration:")
+    for content_type, config in CHUNKING_CONFIG.items():
+        print(f"  • {content_type.upper()}:")
+        print(f"      - Chunk size: {config['max_words']} words")
+        print(f"      - Overlap: {config['overlap_words']} words")
+        print(f"      - Min to chunk: {config.get('min_words_to_chunk', config['max_words'])} words")
+    
+    print(f"\n💡 TIP: To change chunking behavior, edit CHUNKING_CONFIG in {__file__}")
+    print("    Uncomment the aggressive config for more granular chunks.\n")
+    
+    print("─" * 80)
     index_pages_to_qdrant()
     index_workitems_to_qdrant()
     index_projects_to_qdrant()
     index_cycles_to_qdrant()
     index_modules_to_qdrant()
     
-    print("\n✅ Qdrant indexing complete!")
-    print("🚀 All documents now have chunk metadata (parent_id, chunk_index, chunk_count)")
+    # Print comprehensive statistics
+    _stats.print_summary()
+    
+    print("✅ Qdrant indexing complete!")
+    print("🚀 All documents have chunk metadata (parent_id, chunk_index, chunk_count)")
     print("🚀 Chunk-aware retrieval is ready to use!")
+    print("=" * 80)
