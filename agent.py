@@ -1152,31 +1152,25 @@ class MongoDBAgent:
                     "- Break the user request into logical steps.\n"
                     "- For INDEPENDENT operations: Call multiple tools together.\n"
                     "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
-                    "QUERY SCENARIO CLASSIFICATION:\n"
-                    "Before calling tools, identify the query scenario type:\n"
-                    "• COUNT - numeric/summary queries (how many, count, total)\n"
-                    "• BREAKDOWN - grouped/distribution queries (by priority, by state, breakdown)\n"
-                    "• LIST - showing multiple items (list all, show items, display)\n"
-                    "• DETAIL - specific item information (about X, details on Y)\n"
-                    "• COMPARISON - comparing entities (compare A vs B, difference between)\n"
-                    "• ANALYSIS - insights/trends (analyze, patterns, why, insights)\n"
-                    "• SEARCH - finding content (find docs, search for)\n"
-                    "• EXPORT - data export (export to excel, download, save)\n\n"
-                    "Start your response with: SCENARIO: [type]\n\n"
                     "DECISION GUIDE:\n"
                     "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
                     "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
                     "- Use 'rag_mongo' to find items by semantic search AND get complete MongoDB fields.\n\n"
-                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                    "IMPORTANT: Call the appropriate tool(s) immediately. Don't explain what you're going to do - just call the tools.\n"
+                    "Valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
                 if need_finalization:
-                    # Extract scenario from the latest assistant response
-                    scenario = extract_scenario_tag(getattr(last_response, "content", "")) or "search"
-                    print(f"🎯 Response scenario: {scenario.upper()}")
-                    finalization_prompt = build_finalization_prompt(scenario)
-                    finalization_instructions = SystemMessage(content=finalization_prompt)
+                    # After tool execution, ask for final synthesis
+                    print(f"📝 Requesting final synthesis after tool execution [Step {steps+1}/{self.max_steps}]")
+                    finalization_instructions = SystemMessage(content=(
+                        "Based on the tool results above, provide a clear, concise answer to the user's question.\n"
+                        "- Synthesize the data into a natural response\n"
+                        "- Keep it focused and relevant\n"
+                        "- Don't just repeat the tool output\n"
+                        "- Use formatting (bullets, numbers) where helpful"
+                    ))
                     invoke_messages = messages + [routing_instructions, finalization_instructions]
                     need_finalization = False
 
@@ -1193,17 +1187,15 @@ class MongoDBAgent:
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
 
-                # If no tools requested, check for scenario tag and perform one-shot finalization
+                # If no tools requested, return the response directly
                 if not getattr(response, "tool_calls", None):
-                    scenario = extract_scenario_tag(getattr(response, "content", ""))
-                    if scenario:
-                        finalization_prompt = build_finalization_prompt(scenario)
-                        finalization_instructions = SystemMessage(content=finalization_prompt)
-                        # Perform a final synthesis pass with focused prompt
-                        synthesis = await llm_with_tools.ainvoke(messages + [routing_instructions, finalization_instructions])
-                        conversation_memory.add_message(conversation_id, synthesis)
-                        return synthesis.content
-                    return response.content
+                    response_content = getattr(response, "content", "") or ""
+                    
+                    # If response is very short, it might be incomplete
+                    if len(response_content.strip()) < 20:
+                        return "I apologize, but I need more information to answer your question. Could you please rephrase or provide more details?"
+                    
+                    return response_content
 
                 # Execute requested tools
                 # The LLM decides execution order by how it calls tools:
@@ -1351,30 +1343,24 @@ class MongoDBAgent:
                             "- Break the user request into logical steps.\n"
                             "- For INDEPENDENT operations: Call multiple tools together.\n"
                             "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
-                            "QUERY SCENARIO CLASSIFICATION:\n"
-                            "Before calling tools, identify the query scenario type:\n"
-                            "• COUNT - numeric/summary queries (how many, count, total)\n"
-                            "• BREAKDOWN - grouped/distribution queries (by priority, by state, breakdown)\n"
-                            "• LIST - showing multiple items (list all, show items, display)\n"
-                            "• DETAIL - specific item information (about X, details on Y)\n"
-                            "• COMPARISON - comparing entities (compare A vs B, difference between)\n"
-                            "• ANALYSIS - insights/trends (analyze, patterns, why, insights)\n"
-                            "• SEARCH - finding content (find docs, search for)\n"
-                            "• EXPORT - data export (export to excel, download, save)\n\n"
-                            "Start your response with: SCENARIO: [type]\n\n"
                             "DECISION GUIDE:\n"
-                            "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
-                            "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
-                            "- 'rag_mongo' → semantic search + complete MongoDB fields (any entity type).\n\n"
-                            "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                            "- Use 'mongo_query' for DB facts (counts, group, filter, sort, date, assignee, state, project info).\n"
+                            "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
+                            "- Use 'rag_mongo' for semantic search + complete MongoDB fields (any entity type).\n\n"
+                            "IMPORTANT: Call the appropriate tool(s) immediately. Don't explain what you're going to do - just call the tools.\n"
+                            "Valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
-                            # Extract scenario from the latest assistant response
-                            scenario = extract_scenario_tag(getattr(last_response, "content", "")) or "search"
-                            print(f"🎯 Response scenario: {scenario.upper()}")
-                            finalization_prompt = build_finalization_prompt(scenario)
-                            finalization_instructions = SystemMessage(content=finalization_prompt)
+                            # After tool execution, ask for final synthesis
+                            print(f"📝 Requesting final synthesis after tool execution [Step {steps+1}/{self.max_steps}]")
+                            finalization_instructions = SystemMessage(content=(
+                                "Based on the tool results above, provide a clear, concise answer to the user's question.\n"
+                                "- Synthesize the data into a natural response\n"
+                                "- Keep it focused and relevant\n"
+                                "- Don't just repeat the tool output\n"
+                                "- Use formatting (bullets, numbers) where helpful"
+                            ))
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
                         response = await llm_with_tools.ainvoke(
@@ -1394,18 +1380,19 @@ class MongoDBAgent:
                     conversation_memory.add_message(conversation_id, response)
 
                     if not getattr(response, "tool_calls", None):
-                        scenario = extract_scenario_tag(getattr(response, "content", ""))
-                        if scenario:
-                            finalization_prompt = build_finalization_prompt(scenario)
-                            finalization_instructions = SystemMessage(content=finalization_prompt)
-                            synthesis = await llm_with_tools.ainvoke(
-                                messages + [routing_instructions, finalization_instructions],
-                                config={"callbacks": [callback_handler]},
-                            )
-                            conversation_memory.add_message(conversation_id, synthesis)
-                            yield synthesis.content
+                        # No tool calls - check if this is a direct answer or needs tools
+                        response_content = getattr(response, "content", "") or ""
+                        print(f"ℹ️  No tool calls. Response length: {len(response_content)} chars. need_finalization={need_finalization}")
+                        
+                        # If response is very short or looks like reasoning only, it might be stuck
+                        if len(response_content.strip()) < 20:
+                            print(f"⚠️  Response too short, requesting clarification")
+                            yield "I apologize, but I need more information to answer your question. Could you please rephrase or provide more details?"
                             return
-                        yield response.content
+                        
+                        # Direct answer without tools (e.g., greetings, clarifications, or simple questions)
+                        print(f"✅ Direct answer without tools (length: {len(response_content)} chars)")
+                        yield response_content
                         return
 
                     # Execute requested tools with streaming callbacks
@@ -1416,7 +1403,7 @@ class MongoDBAgent:
                     # Log execution info
                     tool_names = [tc["name"] for tc in response.tool_calls]
                     execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
-                    print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
+                    print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names} [Step {steps+1}/{self.max_steps}]")
                     
                     if self.enable_parallel_tools and len(response.tool_calls) > 1:
                         # Multiple tools called together = LLM determined they're independent
