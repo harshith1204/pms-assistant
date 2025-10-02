@@ -145,45 +145,6 @@ llm = ChatOllama(
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
-
-def _detect_multistep(user_query: str) -> bool:
-    """Detect whether a query likely requires multiple steps/tools.
-
-    Signals include: explicit sequencing terms, multiple distinct intents
-    (e.g., count + list + search), or requests to run in parallel/batch.
-    """
-    q = (user_query or "").lower()
-    # Obvious multi-step markers
-    multi_markers = [
-        " compare ", " versus ", " vs ", " side by side ", " and also ",
-        " together ", ";", " then ", " in parallel", " simultaneously",
-        " at the same time", " both ", " batch ", " run multiple", " multi-step",
-    ]
-    if any(m in q for m in multi_markers):
-        return True
-
-    # Multiple action categories in one sentence
-    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
-    action_listing = ["list", "show", "top", "recent", "titles", "items"]
-    action_content = ["summarize", "snippet", "snippets", "context", "explain", "search"]
-
-    def has_any(terms):
-        return any(term in q for term in terms)
-
-    multiple_actions = (
-        (has_any(action_structured) and has_any(action_listing)) or
-        (has_any(action_structured) and has_any(action_content)) or
-        (has_any(action_listing) and has_any(action_content))
-    )
-    if multiple_actions:
-        return True
-
-    # Heuristic: presence of multiple entity types hints multi-step
-    entity_terms = ["project", "work item", "work items", "cycle", "module", "members", "page", "pages", "documentation", "docs"]
-    if sum(1 for t in entity_terms if t in q) >= 2 and ("and" in q or ";" in q):
-        return True
-    return False
-
 def _select_tools_for_query(user_query: str):
     """Return a subset of tools to expose to the LLM for this query.
 
