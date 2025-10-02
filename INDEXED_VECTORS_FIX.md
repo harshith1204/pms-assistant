@@ -54,30 +54,18 @@ Same configuration applied when creating collections on connection.
 
 ## 🚀 How to Apply the Fix
 
-### Option 1: For Existing Collections (RECOMMENDED)
+The fix is already integrated into `insertdocs.py` and `dbconnection.py`!
 
-Run the fix script:
-
+**For new collections:**
 ```bash
 cd /workspace
-python3 fix_indexed_vectors.py
-```
-
-This will:
-1. Check your current configuration
-2. Update `indexing_threshold` to 0
-3. Trigger immediate HNSW indexing
-4. Verify the fix worked
-
-### Option 2: Recreate Collection (Nuclear Option)
-
-```bash
-# This will DELETE and recreate your collection
-# Only use if Option 1 doesn't work
 python3 qdrant/insertdocs.py
 ```
 
-The new collection will have indexing enabled from the start.
+New collections will automatically have `indexing_threshold=0` and HNSW indexing will start immediately.
+
+**For existing collections:**
+The updated `dbconnection.py` will apply the correct config when you restart your application. The HNSW index will build automatically in the background.
 
 ## 🔍 Verify the Fix
 
@@ -201,7 +189,7 @@ After running the fix:
 | Future collections | Old config | Updated `insertdocs.py` & `dbconnection.py` |
 
 **Next Steps:**
-1. Run: `python3 fix_indexed_vectors.py`
+1. Run: `python3 qdrant/insertdocs.py` (for new collections)
 2. Verify: `python3 check_qdrant_status.py`
 3. Enjoy faster search! 🚀
 
@@ -211,4 +199,3 @@ After running the fix:
 - ✅ `/workspace/qdrant/insertdocs.py` - Collection creation with indexing enabled
 - ✅ `/workspace/qdrant/dbconnection.py` - Connection-time collection creation
 - ✅ `/workspace/check_qdrant_status.py` - Enhanced diagnostics
-- ✅ `/workspace/fix_indexed_vectors.py` - Fix script for existing collections

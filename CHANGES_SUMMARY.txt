@@ -192,16 +192,28 @@ Diagnostics:
 QUICK COMMANDS
 ================================================================================
 
-# Standard indexing with stats:
+# Standard indexing with stats and HNSW indexing enabled:
 python3 qdrant/insertdocs.py
 
-# Check collection status:
+# Check collection status (including indexed_vectors_count):
 python3 check_qdrant_status.py
 
 # For aggressive chunking:
 # 1. Edit insertdocs.py line 195
 # 2. Uncomment lines 224-230
 # 3. Run: python3 qdrant/insertdocs.py
+
+================================================================================
+INDEXED_VECTORS_COUNT FIX
+================================================================================
+
+✅ FIXED: indexed_vectors_count was 0 due to default threshold of 20,000
+
+The fix is integrated into:
+  - insertdocs.py (lines 128-147): Creates collections with indexing_threshold=0
+  - dbconnection.py (lines 48-65): Same configuration on connection
+
+No separate fix script needed - just run insertdocs.py!
 
 ================================================================================
 SUMMARY
