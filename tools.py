@@ -695,6 +695,12 @@ async def mongo_query(
             # If caller requested machine-readable rows, return JSON only (no prose)
             try:
                 if isinstance(output_format, str) and output_format.lower() in ["rows", "json", "data"]:
+                    # cache rows for reuse across turns
+                    conv_id = os.getenv("CONVERSATION_ID", "default")
+                    fp = _fingerprint_query(intent if isinstance(intent, dict) else None, pipeline)
+                    _cache_set_json(f"rows:{conv_id}:{fp}", filtered, ttl=600)
+                    # also store as last rows for convenience
+                    _cache_set_json(f"last_rows:{conv_id}", filtered, ttl=600)
                     import json as _json
                     return _json.dumps(filtered, ensure_ascii=False)
             except Exception:
@@ -727,7 +733,8 @@ async def rag_search(
     group_by: str = None,
     limit: int = 10,
     show_content: bool = True,
-    use_chunk_aware: bool = True
+    use_chunk_aware: bool = True,
+    output_format: str = "summary"
 ) -> str:
     """Universal RAG search tool with filtering, grouping, and rich metadata.
     
@@ -794,11 +801,31 @@ async def rag_search(
             if not reconstructed_docs:
                 return f"❌ No results found for query: '{query}'"
             
-            return format_reconstructed_results(
-                docs=reconstructed_docs,
-                show_full_content=show_content,
-                show_chunk_details=True
-            )
+            if isinstance(output_format, str) and output_format.lower() in ["rows", "json", "data"]:
+                # rows = list of flat dicts from reconstructed docs
+                rows: List[Dict[str, Any]] = []
+                for doc in reconstructed_docs:
+                    meta = {
+                        "content_type": doc.get("content_type"),
+                        "title": doc.get("title"),
+                        "project_name": doc.get("project_name"),
+                        "priority": doc.get("priority"),
+                        "state_name": doc.get("state_name"),
+                        "assignee_name": doc.get("assignee_name"),
+                        "displayBugNo": doc.get("displayBugNo"),
+                        "updatedAt": doc.get("updatedAt"),
+                        "score": doc.get("score"),
+                    }
+                    rows.append(meta)
+                conv_id = os.getenv("CONVERSATION_ID", "default")
+                _cache_set_json(f"last_rows:{conv_id}", rows, ttl=600)
+                return json.dumps(rows, ensure_ascii=False)
+            else:
+                return format_reconstructed_results(
+                    docs=reconstructed_docs,
+                    show_full_content=show_content,
+                    show_chunk_details=True
+                )
         
         # Fallback to standard retrieval
         results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
@@ -806,6 +833,25 @@ async def rag_search(
         if not results:
             return f"❌ No results found for query: '{query}'"
         
+        # If rows requested, cache and return machine-readable rows
+        if isinstance(output_format, str) and output_format.lower() in ["rows", "json", "data"]:
+            rows: List[Dict[str, Any]] = []
+            for r in results:
+                rows.append({
+                    "content_type": r.get("content_type"),
+                    "title": r.get("title"),
+                    "project_name": r.get("project_name"),
+                    "priority": r.get("priority"),
+                    "state_name": r.get("state_name"),
+                    "assignee_name": r.get("assignee_name"),
+                    "displayBugNo": r.get("displayBugNo"),
+                    "updatedAt": r.get("updatedAt"),
+                    "score": r.get("score"),
+                })
+            conv_id = os.getenv("CONVERSATION_ID", "default")
+            _cache_set_json(f"last_rows:{conv_id}", rows, ttl=600)
+            return json.dumps(rows, ensure_ascii=False)
+
         # Build response header
         response = f"🔍 RAG SEARCH: '{query}'\n"
         response += f"Found {len(results)} result(s)"
@@ -906,7 +952,8 @@ async def rag_search(
 async def rag_mongo(
     query: str,
     entity_type: str,
-    limit: int = 15
+    limit: int = 15,
+    output_format: str = "summary"
 ) -> str:
     """Bridge semantic search to authoritative MongoDB records (RAG → Mongo).
 
@@ -1044,6 +1091,20 @@ async def rag_mongo(
         # Create ID lookup for RAG context
         rag_lookup = {r["id"]: r for r in rag_context}
         
+        # If rows requested, cache and return flat rows with key Mongo fields + RAG score
+        if isinstance(output_format, str) and output_format.lower() in ["rows", "json", "data"]:
+            rows_out: List[Dict[str, Any]] = []
+            for doc in cleaned_docs[:limit]:
+                doc_id = normalize_mongodb_types(doc.get("_id")) if "_id" in doc else None
+                rag_info = rag_lookup.get(doc_id, {})
+                row: Dict[str, Any] = dict(doc)
+                row["rag_score"] = rag_info.get("score", 0)
+                row["rag_preview"] = rag_info.get("content_preview", "")
+                rows_out.append(row)
+            conv_id = os.getenv("CONVERSATION_ID", "default")
+            _cache_set_json(f"last_rows:{conv_id}", rows_out, ttl=600)
+            return json.dumps(rows_out, ensure_ascii=False)
+
         # Build response showing BOTH RAG context AND Mongo data
         response = f"🔗 RAG→MONGO RESULTS: '{query}' ({entity_type})\n"
         response += f"Found {len(cleaned_docs)} record(s) via semantic search\n\n"
@@ -1145,6 +1206,86 @@ tools = [
 ]
 
 from typing import Iterable
+# --------------------
+"""Lightweight rows cache with optional Redis backend.
+
+Behavior:
+- If REDIS_URL set, use Redis with TTL. Else use in-process dict with TTL.
+- Keys are namespaced with conversation_id and a fingerprint when provided.
+"""
+import time as _time
+
+class _InMemoryTTL:
+    def __init__(self, ttl_seconds: int = 600):
+        self.ttl = ttl_seconds
+        self.store: Dict[str, tuple[float, Any]] = {}
+    def set(self, key: str, value: Any, ex: int | None = None):
+        self.store[key] = (_time.time() + (ex or self.ttl), value)
+    def get(self, key: str) -> Any:
+        rec = self.store.get(key)
+        if not rec:
+            return None
+        exp, val = rec
+        if _time.time() > exp:
+            self.store.pop(key, None)
+            return None
+        return val
+
+def _get_cache_client():
+    try:
+        import os as _os
+        url = _os.getenv("REDIS_URL")
+        if not url:
+            return _InMemoryTTL(600)
+        import redis as _redis
+        client = _redis.Redis.from_url(url, decode_responses=True)
+        # quick ping
+        try:
+            client.ping()
+            return client
+        except Exception:
+            return _InMemoryTTL(600)
+    except Exception:
+        return _InMemoryTTL(600)
+
+_rows_cache = _get_cache_client()
+
+def _cache_set_json(key: str, data: Any, ttl: int = 600):
+    try:
+        payload = json.dumps(data, ensure_ascii=False)
+        if hasattr(_rows_cache, 'set'):
+            _rows_cache.set(key, payload, ex=ttl)  # type: ignore[arg-type]
+    except Exception:
+        pass
+
+def _cache_get_json(key: str) -> Any:
+    try:
+        raw = _rows_cache.get(key)
+        if not raw:
+            return None
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except Exception:
+                return raw
+        return raw
+    except Exception:
+        return None
+
+def _fingerprint_query(intent: Dict[str, Any] | None, pipeline: Any | None) -> str:
+    try:
+        base = {
+            "primary": (intent or {}).get("primary_entity"),
+            "filters": (intent or {}).get("filters"),
+            "aggs": (intent or {}).get("aggregations"),
+            "pipeline": pipeline,
+        }
+        s = json.dumps(base, sort_keys=True, default=str)
+        import hashlib as _hashlib
+        return _hashlib.sha256(s.encode('utf-8')).hexdigest()[:16]
+    except Exception:
+        return "unknown"
+
 
 
 def _slugify_filename(name: str, default: str = "export") -> str:
@@ -1253,9 +1394,32 @@ def _render_markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
 
 
 @tool
+async def export_last_rows(
+    file_name: Optional[str] = None,
+    fields: Optional[List[str]] = None,
+    sheet_name: str = "Sheet1",
+    directory: str = "exports"
+) -> str:
+    """Export the last cached JSON rows to an Excel file (or CSV fallback).
+
+    Use when the previous turn already fetched rows (mongo_query/rag_* with output_format='rows').
+    If cache is empty, returns an error suggesting to re-run the query with rows output.
+    """
+    conv_id = os.getenv("CONVERSATION_ID", "default")
+    data = _cache_get_json(f"last_rows:{conv_id}")
+    if not data:
+        return "❌ No cached rows found. Re-run the query with output_format='rows' first."
+    return await export_excel.ainvoke({
+        "data": data,
+        "file_name": file_name or "export-last-rows",
+        "fields": fields,
+        "sheet_name": sheet_name,
+        "directory": directory,
+    })
+
 async def export_doc(
     title: str,
-    data: Any,
+    data: Any = None,
     file_name: Optional[str] = None,
     fields: Optional[List[str]] = None,
     directory: str = "exports"
@@ -1279,6 +1443,11 @@ async def export_doc(
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, fname)
 
+        # Allow exporting last cached rows when data is None
+        if data is None:
+            conv_id = os.getenv("CONVERSATION_ID", "default")
+            data = _cache_get_json(f"last_rows:{conv_id}") or []
+
         headers, rows = _coerce_to_rows(data, fields=fields)
 
         md: List[str] = []
@@ -1298,7 +1467,7 @@ async def export_doc(
 
 @tool
 async def export_excel(
-    data: Any,
+    data: Any = None,
     file_name: Optional[str] = None,
     fields: Optional[List[str]] = None,
     sheet_name: str = "Sheet1",
@@ -1321,6 +1490,11 @@ async def export_excel(
         out_dir = os.path.abspath(directory)
         os.makedirs(out_dir, exist_ok=True)
         xlsx_path = os.path.join(out_dir, f"{base}.xlsx")
+
+        # Allow exporting last cached rows when data is None
+        if data is None:
+            conv_id = os.getenv("CONVERSATION_ID", "default")
+            data = _cache_get_json(f"last_rows:{conv_id}") or []
 
         headers, rows = _coerce_to_rows(data, fields=fields)
 
@@ -1361,6 +1535,7 @@ async def export_excel(
 tools.extend([
     export_doc,
     export_excel,
+    export_last_rows,
 ])
 
 # import asyncio

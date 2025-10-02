@@ -109,8 +109,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
     "- If the user searches by content BUT needs complete MongoDB fields (state, assignee, dates, etc.) → rag_mongo.\n\n"
     "EXPORT PLAYBOOK:\n"
-    "- For export flows (Excel/Markdown), FIRST call mongo_query with output_format='rows' to get clean JSON rows.\n"
-    "- Then call export_excel/export_doc with those rows and explicit fields (dot paths allowed, e.g., 'state.name').\n"
+    "- For export flows (Excel/Markdown), FIRST call mongo_query or rag_* with output_format='rows' to get clean JSON rows.\n"
+    "- Cache the rows automatically; across turns prefer export_last_rows to avoid re-querying.\n"
+    "- Else call export_excel/export_doc with those rows and explicit fields (dot paths allowed, e.g., 'state.name').\n"
     "- Prefer date windows with explicit boundaries (e.g., 'updatedAt between <start> and <end>').\n\n"
     "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
