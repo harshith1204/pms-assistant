@@ -1,7 +1,7 @@
 import os
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams
+from qdrant_client.http.models import Distance, VectorParams, OptimizersConfigDiff
 from dotenv import load_dotenv
 # from tools import rag_content_search
 
@@ -52,6 +52,16 @@ try:
                 distance=Distance.COSINE
             )
         )
+    
+    # Force immediate indexing on this collection
+    try:
+        qdrant_client.update_collection(
+            collection_name=QDRANT_COLLECTION,
+            optimizer_config=OptimizersConfigDiff(indexing_threshold=1)
+        )
+        print("✅ Qdrant optimizer indexing_threshold set to 1")
+    except Exception as e:
+        print(f"⚠️ Failed to set optimizer config: {e}")
     # if QDRANT_COLLECTION_WORKITEM not in [col.name for col in qdrant_client.get_collections().collections]:
     #     qdrant_client.recreate_collection(
     #         collection_name=QDRANT_COLLECTION_WORKITEM,
