@@ -31,7 +31,26 @@ try:
     print(f"\n✅ Collection exists!")
     print(f"   • Vectors count: {info.vectors_count}")
     print(f"   • Points count: {info.points_count}")
+    print(f"   • Indexed vectors count: {info.indexed_vectors_count}")
     print(f"   • Vector size: {info.config.params.vectors.size if info.config else 'N/A'}")
+    
+    # Check HNSW config
+    if hasattr(info.config, 'hnsw_config') and info.config.hnsw_config:
+        print(f"\n🔧 HNSW Index Configuration:")
+        print(f"   • M (edges per node): {info.config.hnsw_config.m}")
+        print(f"   • EF construct: {info.config.hnsw_config.ef_construct}")
+    
+    # Check optimizer config
+    if hasattr(info.config, 'optimizer_config') and info.config.optimizer_config:
+        print(f"\n⚙️  Optimizer Configuration:")
+        print(f"   • Indexing threshold: {info.config.optimizer_config.indexing_threshold}")
+        if info.config.optimizer_config.indexing_threshold > 0:
+            print(f"   ⚠️  WARNING: Indexing threshold is {info.config.optimizer_config.indexing_threshold}")
+            print(f"      HNSW index will only build after {info.config.optimizer_config.indexing_threshold} vectors")
+            print(f"      Current vectors: {info.vectors_count}")
+            if info.vectors_count < info.config.optimizer_config.indexing_threshold:
+                print(f"   ❌ Indexed vectors count is 0 because threshold not reached!")
+                print(f"      Need {info.config.optimizer_config.indexing_threshold - info.vectors_count} more vectors")
     
     # Check payload schema (indexes)
     if info.payload_schema:

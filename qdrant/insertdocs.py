@@ -122,17 +122,29 @@ def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
 
     - Creates collection if missing with cosine distance and specified vector size
     - Ensures payload indexes for keyword and text fields used by our tools
+    - Enables HNSW indexing for fast search (sets indexing threshold to 0)
     """
     try:
+        from qdrant_client.http.models import HnswConfigDiff, OptimizersConfigDiff
+        
         existing = [col.name for col in qdrant_client.get_collections().collections]
         if collection_name not in existing:
             print(f"ℹ️ Creating Qdrant collection '{collection_name}' with vector_size={vector_size}...")
-            # Create basic dense vector collection; sparse/text search uses payload text indexes
+            # Create dense vector collection with HNSW indexing enabled
             qdrant_client.create_collection(
                 collection_name=collection_name,
                 vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+                # Enable HNSW indexing immediately (no threshold)
+                hnsw_config=HnswConfigDiff(
+                    m=16,  # Number of edges per node (default: 16)
+                    ef_construct=100,  # Construction time quality (default: 100)
+                    full_scan_threshold=10000,  # Use HNSW for collections > 10k points
+                ),
+                optimizers_config=OptimizersConfigDiff(
+                    indexing_threshold=0,  # Start indexing immediately (instead of waiting for 20k vectors)
+                )
             )
-            print(f"✅ Collection '{collection_name}' created")
+            print(f"✅ Collection '{collection_name}' created with HNSW indexing enabled")
 
         # Ensure keyword and text payload indexes exist (idempotent)
         try:

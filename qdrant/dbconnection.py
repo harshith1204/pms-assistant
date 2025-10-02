@@ -45,11 +45,22 @@ try:
 
     # Check if collection exists, if not, create
     if QDRANT_COLLECTION not in [col.name for col in qdrant_client.get_collections().collections]:
+        from qdrant_client.http.models import HnswConfigDiff, OptimizersConfigDiff
+        
         qdrant_client.recreate_collection(
             collection_name=QDRANT_COLLECTION,
             vectors_config=VectorParams(
                 size=768, 
                 distance=Distance.COSINE
+            ),
+            # Enable HNSW indexing immediately (no threshold)
+            hnsw_config=HnswConfigDiff(
+                m=16,  # Number of edges per node
+                ef_construct=100,  # Construction time quality
+                full_scan_threshold=10000,  # Use HNSW for collections > 10k points
+            ),
+            optimizers_config=OptimizersConfigDiff(
+                indexing_threshold=0,  # Start indexing immediately
             )
         )
     # if QDRANT_COLLECTION_WORKITEM not in [col.name for col in qdrant_client.get_collections().collections]:
