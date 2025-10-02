@@ -329,6 +329,170 @@ class QdrantMemoryStore:
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
+def _classify_query_scenario(user_query: str) -> str:
+    """Classify the query into a scenario type for tailored response generation.
+    
+    Returns:
+        str: One of 'count', 'list', 'detail', 'comparison', 'analysis', 'search', 'export', 'breakdown'
+    """
+    q = (user_query or "").lower()
+    
+    # Count/Summary queries - numeric results
+    count_patterns = ["how many", "count", "total", "number of"]
+    if any(p in q for p in count_patterns):
+        return "count"
+    
+    # Breakdown/Distribution queries - grouped aggregations
+    breakdown_patterns = ["breakdown", "distribution", "group by", "grouped by", "by project", "by priority", "by state", "by status"]
+    if any(p in q for p in breakdown_patterns):
+        return "breakdown"
+    
+    # Comparison queries - comparing entities
+    comparison_patterns = ["compare", "versus", "vs", "difference between", "contrast"]
+    if any(p in q for p in comparison_patterns):
+        return "comparison"
+    
+    # Analysis/Trend queries - insights and patterns
+    analysis_patterns = ["analyze", "analysis", "trend", "pattern", "insight", "what are the", "why", "how does"]
+    if any(p in q for p in analysis_patterns):
+        return "analysis"
+    
+    # Export queries - data export
+    export_patterns = ["export", "download", "save", "excel", "csv", "spreadsheet"]
+    if any(p in q for p in export_patterns):
+        return "export"
+    
+    # Search queries - finding specific content
+    search_patterns = ["find", "search", "show me", "get me", "look for"]
+    if any(p in q for p in search_patterns):
+        # Check if it's a detail query (singular) vs list query (plural/multiple)
+        detail_patterns = ["about", "detail", "information on", "tell me about"]
+        if any(p in q for p in detail_patterns):
+            return "detail"
+        return "search"
+    
+    # List queries - showing multiple items
+    list_patterns = ["list", "show all", "display", "what are", "which"]
+    if any(p in q for p in list_patterns):
+        return "list"
+    
+    # Default to search for general queries
+    return "search"
+
+
+# Scenario-specific finalization prompts
+FINALIZATION_PROMPTS = {
+    "count": """FINALIZATION (Count/Summary Response):
+Based on the tool outputs above, provide a CONCISE numeric answer.
+
+Structure your response as:
+1. Direct answer with the count/total (e.g., "There are X items...")
+2. One-sentence context if relevant (e.g., breakdown by key dimension)
+3. Offer to provide more details if helpful
+
+Keep it SHORT - 2-3 sentences maximum. Focus on the NUMBER.
+Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
+
+    "breakdown": """FINALIZATION (Breakdown/Distribution Response):
+Based on the tool outputs above, present the grouped data in a CLEAR, STRUCTURED way.
+
+Structure your response as:
+1. Brief summary of total items and what they're grouped by
+2. Top 5-7 categories with their counts in a clean format:
+   • Category Name: X items (with key details if relevant)
+3. Mention remaining categories if truncated
+4. One insight about the distribution (e.g., "Most items are...")
+
+Keep it ORGANIZED and SCANNABLE. Use bullet points effectively.
+Do NOT paste raw tool outputs. Do NOT include emojis or banners.""",
+
+    "list": """FINALIZATION (List Response):
+Based on the tool outputs above, present the items as a CLEAN, FORMATTED list.
+
+Structure your response as:
+1. Brief intro stating how many items found
+2. List items (max 10-15) with essential fields:
+   • Item identifier: Key details (state, priority, assignee, date as relevant)
+3. Mention if list is truncated ("...and X more items")
+4. Offer to show more details or filter if helpful
+
+Keep it CONCISE per item - one line with 3-4 key fields.
+Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
+
+    "detail": """FINALIZATION (Detail Response):
+Based on the tool outputs above, provide COMPREHENSIVE information about the requested item(s).
+
+Structure your response as:
+1. Item name/title and type
+2. Key fields organized by category:
+   - Status & Priority
+   - Assignment & Ownership
+   - Dates & Timeline
+   - Related entities (project, cycle, module)
+   - Description/Content summary (if available)
+3. Any notable relationships or dependencies
+
+Keep it INFORMATIVE but ORGANIZED. Use clear sections.
+Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
+
+    "comparison": """FINALIZATION (Comparison Response):
+Based on the tool outputs above, provide a CLEAR COMPARISON between entities.
+
+Structure your response as:
+1. Brief intro of what's being compared
+2. Side-by-side comparison table or structured list:
+   - Entity A: [key metrics/fields]
+   - Entity B: [key metrics/fields]
+3. 2-3 key differences or similarities
+4. Brief conclusion or recommendation if appropriate
+
+Keep it BALANCED and FACTUAL. Highlight differences clearly.
+Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
+
+    "analysis": """FINALIZATION (Analysis Response):
+Based on the tool outputs above, provide ANALYTICAL INSIGHTS.
+
+Structure your response as:
+1. Summary of the data/context analyzed
+2. Key findings (2-4 bullet points):
+   • Pattern/trend observed
+   • Notable statistics or distributions
+   • Potential issues or opportunities
+3. Brief interpretation or recommendation
+4. Suggest follow-up questions if helpful
+
+Keep it INSIGHTFUL and ACTION-ORIENTED. Focus on meaning, not just data.
+Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
+
+    "search": """FINALIZATION (Search Response):
+Based on the tool outputs above, present the MOST RELEVANT search results.
+
+Structure your response as:
+1. Brief summary of what was found
+2. Top 5-8 results with:
+   • Title/name (relevance score if helpful)
+   • Brief preview/context showing why it matched
+   • Key metadata (project, date, type, etc.)
+3. Mention total results if more are available
+4. Suggest ways to refine search if needed
+
+Keep it RELEVANT and CONTEXTUAL. Show WHY items matched.
+Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
+
+    "export": """FINALIZATION (Export Response):
+Based on the tool outputs above, confirm the export operation.
+
+Structure your response as:
+1. Confirmation of what was exported
+2. File location and format
+3. Number of records/items exported
+4. Brief note on how to access or use the exported file
+
+Keep it CLEAR and ACTIONABLE. Provide file path.
+Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
+}
+
+
 def _select_tools_for_query(user_query: str):
     """Return a subset of tools to expose to the LLM for this query.
 
@@ -987,10 +1151,11 @@ class MongoDBAgent:
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
                 if need_finalization:
-                    finalization_instructions = SystemMessage(content=(
-                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
-                        "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
-                    ))
+                    # Classify query scenario and use appropriate finalization prompt
+                    scenario = _classify_query_scenario(query)
+                    print(f"🎯 Query scenario detected: {scenario.upper()}")
+                    finalization_prompt = FINALIZATION_PROMPTS.get(scenario, FINALIZATION_PROMPTS["search"])
+                    finalization_instructions = SystemMessage(content=finalization_prompt)
                     invoke_messages = messages + [routing_instructions, finalization_instructions]
                     need_finalization = False
 
@@ -1165,12 +1330,11 @@ class MongoDBAgent:
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
-                            finalization_instructions = SystemMessage(content=(
-                                "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
-                                "Do not paste tool outputs verbatim or include banners/emojis. "
-                                "If the user asked to browse or see examples, summarize briefly and offer to expand. "
-                                "For work items, present canonical fields succinctly."
-                            ))
+                            # Classify query scenario and use appropriate finalization prompt
+                            scenario = _classify_query_scenario(query)
+                            print(f"🎯 Query scenario detected: {scenario.upper()}")
+                            finalization_prompt = FINALIZATION_PROMPTS.get(scenario, FINALIZATION_PROMPTS["search"])
+                            finalization_instructions = SystemMessage(content=finalization_prompt)
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
                         response = await llm_with_tools.ainvoke(
