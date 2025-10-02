@@ -563,13 +563,15 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             print(f"Warning: Error stopping Phoenix span collector: {e}")
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling with Parallel Execution Support
+    """MongoDB Agent using Tool Calling with Context-Aware Execution
     
     Features:
-    - Parallel tool execution: When multiple tools are requested by the LLM, they are executed
-      concurrently using asyncio.gather() for improved performance.
-    - Sequential fallback: Single tool calls or when parallel execution is disabled, tools
-      execute sequentially.
+    - Context-aware tool execution: Analyzes query and tool dependencies to determine
+      whether to execute tools in parallel or sequentially.
+    - Parallel execution: When tools are independent, they execute concurrently using
+      asyncio.gather() for improved performance.
+    - Sequential execution: When tools have dependencies or the query implies ordered
+      operations, tools execute sequentially.
     - Full tracing support: All tool executions (parallel or sequential) are properly traced
       with Phoenix/OpenTelemetry.
     - Conversation memory: Maintains context across multiple turns.
@@ -593,6 +595,82 @@ class MongoDBAgent:
         """Enable Phoenix tracing for this agent."""
         await phoenix_span_manager.initialize()
         self.tracing_enabled = True
+
+    def _should_execute_parallel(self, tool_calls: List[Dict[str, Any]], query: str) -> bool:
+        """Determine if tool calls should be executed in parallel based on context.
+        
+        Returns False (sequential) when:
+        - Tools have dependencies (one tool's output needed for another)
+        - Query implies ordered operations ("first", "then", "after", etc.)
+        - Tools operate on shared state or resources
+        - Only one tool call exists
+        
+        Returns True (parallel) when:
+        - Multiple independent tools gathering different information
+        - Query explicitly asks for parallel execution
+        - Tools are read-only and don't depend on each other
+        """
+        if not self.enable_parallel_tools or len(tool_calls) <= 1:
+            return False
+            
+        q = (query or "").lower()
+        
+        # Sequential indicators in query
+        sequential_markers = [
+            "first", "then", "after", "before", "step by step", "one by one",
+            "sequentially", "in order", "followed by", "depends on", "based on",
+            "use the result", "with the output", "from the previous"
+        ]
+        if any(marker in q for marker in sequential_markers):
+            return False
+            
+        # Parallel indicators in query
+        parallel_markers = [
+            "in parallel", "simultaneously", "at the same time", "together",
+            "concurrently", "both", "all at once", "compare", "versus", "vs"
+        ]
+        has_parallel_marker = any(marker in q for marker in parallel_markers)
+        
+        # Analyze tool dependencies
+        tool_names = [tc["name"] for tc in tool_calls]
+        tool_args = [tc.get("args", {}) for tc in tool_calls]
+        
+        # Check if tools might have dependencies
+        # For example, if one tool's args reference another tool's typical output
+        for i, args1 in enumerate(tool_args):
+            for j, args2 in enumerate(tool_args):
+                if i != j:
+                    # Check if args contain references that might indicate dependency
+                    args1_str = str(args1).lower()
+                    args2_str = str(args2).lower()
+                    
+                    # Common dependency patterns
+                    if any(pattern in args1_str for pattern in ["from previous", "result of", "output from"]):
+                        return False
+                    if any(pattern in args2_str for pattern in ["from previous", "result of", "output from"]):
+                        return False
+        
+        # Check tool types - some combinations should be sequential
+        if "mongo_query" in tool_names and "rag_mongo" in tool_names:
+            # These might need to be sequential if rag_mongo depends on mongo_query results
+            if not has_parallel_marker:
+                return False
+                
+        # If all tools are the same type (e.g., multiple rag_search), they're likely independent
+        if len(set(tool_names)) == 1:
+            return True
+            
+        # If we have explicit parallel markers, honor them
+        if has_parallel_marker:
+            return True
+            
+        # Default to parallel for multiple independent read operations
+        read_only_tools = {"mongo_query", "rag_search", "rag_mongo"}
+        if all(name in read_only_tools for name in tool_names):
+            return True
+            
+        # When in doubt, use sequential for safety
+        return False
 
     def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
         if not self.tracing_enabled or phoenix_span_manager.tracer is None:
@@ -817,6 +895,12 @@ class MongoDBAgent:
                             except Exception:
                                 pass
                 # Lightweight routing hint to bias correct tool choice
+                # Add hints about tool ordering if query suggests dependencies
+                q_lower = query.lower()
+                sequential_hint = ""
+                if any(marker in q_lower for marker in ["first", "then", "after", "use the result", "based on"]):
+                    sequential_hint = "\n\nIMPORTANT: The user's query suggests ordered operations. Plan your tool calls accordingly."
+                
                 routing_instructions = SystemMessage(content=(
                     "PLANNING & ROUTING:\n"
                     "- First, break the user request into minimal sub-steps.\n"
@@ -826,6 +910,7 @@ class MongoDBAgent:
                     "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
                     "- Use 'rag_mongo' to find items by semantic search AND get complete MongoDB fields.\n\n"
                     "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                    + sequential_hint
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
@@ -854,12 +939,25 @@ class MongoDBAgent:
                 if not getattr(response, "tool_calls", None):
                     return response.content
 
-                # Execute requested tools (parallel or sequential based on configuration)
+                # Execute requested tools (context-aware parallel or sequential)
                 messages.append(response)
                 did_any_tool = False
                 
-                if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                    # Parallel execution for multiple tools
+                # Determine execution strategy based on context
+                should_parallel = self._should_execute_parallel(response.tool_calls, query)
+                
+                # Log execution strategy for debugging
+                tool_names = [tc["name"] for tc in response.tool_calls]
+                print(f"🔧 Tool execution strategy: {'PARALLEL' if should_parallel else 'SEQUENTIAL'} for tools: {tool_names}")
+                
+                if should_parallel:
+                    # Parallel execution for independent tools
+                    if run_span:
+                        run_span.add_event("parallel_tool_execution", {
+                            "tool_count": len(response.tool_calls),
+                            "tools": [tc["name"] for tc in response.tool_calls]
+                        })
+                    
                     tool_tasks = [
                         self._execute_single_tool(None, tool_call, selected_tools, tracer)
                         for tool_call in response.tool_calls
@@ -873,7 +971,13 @@ class MongoDBAgent:
                         if success:
                             did_any_tool = True
                 else:
-                    # Sequential execution (fallback or single tool)
+                    # Sequential execution for dependent tools
+                    if run_span:
+                        run_span.add_event("sequential_tool_execution", {
+                            "tool_count": len(response.tool_calls),
+                            "tools": [tc["name"] for tc in response.tool_calls]
+                        })
+                    
                     for tool_call in response.tool_calls:
                         tool_message, success = await self._execute_single_tool(
                             None, tool_call, selected_tools, tracer
@@ -981,6 +1085,12 @@ class MongoDBAgent:
                                 llm_span.add_event("llm_prompt", {"message_count": len(messages)})
                             except Exception:
                                 pass
+                        # Add hints about tool ordering if query suggests dependencies
+                        q_lower = query.lower()
+                        sequential_hint = ""
+                        if any(marker in q_lower for marker in ["first", "then", "after", "use the result", "based on"]):
+                            sequential_hint = "\n\nIMPORTANT: The user's query suggests ordered operations. Plan your tool calls accordingly."
+                        
                         routing_instructions = SystemMessage(content=(
                             "PLANNING & ROUTING:\n"
                             "- Decompose the task into ordered sub-steps.\n"
@@ -990,6 +1100,7 @@ class MongoDBAgent:
                             "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
                             "- 'rag_mongo' → semantic search + complete MongoDB fields (any entity type).\n\n"
                             "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                            + sequential_hint
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
@@ -1021,12 +1132,19 @@ class MongoDBAgent:
                         yield response.content
                         return
 
-                    # Execute requested tools (parallel or sequential) with streaming callbacks
+                    # Execute requested tools (context-aware parallel or sequential) with streaming callbacks
                     messages.append(response)
                     did_any_tool = False
                     
-                    if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                        # Parallel execution for multiple tools with streaming
+                    # Determine execution strategy based on context
+                    should_parallel = self._should_execute_parallel(response.tool_calls, query)
+                    
+                    # Log execution strategy for debugging
+                    tool_names = [tc["name"] for tc in response.tool_calls]
+                    print(f"🔧 Tool execution strategy: {'PARALLEL' if should_parallel else 'SEQUENTIAL'} for tools: {tool_names}")
+                    
+                    if should_parallel:
+                        # Parallel execution for independent tools with streaming
                         # Send tool_start events for all tools first
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
@@ -1048,7 +1166,7 @@ class MongoDBAgent:
                             if success:
                                 did_any_tool = True
                     else:
-                        # Sequential execution (fallback or single tool)
+                        # Sequential execution for dependent tools
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if tool:
