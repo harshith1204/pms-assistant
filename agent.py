@@ -64,6 +64,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "- If a tool is appropriate, always call it before answering.\n"
     "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
     "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
+    "TOOL EXECUTION STRATEGY:\n"
+    "- When tools are INDEPENDENT (can run without each other's results): Call them together in one batch.\n"
+    "- When tools are DEPENDENT (one needs another's output): Call them separately in sequence.\n"
+    "- Examples of INDEPENDENT: 'Show bug counts AND feature counts' → call both tools together\n"
+    "- Examples of DEPENDENT: 'Find bugs by John, THEN search docs about those bugs' → call mongo_query first, wait for results, then call rag_search\n\n"
     "DECISION GUIDE:\n"
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
     "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
@@ -563,13 +568,17 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             print(f"Warning: Error stopping Phoenix span collector: {e}")
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling with Parallel Execution Support
+    """MongoDB Agent using Tool Calling with LLM-Controlled Execution
     
     Features:
-    - Parallel tool execution: When multiple tools are requested by the LLM, they are executed
-      concurrently using asyncio.gather() for improved performance.
-    - Sequential fallback: Single tool calls or when parallel execution is disabled, tools
-      execute sequentially.
+    - LLM-controlled execution: The LLM decides whether tools should run in parallel
+      or sequentially based on dependencies. When the LLM calls multiple tools together,
+      they execute in parallel. When tools need sequential execution, the LLM will
+      make separate calls.
+    - Parallel execution: When the LLM calls multiple independent tools together,
+      they execute concurrently using asyncio.gather() for improved performance.
+    - Sequential execution: When tools have dependencies, the LLM naturally handles
+      this by calling them in separate rounds.
     - Full tracing support: All tool executions (parallel or sequential) are properly traced
       with Phoenix/OpenTelemetry.
     - Conversation memory: Maintains context across multiple turns.
@@ -593,6 +602,7 @@ class MongoDBAgent:
         """Enable Phoenix tracing for this agent."""
         await phoenix_span_manager.initialize()
         self.tracing_enabled = True
+
 
     def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
         if not self.tracing_enabled or phoenix_span_manager.tracer is None:
@@ -819,8 +829,9 @@ class MongoDBAgent:
                 # Lightweight routing hint to bias correct tool choice
                 routing_instructions = SystemMessage(content=(
                     "PLANNING & ROUTING:\n"
-                    "- First, break the user request into minimal sub-steps.\n"
-                    "- For each sub-step, pick exactly one tool using the Decision Guide.\n\n"
+                    "- Break the user request into logical steps.\n"
+                    "- For INDEPENDENT operations: Call multiple tools together.\n"
+                    "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
                     "DECISION GUIDE:\n"
                     "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
                     "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
@@ -854,12 +865,26 @@ class MongoDBAgent:
                 if not getattr(response, "tool_calls", None):
                     return response.content
 
-                # Execute requested tools (parallel or sequential based on configuration)
+                # Execute requested tools
+                # The LLM decides execution order by how it calls tools:
+                # - Multiple tools in one response = parallel execution
+                # - Sequential needs are handled by the LLM making separate calls
                 messages.append(response)
                 did_any_tool = False
                 
+                # Log execution info
+                tool_names = [tc["name"] for tc in response.tool_calls]
+                execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
+                print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
+                
                 if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                    # Parallel execution for multiple tools
+                    # Multiple tools called together = LLM determined they're independent
+                    if run_span:
+                        run_span.add_event("parallel_tool_execution", {
+                            "tool_count": len(response.tool_calls),
+                            "tools": tool_names
+                        })
+                    
                     tool_tasks = [
                         self._execute_single_tool(None, tool_call, selected_tools, tracer)
                         for tool_call in response.tool_calls
@@ -873,7 +898,7 @@ class MongoDBAgent:
                         if success:
                             did_any_tool = True
                 else:
-                    # Sequential execution (fallback or single tool)
+                    # Single tool or parallel disabled
                     for tool_call in response.tool_calls:
                         tool_message, success = await self._execute_single_tool(
                             None, tool_call, selected_tools, tracer
@@ -983,8 +1008,9 @@ class MongoDBAgent:
                                 pass
                         routing_instructions = SystemMessage(content=(
                             "PLANNING & ROUTING:\n"
-                            "- Decompose the task into ordered sub-steps.\n"
-                            "- Choose exactly one tool per sub-step.\n\n"
+                            "- Break the user request into logical steps.\n"
+                            "- For INDEPENDENT operations: Call multiple tools together.\n"
+                            "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
                             "DECISION GUIDE:\n"
                             "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
                             "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
@@ -1021,12 +1047,18 @@ class MongoDBAgent:
                         yield response.content
                         return
 
-                    # Execute requested tools (parallel or sequential) with streaming callbacks
+                    # Execute requested tools with streaming callbacks
+                    # The LLM decides execution order by how it calls tools
                     messages.append(response)
                     did_any_tool = False
                     
+                    # Log execution info
+                    tool_names = [tc["name"] for tc in response.tool_calls]
+                    execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
+                    print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
+                    
                     if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                        # Parallel execution for multiple tools with streaming
+                        # Multiple tools called together = LLM determined they're independent
                         # Send tool_start events for all tools first
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
@@ -1048,7 +1080,7 @@ class MongoDBAgent:
                             if success:
                                 did_any_tool = True
                     else:
-                        # Sequential execution (fallback or single tool)
+                        # Single tool or parallel disabled
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if tool:
