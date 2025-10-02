@@ -329,57 +329,6 @@ class QdrantMemoryStore:
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
-def _classify_query_scenario(user_query: str) -> str:
-    """Classify the query into a scenario type for tailored response generation.
-    
-    Returns:
-        str: One of 'count', 'list', 'detail', 'comparison', 'analysis', 'search', 'export', 'breakdown'
-    """
-    q = (user_query or "").lower()
-    
-    # Count/Summary queries - numeric results
-    count_patterns = ["how many", "count", "total", "number of"]
-    if any(p in q for p in count_patterns):
-        return "count"
-    
-    # Breakdown/Distribution queries - grouped aggregations
-    breakdown_patterns = ["breakdown", "distribution", "group by", "grouped by", "by project", "by priority", "by state", "by status"]
-    if any(p in q for p in breakdown_patterns):
-        return "breakdown"
-    
-    # Comparison queries - comparing entities
-    comparison_patterns = ["compare", "versus", "vs", "difference between", "contrast"]
-    if any(p in q for p in comparison_patterns):
-        return "comparison"
-    
-    # Analysis/Trend queries - insights and patterns
-    analysis_patterns = ["analyze", "analysis", "trend", "pattern", "insight", "what are the", "why", "how does"]
-    if any(p in q for p in analysis_patterns):
-        return "analysis"
-    
-    # Export queries - data export
-    export_patterns = ["export", "download", "save", "excel", "csv", "spreadsheet"]
-    if any(p in q for p in export_patterns):
-        return "export"
-    
-    # Search queries - finding specific content
-    search_patterns = ["find", "search", "show me", "get me", "look for"]
-    if any(p in q for p in search_patterns):
-        # Check if it's a detail query (singular) vs list query (plural/multiple)
-        detail_patterns = ["about", "detail", "information on", "tell me about"]
-        if any(p in q for p in detail_patterns):
-            return "detail"
-        return "search"
-    
-    # List queries - showing multiple items
-    list_patterns = ["list", "show all", "display", "what are", "which"]
-    if any(p in q for p in list_patterns):
-        return "list"
-    
-    # Default to search for general queries
-    return "search"
-
-
 # Scenario-specific finalization prompts
 FINALIZATION_PROMPTS = {
     "count": """FINALIZATION (Count/Summary Response):
@@ -391,6 +340,7 @@ Structure your response as:
 3. Offer to provide more details if helpful
 
 Keep it SHORT - 2-3 sentences maximum. Focus on the NUMBER.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
 
     "breakdown": """FINALIZATION (Breakdown/Distribution Response):
@@ -404,6 +354,7 @@ Structure your response as:
 4. One insight about the distribution (e.g., "Most items are...")
 
 Keep it ORGANIZED and SCANNABLE. Use bullet points effectively.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste raw tool outputs. Do NOT include emojis or banners.""",
 
     "list": """FINALIZATION (List Response):
@@ -417,6 +368,7 @@ Structure your response as:
 4. Offer to show more details or filter if helpful
 
 Keep it CONCISE per item - one line with 3-4 key fields.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
 
     "detail": """FINALIZATION (Detail Response):
@@ -433,6 +385,7 @@ Structure your response as:
 3. Any notable relationships or dependencies
 
 Keep it INFORMATIVE but ORGANIZED. Use clear sections.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
 
     "comparison": """FINALIZATION (Comparison Response):
@@ -447,6 +400,7 @@ Structure your response as:
 4. Brief conclusion or recommendation if appropriate
 
 Keep it BALANCED and FACTUAL. Highlight differences clearly.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
 
     "analysis": """FINALIZATION (Analysis Response):
@@ -462,6 +416,7 @@ Structure your response as:
 4. Suggest follow-up questions if helpful
 
 Keep it INSIGHTFUL and ACTION-ORIENTED. Focus on meaning, not just data.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
 
     "search": """FINALIZATION (Search Response):
@@ -477,6 +432,7 @@ Structure your response as:
 4. Suggest ways to refine search if needed
 
 Keep it RELEVANT and CONTEXTUAL. Show WHY items matched.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
 
     "export": """FINALIZATION (Export Response):
@@ -489,6 +445,7 @@ Structure your response as:
 4. Brief note on how to access or use the exported file
 
 Keep it CLEAR and ACTIONABLE. Provide file path.
+Do NOT include "SCENARIO:" tag in your final response.
 Do NOT paste tool outputs verbatim. Do NOT include emojis or banners.""",
 }
 
@@ -1142,6 +1099,17 @@ class MongoDBAgent:
                     "- Break the user request into logical steps.\n"
                     "- For INDEPENDENT operations: Call multiple tools together.\n"
                     "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
+                    "QUERY SCENARIO CLASSIFICATION:\n"
+                    "Before calling tools, identify the query scenario type:\n"
+                    "• COUNT - numeric/summary queries (how many, count, total)\n"
+                    "• BREAKDOWN - grouped/distribution queries (by priority, by state, breakdown)\n"
+                    "• LIST - showing multiple items (list all, show items, display)\n"
+                    "• DETAIL - specific item information (about X, details on Y)\n"
+                    "• COMPARISON - comparing entities (compare A vs B, difference between)\n"
+                    "• ANALYSIS - insights/trends (analyze, patterns, why, insights)\n"
+                    "• SEARCH - finding content (find docs, search for)\n"
+                    "• EXPORT - data export (export to excel, download, save)\n\n"
+                    "Start your response with: SCENARIO: [type]\n\n"
                     "DECISION GUIDE:\n"
                     "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
                     "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
@@ -1151,9 +1119,17 @@ class MongoDBAgent:
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
                 if need_finalization:
-                    # Classify query scenario and use appropriate finalization prompt
-                    scenario = _classify_query_scenario(query)
-                    print(f"🎯 Query scenario detected: {scenario.upper()}")
+                    # Extract scenario from LLM's previous response (if present)
+                    scenario = "search"  # default
+                    if last_response and hasattr(last_response, "content"):
+                        import re
+                        scenario_match = re.search(r"SCENARIO:\s*(\w+)", str(last_response.content), re.IGNORECASE)
+                        if scenario_match:
+                            detected = scenario_match.group(1).lower()
+                            if detected in FINALIZATION_PROMPTS:
+                                scenario = detected
+                    
+                    print(f"🎯 Response scenario: {scenario.upper()}")
                     finalization_prompt = FINALIZATION_PROMPTS.get(scenario, FINALIZATION_PROMPTS["search"])
                     finalization_instructions = SystemMessage(content=finalization_prompt)
                     invoke_messages = messages + [routing_instructions, finalization_instructions]
@@ -1322,6 +1298,17 @@ class MongoDBAgent:
                             "- Break the user request into logical steps.\n"
                             "- For INDEPENDENT operations: Call multiple tools together.\n"
                             "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
+                            "QUERY SCENARIO CLASSIFICATION:\n"
+                            "Before calling tools, identify the query scenario type:\n"
+                            "• COUNT - numeric/summary queries (how many, count, total)\n"
+                            "• BREAKDOWN - grouped/distribution queries (by priority, by state, breakdown)\n"
+                            "• LIST - showing multiple items (list all, show items, display)\n"
+                            "• DETAIL - specific item information (about X, details on Y)\n"
+                            "• COMPARISON - comparing entities (compare A vs B, difference between)\n"
+                            "• ANALYSIS - insights/trends (analyze, patterns, why, insights)\n"
+                            "• SEARCH - finding content (find docs, search for)\n"
+                            "• EXPORT - data export (export to excel, download, save)\n\n"
+                            "Start your response with: SCENARIO: [type]\n\n"
                             "DECISION GUIDE:\n"
                             "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
                             "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
@@ -1330,9 +1317,17 @@ class MongoDBAgent:
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
-                            # Classify query scenario and use appropriate finalization prompt
-                            scenario = _classify_query_scenario(query)
-                            print(f"🎯 Query scenario detected: {scenario.upper()}")
+                            # Extract scenario from LLM's previous response (if present)
+                            scenario = "search"  # default
+                            if last_response and hasattr(last_response, "content"):
+                                import re
+                                scenario_match = re.search(r"SCENARIO:\s*(\w+)", str(last_response.content), re.IGNORECASE)
+                                if scenario_match:
+                                    detected = scenario_match.group(1).lower()
+                                    if detected in FINALIZATION_PROMPTS:
+                                        scenario = detected
+                            
+                            print(f"🎯 Response scenario: {scenario.upper()}")
                             finalization_prompt = FINALIZATION_PROMPTS.get(scenario, FINALIZATION_PROMPTS["search"])
                             finalization_instructions = SystemMessage(content=finalization_prompt)
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
