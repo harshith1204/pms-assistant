@@ -219,7 +219,7 @@ export function ConfigSidebar({ open }: ConfigSidebarProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-yellow-500"></div>
-                  <span className="text-xs font-medium">MCP Server - Smithery</span>
+                  <span className="text-xs font-medium">MongoDB</span>
                 </div>
                 <Badge variant="outline" className="text-xs h-5">Disconnected</Badge>
               </div>
