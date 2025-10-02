@@ -83,6 +83,47 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
   const renderToolOutput = () => {
     if (!message.toolOutput) return null;
 
+    // Detect backend export messages and render a download link
+    const tryRenderExport = (text: string) => {
+      try {
+        // Patterns emitted by tools.py
+        // "✅ Excel exported: /abs/path/to/exports/<file>.xlsx"
+        // "⚠️ openpyxl not installed. Exported CSV instead: /abs/path/to/exports/<file>.csv"
+        // "✅ Markdown exported: /abs/path/to/exports/<file>.md"
+        const patterns = [
+          /(Excel exported:\s*)([^\n]+\.(xlsx|csv))/i,
+          /(Markdown exported:\s*)([^\n]+\.(md))/i,
+          /(Exported CSV instead:\s*)([^\n]+\.(csv))/i,
+        ];
+        for (const re of patterns) {
+          const m = text.match(re);
+          if (m && m[2]) {
+            const absPath = m[2].trim();
+            const idx = Math.max(absPath.lastIndexOf("/"), absPath.lastIndexOf("\\"));
+            const fileName = idx >= 0 ? absPath.substring(idx + 1) : absPath;
+            const host = window.location.hostname;
+            const url = `${window.location.protocol}//${host}:8000/exports/${encodeURIComponent(fileName)}`;
+            const label = fileName.toLowerCase().endsWith(".md") ? "Download Markdown" : (fileName.toLowerCase().endsWith(".csv") ? "Download CSV" : "Download Excel");
+            return (
+              <div className="mt-3 p-3 bg-muted/30 rounded-md">
+                <p className="text-xs font-medium mb-2">Export ready</p>
+                <a href={url} target="_blank" rel="noopener noreferrer">
+                  <Button size="sm" variant="secondary">{label}</Button>
+                </a>
+                <div className="text-xs mt-2 opacity-70 break-all">{fileName}</div>
+              </div>
+            );
+          }
+        }
+      } catch {}
+      return null;
+    };
+
+    if (typeof message.toolOutput === "string") {
+      const exportEl = tryRenderExport(message.toolOutput);
+      if (exportEl) return exportEl;
+    }
+
     if (Array.isArray(message.toolOutput)) {
       return (
         <div className="mt-3 p-3 bg-muted/30 rounded-md">

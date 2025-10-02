@@ -1,10 +1,12 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
+from pathlib import Path
 
 from agent import MongoDBAgent, phoenix_span_manager
 from traces.setup import EvaluationPipeline
@@ -74,6 +76,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Ensure the exports directory exists and serve exported files (Excel/Markdown/CSV)
+EXPORTS_DIR = (Path(__file__).parent / "exports").resolve()
+EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/exports", StaticFiles(directory=str(EXPORTS_DIR)), name="exports")
 
 @app.get("/")
 async def root():
