@@ -551,6 +551,7 @@ def _select_tools_for_query(user_query: str):
     if has_any(export_markers):
         allowed_names.append("export_doc")
         allowed_names.append("export_excel")
+        allowed_names.append("export_last_rows")  # Allow exporting cached data from previous queries
 
     # Detect presence of multiple action intents in one query
     action_structured = ["count", "group", "breakdown", "distribution", "compare"]
@@ -1085,6 +1086,9 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
+                # SET CONVERSATION_ID ENV VAR FOR TOOLS TO USE FOR CACHING
+                os.environ["CONVERSATION_ID"] = conversation_id
+
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
@@ -1289,6 +1293,9 @@ class MongoDBAgent:
                 # Use default conversation ID if none provided
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
+
+                # SET CONVERSATION_ID ENV VAR FOR TOOLS TO USE FOR CACHING
+                os.environ["CONVERSATION_ID"] = conversation_id
 
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
