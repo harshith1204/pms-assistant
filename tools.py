@@ -383,7 +383,12 @@ def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None
 
 
 @tool
-async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = True) -> str:
+async def mongo_query(
+    query: str,
+    show_all: bool = False,
+    enable_complex_joins: bool = True,
+    output_format: str = "summary"
+) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
 
     Use this ONLY when the user asks for authoritative data that must come from
@@ -408,8 +413,9 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
         query: Natural language, structured data request about PM entities.
         show_all: If True, output full details instead of a summary. Use sparingly.
         enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
+        output_format: 'summary' (default, human-friendly) or 'rows' (pure JSON rows for export).
 
-    Returns: A compact result suitable for direct user display.
+    Returns: A compact result suitable for direct user display, or JSON rows when output_format='rows'.
     """
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
@@ -685,6 +691,15 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
             # Apply strong filter/transform now that we know the primary entity
             primary_entity = intent.get('primary_entity') if isinstance(intent, dict) else None
             filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
+
+            # If caller requested machine-readable rows, return JSON only (no prose)
+            try:
+                if isinstance(output_format, str) and output_format.lower() in ["rows", "json", "data"]:
+                    import json as _json
+                    return _json.dumps(filtered, ensure_ascii=False)
+            except Exception:
+                # Fall back to summary formatting on any error
+                pass
 
             # Format in LLM-friendly way
             max_items = None if show_all else 20
@@ -1171,8 +1186,22 @@ def _coerce_to_rows(data: Any, fields: Optional[List[str]] = None) -> tuple[List
                             seen[k] = None
                 keys = list(seen.keys())[:40]
             rows: List[List[Any]] = []
+            def _get_dot(obj: Dict[str, Any], path: str) -> Any:
+                try:
+                    cur: Any = obj
+                    for part in path.split('.'):
+                        if isinstance(cur, dict) and part in cur:
+                            cur = cur[part]
+                        else:
+                            return ""
+                    if isinstance(cur, (dict, list)):
+                        import json as _json
+                        return _json.dumps(cur, ensure_ascii=False)[:200]
+                    return cur
+                except Exception:
+                    return ""
             for row in payload:
-                rows.append([row.get(k, "") for k in keys])
+                rows.append([_get_dot(row, k) for k in keys])
             return keys, rows
 
         # list of scalars
@@ -1181,8 +1210,26 @@ def _coerce_to_rows(data: Any, fields: Optional[List[str]] = None) -> tuple[List
 
         # single dict
         if isinstance(payload, dict):
-            keys = list(payload.keys())[:40]
-            return keys, [[payload.get(k, "") for k in keys]]
+            if fields and isinstance(fields, list) and all(isinstance(f, str) for f in fields):
+                keys = fields
+                def _get_dot_single(obj: Dict[str, Any], path: str) -> Any:
+                    try:
+                        cur: Any = obj
+                        for part in path.split('.'):
+                            if isinstance(cur, dict) and part in cur:
+                                cur = cur[part]
+                            else:
+                                return ""
+                        if isinstance(cur, (dict, list)):
+                            import json as _json
+                            return _json.dumps(cur, ensure_ascii=False)[:200]
+                        return cur
+                    except Exception:
+                        return ""
+                return keys, [[_get_dot_single(payload, k) for k in keys]]
+            else:
+                keys = list(payload.keys())[:40]
+                return keys, [[payload.get(k, "") for k in keys]]
 
         # fallback single cell
         return ["value"], [[payload]]
