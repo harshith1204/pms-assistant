@@ -1417,6 +1417,7 @@ async def export_last_rows(
         "directory": directory,
     })
 
+@tool
 async def export_doc(
     title: str,
     data: Any = None,
