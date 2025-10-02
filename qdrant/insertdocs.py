@@ -5,7 +5,7 @@ import uuid
 from itertools import islice
 from bson.binary import Binary
 from bson.objectid import ObjectId
-from qdrant_client.http.models import PointStruct, PayloadSchemaType, Distance, VectorParams
+from qdrant_client.http.models import PointStruct, PayloadSchemaType, Distance, VectorParams, OptimizersConfigDiff
 from sentence_transformers import SentenceTransformer
 from collections import defaultdict
 
@@ -133,6 +133,16 @@ def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
                 vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
             )
             print(f"✅ Collection '{collection_name}' created")
+        
+        # Force immediate HNSW indexing by lowering the threshold
+        try:
+            qdrant_client.update_collection(
+                collection_name=collection_name,
+                optimizer_config=OptimizersConfigDiff(indexing_threshold=1)
+            )
+            print("✅ Set indexing_threshold=1 for immediate indexing")
+        except Exception as e:
+            print(f"⚠️ Failed to update optimizer config: {e}")
 
         # Ensure keyword and text payload indexes exist (idempotent)
         try:
