@@ -5,11 +5,14 @@ from langchain_core.callbacks import AsyncCallbackHandler
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
+from typing import Tuple
 import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
 import os
+import uuid
+import hashlib
 
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
@@ -25,6 +28,7 @@ import threading
 import time
 from opentelemetry.sdk.trace.export import SpanProcessor
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
+import math
 
 # OpenInference semantic conventions (optional)
 try:
@@ -56,6 +60,17 @@ except AttributeError:
     # Fallback: define empty tools list if import fails
     tools_list = []
 from mongo.constants import DATABASE_NAME, mongodb_tools
+from mongo.constants import QDRANT_URL, QDRANT_API_KEY, EMBEDDING_MODEL
+
+# Qdrant / embeddings for long-term memory
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.http.models import Distance, VectorParams
+    from qdrant_client.models import PointStruct
+    from sentence_transformers import SentenceTransformer
+except Exception:
+    QdrantClient = None  # type: ignore
+    SentenceTransformer = None  # type: ignore
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a precise, non-speculative Project Management assistant.\n\n"
@@ -100,6 +115,9 @@ class ConversationMemory:
     def __init__(self, max_messages_per_conversation: int = 50):
         self.conversations: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_conversation))
         self.max_messages_per_conversation = max_messages_per_conversation
+        # Rolling summary per conversation (compact)
+        self.summaries: Dict[str, str] = {}
+        self.turn_counters: Dict[str, int] = defaultdict(int)
 
     def add_message(self, conversation_id: str, message: BaseMessage):
         """Add a message to the conversation history"""
@@ -115,16 +133,64 @@ class ConversationMemory:
             self.conversations[conversation_id].clear()
 
     def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
-        """Get recent conversation context, respecting token limits"""
+        """Get recent conversation context with a token budget and rolling summary."""
         messages = self.get_conversation_history(conversation_id)
 
-        # For now, just return the last few messages to stay within context limits
-        # In a production system, you'd want to implement proper token counting
-        if len(messages) <= 10:  # Return all if small conversation
-            return messages
-        else:
-            # Return last 10 messages to keep context manageable
-            return messages[-10:]
+        # Approximate token counting (≈4 chars/token)
+        def approx_tokens(text: str) -> int:
+            try:
+                return max(1, math.ceil(len(text) / 4))
+            except Exception:
+                return len(text) // 4
+
+        budget = max(500, max_tokens)
+        used = 0
+        selected: List[BaseMessage] = []
+
+        # Walk backwards to select most recent turns under budget
+        for msg in reversed(messages):
+            content = getattr(msg, "content", "")
+            used += approx_tokens(str(content)) + 8
+            if used > budget:
+                break
+            selected.append(msg)
+
+        selected.reverse()
+
+        # Prepend rolling summary if present and within budget
+        summary = self.summaries.get(conversation_id)
+        if summary:
+            stoks = approx_tokens(summary)
+            if used + stoks <= budget:
+                selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
+
+        return selected
+
+    def register_turn(self, conversation_id: str) -> None:
+        self.turn_counters[conversation_id] += 1
+
+    def should_update_summary(self, conversation_id: str, every_n_turns: int = 3) -> bool:
+        return self.turn_counters[conversation_id] % every_n_turns == 0
+
+    async def update_summary_async(self, conversation_id: str, llm_for_summary) -> None:
+        """Update the rolling summary asynchronously to avoid latency in main path."""
+        try:
+            history = self.get_conversation_history(conversation_id)
+            if not history:
+                return
+            recent = history[-12:]
+            prompt = [
+                SystemMessage(content=(
+                    "Summarize the durable facts, goals, and decisions from the conversation. "
+                    "Keep it 6-10 bullets, under 600 tokens. Avoid chit-chat."
+                ))
+            ] + recent + [HumanMessage(content="Produce condensed summary now.")]
+            resp = await llm_for_summary.ainvoke(prompt)
+            if getattr(resp, "content", None):
+                self.summaries[conversation_id] = str(resp.content)
+        except Exception:
+            # Best-effort; ignore failures
+            pass
 
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
@@ -141,6 +207,122 @@ llm = ChatOllama(
     top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
     top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
 )
+
+
+class TTLCache:
+    """Simple TTL cache for tool results to reduce repeat latency."""
+
+    def __init__(self, max_items: int = 256, ttl_seconds: int = 900):
+        self.store: Dict[str, tuple[float, Any]] = {}
+        self.max_items = max_items
+        self.ttl = ttl_seconds
+
+    def _evict_if_needed(self):
+        if len(self.store) <= self.max_items:
+            return
+        oldest_key = min(self.store.items(), key=lambda kv: kv[1][0])[0]
+        self.store.pop(oldest_key, None)
+
+    def get(self, key: str) -> Optional[Any]:
+        rec = self.store.get(key)
+        if not rec:
+            return None
+        ts, value = rec
+        if time.time() - ts > self.ttl:
+            self.store.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        self.store[key] = (time.time(), value)
+        self._evict_if_needed()
+
+
+class QdrantMemoryStore:
+    """Long-term semantic memory for chat/tool records backed by Qdrant."""
+
+    def __init__(self):
+        self.enabled = False
+        self.client = None
+        self.embedding_model = None
+        self.collection = "pms_memory"
+        self.vector_dim: Optional[int] = None
+
+    async def initialize(self):
+        try:
+            if QdrantClient is None or SentenceTransformer is None:
+                return
+            self.client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=30)
+            self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+            self.vector_dim = len(self.embedding_model.encode("dim_check").tolist())
+            collections = self.client.get_collections().collections
+            names = [c.name for c in collections]
+            if self.collection not in names:
+                self.client.recreate_collection(
+                    collection_name=self.collection,
+                    vectors_config=VectorParams(size=self.vector_dim, distance=Distance.COSINE),
+                )
+            self.enabled = True
+        except Exception:
+            self.enabled = False
+
+    def _embed(self, text: str) -> Optional[List[float]]:
+        try:
+            if not self.enabled or not self.embedding_model:
+                return None
+            return self.embedding_model.encode(text).tolist()
+        except Exception:
+            return None
+
+    def _point(self, text: str, payload: Dict[str, Any]):
+        vec = self._embed(text)
+        if vec is None:
+            return None
+        return PointStruct(id=str(uuid.uuid4()), vector=vec, payload=payload)
+
+    def upsert(self, text: str, payload: Dict[str, Any]) -> None:
+        if not self.enabled or not self.client:
+            return
+        try:
+            p = self._point(text, payload)
+            if p is None:
+                return
+            self.client.upsert(collection_name=self.collection, points=[p])
+        except Exception:
+            pass
+
+    def search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        if not self.enabled or not self.client:
+            return []
+        try:
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+            vec = self._embed(query)
+            if vec is None:
+                return []
+            qfilter = None
+            if filters:
+                must = []
+                for k, v in filters.items():
+                    must.append(FieldCondition(key=str(k), match=MatchValue(value=v)))
+                if must:
+                    qfilter = Filter(must=must)
+            hits = self.client.search(
+                collection_name=self.collection,
+                query_vector=vec,
+                limit=top_k,
+                with_payload=True,
+                score_threshold=0.3,
+                query_filter=qfilter,
+            )
+            out: List[Dict[str, Any]] = []
+            for h in hits:
+                out.append({
+                    "score": getattr(h, "score", 0.0),
+                    "payload": getattr(h, "payload", {}) or {},
+                })
+            return out
+        except Exception:
+            return []
 
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
