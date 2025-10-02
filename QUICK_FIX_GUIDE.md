@@ -1,25 +1,19 @@
-# Quick Fix Guide: Qdrant Chunking & Indexing Issues
+# Quick Guide: Qdrant Chunking & Indexing
 
-## 🎯 Understanding Your Issue
+## 🎯 Understanding Chunking
 
-You saw:
+You might see:
 ```
 chunk_index: 0
 chunk_count: 1
 ```
 
-And you're worried about:
-1. Chunking not happening
-2. Vector index count being 0
-3. RAG tools not working properly
-
-## ✅ TL;DR - Is This Actually A Problem?
-
-**NO** - In most cases, `chunk_count=1` is **normal and correct**:
-- Your example work item has ~50 words
-- Chunking threshold is 300 words
-- Short documents **should not** be chunked
+This is **NORMAL and CORRECT** for short documents:
+- Work items with ~50-200 words → single chunk
+- Chunking threshold is 300 words by default
 - **70-80% of typical PM work items are single-chunk** ← This is expected!
+
+**Only documents longer than the threshold get chunked into multiple pieces.**
 
 ## 🔍 Step 1: Run Diagnostics (Required)
 
@@ -58,22 +52,29 @@ This will index all MongoDB collections to Qdrant.
 
 **Solution**: Use aggressive chunking
 
-1. **Edit `/workspace/qdrant/chunking_config.py`:**
+1. **Edit `/workspace/qdrant/insertdocs.py` around line 195:**
 ```python
-# Line 78 - Change from DEFAULT to AGGRESSIVE
-ACTIVE_CONFIG = AGGRESSIVE_CHUNK_CONFIG  # ← Change this line
+# Replace the CHUNKING_CONFIG with this:
+CHUNKING_CONFIG = {
+    "page": {"max_words": 200, "overlap_words": 40, "min_words_to_chunk": 100},
+    "work_item": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+    "project": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+    "cycle": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+    "module": {"max_words": 150, "overlap_words": 30, "min_words_to_chunk": 80},
+}
 ```
 
-2. **Re-index with statistics:**
+2. **Re-index:**
 ```bash
 cd /workspace
-python3 qdrant/reindex_with_stats.py
+python3 qdrant/insertdocs.py
 ```
 
-This will show you:
+This will automatically show you:
 - How many documents got chunked
 - Average chunks per document
 - Distribution of chunk counts
+- Detailed statistics by content type
 
 **Expected results with AGGRESSIVE:**
 - Work items > 80 words → chunked
@@ -160,11 +161,11 @@ This will show you:
 
 ## 🔧 Advanced: Custom Chunking
 
-If you want fine-tuned control, edit `/workspace/qdrant/chunking_config.py`:
+If you want fine-tuned control, edit the `CHUNKING_CONFIG` in `/workspace/qdrant/insertdocs.py` (around line 195):
 
 ```python
-# Create custom configuration
-CUSTOM_CONFIG = {
+# Custom configuration example
+CHUNKING_CONFIG = {
     "work_item": {
         "max_words": 200,          # Chunk size
         "overlap_words": 40,       # Overlap between chunks
@@ -175,14 +176,11 @@ CUSTOM_CONFIG = {
         "overlap_words": 50,
         "min_words_to_chunk": 150,
     },
-    # ... other types
+    # ... configure other types similarly
 }
-
-# Activate it
-ACTIVE_CONFIG = CUSTOM_CONFIG  # Line 78
 ```
 
-Then re-index with `python3 qdrant/reindex_with_stats.py`.
+Then re-index with `python3 qdrant/insertdocs.py` - it will show you statistics automatically!
 
 ## 📞 Still Having Issues?
 
