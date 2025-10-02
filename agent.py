@@ -101,7 +101,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "  REQUIRED: 'query' - semantic search terms.\n"
     "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n"
     "- rag_mongo(query:str, entity_type:str, limit:int=15): Semantic search → MongoDB records with full fields.\n"
-    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n\n"
+    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n"
+    "- export_doc(title:str, data:any, file_name?:str, fields?:[str], directory?:str): Export Markdown doc (.md).\n"
+    "- export_excel(data:any, file_name?:str, fields?:[str], sheet_name?:str, directory?:str): Export Excel (.xlsx).\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
     "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
@@ -341,6 +343,9 @@ def _select_tools_for_query(user_query: str):
         "description", "context", "summarize", "summary", "snippet", "snippets",
         "search", "find examples", "show examples", "browse"
     ]
+    export_markers = [
+        "export", "download", "save", "excel", "xlsx", "csv", "spreadsheet", "markdown", "md", "doc page"
+    ]
     member_terms = [
         "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
         "user", "users", "staff", "people", "personnel"
@@ -367,6 +372,11 @@ def _select_tools_for_query(user_query: str):
         # This works for any entity type (work_item, page, project, cycle, module)
         if has_any(canonical_field_terms):
             allowed_names.append("rag_mongo")
+
+    # Enable export tools when user asks to export/download/save
+    if has_any(export_markers):
+        allowed_names.append("export_doc")
+        allowed_names.append("export_excel")
 
     # Detect presence of multiple action intents in one query
     action_structured = ["count", "group", "breakdown", "distribution", "compare"]

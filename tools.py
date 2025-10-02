@@ -1129,6 +1129,193 @@ tools = [
     rag_mongo,             # Bridge RAG semantic search to authoritative MongoDB records (any entity type)
 ]
 
+from typing import Iterable
+
+
+def _slugify_filename(name: str, default: str = "export") -> str:
+    try:
+        base = re.sub(r"[^A-Za-z0-9\-_.]+", "-", (name or "").strip()).strip("-._")
+        return base or default
+    except Exception:
+        return default
+
+
+def _coerce_to_rows(data: Any, fields: Optional[List[str]] = None) -> tuple[List[str], List[List[Any]]]:
+    """Convert arbitrary data into tabular headers and rows.
+
+    - If data is JSON string → parse
+    - If list[dict] → headers from keys (optionally subset by fields)
+    - If list[str|int|float] → single-column rows
+    - If dict → single row
+    - Else → single cell
+    """
+    try:
+        payload = data
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                pass
+
+        # list of dicts
+        if isinstance(payload, list) and payload and all(isinstance(x, dict) for x in payload):
+            keys: List[str]
+            if fields and isinstance(fields, list) and all(isinstance(f, str) for f in fields):
+                keys = fields
+            else:
+                # union of keys across rows, stable order by first appearance
+                seen: Dict[str, None] = {}
+                for row in payload:
+                    for k in row.keys():
+                        if k not in seen:
+                            seen[k] = None
+                keys = list(seen.keys())[:40]
+            rows: List[List[Any]] = []
+            for row in payload:
+                rows.append([row.get(k, "") for k in keys])
+            return keys, rows
+
+        # list of scalars
+        if isinstance(payload, list) and payload and all(not isinstance(x, dict) for x in payload):
+            return ["value"], [[x] for x in payload]
+
+        # single dict
+        if isinstance(payload, dict):
+            keys = list(payload.keys())[:40]
+            return keys, [[payload.get(k, "") for k in keys]]
+
+        # fallback single cell
+        return ["value"], [[payload]]
+    except Exception:
+        return ["value"], [[data]]
+
+
+def _render_markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
+    def _cell(v: Any) -> str:
+        s = str(v)
+        s = s.replace("|", "\\|")
+        return s
+    lines: List[str] = []
+    lines.append("| " + " | ".join(headers) + " |")
+    lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+    for r in rows:
+        # pad/truncate row length
+        vals = [ _cell(v) for v in (r + [""] * len(headers))[:len(headers)] ]
+        lines.append("| " + " | ".join(vals) + " |")
+    return "\n".join(lines)
+
+
+@tool
+async def export_doc(
+    title: str,
+    data: Any,
+    file_name: Optional[str] = None,
+    fields: Optional[List[str]] = None,
+    directory: str = "exports"
+) -> str:
+    """Export provided data to a Markdown doc page (.md).
+
+    Args:
+        title: Title to place at top of the document
+        data: Data to export (JSON string, list[dict], dict, list[scalar], or plain text)
+        file_name: Optional file base-name (without extension). Defaults to a slug of title.
+        fields: Optional subset of fields/columns for tabular export
+        directory: Directory to write into (default: 'exports')
+
+    Returns: Absolute file path of the generated Markdown file.
+    """
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        base = _slugify_filename(file_name or title or "export")
+        fname = f"{base}.md"
+        out_dir = os.path.abspath(directory)
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, fname)
+
+        headers, rows = _coerce_to_rows(data, fields=fields)
+
+        md: List[str] = []
+        md.append(f"# {title or 'Export'}")
+        md.append("")
+        md.append(f"_Generated: {datetime.now().isoformat()}_\n")
+        md.append(_render_markdown_table(headers, rows))
+        md.append("")
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(md))
+
+        return f"✅ Markdown exported: {out_path}"
+    except Exception as e:
+        return f"❌ EXPORT DOC ERROR: {str(e)}"
+
+
+@tool
+async def export_excel(
+    data: Any,
+    file_name: Optional[str] = None,
+    fields: Optional[List[str]] = None,
+    sheet_name: str = "Sheet1",
+    directory: str = "exports"
+) -> str:
+    """Export provided data to an Excel workbook (.xlsx).
+
+    Args:
+        data: Data to export (JSON string, list[dict], dict, list[scalar], or plain text)
+        file_name: Optional file base-name (without extension). Defaults to 'export-<timestamp>'.
+        fields: Optional subset of fields/columns when exporting list[dict]
+        sheet_name: Worksheet name (default 'Sheet1')
+        directory: Directory to write into (default: 'exports')
+
+    Returns: Absolute file path of the generated Excel file. Falls back to CSV if Excel writer unavailable.
+    """
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        base = _slugify_filename(file_name or f"export-{ts}")
+        out_dir = os.path.abspath(directory)
+        os.makedirs(out_dir, exist_ok=True)
+        xlsx_path = os.path.join(out_dir, f"{base}.xlsx")
+
+        headers, rows = _coerce_to_rows(data, fields=fields)
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.utils import get_column_letter
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = sheet_name[:31] or "Sheet1"
+
+            # write headers
+            for c_idx, h in enumerate(headers, start=1):
+                ws.cell(row=1, column=c_idx, value=str(h))
+            # write rows
+            for r_idx, r in enumerate(rows, start=2):
+                for c_idx, v in enumerate(r[:len(headers)], start=1):
+                    ws.cell(row=r_idx, column=c_idx, value=str(v))
+
+            wb.save(xlsx_path)
+            return f"✅ Excel exported: {xlsx_path}"
+        except ImportError:
+            # Fallback to CSV if openpyxl is not available
+            import csv
+            csv_path = os.path.join(out_dir, f"{base}.csv")
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            return f"⚠️ openpyxl not installed. Exported CSV instead: {csv_path}"
+        except Exception as e:
+            return f"❌ EXPORT EXCEL ERROR: {str(e)}"
+    except Exception as e:
+        return f"❌ EXPORT EXCEL ERROR: {str(e)}"
+
+
+# Extend tools registry
+tools.extend([
+    export_doc,
+    export_excel,
+])
+
 # import asyncio
 
 # if __name__ == "__main__":

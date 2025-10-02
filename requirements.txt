@@ -44,3 +44,4 @@ arize-phoenix-evals
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp
+openpyxl
