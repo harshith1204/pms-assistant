@@ -999,14 +999,7 @@ class MongoDBAgent:
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
-                if need_finalization:
-                    finalization_instructions = SystemMessage(content=(
-                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
-                        "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
-                    ))
-                    invoke_messages = messages + [routing_instructions, finalization_instructions]
-                    need_finalization = False
-
+               
                 response = await llm_with_tools.ainvoke(invoke_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
