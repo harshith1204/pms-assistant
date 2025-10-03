@@ -1,15 +1,19 @@
-# from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
+from typing import Tuple
 import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
 import os
+import uuid
+import hashlib
+
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -24,6 +28,7 @@ import threading
 import time
 from opentelemetry.sdk.trace.export import SpanProcessor
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
+import math
 
 # OpenInference semantic conventions (optional)
 try:
@@ -57,14 +62,18 @@ except AttributeError:
 import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
-from dotenv import load_dotenv
-load_dotenv()
-groq_api_key = os.getenv("GROQ_API_KEY")
-if not groq_api_key:
-    raise ValueError(
-        "FATAL: GROQ_API_KEY environment variable not set.\n"
-        "Please create a .env file and add your Groq API key to it."
-    )
+from mongo.constants import QDRANT_URL, QDRANT_API_KEY, EMBEDDING_MODEL
+
+# Qdrant / embeddings for long-term memory
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.http.models import Distance, VectorParams
+    from qdrant_client.models import PointStruct
+    from sentence_transformers import SentenceTransformer
+except Exception:
+    QdrantClient = None  # type: ignore
+    SentenceTransformer = None  # type: ignore
+
 DEFAULT_SYSTEM_PROMPT = (
     "You are a precise, non-speculative Project Management assistant.\n\n"
     "GENERAL RULES:\n"
@@ -72,33 +81,33 @@ DEFAULT_SYSTEM_PROMPT = (
     "- If a tool is appropriate, always call it before answering.\n"
     "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
     "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
+    "TOOL EXECUTION STRATEGY:\n"
+    "- When tools are INDEPENDENT (can run without each other's results): Call them together in one batch.\n"
+    "- When tools are DEPENDENT (one needs another's output): Call them separately in sequence.\n"
+    "- Examples of INDEPENDENT: 'Show bug counts AND feature counts' → call both tools together\n"
+    "- Examples of DEPENDENT: 'Find bugs by John, THEN search docs about those bugs' → call mongo_query first, wait for results, then call rag_search\n\n"
     "DECISION GUIDE:\n"
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
     "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
     "   - Do NOT answer from memory; run a query.\n"
-    "2) Use 'rag_content_search' to find content snippets for pages/work items by semantic meaning.\n"
-    "   - Example: 'find notes about OAuth errors' or 'search design doc for navigation'.\n"
-    "3) Use 'rag_answer_question' to assemble short context for answering a content question.\n"
-    "   - Use when the user asks a question that needs reading content first.\n"
-    "4) Use 'rag_to_mongo_workitems' when a free-text phrase identifies work items, but you must report canonical fields (state.name, assignee, project.name).\n\n"
+    "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
+    "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
+    "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
+    "3) Use 'rag_mongo' when searching by content/meaning AND need complete MongoDB records with all fields.\n"
+    "   - Combines semantic search with authoritative Mongo data.\n"
+    "   - Examples: 'find auth bugs with their status', 'security pages with project info', 'microservices projects'.\n\n"
     "TOOL CHEATSHEET:\n"
     "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
-    "- rag_content_search(query:str, content_type:'page'|'work_item'|None, limit:int=5): Retrieve relevant snippets with scores.\n"
-    "  REQUIRED: 'query' - semantic search terms for finding relevant content.\n"
-    "- rag_answer_question(question:str, content_types:list[str]|None): Provide condensed context to inform your final answer.\n"
-    "  REQUIRED: 'question' - the specific question you want answered using content.\n"
-    "- rag_to_mongo_workitems(query:str, limit:int=20): Vector-match items, then fetch authoritative Mongo fields.\n"
-    "  REQUIRED: 'query' - descriptive text to match against work items.\n"
-    "- composite_query(instruction:str, steps?:list): Run multiple sub-steps in parallel and consolidate.\n"
-    "  Use when query has multiple actions (e.g., 'compare X and list recent Y').\n"
-    "  Steps format: [{'tool': 'mongo_query', 'args': {'query': 'your query here'}, 'label': 'Step description'}, ...]\n"
-    "  Each tool in steps REQUIRES its specific arguments (see REQUIRED fields above).\n"
-    "  Allowed tools in steps: mongo_query, rag_content_search, rag_answer_question, rag_to_mongo_workitems.\n\n"
+    "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
+    "  REQUIRED: 'query' - semantic search terms.\n"
+    "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n"
+    "- rag_mongo(query:str, entity_type:str, limit:int=15): Semantic search → MongoDB records with full fields.\n"
+    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
-    "- If the question references 'content', 'notes', 'docs', 'pages', or 'descriptions' → rag_content_search or rag_answer_question.\n"
-    "- If the user wants tickets by phrase AND their state/assignee → rag_to_mongo_workitems.\n\n"
+    "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
+    "- If the user searches by content BUT needs complete MongoDB fields (state, assignee, dates, etc.) → rag_mongo.\n\n"
     "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
 
@@ -108,6 +117,9 @@ class ConversationMemory:
     def __init__(self, max_messages_per_conversation: int = 50):
         self.conversations: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_conversation))
         self.max_messages_per_conversation = max_messages_per_conversation
+        # Rolling summary per conversation (compact)
+        self.summaries: Dict[str, str] = {}
+        self.turn_counters: Dict[str, int] = defaultdict(int)
 
     def add_message(self, conversation_id: str, message: BaseMessage):
         """Add a message to the conversation history"""
@@ -123,16 +135,64 @@ class ConversationMemory:
             self.conversations[conversation_id].clear()
 
     def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
-        """Get recent conversation context, respecting token limits"""
+        """Get recent conversation context with a token budget and rolling summary."""
         messages = self.get_conversation_history(conversation_id)
 
-        # For now, just return the last few messages to stay within context limits
-        # In a production system, you'd want to implement proper token counting
-        if len(messages) <= 10:  # Return all if small conversation
-            return messages
-        else:
-            # Return last 10 messages to keep context manageable
-            return messages[-10:]
+        # Approximate token counting (≈4 chars/token)
+        def approx_tokens(text: str) -> int:
+            try:
+                return max(1, math.ceil(len(text) / 4))
+            except Exception:
+                return len(text) // 4
+
+        budget = max(500, max_tokens)
+        used = 0
+        selected: List[BaseMessage] = []
+
+        # Walk backwards to select most recent turns under budget
+        for msg in reversed(messages):
+            content = getattr(msg, "content", "")
+            used += approx_tokens(str(content)) + 8
+            if used > budget:
+                break
+            selected.append(msg)
+
+        selected.reverse()
+
+        # Prepend rolling summary if present and within budget
+        summary = self.summaries.get(conversation_id)
+        if summary:
+            stoks = approx_tokens(summary)
+            if used + stoks <= budget:
+                selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
+
+        return selected
+
+    def register_turn(self, conversation_id: str) -> None:
+        self.turn_counters[conversation_id] += 1
+
+    def should_update_summary(self, conversation_id: str, every_n_turns: int = 3) -> bool:
+        return self.turn_counters[conversation_id] % every_n_turns == 0
+
+    async def update_summary_async(self, conversation_id: str, llm_for_summary) -> None:
+        """Update the rolling summary asynchronously to avoid latency in main path."""
+        try:
+            history = self.get_conversation_history(conversation_id)
+            if not history:
+                return
+            recent = history[-12:]
+            prompt = [
+                SystemMessage(content=(
+                    "Summarize the durable facts, goals, and decisions from the conversation. "
+                    "Keep it 6-10 bullets, under 600 tokens. Avoid chit-chat."
+                ))
+            ] + recent + [HumanMessage(content="Produce condensed summary now.")]
+            resp = await llm_for_summary.ainvoke(prompt)
+            if getattr(resp, "content", None):
+                self.summaries[conversation_id] = str(resp.content)
+        except Exception:
+            # Best-effort; ignore failures
+            pass
 
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
@@ -150,6 +210,125 @@ llm = ChatOllama(
     top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
 )
 
+
+class TTLCache:
+    """Simple TTL cache for tool results to reduce repeat latency."""
+
+    def __init__(self, max_items: int = 256, ttl_seconds: int = 900):
+        self.store: Dict[str, tuple[float, Any]] = {}
+        self.max_items = max_items
+        self.ttl = ttl_seconds
+
+    def _evict_if_needed(self):
+        if len(self.store) <= self.max_items:
+            return
+        oldest_key = min(self.store.items(), key=lambda kv: kv[1][0])[0]
+        self.store.pop(oldest_key, None)
+
+    def get(self, key: str) -> Optional[Any]:
+        rec = self.store.get(key)
+        if not rec:
+            return None
+        ts, value = rec
+        if time.time() - ts > self.ttl:
+            self.store.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        self.store[key] = (time.time(), value)
+        self._evict_if_needed()
+
+
+class QdrantMemoryStore:
+    """Long-term semantic memory for chat/tool records backed by Qdrant."""
+
+    def __init__(self):
+        self.enabled = False
+        self.client = None
+        self.embedding_model = None
+        self.collection = "pms_memory"
+        self.vector_dim: Optional[int] = None
+
+    async def initialize(self):
+        try:
+            if QdrantClient is None or SentenceTransformer is None:
+                return
+            self.client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=30)
+            self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+            self.vector_dim = len(self.embedding_model.encode("dim_check").tolist())
+            collections = self.client.get_collections().collections
+            names = [c.name for c in collections]
+            if self.collection not in names:
+                self.client.recreate_collection(
+                    collection_name=self.collection,
+                    vectors_config=VectorParams(size=self.vector_dim, distance=Distance.COSINE),
+                )
+            self.enabled = True
+        except Exception:
+            self.enabled = False
+
+    def _embed(self, text: str) -> Optional[List[float]]:
+        try:
+            if not self.enabled or not self.embedding_model:
+                return None
+            return self.embedding_model.encode(text).tolist()
+        except Exception:
+            return None
+
+    def _point(self, text: str, payload: Dict[str, Any]):
+        vec = self._embed(text)
+        if vec is None:
+            return None
+        return PointStruct(id=str(uuid.uuid4()), vector=vec, payload=payload)
+
+    def upsert(self, text: str, payload: Dict[str, Any]) -> None:
+        if not self.enabled or not self.client:
+            return
+        try:
+            p = self._point(text, payload)
+            if p is None:
+                return
+            self.client.upsert(collection_name=self.collection, points=[p])
+        except Exception:
+            pass
+
+    def search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        if not self.enabled or not self.client:
+            return []
+        try:
+            from qdrant_client.models import Filter, FieldCondition, MatchValue
+            vec = self._embed(query)
+            if vec is None:
+                return []
+            qfilter = None
+            if filters:
+                must = []
+                for k, v in filters.items():
+                    must.append(FieldCondition(key=str(k), match=MatchValue(value=v)))
+                if must:
+                    qfilter = Filter(must=must)
+            hits = self.client.search(
+                collection_name=self.collection,
+                query_vector=vec,
+                limit=top_k,
+                with_payload=True,
+                score_threshold=0.3,
+                query_filter=qfilter,
+            )
+            out: List[Dict[str, Any]] = []
+            for h in hits:
+                out.append({
+                    "score": getattr(h, "score", 0.0),
+                    "payload": getattr(h, "payload", {}) or {},
+                })
+            return out
+        except Exception:
+            return []
+
+# Global long-term memory instance
+qdrant_memory_store = QdrantMemoryStore()
+
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
@@ -159,7 +338,7 @@ def _select_tools_for_query(user_query: str):
     Policy:
     - Default to mongo_query for structured field questions.
     - Only enable RAG tools when the query clearly asks for content/context.
-    - Enable rag_to_mongo_workitems only when content-like AND canonical fields are requested.
+    - Enable rag_mongo_workitems only when content-like AND canonical fields are requested.
     """
     q = (user_query or "").lower()
     content_markers = [
@@ -167,8 +346,6 @@ def _select_tools_for_query(user_query: str):
         "description", "context", "summarize", "summary", "snippet", "snippets",
         "search", "find examples", "show examples", "browse"
     ]
-    workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
-    # Member-related structured queries should always go to mongo_query (avoid RAG)
     member_terms = [
         "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
         "user", "users", "staff", "people", "personnel"
@@ -189,16 +366,13 @@ def _select_tools_for_query(user_query: str):
 
     allowed_names = ["mongo_query"]
     if allow_rag:
-        # Allow content-oriented RAG tools
-        allowed_names.extend(["rag_content_search", "rag_answer_question"])
-        # Only allow rag_to_mongo_workitems when user mentions work items AND canonical fields
-        if has_any(workitem_terms) and has_any(canonical_field_terms):
-            allowed_names.append("rag_to_mongo_workitems")
+        # Allow universal RAG search tool
+        allowed_names.append("rag_search")
+        # Allow rag_mongo when user needs semantic search + authoritative Mongo fields
+        # This works for any entity type (work_item, page, project, cycle, module)
+        if has_any(canonical_field_terms):
+            allowed_names.append("rag_mongo")
 
-    # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
-    multi_markers = [
-        "compare", " versus ", " vs ", "side by side", "both ", " and also ", " together ", ";", " then "
-    ]
     # Detect presence of multiple action intents in one query
     action_structured = ["count", "group", "breakdown", "distribution", "compare"]
     action_listing = ["list", "show", "top", "recent", "titles", "items"]
@@ -208,13 +382,7 @@ def _select_tools_for_query(user_query: str):
         (has_any(action_structured) and has_any(action_content)) or
         (has_any(action_listing) and has_any(action_content))
     )
-    needs_composite = (
-        has_any(multi_markers)
-        or multiple_actions
-        or (allow_rag and has_any(canonical_field_terms))
-    )
-    if needs_composite:
-        allowed_names.append("composite_query")
+    # composite_query removed; agent will chain tools internally via planning
 
     # Map to actual tool objects, keep only those present
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
@@ -472,6 +640,24 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
+async def _store_in_long_term_memory(query: str, response: str, conversation_id: str):
+    """Store conversation in QdrantMemoryStore asynchronously."""
+    try:
+        conversation_text = f"User: {query}\n\nAssistant: {response}"
+        qdrant_memory_store.upsert(
+            text=conversation_text,
+            payload={
+                "conversation_id": conversation_id,
+                "timestamp": time.time(),
+                "query": query,
+                "response": response,
+                "type": "conversation_exchange"
+            }
+        )
+    except Exception as e:
+        print(f"Error storing in long-term memory: {e}")
+
+
 class PhoenixCallbackHandler(AsyncCallbackHandler):
     """WebSocket streaming callback handler for Phoenix events"""
 
@@ -541,20 +727,41 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             print(f"Warning: Error stopping Phoenix span collector: {e}")
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling"""
+    """MongoDB Agent using Tool Calling with LLM-Controlled Execution
+    
+    Features:
+    - LLM-controlled execution: The LLM decides whether tools should run in parallel
+      or sequentially based on dependencies. When the LLM calls multiple tools together,
+      they execute in parallel. When tools need sequential execution, the LLM will
+      make separate calls.
+    - Parallel execution: When the LLM calls multiple independent tools together,
+      they execute concurrently using asyncio.gather() for improved performance.
+    - Sequential execution: When tools have dependencies, the LLM naturally handles
+      this by calling them in separate rounds.
+    - Full tracing support: All tool executions (parallel or sequential) are properly traced
+      with Phoenix/OpenTelemetry.
+    - Conversation memory: Maintains context across multiple turns.
+    
+    Args:
+        max_steps: Maximum number of reasoning steps (default: 8)
+        system_prompt: Custom system prompt or None to use default
+        enable_parallel_tools: Enable parallel tool execution (default: True)
+    """
 
-    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT):
+    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT, enable_parallel_tools: bool = True):
         # Base LLM; tools will be bound per-query via router
         self.llm_base = llm
         self.connected = False
         self.max_steps = max_steps
         self.system_prompt = system_prompt
         self.tracing_enabled = False
+        self.enable_parallel_tools = enable_parallel_tools
 
     async def initialize_tracing(self):
         """Enable Phoenix tracing for this agent."""
         await phoenix_span_manager.initialize()
         self.tracing_enabled = True
+
 
     def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
         if not self.tracing_enabled or phoenix_span_manager.tracer is None:
@@ -579,6 +786,82 @@ class MongoDBAgent:
             span.end()
         except Exception as e:
             print(f"Tracing error ending span: {e}")
+
+    async def _execute_single_tool(
+        self, 
+        tool, 
+        tool_call: Dict[str, Any], 
+        selected_tools: List[Any],
+        tracer=None
+    ) -> tuple[ToolMessage, bool]:
+        """Execute a single tool with tracing support.
+        
+        Returns:
+            tuple: (ToolMessage, success_flag)
+        """
+        tool_cm = None
+        if tracer is not None:
+            tool_cm = tracer.start_as_current_span(
+                "tool_execute",
+                kind=trace.SpanKind.INTERNAL,
+                attributes={"tool_name": tool_call["name"]},
+            )
+        
+        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+            # Enforce router: only allow selected tools
+            actual_tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+            if not actual_tool:
+                error_msg = ToolMessage(
+                    content=f"Tool '{tool_call['name']}' not found.",
+                    tool_call_id=tool_call["id"],
+                )
+                return error_msg, False
+
+            try:
+                if tool_span:
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), actual_tool.name)
+                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
+                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
+                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
+                        try:
+                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
+                        except Exception:
+                            pass
+                        tool_span.add_event("tool_start", {"tool": actual_tool.name})
+                    except Exception:
+                        pass
+                
+                result = await actual_tool.ainvoke(tool_call["args"])
+                
+                if tool_span:
+                    tool_span.set_attribute("tool_success", True)
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
+                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
+                        try:
+                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
+                        except Exception:
+                            pass
+                        tool_span.add_event("tool_end", {"tool": actual_tool.name})
+                    except Exception:
+                        pass
+                        
+            except Exception as tool_exc:
+                result = f"Tool execution error: {tool_exc}"
+                if tool_span:
+                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
+                    try:
+                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
+                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
+                    except Exception:
+                        pass
+
+            tool_message = ToolMessage(
+                content=str(result),
+                tool_call_id=tool_call["id"],
+            )
+            return tool_message, True
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
@@ -644,10 +927,38 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
+                # Retrieve relevant long-term memories
+                past_memories = []
+                if qdrant_memory_store.enabled:
+                    try:
+                        past_memories = qdrant_memory_store.search(query, top_k=3)
+                    except Exception as e:
+                        print(f"Warning: Failed to retrieve long-term memories: {e}")
+
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
+
+                # Add relevant long-term memories if available
+                if past_memories:
+                    memory_snippets = []
+                    for i, mem in enumerate(past_memories):
+                        payload = mem.get('payload', {})
+                        score = mem.get('score', 0.0)
+                        if score > 0.5:  # Only high-relevance memories
+                            memory_snippets.append(
+                                f"[Past Context {i+1}]\n"
+                                f"Q: {payload.get('query', '')[:150]}\n"
+                                f"A: {payload.get('response', '')[:150]}"
+                            )
+                    
+                    if memory_snippets:
+                        memory_context = "\n\n".join(memory_snippets)
+                        messages.append(SystemMessage(
+                            content=f"Relevant past conversations:\n{memory_context}"
+                        ))
+
                 messages.extend(conversation_context)
 
                 # Add current user message
@@ -704,12 +1015,15 @@ class MongoDBAgent:
                                 pass
                 # Lightweight routing hint to bias correct tool choice
                 routing_instructions = SystemMessage(content=(
-                    "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
-                    "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
-                    "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass steps like: "
-                    "[{'tool': 'mongo_query', 'args': {'query': 'count open work items'}, 'label': 'Count open items'}, "
-                    "{'tool': 'mongo_query', 'args': {'query': 'list recent completed work items'}, 'label': 'Recent completed'}]. "
-                    "IMPORTANT: Each tool requires specific arguments - mongo_query needs 'query', rag tools need 'query' or 'question'."
+                    "PLANNING & ROUTING:\n"
+                    "- Break the user request into logical steps.\n"
+                    "- For INDEPENDENT operations: Call multiple tools together.\n"
+                    "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
+                    "DECISION GUIDE:\n"
+                    "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
+                    "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
+                    "- Use 'rag_mongo' to find items by semantic search AND get complete MongoDB fields.\n\n"
+                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
@@ -738,77 +1052,49 @@ class MongoDBAgent:
                 if not getattr(response, "tool_calls", None):
                     return response.content
 
-                # Execute requested tools sequentially
+                # Execute requested tools
+                # The LLM decides execution order by how it calls tools:
+                # - Multiple tools in one response = parallel execution
+                # - Sequential needs are handled by the LLM making separate calls
                 messages.append(response)
                 did_any_tool = False
-                for tool_call in response.tool_calls:
-                    if tracer is not None:
-                        tool_cm = tracer.start_as_current_span(
-                            "tool_execute",
-                            kind=trace.SpanKind.INTERNAL,
-                            attributes={"tool_name": tool_call["name"]},
-                        )
-                    else:
-                        tool_cm = None
-
-                    with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                        # Enforce router: only allow selected tools
-                        tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
-                        if not tool:
-                            error_msg = ToolMessage(
-                                content=f"Tool '{tool_call['name']}' not found.",
-                                tool_call_id=tool_call["id"],
-                            )
-                            messages.append(error_msg)
-                            conversation_memory.add_message(conversation_id, error_msg)
-                            continue
-
-                        try:
-                            if tool_span:
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                    # Tag span kind for OpenInference UI (uppercase expected)
-                                    tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
-                                    # Also set generic and OpenInference input.value for Phoenix UI
-                                    tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
-                                    try:
-                                        tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
-                                    except Exception:
-                                        pass
-                                    tool_span.add_event("tool_start", {"tool": tool.name})
-                                except Exception:
-                                    pass
-                            result = await tool.ainvoke(tool_call["args"])
-                            if tool_span:
-                                tool_span.set_attribute("tool_success", True)
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                    tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
-                                    try:
-                                        tool_span.set_attribute('openinference.output.value', str(result)[:1200])
-                                    except Exception:
-                                        pass
-                                    tool_span.add_event("tool_end", {"tool": tool.name})
-                                except Exception:
-                                    pass
-                        except Exception as tool_exc:
-                            result = f"Tool execution error: {tool_exc}"
-                            if tool_span:
-                                tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                try:
-                                    tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                    tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                except Exception:
-                                    pass
-
-                        tool_message = ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"],
+                
+                # Log execution info
+                tool_names = [tc["name"] for tc in response.tool_calls]
+                execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
+                print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
+                
+                if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                    # Multiple tools called together = LLM determined they're independent
+                    if run_span:
+                        run_span.add_event("parallel_tool_execution", {
+                            "tool_count": len(response.tool_calls),
+                            "tools": tool_names
+                        })
+                    
+                    tool_tasks = [
+                        self._execute_single_tool(None, tool_call, selected_tools, tracer)
+                        for tool_call in response.tool_calls
+                    ]
+                    tool_results = await asyncio.gather(*tool_tasks)
+                    
+                    # Process results in order
+                    for tool_message, success in tool_results:
+                        messages.append(tool_message)
+                        conversation_memory.add_message(conversation_id, tool_message)
+                        if success:
+                            did_any_tool = True
+                else:
+                    # Single tool or parallel disabled
+                    for tool_call in response.tool_calls:
+                        tool_message, success = await self._execute_single_tool(
+                            None, tool_call, selected_tools, tracer
                         )
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        did_any_tool = True
+                        if success:
+                            did_any_tool = True
+                
                 steps += 1
 
                 # After executing any tools, force the next LLM turn to synthesize
@@ -828,6 +1114,25 @@ class MongoDBAgent:
 
             # If we exit the loop due to step cap, return the best available answer
             if last_response is not None:
+                # Register turn and update summary if needed
+                conversation_memory.register_turn(conversation_id)
+                if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                    try:
+                        asyncio.create_task(
+                            conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to update summary: {e}")
+                
+                # Store in long-term memory (non-blocking)
+                if qdrant_memory_store.enabled:
+                    try:
+                        asyncio.create_task(
+                            _store_in_long_term_memory(query, last_response.content, conversation_id)
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to store in long-term memory: {e}")
+                
                 return last_response.content
             return "Reached maximum reasoning steps without a final answer."
 
@@ -862,10 +1167,38 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
+                # Retrieve relevant long-term memories
+                past_memories = []
+                if qdrant_memory_store.enabled:
+                    try:
+                        past_memories = qdrant_memory_store.search(query, top_k=3)
+                    except Exception as e:
+                        print(f"Warning: Failed to retrieve long-term memories: {e}")
+
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
+
+                # Add relevant long-term memories if available
+                if past_memories:
+                    memory_snippets = []
+                    for i, mem in enumerate(past_memories):
+                        payload = mem.get('payload', {})
+                        score = mem.get('score', 0.0)
+                        if score > 0.5:  # Only high-relevance memories
+                            memory_snippets.append(
+                                f"[Past Context {i+1}]\n"
+                                f"Q: {payload.get('query', '')[:150]}\n"
+                                f"A: {payload.get('response', '')[:150]}"
+                            )
+                    
+                    if memory_snippets:
+                        memory_context = "\n\n".join(memory_snippets)
+                        messages.append(SystemMessage(
+                            content=f"Relevant past conversations:\n{memory_context}"
+                        ))
+
                 messages.extend(conversation_context)
 
                 # Add current user message
@@ -908,12 +1241,15 @@ class MongoDBAgent:
                             except Exception:
                                 pass
                         routing_instructions = SystemMessage(content=(
-                            "ROUTING REMINDER: Choose one tool per step using the Decision Guide. "
-                            "If the user asks for DB facts, prefer 'mongo_query'. If asking about content, prefer RAG tools. "
-                            "If the query has multiple actions (e.g., compare + list recent), prefer 'composite_query' and pass steps like: "
-                            "[{'tool': 'mongo_query', 'args': {'query': 'count open work items'}, 'label': 'Count open items'}, "
-                            "{'tool': 'mongo_query', 'args': {'query': 'list recent completed work items'}, 'label': 'Recent completed'}]. "
-                            "IMPORTANT: Each tool requires specific arguments - mongo_query needs 'query', rag tools need 'query' or 'question'."
+                            "PLANNING & ROUTING:\n"
+                            "- Break the user request into logical steps.\n"
+                            "- For INDEPENDENT operations: Call multiple tools together.\n"
+                            "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
+                            "DECISION GUIDE:\n"
+                            "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
+                            "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
+                            "- 'rag_mongo' → semantic search + complete MongoDB fields (any entity type).\n\n"
+                            "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
@@ -945,68 +1281,54 @@ class MongoDBAgent:
                         yield response.content
                         return
 
-                    # Execute requested tools sequentially with streaming callbacks
+                    # Execute requested tools with streaming callbacks
+                    # The LLM decides execution order by how it calls tools
                     messages.append(response)
                     did_any_tool = False
-                    for tool_call in response.tool_calls:
-                        if tracer is not None:
-                            tool_cm = tracer.start_as_current_span(
-                                "tool_execute",
-                                kind=trace.SpanKind.INTERNAL,
-                                attributes={"tool_name": tool_call["name"]},
-                            )
-                        else:
-                            tool_cm = None
-
-                        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
-                            # Enforce router: only allow selected tools
+                    
+                    # Log execution info
+                    tool_names = [tc["name"] for tc in response.tool_calls]
+                    execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
+                    print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
+                    
+                    if self.enable_parallel_tools and len(response.tool_calls) > 1:
+                        # Multiple tools called together = LLM determined they're independent
+                        # Send tool_start events for all tools first
+                        for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
-                            if not tool:
-                                error_msg = ToolMessage(
-                                    content=f"Tool '{tool_call['name']}' not found.",
-                                    tool_call_id=tool_call["id"],
-                                )
-                                messages.append(error_msg)
-                                conversation_memory.add_message(conversation_id, error_msg)
-                                continue
-
-                            await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
-                            try:
-                                if tool_span:
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), tool.name)
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'tool')
-                                        tool_span.add_event("tool_start", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                result = await tool.ainvoke(tool_call["args"])
-                                if tool_span:
-                                    tool_span.set_attribute("tool_success", True)
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                                        tool_span.add_event("tool_end", {"tool": tool.name})
-                                    except Exception:
-                                        pass
-                                await callback_handler.on_tool_end(str(result))
-                            except Exception as tool_exc:
-                                result = f"Tool execution error: {tool_exc}"
-                                if tool_span:
-                                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                                    try:
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                                    except Exception:
-                                        pass
-                                await callback_handler.on_tool_end(str(result))
-
-                            tool_message = ToolMessage(
-                                content=str(result),
-                                tool_call_id=tool_call["id"],
-                            )
+                            if tool:
+                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                        
+                        # Execute all tools in parallel
+                        tool_tasks = [
+                            self._execute_single_tool(None, tool_call, selected_tools, tracer)
+                            for tool_call in response.tool_calls
+                        ]
+                        tool_results = await asyncio.gather(*tool_tasks)
+                        
+                        # Process results and send tool_end events
+                        for tool_message, success in tool_results:
+                            await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            did_any_tool = True
+                            if success:
+                                did_any_tool = True
+                    else:
+                        # Single tool or parallel disabled
+                        for tool_call in response.tool_calls:
+                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
+                            if tool:
+                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                            
+                            tool_message, success = await self._execute_single_tool(
+                                None, tool_call, selected_tools, tracer
+                            )
+                            await callback_handler.on_tool_end(tool_message.content)
+                            messages.append(tool_message)
+                            conversation_memory.add_message(conversation_id, tool_message)
+                            if success:
+                                did_any_tool = True
+                    
                     steps += 1
 
                     # After executing any tools, force the next LLM turn to synthesize
@@ -1015,6 +1337,25 @@ class MongoDBAgent:
 
                 # Step cap reached; send best available response
                 if last_response is not None:
+                    # Register turn and update summary if needed
+                    conversation_memory.register_turn(conversation_id)
+                    if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                        try:
+                            asyncio.create_task(
+                                conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to update summary: {e}")
+                    
+                    # Store in long-term memory (non-blocking)
+                    if qdrant_memory_store.enabled:
+                        try:
+                            asyncio.create_task(
+                                _store_in_long_term_memory(query, last_response.content, conversation_id)
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to store in long-term memory: {e}")
+                    
                     yield last_response.content
                 else:
                     yield "Reached maximum reasoning steps without a final answer."
