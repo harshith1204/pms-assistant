@@ -15,7 +15,7 @@ import copy
 
 from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
-# from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -280,22 +280,37 @@ class LLMIntentParser:
         return None
 
     def _infer_sort_order_from_query(self, query_text: str) -> Optional[Dict[str, int]]:
-        """Infer time-based sorting preferences from free-form query text.
+        """Infer sorting preferences from free-form query text.
 
-        Recognizes phrases like 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
-        and 'oldest', 'earliest' → createdTimeStamp asc (1). Also handles
-        'ascending/descending' when mentioned alongside time/date/created keywords.
+        Recognizes phrases like:
+        - 'recent', 'latest', 'newest' → createdTimeStamp desc (-1)
+        - 'oldest', 'earliest' → createdTimeStamp asc (1)
+        - 'top N priority' → priority desc (-1)
+        - 'highest priority' → priority desc (-1)
+        - 'top N' with time context → createdTimeStamp desc (-1)
         """
         if not query_text:
             return None
 
         text = query_text.lower()
 
+        # Priority-based sorting cues (highest priority first)
+        if re.search(r'\b(?:top|highest|most|high)\s+\d*\s*priority\b', text):
+            return {"priority": -1}
+        if re.search(r'\bpriority\s+(?:top|highest|desc|descending)\b', text):
+            return {"priority": -1}
+        if re.search(r'\b(?:lowest|low)\s+priority\b', text):
+            return {"priority": 1}
+            
         # Direct recency/age cues
         if re.search(r"\b(recent|latest|newest|most\s+recent|newer\s+first)\b", text):
             return {"createdTimeStamp": -1}
         if re.search(r"\b(oldest|earliest|older\s+first)\b", text):
             return {"createdTimeStamp": 1}
+            
+        # "Top N" without explicit field → assume recent (most common use case)
+        if re.search(r'\btop\s+\d+\b', text) and not re.search(r'\bpriority\b', text):
+            return {"createdTimeStamp": -1}
 
         # Asc/Desc cues when paired with time/date/created terms
         mentions_time = re.search(r"\b(time|date|created|creation|timestamp|recent)\b", text) is not None
@@ -306,6 +321,7 @@ class LLMIntentParser:
                 return {"createdTimeStamp": 1}
 
         return None
+
 
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
@@ -351,6 +367,19 @@ class LLMIntentParser:
             "- 'oldest', 'earliest', 'older first' → {\"createdTimeStamp\": 1}\n"
             "- If 'ascending/descending' is mentioned with created/time/date/timestamp, map to 1/-1 respectively on 'createdTimeStamp'.\n"
             "Only include sort_order when relevant; otherwise set it to null.\n\n"
+
+            "## LIMIT EXTRACTION (CRITICAL)\n"
+            "Extract the result limit intelligently from the user's query:\n"
+            "- 'top N' / 'first N' / 'N items' → limit: N (e.g., 'top 5' → limit: 5)\n"
+            "- 'all' / 'every' / 'list all' → limit: 1000 (high limit to get all results)\n"
+            "- 'a few' / 'some' → limit: 5\n"
+            "- 'several' → limit: 10\n"
+            "- 'one' / 'single' / 'find X' (singular) → limit: 1, fetch_one: true\n"
+            "- No specific mention → limit: 20 (reasonable default)\n"
+            "- For count/aggregation queries → limit: null (no limit needed)\n"
+            "IMPORTANT: When 'top N' is used, also infer appropriate sorting:\n"
+            "  - 'top N' with priority context → sort_order: {\"priority\": -1}\n"
+            "  - 'top N' with date/recent context → sort_order: {\"createdTimeStamp\": -1}\n\n"
 
             "## NAME EXTRACTION RULES - CRITICAL\n"
             "ALWAYS extract ONLY the core entity name, NEVER include descriptive phrases:\n"
@@ -435,7 +464,12 @@ class LLMIntentParser:
             "- 'work items updated in the last 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
             "- 'tasks created since yesterday' → {\"primary_entity\": \"workItem\", \"filters\": {\"createdTimeStamp_from\": \"yesterday\"}, \"aggregations\": []}\n"
             "- 'issues from the last week' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"last_week\"}, \"aggregations\": []}\n"
-            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n\n"
+            "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
+            "- 'top 5 priority work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"priority\": -1}, \"limit\": 5}\n"
+            "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
+            "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
+            "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
+            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -564,17 +598,69 @@ class LLMIntentParser:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
 
+        # Heuristic enrichments from original query text (generalized)
+        oq_text = (original_query or "").lower()
+
+        # 1) Infer grouping from phrasing: "by X", "group by X", "breakdown by X", "per X"
+        inferred_group_by: List[str] = []
+        def _maybe_add_group(token: str):
+            if token in {"project", "priority", "assignee", "cycle", "module", "state", "status", "business"}:
+                if token not in inferred_group_by:
+                    inferred_group_by.append(token)
+
+        # Common phrasings
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+priority\b", oq_text):
+            _maybe_add_group("priority")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+project\b", oq_text):
+            _maybe_add_group("project")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+assignee\b", oq_text):
+            _maybe_add_group("assignee")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+cycle\b", oq_text):
+            _maybe_add_group("cycle")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+module\b", oq_text):
+            _maybe_add_group("module")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+(state|status)\b", oq_text):
+            _maybe_add_group("state")
+        if re.search(r"\b(group\s+by|breakdown\s+by|distribution\s+by|by|per)\s+business\b", oq_text):
+            _maybe_add_group("business")
+
+        # Merge with LLM-provided group_by if any
+        if inferred_group_by:
+            existing_group_by = [g for g in (data.get("group_by") or [])]
+            # keep order: inferred first, then any unique extras
+            merged = inferred_group_by + [g for g in existing_group_by if g not in inferred_group_by]
+            data["group_by"] = merged
+
+            # If grouping by priority explicitly, drop conflicting exact priority filters to avoid collapsing buckets
+            if "priority" in merged and "by priority" in oq_text and "priority" in filters:
+                filters.pop("priority", None)
+
+        # 2) Overdue semantics for work items: dueDate < now and not in done-like states
+        if primary == "workItem" and re.search(r"\boverdue\b|\bpast\s+due\b|\blate\b", oq_text):
+            # Only add if user didn't already specify a dueDate bound
+            if "dueDate_to" not in filters:
+                filters["dueDate_to"] = "now"
+            # Exclude commonly done/closed states if user didn't explicitly filter state
+            if "state" not in filters and "state_not" not in filters:
+                filters["state_not"] = ["Completed", "Verified"]
+
 
         # Aggregations
         allowed_aggs = {"count", "group", "summary"}
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
-        allowed_group = {"cycle", "project", "assignee", "state", "priority", "module"}
+        # Extended to support status/visibility/business and date buckets
+        allowed_group = {
+            "cycle", "project", "assignee", "state", "priority", "module",
+            "status", "visibility", "business",
+            "created_day", "created_week", "created_month",
+            "updated_day", "updated_week", "updated_month",
+        }
         group_by = [g for g in (data.get("group_by") or []) if g in allowed_group]
 
         # If user grouped by cross-entity tokens, force workItem as base (entity lock)
-        cross_tokens = {"assignee", "project", "cycle", "module"}
+        cross_tokens = {"assignee", "project", "cycle", "module", "business"}
         if any(g in cross_tokens for g in group_by):
             primary = "workItem"
 
@@ -620,14 +706,23 @@ class LLMIntentParser:
             if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
                 sort_order = {norm_key: norm_dir}
 
-        # Limit
+        # Limit - intelligent handling based on query type
         limit_val = data.get("limit")
         try:
-            limit = int(limit_val) if limit_val is not None else 20
-            if limit <= 0:
+            # For count/aggregation-only queries, no limit needed unless specifically requested
+            if aggregations and not wants_details and limit_val is None:
+                limit = None
+            elif limit_val is None or limit_val == 20:
+                # Use default limit when LLM doesn't provide a specific limit
                 limit = 20
-            limit = min(limit, 100)
+            else:
+                limit = int(limit_val)
+                if limit <= 0:
+                    limit = 20
+                # Cap at 1000 to prevent runaway queries (instead of 100)
+                limit = min(limit, 1000)
         except Exception:
+            # Last resort fallback: use default limit
             limit = 20
 
         # Skip (offset)
@@ -745,7 +840,59 @@ class PipelineGenerator:
     def __init__(self):
         self.relationship_cache = {}  # Cache for computed relationship paths
 
-    def generate_pipeline(self, intent: QueryIntent) -> List[Dict[str, Any]]:
+    def _add_comprehensive_lookups(self, pipeline: List[Dict[str, Any]], collection: str, intent: QueryIntent, required_relations: Set[str]):
+        """Add comprehensive lookups for better performance on complex multi-step operations"""
+        # Define comprehensive relationship maps for each collection
+        comprehensive_relations = {
+            'workItem': {
+                # Always include project and assignee for work items (most commonly needed)
+                'project': True,
+                'assignee': True,
+                # Conditionally include others based on query complexity
+                'cycle': intent.wants_details or len(intent.group_by or []) > 0,
+                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+            },
+            'project': {
+                # Always include business for projects
+                'business': True,
+                # Include commonly accessed relations
+                'members': intent.wants_details or 'assignee' in (intent.group_by or []),
+                'cycles': intent.wants_details or 'cycle' in (intent.group_by or []),
+                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+            },
+            'cycle': {
+                'project': True,  # Always needed for cycle context
+                'business': True,  # Often needed for business context
+            },
+            'module': {
+                'project': True,  # Always needed for module context
+                'assignee': intent.wants_details or 'assignee' in (intent.group_by or []),
+                'business': True,  # Often needed for business context
+            },
+            'members': {
+                'project': True,  # Always needed for member context
+                'business': True,  # Often needed for business context
+            },
+            'page': {
+                'project': True,  # Always needed for page context
+                'linkedCycle': intent.wants_details,
+                'linkedModule': intent.wants_details,
+                'business': True,  # Often needed for business context
+            }
+        }
+
+        # Get the comprehensive relations for this collection
+        relations_to_add = comprehensive_relations.get(collection, {})
+
+        # Add each comprehensive relation if it's available in the relationship registry
+        for relation_name, should_add in relations_to_add.items():
+            if should_add and relation_name in REL.get(collection, {}):
+                # Add to required_relations so it gets processed in the main lookup loop
+                if relation_name not in required_relations:
+                    # Add the relation directly - the lookup logic will handle array vs single relations
+                    required_relations.add(relation_name)
+
+    def generate_pipeline(self, intent: QueryIntent, enable_complex_joins: bool = True) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
         pipeline: List[Dict[str, Any]] = []
 
@@ -785,6 +932,8 @@ class PipelineGenerator:
                 'assignee': None,
                 'module': None,
                 'cycle': None,
+                # For business grouping we may need a project join to ensure business name
+                'business': 'project',
             },
             'project': {
                 'cycle': 'cycles',
@@ -795,22 +944,27 @@ class PipelineGenerator:
             },
             'cycle': {
                 'project': 'project',
+                'business': 'project',
             },
             'module': {
                 'project': 'project',
                 'assignee': 'assignee',
+                'business': 'project',
             },
             'page': {
                 'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
                 'cycle': 'linkedCycle',
                 'module': 'linkedModule',
+                'business': 'project',
                 'linkedMembers': 'linkedMembers',
             },
             'members': {
                 'project': 'project',
+                'business': 'project',
             },
             'projectState': {
                 'project': 'project',
+                'business': 'project',
             },
         }.get(collection, {})
 
@@ -877,6 +1031,11 @@ class PipelineGenerator:
                     required_relations.add('project')
                     required_relations.add('project.modules')
 
+        # When complex joins are enabled, proactively add comprehensive lookups
+        # for better performance on multi-step operations
+        if enable_complex_joins:
+            self._add_comprehensive_lookups(pipeline, collection, intent, required_relations)
+
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
         for target_entity in sorted(required_relations):
             # Allow multi-hop relation names like "project.cycles"
@@ -935,9 +1094,13 @@ class PipelineGenerator:
             group_id_expr: Any
             id_fields: Dict[str, Any] = {}
             for token in intent.group_by:
-                field_path = self._resolve_group_field(intent.primary_entity, token)
-                if field_path:
-                    id_fields[token] = f"${field_path}"
+                resolved = self._resolve_group_field(intent.primary_entity, token)
+                if resolved:
+                    # Accept either a field path (str) or a full expression (dict)
+                    if isinstance(resolved, str):
+                        id_fields[token] = f"${resolved}"
+                    else:
+                        id_fields[token] = resolved
             if not id_fields:
                 # Fallback: do nothing if we can't resolve
                 pass
@@ -1244,6 +1407,14 @@ class PipelineGenerator:
             if 'state' in filters:
                 # Map logical state filter to embedded field
                 primary_filters['state.name'] = filters['state']
+            # Exclude states (array) support, mapped to state.name not-in
+            if 'state_not' in filters and isinstance(filters['state_not'], list) and filters['state_not']:
+                primary_filters['state.name'] = primary_filters.get('state.name') or {}
+                # If previously set to a scalar via 'state', turn into $nin with preservation
+                if isinstance(primary_filters['state.name'], str):
+                    primary_filters['state.name'] = {"$in": [primary_filters['state.name']]}
+                # Merge not-in
+                primary_filters['state.name']["$nin"] = filters['state_not']
             if 'label' in filters and isinstance(filters['label'], str):
                 primary_filters['label'] = {'$regex': filters['label'], '$options': 'i'}
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
@@ -1254,6 +1425,8 @@ class PipelineGenerator:
                 primary_filters['displayBugNo'] = {'$regex': f"^{filters['displayBugNo']}", '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
             _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+            # Support dueDate ranges uniformly
+            _apply_date_range(primary_filters, 'dueDate', filters)
 
         elif collection == "project":
             if 'project_status' in filters:
@@ -1562,32 +1735,102 @@ class PipelineGenerator:
         return validated
 
     def _resolve_group_field(self, primary_entity: str, token: str) -> Optional[str]:
-        """Map a grouping token to a concrete field path in the current pipeline."""
-        mapping = {
+        """Map a grouping token to a concrete field path or Mongo expression.
+
+        Returns either a string field path (relative to current doc) or a dict representing
+        a MongoDB aggregation expression (e.g., for date bucketing).
+        """
+        # Date bucket helper
+        def date_field_for(entity: str, which: str) -> Optional[str]:
+            # which: 'created' | 'updated'
+            if entity == 'page':
+                return 'createdAt' if which == 'created' else 'updatedAt'
+            # Default to *TimeStamp for other entities
+            return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
+
+        def bucket_expr(entity: str, which: str, unit: str):
+            field = date_field_for(entity, which)
+            if not field:
+                return None
+            # Prefer $dateTrunc for week/month; for day we can also truncate
+            if unit in {'week', 'month', 'day'}:
+                return {"$dateTrunc": {"date": f"${field}", "unit": unit}}
+            return None
+
+        # Base mappings
+        mapping: Dict[str, Dict[str, Any]] = {
             'workItem': {
-                # Only relations that exist in REL for workItem
                 'project': 'project.name',
                 'assignee': 'assignee.name',
                 'cycle': 'cycle.name',
                 'module': 'modules.name',
                 'state': 'state.name',
+                'status': 'state.name',  # accept 'status' as synonym for state
                 'priority': 'priority',
+                'business': 'projectDoc.business.name',  # ensure join if needed
+                'created_day': bucket_expr('workItem', 'created', 'day'),
+                'created_week': bucket_expr('workItem', 'created', 'week'),
+                'created_month': bucket_expr('workItem', 'created', 'month'),
+                'updated_day': bucket_expr('workItem', 'updated', 'day'),
+                'updated_week': bucket_expr('workItem', 'updated', 'week'),
+                'updated_month': bucket_expr('workItem', 'updated', 'month'),
             },
             'project': {
-                'status': 'status',  # project status unchanged
+                'status': 'status',
+                'business': 'business.name',
+                'created_day': bucket_expr('project', 'created', 'day'),
+                'created_week': bucket_expr('project', 'created', 'week'),
+                'created_month': bucket_expr('project', 'created', 'month'),
+                'updated_day': bucket_expr('project', 'updated', 'day'),
+                'updated_week': bucket_expr('project', 'updated', 'week'),
+                'updated_month': bucket_expr('project', 'updated', 'month'),
             },
             'cycle': {
                 'project': 'project.name',
-                'status': 'status',  # cycle status unchanged
+                'status': 'status',
+                'created_day': bucket_expr('cycle', 'created', 'day'),
+                'created_week': bucket_expr('cycle', 'created', 'week'),
+                'created_month': bucket_expr('cycle', 'created', 'month'),
+                'updated_day': bucket_expr('cycle', 'updated', 'day'),
+                'updated_week': bucket_expr('cycle', 'updated', 'week'),
+                'updated_month': bucket_expr('cycle', 'updated', 'month'),
             },
             'page': {
                 'project': 'projectDoc.name',
                 'cycle': 'linkedCycleDocs.name',
                 'module': 'linkedModuleDocs.name',
+                'visibility': 'visibility',
+                'business': 'projectDoc.business.name',
+                'created_day': bucket_expr('page', 'created', 'day'),
+                'created_week': bucket_expr('page', 'created', 'week'),
+                'created_month': bucket_expr('page', 'created', 'month'),
+                'updated_day': bucket_expr('page', 'updated', 'day'),
+                'updated_week': bucket_expr('page', 'updated', 'week'),
+                'updated_month': bucket_expr('page', 'updated', 'month'),
+            },
+            'module': {
+                'project': 'project.name',
+                'business': 'project.business.name',
+                'created_day': bucket_expr('module', 'created', 'day'),
+                'created_week': bucket_expr('module', 'created', 'week'),
+                'created_month': bucket_expr('module', 'created', 'month'),
+            },
+            'members': {
+                'project': 'project.name',
+                'business': 'project.business.name',
+                'created_day': bucket_expr('members', 'created', 'day'),
+                'created_week': bucket_expr('members', 'created', 'week'),
+                'created_month': bucket_expr('members', 'created', 'month'),
+            },
+            'projectState': {
+                'project': 'project.name',
+                'business': 'project.business.name',
             },
         }
         entity_map = mapping.get(primary_entity, {})
-        return entity_map.get(token)
+        val = entity_map.get(token)
+        # Some bucket_expr entries may be None if field not applicable
+        return val if val is not None else None
 
 class Planner:
     """Main query planner that orchestrates the entire process"""
@@ -1597,10 +1840,10 @@ class Planner:
         self.llm_parser = LLMIntentParser()
         self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
-    async def plan_and_execute(self, query: str) -> Dict[str, Any]:
+    async def plan_and_execute(self, query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
         """Plan and execute a natural language query using the Orchestrator."""
         try:
-            # Define step coroutines as closures to capture self
+            # Define step coroutines as closures to capture self and enable_complex_joins
             async def _ensure_connection(ctx: Dict[str, Any]) -> bool:
                 await mongodb_tools.connect()
                 return True
@@ -1612,7 +1855,7 @@ class Planner:
                 return result is not None
 
             def _generate_pipeline(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
-                return self.generator.generate_pipeline(ctx["intent"])  # type: ignore[index]
+                return self.generator.generate_pipeline(ctx["intent"], enable_complex_joins=enable_complex_joins)  # type: ignore[index]
 
             async def _execute(ctx: Dict[str, Any]) -> Any:
                 intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
@@ -1697,6 +1940,6 @@ class Planner:
 # Global instance
 query_planner = Planner()
 
-async def plan_and_execute_query(query: str) -> Dict[str, Any]:
+async def plan_and_execute_query(query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
     return await query_planner.plan_and_execute(query)
