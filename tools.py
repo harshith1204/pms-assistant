@@ -387,12 +387,12 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
     """Plan-first Mongo query executor for structured, factual questions.
 
     Use this ONLY when the user asks for authoritative data that must come from
-    MongoDB (counts, lists, filters, group-by, state/assignee/project details)
+    MongoDB (counts, lists, filters, group-by, breakdowns, state/assignee/project details)
     across collections: `project`, `workItem`, `cycle`, `module`, `members`,
     `page`, `projectState`.
 
     Do NOT use this for:
-    - Free-form content questions (use `rag_answer_question` or `rag_content_search`).
+    - Free-form content questions (use `rag_search`).
     - Pure summarization or opinion without data retrieval.
     - When you already have the exact answer in prior tool results.
 
@@ -401,6 +401,12 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
       hallucinated fields.
     - Can generate complex aggregation pipelines with multiple joins when
       enable_complex_joins=True, reducing need for tool chaining.
+    - Set enable_complex_joins=True when query needs relationships between collections:
+        - workItem→assignee, workItem→project, project→business, cycle→project, etc.
+        - Multi-hop queries: "work items by business" (workItem→project→business)
+        - Cross-collection analysis: "members working on projects by business"
+    - Use enable_complex_joins=False for simple queries (default) for better performance.
+        
     - For simple queries, use enable_complex_joins=False (default) for better performance.
     - Return concise summaries by default; pass `show_all=True` only when the
       user explicitly requests full records.
@@ -409,8 +415,7 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
         query: Natural language, structured data request about PM entities.
         show_all: If True, output full details instead of a summary. Use sparingly.
         enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
-            Use for: relationships, multi-hop queries, cross-collection analysis.
-            Default: False for better performance on simple queries.
+            Agent decides based on relationships needed in the query.
 
     Returns: A compact result suitable for direct user display.
     """
