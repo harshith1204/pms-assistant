@@ -398,12 +398,9 @@ def format_reconstructed_results(
                 chunk_info = ", ".join([f"#{c.chunk_index}({c.score:.2f})" for c in scored_chunks])
                 response_parts.append(f"    Matched chunks: {chunk_info}")
         
-        # Show full content
+        # Show full content without truncation so the agent has full context
         if show_full_content:
             content = doc.full_content
-            # Optionally truncate if still too long
-            if len(content) > 4000:
-                content = content[:4000] + f"\n... [truncated {len(doc.full_content) - 4000} chars]"
             response_parts.append(f"\n    Content:\n{content}")
         
         response_parts.append("")  # Empty line between docs
