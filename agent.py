@@ -88,7 +88,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
     "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
     "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
-    "   - Agent decides when to use complex joins (enable_complex_joins=True) based on relationships needed (project→business, workItem→assignee).\n"
+    "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
     "   - Do NOT answer from memory; run a query.\n"
     "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
     "   - Find pages/work items by meaning, analyze content patterns, search documentation.\n"
@@ -97,7 +97,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "   - Example: 'Show bug counts by priority (mongo_query) and find related documentation (rag_search)'.\n"
     "   - Agent decides tool combination based on query complexity and dependencies.\n\n"
     "TOOL CHEATSHEET:\n"
-    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
+    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only. Automatically uses complex joins when beneficial.\n"
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
     "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
     "  REQUIRED: 'query' - semantic search terms.\n"
@@ -977,7 +977,7 @@ class MongoDBAgent:
                     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
                     "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
                     "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
-                    "   - Agent decides when to use complex joins (enable_complex_joins=True) based on relationships needed (project→business, workItem→assignee).\n"
+                    "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
                     "   - Do NOT answer from memory; run a query.\n"
                     "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
                     "   - Find pages/work items by meaning, analyze content patterns, search documentation.\n"
@@ -997,9 +997,7 @@ class MongoDBAgent:
                     "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
                     "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content)."
                 ))
-                # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
-               
                 response = await llm_with_tools.ainvoke(invoke_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
@@ -1214,7 +1212,7 @@ class MongoDBAgent:
                             "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
                             "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
                             "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
-                            "   - Agent decides when to use complex joins (enable_complex_joins=True) based on relationships needed (project→business, workItem→assignee).\n"
+                            "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
                             "   - Do NOT answer from memory; run a query.\n"
                             "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
                             "   - Find pages/work items by meaning, analyze content patterns, search documentation.\n"
