@@ -27,6 +27,7 @@ class QueryIntent:
     limit: Optional[int]  # Result limit
     wants_details: bool  # Prefer detailed documents over counts
     wants_count: bool  # Whether the user asked for a count
+    content_type: Optional[str] = None  # Derived content type for retrieval (page, workitems, cycle)
 
 @dataclass
 class RelationshipPath:
@@ -47,7 +48,7 @@ class NaturalLanguageParser:
             'project': ['project', 'initiative', 'program'],
             'cycle': ['cycle', 'sprint', 'iteration', 'phase'],
             'members': ['member', 'user', 'person', 'team member', 'developer'],
-            'page': ['page', 'document', 'wiki', 'documentation'],
+            'page': ['page', 'document', 'wiki', 'documentation', 'release', 'release notes'],
             'module': ['module', 'component', 'feature'],
             'projectState': ['state', 'status', 'workflow', 'stage']
         }
@@ -124,6 +125,33 @@ class NaturalLanguageParser:
             aggregations = [a for a in aggregations if a != 'count']
             wants_count = False
 
+        # Content-type classification for retrieval routing
+        content_type = self._classify_content_type(query_lower)
+        # If content type is detected, align primary_entity accordingly
+        if content_type:
+            ct_to_entity = {
+                'workitems': 'workItem',
+                'page': 'page',
+                'cycle': 'cycle',
+            }
+            primary_entity = ct_to_entity.get(content_type, primary_entity)
+
+        # Phrase-based heuristics for sorting and limits
+        # - "recent" implies newest first and a small limit
+        if 'recent' in query_lower or 'latest' in query_lower or 'newest' in query_lower:
+            sort_order = sort_order or {'createdTimeStamp': -1}
+            limit = min(limit or 10, 10)
+
+        # - "next release" maps to content_type page and page title filter
+        if 'next release' in query_lower or 'upcoming release' in query_lower:
+            content_type = content_type or 'page'
+            # Apply a title regex filter for release pages
+            # Keep lightweight and case-insensitive
+            filters['page_title_regex'] = r"release|release notes|next release"
+            # Prefer latest
+            sort_order = sort_order or {'createdAt': -1}
+            limit = min(limit or 5, 5)
+
         return QueryIntent(
             primary_entity=primary_entity,
             target_entities=target_entities,
@@ -133,7 +161,8 @@ class NaturalLanguageParser:
             sort_order=sort_order,
             limit=limit,
             wants_details=wants_details,
-            wants_count=wants_count
+            wants_count=wants_count,
+            content_type=content_type
         )
 
     def _extract_primary_entity(self, query: str) -> str:
@@ -143,6 +172,26 @@ class NaturalLanguageParser:
                 if keyword in query:
                     return collection
         return "project"  # Default fallback
+
+    def _classify_content_type(self, query: str) -> Optional[str]:
+        """Classify content type for retrieval routing.
+        - page: pages, documentation, release notes, release
+        - workitems: work items, tasks, bugs
+        - cycle: active cycle, sprint
+        Returns one of 'page' | 'workitems' | 'cycle' or None.
+        """
+        page_terms = ['page', 'pages', 'wiki', 'document', 'documentation', 'docs', 'release', 'release notes']
+        work_terms = ['work item', 'work items', 'task', 'tasks', 'bug', 'bugs', 'issue', 'issues', 'story', 'stories', 'ticket', 'tickets']
+        cycle_terms = ['cycle', 'sprint', 'iteration', 'phase']
+
+        if any(t in query for t in page_terms):
+            return 'page'
+        if any(t in query for t in work_terms):
+            return 'workitems'
+        if any(t in query for t in cycle_terms):
+            return 'cycle'
+        # Fallback None – caller may choose intelligent fallback
+        return None
 
     def _extract_target_entities(self, query: str, primary_entity: str) -> List[str]:
         """Extract related entities to include in the query"""
@@ -442,6 +491,9 @@ class PipelineGenerator:
         elif collection == "page":
             if 'page_visibility' in filters:
                 primary_filters['visibility'] = filters['page_visibility']
+            # Title regex for release-related pages
+            if 'page_title_regex' in filters:
+                primary_filters['title'] = {'$regex': filters['page_title_regex'], '$options': 'i'}
 
         return primary_filters
 
