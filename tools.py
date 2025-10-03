@@ -715,21 +715,27 @@ async def rag_search(
     show_content: bool = True,
     use_chunk_aware: bool = True
 ) -> str:
-    """Universal RAG search tool with filtering, grouping, and rich metadata.
+    """Universal RAG search tool - returns FULL chunk content for LLM synthesis.
+    
+    **IMPORTANT**: This tool returns complete, untruncated content chunks so you can:
+    - Analyze and understand the actual content
+    - Generate properly formatted responses based on real data
+    - Answer questions accurately using the retrieved context
+    - Synthesize information from multiple sources
     
     Use this for ANY content-based search or analysis needs:
     - Find relevant pages, work items, projects, cycles, modules
     - Search by semantic meaning (not just keywords)
-    - Group/breakdown results by any dimension
-    - Get context for answering questions
+    - Get full context for answering questions
     - Analyze content patterns and distributions
+    - Group/breakdown results by any dimension
     
     **When to use:**
     - "Find/search/show me pages about X"
     - "What content discusses Y?"
-    - "Break down results by project/date/priority/etc."
     - "Which work items mention authentication?"
     - "Show me recent documentation about APIs"
+    - "Break down results by project/date/priority/etc."
     
     **Do NOT use for:**
     - Structured database queries (counts, filters on structured fields) → use `mongo_query`
@@ -740,15 +746,15 @@ async def rag_search(
         group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
                  'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
         limit: Max results to retrieve (default 10, increase for broader searches)
-        show_content: If True, shows content previews; if False, shows only metadata (for summaries)
+        show_content: If True, shows full content; if False, shows only metadata
         use_chunk_aware: If True, uses chunk-aware retrieval for better context (default True)
     
-    Returns: Search results with rich metadata, optionally grouped and aggregated
+    Returns: FULL chunk content with rich metadata - ready for LLM synthesis and formatting
     
     Examples:
-        query="authentication", group_by="content_type" → breakdown by type
-        query="API documentation", content_type="page", group_by="project_name" → pages by project
-        query="bugs", content_type="work_item", group_by="priority" → work items by priority
+        query="authentication" → finds all content about authentication with full text
+        query="API documentation", content_type="page" → finds API docs pages with complete content
+        query="bugs", content_type="work_item", group_by="priority" → work items grouped by priority
     """
     try:
         from collections import defaultdict
@@ -834,15 +840,11 @@ async def rag_search(
                 if meta:
                     response += f"    {' | '.join(meta)}\n"
                 
-                # Always include content for agent synthesis; avoid truncation whenever possible
+                # Always include FULL content for LLM synthesis (no truncation)
+                # This enables the LLM to generate properly formatted responses based on actual content
                 if result.get('content'):
-                    response += "    Content: "
                     content_text = result['content']
-                    # Avoid extremely long single tool outputs; cap very large payloads conservatively
-                    if len(content_text) > 8000:
-                        response += content_text[:8000] + f"... [truncated {len(content_text) - 8000} chars]\n"
-                    else:
-                        response += content_text + "\n"
+                    response += f"\n    === CONTENT START ===\n{content_text}\n    === CONTENT END ===\n"
                 
                 response += "\n"
             
@@ -851,7 +853,7 @@ async def rag_search(
             
             return response
         
-        # GROUPING - Aggregate and show distribution
+        # GROUPING - Aggregate and show distribution with content snippets
         groups = defaultdict(list)
         
         for result in results:
@@ -877,10 +879,14 @@ async def rag_search(
         for group_key, items in sorted_groups[:20]:
             response += f"▸ {group_key}: {len(items)} item(s)\n"
             
-            # Show sample items
+            # Show sample items with content snippets for context
             for item in items[:3]:
                 title = item['title'][:55] + "..." if len(item['title']) > 55 else item['title']
                 response += f"  • {title} (score: {item['score']:.2f})\n"
+                # Include content snippet for better LLM understanding
+                if show_content and item.get('content'):
+                    snippet = item['content'][:200] + "..." if len(item['content']) > 200 else item['content']
+                    response += f"    Content: {snippet}\n"
             
             if len(items) > 3:
                 response += f"  ... and {len(items) - 3} more\n"
