@@ -91,22 +91,16 @@ DEFAULT_SYSTEM_PROMPT = (
     "   - Decide when to use complex joins based on query needs (enable_complex_joins parameter).\n"
     "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
     "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
-    "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
-    "3) Use 'rag_mongo' when searching by content/meaning AND need complete MongoDB records with all fields.\n"
-    "   - Combines semantic search with authoritative Mongo data.\n"
-    "   - Examples: 'find auth bugs with their status', 'security pages with project info', 'microservices projects'.\n\n"
+    "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n\n"
     "TOOL CHEATSHEET:\n"
     "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
     "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
     "  REQUIRED: 'query' - semantic search terms.\n"
-    "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n"
-    "- rag_mongo(query:str, entity_type:str, limit:int=15): Semantic search → MongoDB records with full fields.\n"
-    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n\n"
+    "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
-    "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
-    "- If the user searches by content BUT needs complete MongoDB fields (state, assignee, dates, etc.) → rag_mongo.\n\n"
+    "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n\n"
     "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
 
@@ -336,11 +330,11 @@ def _select_tools_for_query(user_query: str):
     """Return tools exposed to the LLM for this query.
 
     Enhanced policy:
-    - Always expose both structured (mongo_query) and RAG tools (rag_search, rag_mongo).
+    - Always expose both structured (mongo_query) and RAG tools (rag_search).
     - Let the LLM decide routing based on instructions; no keyword gating.
     - Add query analysis hints for complex join decisions.
     """
-    allowed_names = ["mongo_query", "rag_search", "rag_mongo"]
+    allowed_names = ["mongo_query", "rag_search"]
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
     if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
@@ -976,9 +970,8 @@ class MongoDBAgent:
                     "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
                     "DECISION GUIDE:\n"
                     "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
-                    "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
-                    "- Use 'rag_mongo' to find items by semantic search AND get complete MongoDB fields.\n\n"
-                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                    "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n\n"
+                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content)."
                 ))
                 # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
@@ -1202,9 +1195,8 @@ class MongoDBAgent:
                             "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
                             "DECISION GUIDE:\n"
                             "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
-                            "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
-                            "- 'rag_mongo' → semantic search + complete MongoDB fields (any entity type).\n\n"
-                            "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                            "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n\n"
+                            "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content)."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
