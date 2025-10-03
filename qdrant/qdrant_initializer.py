@@ -105,23 +105,27 @@ class RAGTool:
                 with_payload=True
             )
 
-            # Format results
+            # Format results - include ALL metadata from payload
             results = []
             # print(f"total results",search_results)
             for result in search_results:
                 payload = result.payload or {}
-                results.append({
+                # Create a result dict with all payload fields
+                result_dict = {
                     "id": result.id,
                     "score": result.score,
                     "title": payload.get("title", "Untitled"),
                     "content": payload.get("content", ""),
                     "content_type": payload.get("content_type", "unknown"),
                     "mongo_id": payload.get("mongo_id"),
-                    "parent_id": payload.get("parent_id"),
-                    "chunk_index": payload.get("chunk_index"),
-                    "chunk_count": payload.get("chunk_count"),
-                    # "metadata": payload.get("metadata", {})
-                })
+                }
+                
+                # Add all other metadata fields from payload
+                for key, value in payload.items():
+                    if key not in result_dict and key not in ["full_text"]:  # Skip duplicates and internal fields
+                        result_dict[key] = value
+                
+                results.append(result_dict)
 
             return results
 
