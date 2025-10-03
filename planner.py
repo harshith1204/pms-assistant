@@ -533,6 +533,55 @@ class LLMIntentParser:
             if primary == "cycle" and "cycle_status" not in raw_filters:
                 raw_filters["cycle_status"] = raw_filters["status"]
 
+        # Normalize date filter key synonyms BEFORE validation so they are preserved
+        # Examples the LLM might emit: createdAt_from, created_from, date_to, updated_since, etc.
+        def _normalize_date_filter_keys(primary_entity: str, rf: Dict[str, Any]) -> Dict[str, Any]:
+            normalized: Dict[str, Any] = {}
+            # Determine canonical created/updated fields per entity
+            if primary_entity == "page":
+                created_field = "createdAt"
+                updated_field = "updatedAt"
+            elif primary_entity == "members":
+                # members commonly use joiningDate
+                created_field = "joiningDate"
+                updated_field = None
+            else:
+                # workItem/project/cycle/module use createdTimeStamp/updatedTimeStamp
+                created_field = "createdTimeStamp"
+                updated_field = "updatedTimeStamp"
+
+            # Supported suffixes indicating range/window semantics
+            suffixes = ("_from", "_to", "_within", "_duration")
+            # Bases that imply created vs updated
+            created_bases = {"created", "createdat", "created_time", "creation", "date", "timestamp"}
+            updated_bases = {"updated", "updatedat", "last_date", "modified", "updated_time"}
+
+            for key, val in rf.items():
+                k = str(key)
+                lk = k.lower()
+                matched_suffix = next((s for s in suffixes if lk.endswith(s)), None)
+                if matched_suffix:
+                    base = lk[: -len(matched_suffix)]
+                    if base in created_bases and created_field:
+                        normalized[f"{created_field}{matched_suffix}"] = val
+                        continue
+                    if base in updated_bases and updated_field:
+                        normalized[f"{updated_field}{matched_suffix}"] = val
+                        continue
+                # Also normalize plain created/updated without suffix if value looks like a window
+                if lk in created_bases and created_field:
+                    normalized[f"{created_field}_from"] = val
+                    continue
+                if lk in updated_bases and updated_field:
+                    normalized[f"{updated_field}_from"] = val
+                    continue
+                # Keep as-is when not a recognized synonym
+                normalized[k] = val
+
+            return normalized
+
+        raw_filters = _normalize_date_filter_keys(primary, raw_filters)
+
         # Build dynamic known keys from allow-listed fields and common tokens
         allowed_primary_fields = set(self.allowed_fields.get(primary, []))
         # Recognize date-like fields for range filters
@@ -590,6 +639,7 @@ class LLMIntentParser:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
 
+        
         # Heuristic enrichments from original query text (generalized)
         oq_text = (original_query or "").lower()
 
@@ -884,7 +934,7 @@ class PipelineGenerator:
                     # Add the relation directly - the lookup logic will handle array vs single relations
                     required_relations.add(relation_name)
 
-    def generate_pipeline(self, intent: QueryIntent, enable_complex_joins: bool = True) -> List[Dict[str, Any]]:
+    def generate_pipeline(self, intent: QueryIntent, enable_complex_joins: bool = False) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
         pipeline: List[Dict[str, Any]] = []
 
@@ -1832,7 +1882,7 @@ class Planner:
         self.llm_parser = LLMIntentParser()
         self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
-    async def plan_and_execute(self, query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
+    async def plan_and_execute(self, query: str, enable_complex_joins: bool = False) -> Dict[str, Any]:
         """Plan and execute a natural language query using the Orchestrator."""
         try:
             # Define step coroutines as closures to capture self and enable_complex_joins
@@ -1932,6 +1982,6 @@ class Planner:
 # Global instance
 query_planner = Planner()
 
-async def plan_and_execute_query(query: str, enable_complex_joins: bool = True) -> Dict[str, Any]:
+async def plan_and_execute_query(query: str, enable_complex_joins: bool = False) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
     return await query_planner.plan_and_execute(query)

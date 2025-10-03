@@ -383,7 +383,7 @@ def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None
 
 
 @tool
-async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = True) -> str:
+async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = False) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
 
     Use this ONLY when the user asks for authoritative data that must come from
@@ -400,7 +400,8 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
     - Follows a planner to generate a safe aggregation pipeline; avoids
       hallucinated fields.
     - Can generate complex aggregation pipelines with multiple joins when
-      enable_complex_joins=True (default), reducing need for tool chaining.
+      enable_complex_joins=True, reducing need for tool chaining.
+    - For simple queries, use enable_complex_joins=False (default) for better performance.
     - Return concise summaries by default; pass `show_all=True` only when the
       user explicitly requests full records.
 
@@ -408,6 +409,8 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
         query: Natural language, structured data request about PM entities.
         show_all: If True, output full details instead of a summary. Use sparingly.
         enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
+            Use for: relationships, multi-hop queries, cross-collection analysis.
+            Default: False for better performance on simple queries.
 
     Returns: A compact result suitable for direct user display.
     """
