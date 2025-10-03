@@ -639,22 +639,41 @@ class LLMIntentParser:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
 
-        # Heuristic fallback: infer simple date windows from the original query when missing
-        # e.g., "created today", "created yesterday", "created last week", "created this week"
-        if primary == "workItem":
-            has_created_range = any(
-                key.startswith("createdTimeStamp_") for key in filters.keys()
-            )
-            oq_text = (original_query or "").lower()
-            if not has_created_range:
-                if re.search(r"\bcreated\s+today\b", oq_text):
-                    filters["createdTimeStamp_from"] = "today"
-                elif re.search(r"\bcreated\s+yesterday\b", oq_text):
-                    filters["createdTimeStamp_from"] = "yesterday"
-                elif re.search(r"\bcreated\s+last\s+week\b", oq_text):
-                    filters["createdTimeStamp_from"] = "last_week"
-                elif re.search(r"\bcreated\s+this\s+week\b", oq_text):
-                    filters["createdTimeStamp_from"] = "this_week"
+        # General, non-overfit fallback: infer common time windows from the query text
+        # Applies to the canonical created/updated field for the current primary entity
+        # Only triggers if no explicit range for that field exists yet
+        def _canonical_time_fields(entity: str) -> tuple[str | None, str | None]:
+            if entity == "page":
+                return "createdAt", "updatedAt"
+            if entity == "members":
+                return "joiningDate", None
+            return "createdTimeStamp", "updatedTimeStamp"
+
+        created_field, updated_field = _canonical_time_fields(primary)
+        oq_text = (original_query or "").lower()
+        # Detect generic window tokens
+        window_value: str | None = None
+        if re.search(r"\btoday\b", oq_text):
+            window_value = "today"
+        elif re.search(r"\byesterday\b", oq_text):
+            window_value = "yesterday"
+        elif re.search(r"\bthis\s+week\b", oq_text):
+            window_value = "this_week"
+        elif re.search(r"\blast\s+week\b", oq_text):
+            window_value = "last_week"
+        else:
+            m = re.search(r"\b(last|past)\s+([0-9]+)\s*(day|days|week|weeks|month|months|hour|hours|year|years)\b", oq_text)
+            if m:
+                window_value = f"{m.group(1)} {m.group(2)} {m.group(3)}"
+
+        if window_value:
+            # Choose updated vs created based on explicit mention; default to created
+            target_field = created_field
+            if updated_field and re.search(r"\b(updated|modified|last\s+updated)\b", oq_text):
+                target_field = updated_field
+            # Only set if no existing range for that field
+            if target_field and not any(k.startswith(f"{target_field}_") for k in filters.keys()):
+                filters[f"{target_field}_within"] = window_value
 
         # Heuristic enrichments from original query text (generalized)
         oq_text = (original_query or "").lower()
