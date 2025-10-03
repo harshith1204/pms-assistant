@@ -383,7 +383,7 @@ def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None
 
 
 @tool
-async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = False) -> str:
+async def mongo_query(query: str, show_all: bool = False) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
 
     Use this ONLY when the user asks for authoritative data that must come from
@@ -399,23 +399,16 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
     Behavior:
     - Follows a planner to generate a safe aggregation pipeline; avoids
       hallucinated fields.
-    - Can generate complex aggregation pipelines with multiple joins when
-      enable_complex_joins=True, reducing need for tool chaining.
-    - Set enable_complex_joins=True when query needs relationships between collections:
-        - workItem→assignee, workItem→project, project→business, cycle→project, etc.
+    - Automatically determines when complex joins are beneficial based on query requirements.
+    - Intelligently adds strategic relationships only when they improve query performance:
         - Multi-hop queries: "work items by business" (workItem→project→business)
         - Cross-collection analysis: "members working on projects by business"
-    - Use enable_complex_joins=False for simple queries (default) for better performance.
-        
-    - For simple queries, use enable_complex_joins=False (default) for better performance.
-    - Return concise summaries by default; pass `show_all=True` only when the
-      user explicitly requests full records.
+        - Complex grouping that spans multiple collections
+    - Only adds joins that provide clear benefits for the specific query, avoiding unnecessary complexity.
 
     Args:
         query: Natural language, structured data request about PM entities.
         show_all: If True, output full details instead of a summary. Use sparingly.
-        enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
-            Agent decides based on relationships needed in the query.
 
     Returns: A compact result suitable for direct user display.
     """
@@ -423,7 +416,7 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
 
     try:
-        result = await plan_and_execute_query(query, enable_complex_joins=enable_complex_joins)
+        result = await plan_and_execute_query(query)
 
         if result["success"]:
             response = f"🎯 INTELLIGENT QUERY RESULT:\n"
