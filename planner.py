@@ -533,6 +533,55 @@ class LLMIntentParser:
             if primary == "cycle" and "cycle_status" not in raw_filters:
                 raw_filters["cycle_status"] = raw_filters["status"]
 
+        # Normalize date filter key synonyms BEFORE validation so they are preserved
+        # Examples the LLM might emit: createdAt_from, created_from, date_to, updated_since, etc.
+        def _normalize_date_filter_keys(primary_entity: str, rf: Dict[str, Any]) -> Dict[str, Any]:
+            normalized: Dict[str, Any] = {}
+            # Determine canonical created/updated fields per entity
+            if primary_entity == "page":
+                created_field = "createdAt"
+                updated_field = "updatedAt"
+            elif primary_entity == "members":
+                # members commonly use joiningDate
+                created_field = "joiningDate"
+                updated_field = None
+            else:
+                # workItem/project/cycle/module use createdTimeStamp/updatedTimeStamp
+                created_field = "createdTimeStamp"
+                updated_field = "updatedTimeStamp"
+
+            # Supported suffixes indicating range/window semantics
+            suffixes = ("_from", "_to", "_within", "_duration")
+            # Bases that imply created vs updated
+            created_bases = {"created", "createdat", "created_time", "creation", "date", "timestamp"}
+            updated_bases = {"updated", "updatedat", "last_date", "modified", "updated_time"}
+
+            for key, val in rf.items():
+                k = str(key)
+                lk = k.lower()
+                matched_suffix = next((s for s in suffixes if lk.endswith(s)), None)
+                if matched_suffix:
+                    base = lk[: -len(matched_suffix)]
+                    if base in created_bases and created_field:
+                        normalized[f"{created_field}{matched_suffix}"] = val
+                        continue
+                    if base in updated_bases and updated_field:
+                        normalized[f"{updated_field}{matched_suffix}"] = val
+                        continue
+                # Also normalize plain created/updated without suffix if value looks like a window
+                if lk in created_bases and created_field:
+                    normalized[f"{created_field}_from"] = val
+                    continue
+                if lk in updated_bases and updated_field:
+                    normalized[f"{updated_field}_from"] = val
+                    continue
+                # Keep as-is when not a recognized synonym
+                normalized[k] = val
+
+            return normalized
+
+        raw_filters = _normalize_date_filter_keys(primary, raw_filters)
+
         # Build dynamic known keys from allow-listed fields and common tokens
         allowed_primary_fields = set(self.allowed_fields.get(primary, []))
         # Recognize date-like fields for range filters
@@ -589,6 +638,42 @@ class LLMIntentParser:
             else:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
+
+        # General, non-overfit fallback: infer common time windows from the query text
+        # Applies to the canonical created/updated field for the current primary entity
+        # Only triggers if no explicit range for that field exists yet
+        def _canonical_time_fields(entity: str) -> tuple[str | None, str | None]:
+            if entity == "page":
+                return "createdAt", "updatedAt"
+            if entity == "members":
+                return "joiningDate", None
+            return "createdTimeStamp", "updatedTimeStamp"
+
+        created_field, updated_field = _canonical_time_fields(primary)
+        oq_text = (original_query or "").lower()
+        # Detect generic window tokens
+        window_value: str | None = None
+        if re.search(r"\btoday\b", oq_text):
+            window_value = "today"
+        elif re.search(r"\byesterday\b", oq_text):
+            window_value = "yesterday"
+        elif re.search(r"\bthis\s+week\b", oq_text):
+            window_value = "this_week"
+        elif re.search(r"\blast\s+week\b", oq_text):
+            window_value = "last_week"
+        else:
+            m = re.search(r"\b(last|past)\s+([0-9]+)\s*(day|days|week|weeks|month|months|hour|hours|year|years)\b", oq_text)
+            if m:
+                window_value = f"{m.group(1)} {m.group(2)} {m.group(3)}"
+
+        if window_value:
+            # Choose updated vs created based on explicit mention; default to created
+            target_field = created_field
+            if updated_field and re.search(r"\b(updated|modified|last\s+updated)\b", oq_text):
+                target_field = updated_field
+            # Only set if no existing range for that field
+            if target_field and not any(k.startswith(f"{target_field}_") for k in filters.keys()):
+                filters[f"{target_field}_within"] = window_value
 
         # Heuristic enrichments from original query text (generalized)
         oq_text = (original_query or "").lower()
