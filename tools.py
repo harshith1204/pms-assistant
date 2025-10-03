@@ -62,6 +62,8 @@ async def intelligent_query(query: str) -> str:
             intent = result["intent"]
             response += f"📋 UNDERSTOOD INTENT:\n"
             response += f"• Primary Entity: {intent['primary_entity']}\n"
+            if intent.get('content_type'):
+                response += f"• Content Type: {intent['content_type']}\n"
             if intent['target_entities']:
                 response += f"• Related Entities: {', '.join(intent['target_entities'])}\n"
             if intent['filters']:
