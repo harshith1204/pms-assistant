@@ -88,6 +88,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
     "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
     "   - Do NOT answer from memory; run a query.\n"
+    "   - Decide when to use complex joins based on query needs (enable_complex_joins parameter).\n"
     "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
     "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
     "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
@@ -194,6 +195,7 @@ class ConversationMemory:
 
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
+
 
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
@@ -333,9 +335,10 @@ _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list
 def _select_tools_for_query(user_query: str):
     """Return tools exposed to the LLM for this query.
 
-    Simplified policy:
+    Enhanced policy:
     - Always expose both structured (mongo_query) and RAG tools (rag_search, rag_mongo).
     - Let the LLM decide routing based on instructions; no keyword gating.
+    - Add query analysis hints for complex join decisions.
     """
     allowed_names = ["mongo_query", "rag_search", "rag_mongo"]
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
