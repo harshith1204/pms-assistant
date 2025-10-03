@@ -533,6 +533,55 @@ class LLMIntentParser:
             if primary == "cycle" and "cycle_status" not in raw_filters:
                 raw_filters["cycle_status"] = raw_filters["status"]
 
+        # Normalize date filter key synonyms BEFORE validation so they are preserved
+        # Examples the LLM might emit: createdAt_from, created_from, date_to, updated_since, etc.
+        def _normalize_date_filter_keys(primary_entity: str, rf: Dict[str, Any]) -> Dict[str, Any]:
+            normalized: Dict[str, Any] = {}
+            # Determine canonical created/updated fields per entity
+            if primary_entity == "page":
+                created_field = "createdAt"
+                updated_field = "updatedAt"
+            elif primary_entity == "members":
+                # members commonly use joiningDate
+                created_field = "joiningDate"
+                updated_field = None
+            else:
+                # workItem/project/cycle/module use createdTimeStamp/updatedTimeStamp
+                created_field = "createdTimeStamp"
+                updated_field = "updatedTimeStamp"
+
+            # Supported suffixes indicating range/window semantics
+            suffixes = ("_from", "_to", "_within", "_duration")
+            # Bases that imply created vs updated
+            created_bases = {"created", "createdat", "created_time", "creation", "date", "timestamp"}
+            updated_bases = {"updated", "updatedat", "last_date", "modified", "updated_time"}
+
+            for key, val in rf.items():
+                k = str(key)
+                lk = k.lower()
+                matched_suffix = next((s for s in suffixes if lk.endswith(s)), None)
+                if matched_suffix:
+                    base = lk[: -len(matched_suffix)]
+                    if base in created_bases and created_field:
+                        normalized[f"{created_field}{matched_suffix}"] = val
+                        continue
+                    if base in updated_bases and updated_field:
+                        normalized[f"{updated_field}{matched_suffix}"] = val
+                        continue
+                # Also normalize plain created/updated without suffix if value looks like a window
+                if lk in created_bases and created_field:
+                    normalized[f"{created_field}_from"] = val
+                    continue
+                if lk in updated_bases and updated_field:
+                    normalized[f"{updated_field}_from"] = val
+                    continue
+                # Keep as-is when not a recognized synonym
+                normalized[k] = val
+
+            return normalized
+
+        raw_filters = _normalize_date_filter_keys(primary, raw_filters)
+
         # Build dynamic known keys from allow-listed fields and common tokens
         allowed_primary_fields = set(self.allowed_fields.get(primary, []))
         # Recognize date-like fields for range filters
@@ -589,6 +638,23 @@ class LLMIntentParser:
             else:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
+
+        # Heuristic fallback: infer simple date windows from the original query when missing
+        # e.g., "created today", "created yesterday", "created last week", "created this week"
+        if primary == "workItem":
+            has_created_range = any(
+                key.startswith("createdTimeStamp_") for key in filters.keys()
+            )
+            oq_text = (original_query or "").lower()
+            if not has_created_range:
+                if re.search(r"\bcreated\s+today\b", oq_text):
+                    filters["createdTimeStamp_from"] = "today"
+                elif re.search(r"\bcreated\s+yesterday\b", oq_text):
+                    filters["createdTimeStamp_from"] = "yesterday"
+                elif re.search(r"\bcreated\s+last\s+week\b", oq_text):
+                    filters["createdTimeStamp_from"] = "last_week"
+                elif re.search(r"\bcreated\s+this\s+week\b", oq_text):
+                    filters["createdTimeStamp_from"] = "this_week"
 
         # Heuristic enrichments from original query text (generalized)
         oq_text = (original_query or "").lower()
