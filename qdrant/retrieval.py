@@ -398,10 +398,13 @@ def format_reconstructed_results(
                 chunk_info = ", ".join([f"#{c.chunk_index}({c.score:.2f})" for c in scored_chunks])
                 response_parts.append(f"    Matched chunks: {chunk_info}")
         
-        # Show full content without truncation so the agent has full context
+        # Show full content without truncation so the LLM has complete context for synthesis
+        # This enables the LLM to generate properly formatted, accurate responses based on actual content
         if show_full_content:
             content = doc.full_content
-            response_parts.append(f"\n    Content:\n{content}")
+            response_parts.append(f"\n    === CONTENT START ===")
+            response_parts.append(content)
+            response_parts.append(f"    === CONTENT END ===")
         
         response_parts.append("")  # Empty line between docs
     
