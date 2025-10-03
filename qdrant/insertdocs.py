@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import uuid
+import re
 from itertools import islice
 from bson.binary import Binary
 from bson.objectid import ObjectId
@@ -177,17 +178,103 @@ def normalize_mongo_id(mongo_id) -> str:
     return str(mongo_id)
 
 def parse_editorjs_blocks(content_str: str):
-    """Extract all blocks and combined text for embedding."""
+    """Extract all blocks and combined text for embedding.
+    
+    Handles various EditorJS block types including:
+    - paragraph: data.text
+    - header: data.text
+    - list: data.items (array)
+    - checklist: data.items (array with text property)
+    - quote: data.text and data.caption
+    - code: data.code
+    - table: data.content (2D array)
+    - delimiter: no text content
+    - raw: data.html
+    - warning: data.title and data.message
+    - etc.
+    """
     if not content_str or not content_str.strip():
         return [], ""
     try:
         content_json = json.loads(content_str)
         blocks = content_json.get("blocks", [])
-        block_texts = [
-            (block.get("data") or {}).get("text", "").strip()
-            for block in blocks
-            if (block.get("data") or {}).get("text", "").strip()
-        ]
+        block_texts = []
+        
+        for block in blocks:
+            block_type = block.get("type", "")
+            data = block.get("data", {})
+            extracted_text = []
+            
+            # Handle different block types
+            if block_type in ["paragraph", "header", "quote", "code"]:
+                # These types store text in data.text or data.code
+                text = data.get("text", "") or data.get("code", "")
+                if text:
+                    extracted_text.append(text.strip())
+                # Quote might also have a caption
+                if block_type == "quote" and data.get("caption"):
+                    extracted_text.append(data["caption"].strip())
+                    
+            elif block_type == "list":
+                # List items are in data.items array
+                items = data.get("items", [])
+                for item in items:
+                    if isinstance(item, str) and item.strip():
+                        extracted_text.append(f"• {item.strip()}")
+                        
+            elif block_type == "checklist":
+                # Checklist items have text property
+                items = data.get("items", [])
+                for item in items:
+                    if isinstance(item, dict):
+                        text = item.get("text", "").strip()
+                        checked = item.get("checked", False)
+                        if text:
+                            prefix = "✓" if checked else "○"
+                            extracted_text.append(f"{prefix} {text}")
+                            
+            elif block_type == "table":
+                # Table content is in 2D array
+                content = data.get("content", [])
+                for row in content:
+                    if isinstance(row, list):
+                        row_text = " | ".join(str(cell).strip() for cell in row if cell)
+                        if row_text:
+                            extracted_text.append(row_text)
+                            
+            elif block_type == "warning":
+                # Warning has title and message
+                title = data.get("title", "").strip()
+                message = data.get("message", "").strip()
+                if title:
+                    extracted_text.append(f"⚠️ {title}")
+                if message:
+                    extracted_text.append(message)
+                    
+            elif block_type == "raw":
+                # Raw HTML content
+                html = data.get("html", "").strip()
+                if html:
+                    # Simple HTML tag removal (you might want to use BeautifulSoup for complex HTML)
+                    text = re.sub('<[^<]+?>', '', html)
+                    if text.strip():
+                        extracted_text.append(text.strip())
+                        
+            elif block_type == "delimiter":
+                # Delimiters have no text content, skip
+                continue
+                
+            else:
+                # For unknown types, try common fields
+                for field in ["text", "content", "caption", "title", "message", "html"]:
+                    value = data.get(field, "")
+                    if value and isinstance(value, str) and value.strip():
+                        extracted_text.append(value.strip())
+            
+            # Add all extracted text from this block
+            if extracted_text:
+                block_texts.extend(extracted_text)
+        
         combined_text = " ".join(block_texts).strip()
         return blocks, combined_text
     except Exception as e:
