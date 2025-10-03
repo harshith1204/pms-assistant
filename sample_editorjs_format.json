@@ -1,0 +1,83 @@
+{
+  "comment": "This is how page content should be stored in MongoDB",
+  "explanation": "The 'content' field in MongoDB pages should contain EditorJS JSON format like this",
+  
+  "example_valid_content": {
+    "time": 1672531200000,
+    "blocks": [
+      {
+        "id": "block1",
+        "type": "header",
+        "data": {
+          "text": "Authentication Implementation Guide",
+          "level": 2
+        }
+      },
+      {
+        "id": "block2",
+        "type": "paragraph",
+        "data": {
+          "text": "This guide explains how to implement OAuth 2.0 authentication in our application. We use JWT tokens for secure authentication."
+        }
+      },
+      {
+        "id": "block3",
+        "type": "list",
+        "data": {
+          "style": "unordered",
+          "items": [
+            "Configure OAuth provider credentials",
+            "Implement token validation middleware",
+            "Add refresh token logic"
+          ]
+        }
+      },
+      {
+        "id": "block4",
+        "type": "paragraph",
+        "data": {
+          "text": "For more details, see the API documentation."
+        }
+      }
+    ],
+    "version": "2.28.0"
+  },
+  
+  "example_minimal_content": {
+    "time": 1672531200000,
+    "blocks": [
+      {
+        "id": "block1",
+        "type": "paragraph",
+        "data": {
+          "text": "Some minimal page content here"
+        }
+      }
+    ],
+    "version": "2.28.0"
+  },
+  
+  "example_empty_content_bad": {
+    "comment": "❌ BAD - This will result in empty content!",
+    "time": 1672531200000,
+    "blocks": [],
+    "version": "2.28.0"
+  },
+  
+  "example_blocks_without_text_bad": {
+    "comment": "❌ BAD - Blocks exist but have no text!",
+    "time": 1672531200000,
+    "blocks": [
+      {
+        "id": "block1",
+        "type": "paragraph",
+        "data": {
+          "text": ""
+        }
+      }
+    ],
+    "version": "2.28.0"
+  },
+  
+  "note": "The parsing logic extracts text from block.data.text fields. If blocks have no text or are empty, the page will have no searchable content."
+}
