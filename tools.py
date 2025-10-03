@@ -752,8 +752,14 @@ async def rag_search(
     """
     try:
         from collections import defaultdict
-        
-        rag_tool = RAGTool.get_instance()
+
+        # Ensure RAGTool is initialized
+        try:
+            rag_tool = RAGTool.get_instance()
+        except RuntimeError:
+            # Try to initialize if not already done
+            await RAGTool.initialize()
+            rag_tool = RAGTool.get_instance()
         
         # Use chunk-aware retrieval if enabled and not grouping
         if use_chunk_aware and not group_by:
@@ -947,7 +953,13 @@ async def rag_mongo(
         title_field = config["title_field"]
         
         # Step 1: RAG search to find semantically relevant items
-        rag_tool = RAGTool.get_instance()
+        try:
+            rag_tool = RAGTool.get_instance()
+        except RuntimeError:
+            # Try to initialize if not already done
+            await RAGTool.initialize()
+            rag_tool = RAGTool.get_instance()
+
         rag_results = await rag_tool.search_content(query, content_type=content_type, limit=min(limit * 2, 30))
         
         if not rag_results:
