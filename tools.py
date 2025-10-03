@@ -383,7 +383,7 @@ def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None
 
 
 @tool
-async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = True) -> str:
+async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = False) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
 
     Use this ONLY when the user asks for authoritative data that must come from
@@ -400,7 +400,8 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
     - Follows a planner to generate a safe aggregation pipeline; avoids
       hallucinated fields.
     - Can generate complex aggregation pipelines with multiple joins when
-      enable_complex_joins=True (default), reducing need for tool chaining.
+      enable_complex_joins=True, reducing need for tool chaining.
+    - For simple queries, use enable_complex_joins=False (default) for better performance.
     - Return concise summaries by default; pass `show_all=True` only when the
       user explicitly requests full records.
 
@@ -408,6 +409,8 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
         query: Natural language, structured data request about PM entities.
         show_all: If True, output full details instead of a summary. Use sparingly.
         enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
+            Use for: relationships, multi-hop queries, cross-collection analysis.
+            Default: False for better performance on simple queries.
 
     Returns: A compact result suitable for direct user display.
     """
@@ -785,9 +788,11 @@ async def rag_search(
             if not reconstructed_docs:
                 return f"❌ No results found for query: '{query}'"
             
+            # Always pass full content chunks to the agent by default for synthesis
+            # Force show_full_content=True so downstream LLM has full context
             return format_reconstructed_results(
                 docs=reconstructed_docs,
-                show_full_content=show_content,
+                show_full_content=True,
                 show_chunk_details=True
             )
         
@@ -832,12 +837,15 @@ async def rag_search(
                 if meta:
                     response += f"    {' | '.join(meta)}\n"
                 
-                # Show content preview if requested (increased from 200 to 1000 chars)
-                if show_content and result.get('content'):
-                    preview = result['content'][:1000]
-                    if len(result['content']) > 1000:
-                        preview += f"... [+{len(result['content']) - 1000} chars]"
-                    response += f"    Content: {preview}\n"
+                # Always include content for agent synthesis; avoid truncation whenever possible
+                if result.get('content'):
+                    response += "    Content: "
+                    content_text = result['content']
+                    # Avoid extremely long single tool outputs; cap very large payloads conservatively
+                    if len(content_text) > 8000:
+                        response += content_text[:8000] + f"... [truncated {len(content_text) - 8000} chars]\n"
+                    else:
+                        response += content_text + "\n"
                 
                 response += "\n"
             

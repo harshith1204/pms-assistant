@@ -90,6 +90,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
     "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
     "   - Do NOT answer from memory; run a query.\n"
+    "   - Decide when to use complex joins based on query needs (enable_complex_joins parameter).\n"
     "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
     "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
     "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
@@ -196,6 +197,7 @@ class ConversationMemory:
 
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
+
 
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatOllama(
@@ -333,60 +335,15 @@ qdrant_memory_store = QdrantMemoryStore()
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
 def _select_tools_for_query(user_query: str):
-    """Return a subset of tools to expose to the LLM for this query.
+    """Return tools exposed to the LLM for this query.
 
-    Policy:
-    - Default to mongo_query for structured field questions.
-    - Only enable RAG tools when the query clearly asks for content/context.
-    - Enable rag_mongo_workitems only when content-like AND canonical fields are requested.
+    Enhanced policy:
+    - Always expose both structured (mongo_query) and RAG tools (rag_search, rag_mongo).
+    - Let the LLM decide routing based on instructions; no keyword gating.
+    - Add query analysis hints for complex join decisions.
     """
-    q = (user_query or "").lower()
-    content_markers = [
-        "content", "note", "notes", "doc", "docs", "documentation", "page", "pages",
-        "description", "context", "summarize", "summary", "snippet", "snippets",
-        "search", "find examples", "show examples", "browse"
-    ]
-    member_terms = [
-        "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
-        "user", "users", "staff", "people", "personnel"
-    ]
-    canonical_field_terms = [
-        "state", "assignee", "project", "count", "group", "filter", "sort",
-        "created", "updated", "date", "due", "id", "displaybugno", "priority"
-    ]
-
-    def has_any(terms):
-        return any(term in q for term in terms)
-
-    # Strict default: Mongo for everything unless content/context explicitly requested
-    allow_rag = has_any(content_markers)
-    # Override: if the query is about members/assignees/team, force Mongo only
-    if has_any(member_terms):
-        allow_rag = False
-
-    allowed_names = ["mongo_query"]
-    if allow_rag:
-        # Allow universal RAG search tool
-        allowed_names.append("rag_search")
-        # Allow rag_mongo when user needs semantic search + authoritative Mongo fields
-        # This works for any entity type (work_item, page, project, cycle, module)
-        if has_any(canonical_field_terms):
-            allowed_names.append("rag_mongo")
-
-    # Detect presence of multiple action intents in one query
-    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
-    action_listing = ["list", "show", "top", "recent", "titles", "items"]
-    action_content = ["summarize", "snippet", "snippets", "context", "explain"]
-    multiple_actions = (
-        (has_any(action_structured) and has_any(action_listing)) or
-        (has_any(action_structured) and has_any(action_content)) or
-        (has_any(action_listing) and has_any(action_content))
-    )
-    # composite_query removed; agent will chain tools internally via planning
-
-    # Map to actual tool objects, keep only those present
+    allowed_names = ["mongo_query", "rag_search", "rag_mongo"]
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
-    # Fallback safety: if mapping failed for any reason, expose mongo_query only
     if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
     return selected_tools, allowed_names
