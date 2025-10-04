@@ -55,7 +55,11 @@ class RAGTool:
             return
         try:
             self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL, api_key=mongo.constants.QDRANT_API_KEY)
-            self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
+            try:
+                self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
+            except Exception as e:
+                print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
+                self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             self.connected = True
             print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
         except Exception as e:
@@ -99,12 +103,15 @@ class RAGTool:
             # print(f"total results",search_results)
             for result in search_results:
                 payload = result.payload or {}
+                # Prefer 'content'; fallback to 'full_text' or 'title' so content is never empty
+                content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+
                 # Create a result dict with all payload fields
                 result_dict = {
                     "id": result.id,
                     "score": result.score,
                     "title": payload.get("title", "Untitled"),
-                    "content": payload.get("content", ""),
+                    "content": content_text,
                     "content_type": payload.get("content_type", "unknown"),
                     "mongo_id": payload.get("mongo_id"),
                 }
