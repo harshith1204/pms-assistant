@@ -888,58 +888,83 @@ class PipelineGenerator:
         self.relationship_cache = {}  # Cache for computed relationship paths
 
     def _add_comprehensive_lookups(self, pipeline: List[Dict[str, Any]], collection: str, intent: QueryIntent, required_relations: Set[str]):
-        """Add comprehensive lookups for better performance on complex multi-step operations"""
-        # Define comprehensive relationship maps for each collection
-        comprehensive_relations = {
+        """Add strategic lookups only for relationships that provide clear query benefits"""
+        # Only add strategic relationships that are likely to improve query performance
+        # without adding unnecessary complexity for simple queries
+
+        strategic_relations = {
             'workItem': {
-                # Always include project and assignee for work items (most commonly needed)
-                'project': True,
-                'assignee': True,
-                # Conditionally include others based on query complexity
-                'cycle': intent.wants_details or len(intent.group_by or []) > 0,
-                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+                # Only add project if we're doing multi-hop queries or need business context
+                'project': self._needs_multi_hop_context(intent, ['business', 'cycle', 'module']),
             },
             'project': {
-                # Always include business for projects
-                'business': True,
-                # Include commonly accessed relations
-                'members': intent.wants_details or 'assignee' in (intent.group_by or []),
-                'cycles': intent.wants_details or 'cycle' in (intent.group_by or []),
-                'modules': intent.wants_details or 'module' in (intent.group_by or []),
+                # Only add business if we're grouping by or filtering by business
+                'business': 'business' in (intent.group_by or []) or 'business_name' in (intent.filters or {}),
             },
             'cycle': {
-                'project': True,  # Always needed for cycle context
-                'business': True,  # Often needed for business context
+                # Only add project if we're doing complex analysis
+                'project': len(intent.group_by or []) > 1 or intent.wants_details,
             },
             'module': {
-                'project': True,  # Always needed for module context
-                'assignee': intent.wants_details or 'assignee' in (intent.group_by or []),
-                'business': True,  # Often needed for business context
+                # Only add project if we're doing complex analysis
+                'project': len(intent.group_by or []) > 1 or intent.wants_details,
             },
             'members': {
-                'project': True,  # Always needed for member context
-                'business': True,  # Often needed for business context
+                # Only add project if we're doing complex analysis
+                'project': len(intent.group_by or []) > 1 or intent.wants_details,
             },
             'page': {
-                'project': True,  # Always needed for page context
-                'linkedCycle': intent.wants_details,
-                'linkedModule': intent.wants_details,
-                'business': True,  # Often needed for business context
+                # Only add project if we're doing complex analysis
+                'project': len(intent.group_by or []) > 1 or intent.wants_details,
             }
         }
 
-        # Get the comprehensive relations for this collection
-        relations_to_add = comprehensive_relations.get(collection, {})
+        # Get the strategic relations for this collection
+        relations_to_add = strategic_relations.get(collection, {})
 
-        # Add each comprehensive relation if it's available in the relationship registry
+        # Only add relations that are actually beneficial for this specific query
         for relation_name, should_add in relations_to_add.items():
             if should_add and relation_name in REL.get(collection, {}):
-                # Add to required_relations so it gets processed in the main lookup loop
+                # Only add if this relationship isn't already required but would be beneficial
                 if relation_name not in required_relations:
-                    # Add the relation directly - the lookup logic will handle array vs single relations
                     required_relations.add(relation_name)
 
-    def generate_pipeline(self, intent: QueryIntent, enable_complex_joins: bool = False) -> List[Dict[str, Any]]:
+    def _needs_multi_hop_context(self, intent: QueryIntent, context_fields: List[str]) -> bool:
+        """Check if the query needs multi-hop context for the given fields"""
+        # Check if any context fields are referenced in group_by or filters
+        for field in context_fields:
+            if field in (intent.group_by or []) or f'{field}_name' in (intent.filters or {}):
+                return True
+        return False
+
+    def _should_use_strategic_joins(self, intent: QueryIntent, required_relations: Set[str]) -> bool:
+        """Automatically determine if strategic joins would benefit this query"""
+        # Use strategic joins if:
+        # 1. Query has multiple group_by fields (complex analysis)
+        # 2. Query needs multi-hop context (business, cycle, module context)
+        # 3. Query filters by fields that require joins
+        # 4. Query requests details (indicating complex data needs)
+
+        # Check for multi-hop context needs
+        needs_multi_hop = (
+            self._needs_multi_hop_context(intent, ['business', 'cycle', 'module']) or
+            'business' in (intent.group_by or []) or
+            'business_name' in (intent.filters or {})
+        )
+
+        # Check for complex grouping
+        has_complex_grouping = len(intent.group_by or []) > 1
+
+        # Check for detail requests
+        wants_details = intent.wants_details
+
+        # Check if already has required relations (don't need strategic joins if relations already identified)
+        has_basic_relations = len(required_relations) > 0
+
+        # Use strategic joins if any of these conditions are met
+        return needs_multi_hop or has_complex_grouping or (wants_details and has_basic_relations)
+
+    def generate_pipeline(self, intent: QueryIntent) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
         pipeline: List[Dict[str, Any]] = []
 
@@ -1078,9 +1103,9 @@ class PipelineGenerator:
                     required_relations.add('project')
                     required_relations.add('project.modules')
 
-        # When complex joins are enabled, proactively add comprehensive lookups
-        # for better performance on multi-step operations
-        if enable_complex_joins:
+        # Automatically add strategic lookups when they provide clear benefits for this query
+        # Complex joins are now fully automatic based on query requirements
+        if self._should_use_strategic_joins(intent, required_relations):
             self._add_comprehensive_lookups(pipeline, collection, intent, required_relations)
 
         # Add relationship lookups (supports multi-hop via dot syntax like project.states)
@@ -1887,10 +1912,10 @@ class Planner:
         self.llm_parser = LLMIntentParser()
         self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
-    async def plan_and_execute(self, query: str, enable_complex_joins: bool = False) -> Dict[str, Any]:
+    async def plan_and_execute(self, query: str) -> Dict[str, Any]:
         """Plan and execute a natural language query using the Orchestrator."""
         try:
-            # Define step coroutines as closures to capture self and enable_complex_joins
+            # Define step coroutines as closures to capture self
             async def _ensure_connection(ctx: Dict[str, Any]) -> bool:
                 await mongodb_tools.connect()
                 return True
@@ -1902,7 +1927,7 @@ class Planner:
                 return result is not None
 
             def _generate_pipeline(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
-                return self.generator.generate_pipeline(ctx["intent"], enable_complex_joins=enable_complex_joins)  # type: ignore[index]
+                return self.generator.generate_pipeline(ctx["intent"])  # type: ignore[index]
 
             async def _execute(ctx: Dict[str, Any]) -> Any:
                 intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
@@ -1987,6 +2012,6 @@ class Planner:
 # Global instance
 query_planner = Planner()
 
-async def plan_and_execute_query(query: str, enable_complex_joins: bool = False) -> Dict[str, Any]:
+async def plan_and_execute_query(query: str) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
     return await query_planner.plan_and_execute(query)
