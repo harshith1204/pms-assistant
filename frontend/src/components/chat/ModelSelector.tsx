@@ -3,10 +3,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Brain } from "lucide-react";
 
 export function ModelSelector() {
-  const [model, setModel] = useState("qwen3:0.6b");
+  const [model, setModel] = useState("llama3-8b-8192");
 
   const availableModels = [
-    { value: "qwen3:0.6b", label: "Qwen 3" },
+    { value: "llama3-8b-8192", label: "Llama 3 8B" },
+    { value: "llama3-70b-8192", label: "Llama 3 70B" },
+    { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B" },
+    { value: "gemma-7b-it", label: "Gemma 7B" },
   ];
 
   return (

@@ -12,10 +12,14 @@ from typing import Dict, List, Any, Optional, Set
 import os
 from dataclasses import dataclass
 import copy
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -150,12 +154,13 @@ class LLMIntentParser:
     """
 
     def __init__(self, model_name: Optional[str] = None):
-        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "qwen3:0.6b-fp16")
+        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "moonshotai/kimi-k2-instruct-0905")
         # Keep the model reasonably deterministic for planning
         self.llm = ChatGroq(
-            api_key=groq_api_key,
-            model="llama-3.1-8b-instant",
-            streaming=False
+            model=self.model_name,
+            temperature=0.1,
+            max_tokens=1024,
+            top_p=0.8,
         )
 
         # Precompute compact schema context to keep prompts short

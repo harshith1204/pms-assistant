@@ -1,4 +1,8 @@
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -213,16 +217,13 @@ conversation_memory = ConversationMemory()
 
 
 # Initialize the LLM with optimized settings for tool calling
-llm = ChatOllama(
-    model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
-    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
-    num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
-    num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
-    num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
+llm = ChatGroq(
+    model=os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905"),
+    temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")),
+    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
     streaming=True,
     verbose=False,
-    top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
-    top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
+    top_p=float(os.getenv("GROQ_TOP_P", "0.8")),
 )
 
 
