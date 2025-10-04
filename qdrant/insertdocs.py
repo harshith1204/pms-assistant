@@ -343,7 +343,16 @@ def index_pages_to_qdrant():
             mongo_id = normalize_mongo_id(doc["_id"])
             title = doc.get("title", "")
             blocks, combined_text = parse_editorjs_blocks(doc.get("content", ""))
-            if not blocks and not combined_text:
+            
+            # Use title as fallback content if no content is available
+            # This ensures pages are searchable even if they have minimal content
+            if not combined_text and title:
+                combined_text = title
+                print(f"⚠️ Page '{title}' has no content, using title as fallback")
+            
+            # Skip only if both content AND title are empty
+            if not combined_text:
+                print(f"⚠️ Skipping page {mongo_id} - no title or content")
                 continue
 
             # Extract metadata for filtering/grouping

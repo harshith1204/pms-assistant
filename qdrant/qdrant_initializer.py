@@ -4,21 +4,10 @@ import mongo.constants
 import os
 import json
 import re
-from glob import glob
-from datetime import datetime
-from orchestrator import Orchestrator, StepSpec, as_async
-try:
-    # For structured, no-LLM execution path
-    from planner import PipelineGenerator, QueryIntent  # type: ignore
-except Exception:
-    PipelineGenerator = None  # type: ignore
-    QueryIntent = None  # type: ignore
-
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from sentence_transformers import SentenceTransformer
-import numpy as np
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
 class RAGTool:
