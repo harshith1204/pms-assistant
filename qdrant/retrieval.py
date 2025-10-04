@@ -107,10 +107,13 @@ class ChunkAwareRetriever:
         for result in search_results:
             payload = result.payload or {}
             
+            # Prefer 'content'; fallback to 'full_text' or title if missing
+            content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+
             chunk = ChunkResult(
                 id=str(result.id),
                 score=result.score,
-                content=payload.get("content", ""),
+                content=content_text,
                 mongo_id=payload.get("mongo_id", ""),
                 parent_id=payload.get("parent_id", payload.get("mongo_id", "")),
                 chunk_index=payload.get("chunk_index", 0),
@@ -201,10 +204,13 @@ class ChunkAwareRetriever:
                     if scroll_result and scroll_result[0]:
                         for point in scroll_result[0]:
                             payload = point.payload or {}
+                            # Prefer 'content'; fallback to 'full_text' or title if missing
+                            adj_content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+
                             adjacent_chunk = ChunkResult(
                                 id=str(point.id),
                                 score=0.0,  # Adjacent chunks get 0 score (context only)
-                                content=payload.get("content", ""),
+                                content=adj_content_text,
                                 mongo_id=payload.get("mongo_id", ""),
                                 parent_id=payload.get("parent_id", payload.get("mongo_id", "")),
                                 chunk_index=payload.get("chunk_index", 0),
@@ -271,7 +277,8 @@ class ChunkAwareRetriever:
             full_content = self._merge_chunks(selected_chunks)
             
             # Build chunk coverage info
-            chunk_indices = sorted([c.chunk_index for c in selected_chunks])
+            # Convert to 1-based indices for display
+            chunk_indices = sorted([c.chunk_index + 1 for c in selected_chunks])
             total_chunks = chunks[0].chunk_count if chunks else 1
             coverage = self._format_coverage(chunk_indices, total_chunks)
             
