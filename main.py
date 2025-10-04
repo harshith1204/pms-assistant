@@ -5,6 +5,10 @@ from typing import Optional, List, Dict, Any
 import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from agent import MongoDBAgent, phoenix_span_manager, qdrant_memory_store
 from traces.setup import EvaluationPipeline
