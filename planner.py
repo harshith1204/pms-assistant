@@ -19,7 +19,7 @@ from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-
+from langchain_groq import ChatGroq
 # Orchestration utilities
 from orchestrator import Orchestrator, StepSpec, as_async
 
@@ -152,13 +152,10 @@ class LLMIntentParser:
     def __init__(self, model_name: Optional[str] = None):
         self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "qwen3:0.6b-fp16")
         # Keep the model reasonably deterministic for planning
-        self.llm = ChatOllama(
-            model=self.model_name,
-            temperature=0.1,
-            num_ctx=4096,
-            num_predict=1024,
-            top_p=0.8,
-            top_k=40,
+        self.llm = ChatGroq(
+            api_key=groq_api_key,
+            model="llama-3.1-8b-instant",
+            streaming=False
         )
 
         # Precompute compact schema context to keep prompts short
