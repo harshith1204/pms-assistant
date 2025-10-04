@@ -22,16 +22,28 @@ from qdrant.dbconnection import (
 )
 from dotenv import load_dotenv
 from huggingface_hub import login
+import re
+import html as html_lib
 
 # ------------------ Setup ------------------
 
 # Load .env file and authenticate HuggingFace
 load_dotenv()
 hf_token = os.getenv("HuggingFace_API_KEY")
-login(hf_token)
+try:
+    if hf_token:
+        login(hf_token)
+    else:
+        print("⚠️ No HuggingFace token found; proceeding without login.")
+except Exception as e:
+    print(f"⚠️ HuggingFace login failed: {e}")
 
-# Load embedding model once
-embedder = SentenceTransformer("google/embeddinggemma-300m")
+# Load embedding model once, with fallback to a public model
+try:
+    embedder = SentenceTransformer("google/embeddinggemma-300m")
+except Exception as e:
+    print(f"⚠️ Failed to load embedding model 'google/embeddinggemma-300m': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
+    embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # ------------------ Chunking Statistics ------------------
 
@@ -176,19 +188,93 @@ def normalize_mongo_id(mongo_id) -> str:
         return str(uuid.UUID(bytes=mongo_id))
     return str(mongo_id)
 
+def html_to_text(html: str) -> str:
+    """Convert basic HTML to plain text, preserving simple line breaks and decoding entities."""
+    if not html:
+        return ""
+    # Normalize common breaks to newlines
+    text = re.sub(r"<(br|BR)\s*/?>", "\n", html)
+    # Remove all other tags
+    text = re.sub(r"<[^>]+>", "", text)
+    # Decode HTML entities
+    text = html_lib.unescape(text)
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
 def parse_editorjs_blocks(content_str: str):
-    """Extract all blocks and combined text for embedding."""
+    """Extract blocks from EditorJS JSON and produce a rich combined plain-text representation."""
     if not content_str or not content_str.strip():
         return [], ""
     try:
         content_json = json.loads(content_str)
         blocks = content_json.get("blocks", [])
-        block_texts = [
-            (block.get("data") or {}).get("text", "").strip()
-            for block in blocks
-            if (block.get("data") or {}).get("text", "").strip()
-        ]
-        combined_text = " ".join(block_texts).strip()
+        extracted: list[str] = []
+        for block in blocks:
+            btype = block.get("type") or ""
+            data = block.get("data") or {}
+            if btype in ("paragraph", "header", "quote"):
+                text = html_to_text(data.get("text", ""))
+                caption = html_to_text(data.get("caption", "")) if btype == "quote" else ""
+                line = text if not caption else f"{text} — {caption}"
+                if line:
+                    extracted.append(line)
+            elif btype == "list":
+                items = data.get("items") or []
+                style = (data.get("style") or "").lower()
+                lines = []
+                for idx, item in enumerate(items, 1):
+                    item_text = html_to_text(item if isinstance(item, str) else str(item))
+                    if not item_text:
+                        continue
+                    prefix = f"{idx}. " if style == "ordered" else "- "
+                    lines.append(prefix + item_text)
+                if lines:
+                    extracted.append("\n".join(lines))
+            elif btype == "checklist":
+                items = data.get("items") or []
+                lines = []
+                for item in items:
+                    text = html_to_text((item or {}).get("text", ""))
+                    checked = (item or {}).get("checked", False)
+                    if text:
+                        lines.append(("[x] " if checked else "[ ] ") + text)
+                if lines:
+                    extracted.append("\n".join(lines))
+            elif btype == "table":
+                table = data.get("content") or []
+                rows = []
+                for row in table:
+                    cells = [html_to_text(cell) for cell in (row or [])]
+                    rows.append(" | ".join(cells).strip())
+                if rows:
+                    extracted.append("\n".join(rows))
+            elif btype == "code":
+                code = data.get("code", "").strip()
+                if code:
+                    extracted.append(code)
+            elif btype in ("image", "embed", "linkTool", "raw", "delimiter"):
+                # Prefer human text fields; skip binary/media noise
+                parts = []
+                if data.get("caption"):
+                    parts.append(html_to_text(data.get("caption", "")))
+                if btype == "linkTool":
+                    link = (data.get("link") or "").strip()
+                    meta = data.get("meta") or {}
+                    title = html_to_text(meta.get("title", "")) if isinstance(meta, dict) else ""
+                    desc = html_to_text(meta.get("description", "")) if isinstance(meta, dict) else ""
+                    parts.extend([p for p in [title, desc, link] if p])
+                text = " - ".join([p for p in parts if p])
+                if text:
+                    extracted.append(text)
+            else:
+                # Fallback: try common 'text' field
+                text = html_to_text(data.get("text", ""))
+                if text:
+                    extracted.append(text)
+
+        # Separate blocks with newlines to retain structure
+        combined_text = "\n\n".join([t for t in extracted if t]).strip()
         return blocks, combined_text
     except Exception as e:
         print(f"⚠️ Failed to parse content: {e}")
@@ -343,13 +429,22 @@ def index_pages_to_qdrant():
             mongo_id = normalize_mongo_id(doc["_id"])
             title = doc.get("title", "")
             blocks, combined_text = parse_editorjs_blocks(doc.get("content", ""))
-            
+
+            # Extract additional text content from other fields in the page
+            if combined_text:
+                # Look for other substantial text fields in the page document
+                for field_name, field_value in doc.items():
+                    if (field_name not in ["_id", "title", "content", "visibility", "isFavourite", "createdAt", "updatedAt", "createdTimeStamp", "updatedTimeStamp", "project", "createdBy", "business"]
+                        and isinstance(field_value, str)
+                        and len(field_value.strip()) > 20):  # Only substantial text
+                        combined_text += " " + field_value.strip()
+
             # Use title as fallback content if no content is available
             # This ensures pages are searchable even if they have minimal content
             if not combined_text and title:
                 combined_text = title
                 print(f"⚠️ Page '{title}' has no content, using title as fallback")
-            
+
             # Skip only if both content AND title are empty
             if not combined_text:
                 print(f"⚠️ Skipping page {mongo_id} - no title or content")
@@ -453,8 +548,12 @@ def index_workitems_to_qdrant():
 
         for doc in documents:
             mongo_id = normalize_mongo_id(doc["_id"])
-            combined_text = " ".join(filter(None, [doc.get("title", ""), doc.get("description", "")])).strip()
+            # Clean HTML/entities before chunking for better retrieval quality
+            title_clean = html_to_text(doc.get("title", ""))
+            desc_clean = html_to_text(doc.get("description", ""))
+            combined_text = " ".join(filter(None, [title_clean, desc_clean])).strip()
             if not combined_text:
+                print(f"⚠️ Skipping work item {mongo_id} - no substantial text content found")
                 continue
 
             # Extract metadata for filtering/grouping
@@ -557,8 +656,28 @@ def index_projects_to_qdrant():
             mongo_id = normalize_mongo_id(doc["_id"])
             name = doc.get("name", "")
             description = (doc.get("description") or "").strip()
-            combined_text = " ".join(filter(None, [name, description])).strip()
+
+            # Extract ALL substantial text content from the project document
+            text_parts = []
+
+            # Include name if present
+            if name:
+                text_parts.append(name)
+
+            # Include description if present and substantial
+            if description and len(description) > 10:
+                text_parts.append(description)
+
+            # Include any other substantial text fields
+            for field_name, field_value in doc.items():
+                if (field_name not in ["_id", "name", "description", "createdAt", "updatedAt", "createdTimeStamp", "updatedTimeStamp"]
+                    and isinstance(field_value, str)
+                    and len(field_value.strip()) > 20):  # Only substantial text
+                    text_parts.append(field_value.strip())
+
+            combined_text = " ".join(text_parts).strip()
             if not combined_text:
+                print(f"⚠️ Skipping project {mongo_id} - no substantial text content found")
                 continue
 
             # Chunk projects with long descriptions
@@ -612,8 +731,28 @@ def index_cycles_to_qdrant():
             mongo_id = normalize_mongo_id(doc["_id"])
             name = doc.get("name") or doc.get("title") or ""
             description = (doc.get("description") or "").strip()
-            combined_text = " ".join(filter(None, [name, description])).strip()
+
+            # Extract ALL substantial text content from the cycle document
+            text_parts = []
+
+            # Include name if present
+            if name:
+                text_parts.append(name)
+
+            # Include description if present and substantial
+            if description and len(description) > 10:
+                text_parts.append(description)
+
+            # Include any other substantial text fields
+            for field_name, field_value in doc.items():
+                if (field_name not in ["_id", "name", "title", "description", "createdAt", "updatedAt", "createdTimeStamp", "updatedTimeStamp"]
+                    and isinstance(field_value, str)
+                    and len(field_value.strip()) > 20):  # Only substantial text
+                    text_parts.append(field_value.strip())
+
+            combined_text = " ".join(text_parts).strip()
             if not combined_text:
+                print(f"⚠️ Skipping cycle {mongo_id} - no substantial text content found")
                 continue
 
             # Chunk cycles with long descriptions
@@ -667,8 +806,28 @@ def index_modules_to_qdrant():
             mongo_id = normalize_mongo_id(doc["_id"])
             name = doc.get("name") or doc.get("title") or ""
             description = (doc.get("description") or "").strip()
-            combined_text = " ".join(filter(None, [name, description])).strip()
+
+            # Extract ALL substantial text content from the module document
+            text_parts = []
+
+            # Include name if present
+            if name:
+                text_parts.append(name)
+
+            # Include description if present and substantial
+            if description and len(description) > 10:
+                text_parts.append(description)
+
+            # Include any other substantial text fields
+            for field_name, field_value in doc.items():
+                if (field_name not in ["_id", "name", "title", "description", "createdAt", "updatedAt", "createdTimeStamp", "updatedTimeStamp"]
+                    and isinstance(field_value, str)
+                    and len(field_value.strip()) > 20):  # Only substantial text
+                    text_parts.append(field_value.strip())
+
+            combined_text = " ".join(text_parts).strip()
             if not combined_text:
+                print(f"⚠️ Skipping module {mongo_id} - no substantial text content found")
                 continue
 
             # Chunk modules with long descriptions
