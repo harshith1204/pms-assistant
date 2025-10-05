@@ -5,6 +5,10 @@ from typing import Optional, List, Dict, Any
 import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from agent import MongoDBAgent, phoenix_span_manager
 from traces.setup import EvaluationPipeline
@@ -70,7 +74,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Vite dev server
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

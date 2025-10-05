@@ -1,15 +1,22 @@
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
+from typing import Tuple
 import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
 import os
+import uuid
+import hashlib
 
 # Tracing imports (Phoenix via OpenTelemetry exporter)
 from opentelemetry import trace
@@ -25,6 +32,7 @@ import threading
 import time
 from opentelemetry.sdk.trace.export import SpanProcessor
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
+import math
 
 # OpenInference semantic conventions (optional)
 try:
@@ -57,6 +65,7 @@ except AttributeError:
     tools_list = []
 from mongo.constants import DATABASE_NAME, mongodb_tools
 
+
 DEFAULT_SYSTEM_PROMPT = (
     "You are a precise, non-speculative Project Management assistant.\n\n"
     "GENERAL RULES:\n"
@@ -64,28 +73,47 @@ DEFAULT_SYSTEM_PROMPT = (
     "- If a tool is appropriate, always call it before answering.\n"
     "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
     "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
+    "TOOL EXECUTION STRATEGY:\n"
+    "- When tools are INDEPENDENT (can run without each other's results): Call them together in one batch.\n"
+    "- When tools are DEPENDENT (one needs another's output): Call them separately in sequence.\n"
+    "- Examples of INDEPENDENT: 'Show bug counts AND feature counts' → call both tools together\n"
+    "- Examples of DEPENDENT: 'Find bugs by John, THEN search docs about those bugs' → call mongo_query first, wait for results, then call rag_search\n\n"
     "DECISION GUIDE:\n"
     "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
-    "   - Examples: counts, lists, filters, sort, group by, assignee/state/project info.\n"
+    "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
+    "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
+    "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
     "   - Do NOT answer from memory; run a query.\n"
     "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
-    "   - Find pages/work items by meaning, group by metadata, analyze content patterns.\n"
-    "   - Examples: 'find notes about OAuth', 'show API docs grouped by project', 'break down bugs by priority'.\n"
-    "3) Use 'rag_mongo' when searching by content/meaning AND need complete MongoDB records with all fields.\n"
-    "   - Combines semantic search with authoritative Mongo data.\n"
-    "   - Examples: 'find auth bugs with their status', 'security pages with project info', 'microservices projects'.\n\n"
+    "   - Returns FULL chunk content (no truncation) for accurate synthesis and formatting.\n"
+    "   - Find pages/work items by meaning, analyze content patterns, search documentation.\n"
+    "   - Examples: 'find notes about OAuth', 'show API docs', 'content mentioning authentication', 'analyze patterns in descriptions'.\n"
+    "   - INTELLIGENT CONTENT TYPE ROUTING: Choose content_type based on query context:\n"
+    "     * Questions about 'release', 'documentation', 'notes', 'wiki' → content_type='page'\n"
+    "     * Questions about 'work items', 'bugs', 'tasks', 'issues' → content_type='work_item'\n"
+    "     * Questions about 'cycle', 'sprint', 'iteration' → content_type='cycle'\n"
+    "     * Questions about 'module', 'component', 'feature area' → content_type='module'\n"
+    "     * Questions about 'project' → content_type='project'\n"
+    "     * Ambiguous queries → omit content_type (searches all types) OR call rag_search multiple times with different types\n"
+    "3) Use BOTH tools together when question needs structured data AND content analysis.\n"
+    "   - Example: 'Show bug counts by priority (mongo_query) and find related documentation (rag_search)'.\n"
+    "   - Agent decides tool combination based on query complexity and dependencies.\n\n"
     "TOOL CHEATSHEET:\n"
-    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
+    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only. Automatically uses complex joins when beneficial.\n"
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
     "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
     "  REQUIRED: 'query' - semantic search terms.\n"
-    "  OPTIONAL: content_type ('page'|'work_item'|etc), group_by (field name), limit, show_content.\n"
-    "- rag_mongo(query:str, entity_type:str, limit:int=15): Semantic search → MongoDB records with full fields.\n"
-    "  REQUIRED: 'query' - semantic search, 'entity_type' ('work_item'|'page'|'project'|'cycle'|'module').\n\n"
+    "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None for all), group_by (field name), limit, show_content.\n\n"
+    "CONTENT TYPE ROUTING EXAMPLES:\n"
+    "- 'What is the next release about?' → rag_search(query='next release', content_type='page')\n"
+    "- 'What are recent work items about?' → rag_search(query='recent work items', content_type='work_item')\n"
+    "- 'What is the active cycle about?' → rag_search(query='active cycle', content_type='cycle')\n"
+    "- 'What is the CRM module about?' → rag_search(query='CRM module', content_type='module')\n"
+    "- 'Find content about authentication' → rag_search(query='authentication', content_type=None)  # searches all types\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
-    "- If the question references states, assignees, counts, filters, dates, or IDs → mongo_query.\n"
-    "- If the question references 'content', 'notes', 'docs', 'pages', 'descriptions', or needs semantic search → rag_search.\n"
-    "- If the user searches by content BUT needs complete MongoDB fields (state, assignee, dates, etc.) → rag_mongo.\n\n"
+    "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
+    "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
+    "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
     "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
 
@@ -95,6 +123,9 @@ class ConversationMemory:
     def __init__(self, max_messages_per_conversation: int = 50):
         self.conversations: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_conversation))
         self.max_messages_per_conversation = max_messages_per_conversation
+        # Rolling summary per conversation (compact)
+        self.summaries: Dict[str, str] = {}
+        self.turn_counters: Dict[str, int] = defaultdict(int)
 
     def add_message(self, conversation_id: str, message: BaseMessage):
         """Add a message to the conversation history"""
@@ -110,137 +141,124 @@ class ConversationMemory:
             self.conversations[conversation_id].clear()
 
     def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
-        """Get recent conversation context, respecting token limits"""
+        """Get recent conversation context with a token budget and rolling summary."""
         messages = self.get_conversation_history(conversation_id)
 
-        # For now, just return the last few messages to stay within context limits
-        # In a production system, you'd want to implement proper token counting
-        if len(messages) <= 10:  # Return all if small conversation
-            return messages
-        else:
-            # Return last 10 messages to keep context manageable
-            return messages[-10:]
+        # Approximate token counting (≈4 chars/token)
+        def approx_tokens(text: str) -> int:
+            try:
+                return max(1, math.ceil(len(text) / 4))
+            except Exception:
+                return len(text) // 4
+
+        budget = max(500, max_tokens)
+        used = 0
+        selected: List[BaseMessage] = []
+
+        # Walk backwards to select most recent turns under budget
+        for msg in reversed(messages):
+            content = getattr(msg, "content", "")
+            used += approx_tokens(str(content)) + 8
+            if used > budget:
+                break
+            selected.append(msg)
+
+        selected.reverse()
+
+        # Prepend rolling summary if present and within budget
+        summary = self.summaries.get(conversation_id)
+        if summary:
+            stoks = approx_tokens(summary)
+            if used + stoks <= budget:
+                selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
+
+        return selected
+
+    def register_turn(self, conversation_id: str) -> None:
+        self.turn_counters[conversation_id] += 1
+
+    def should_update_summary(self, conversation_id: str, every_n_turns: int = 3) -> bool:
+        return self.turn_counters[conversation_id] % every_n_turns == 0
+
+    async def update_summary_async(self, conversation_id: str, llm_for_summary) -> None:
+        """Update the rolling summary asynchronously to avoid latency in main path."""
+        try:
+            history = self.get_conversation_history(conversation_id)
+            if not history:
+                return
+            recent = history[-12:]
+            prompt = [
+                SystemMessage(content=(
+                    "Summarize the durable facts, goals, and decisions from the conversation. "
+                    "Keep it 6-10 bullets, under 600 tokens. Avoid chit-chat."
+                ))
+            ] + recent + [HumanMessage(content="Produce condensed summary now.")]
+            resp = await llm_for_summary.ainvoke(prompt)
+            if getattr(resp, "content", None):
+                self.summaries[conversation_id] = str(resp.content)
+        except Exception:
+            # Best-effort; ignore failures
+            pass
 
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
 
+
 # Initialize the LLM with optimized settings for tool calling
-llm = ChatOllama(
-    model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b-fp16"),
-    temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
-    num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
-    num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "1024")),
-    num_thread=int(os.getenv("OLLAMA_NUM_THREAD", "8")),
+llm = ChatGroq(
+    model=os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905"),
+    temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
+    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
     streaming=True,
     verbose=False,
-    top_p=float(os.getenv("OLLAMA_TOP_P", "0.8")),
-    top_k=int(os.getenv("OLLAMA_TOP_K", "40")),
+    top_p=float(os.getenv("GROQ_TOP_P", "0.8")),
 )
+
+
+class TTLCache:
+    """Simple TTL cache for tool results to reduce repeat latency."""
+
+    def __init__(self, max_items: int = 256, ttl_seconds: int = 900):
+        self.store: Dict[str, tuple[float, Any]] = {}
+        self.max_items = max_items
+        self.ttl = ttl_seconds
+
+    def _evict_if_needed(self):
+        if len(self.store) <= self.max_items:
+            return
+        oldest_key = min(self.store.items(), key=lambda kv: kv[1][0])[0]
+        self.store.pop(oldest_key, None)
+
+    def get(self, key: str) -> Optional[Any]:
+        rec = self.store.get(key)
+        if not rec:
+            return None
+        ts, value = rec
+        if time.time() - ts > self.ttl:
+            self.store.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        self.store[key] = (time.time(), value)
+        self._evict_if_needed()
+
+
+
 
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
-
-def _detect_multistep(user_query: str) -> bool:
-    """Detect whether a query likely requires multiple steps/tools.
-
-    Signals include: explicit sequencing terms, multiple distinct intents
-    (e.g., count + list + search), or requests to run in parallel/batch.
-    """
-    q = (user_query or "").lower()
-    # Obvious multi-step markers
-    multi_markers = [
-        " compare ", " versus ", " vs ", " side by side ", " and also ",
-        " together ", ";", " then ", " in parallel", " simultaneously",
-        " at the same time", " both ", " batch ", " run multiple", " multi-step",
-    ]
-    if any(m in q for m in multi_markers):
-        return True
-
-    # Multiple action categories in one sentence
-    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
-    action_listing = ["list", "show", "top", "recent", "titles", "items"]
-    action_content = ["summarize", "snippet", "snippets", "context", "explain", "search"]
-
-    def has_any(terms):
-        return any(term in q for term in terms)
-
-    multiple_actions = (
-        (has_any(action_structured) and has_any(action_listing)) or
-        (has_any(action_structured) and has_any(action_content)) or
-        (has_any(action_listing) and has_any(action_content))
-    )
-    if multiple_actions:
-        return True
-
-    # Heuristic: presence of multiple entity types hints multi-step
-    entity_terms = ["project", "work item", "work items", "cycle", "module", "members", "page", "pages", "documentation", "docs"]
-    if sum(1 for t in entity_terms if t in q) >= 2 and ("and" in q or ";" in q):
-        return True
-    return False
-
 def _select_tools_for_query(user_query: str):
-    """Return a subset of tools to expose to the LLM for this query.
+    """Return tools exposed to the LLM for this query.
 
-    Policy:
-    - Default to mongo_query for structured field questions.
-    - Only enable RAG tools when the query clearly asks for content/context.
-    - Enable rag_mongo_workitems only when content-like AND canonical fields are requested.
+    Enhanced policy:
+    - Always expose both structured (mongo_query) and RAG tools (rag_search).
+    - Let the LLM decide routing based on instructions; no keyword gating.
+    - Add query analysis hints for complex join decisions.
     """
-    q = (user_query or "").lower()
-    content_markers = [
-        "content", "note", "notes", "doc", "docs", "documentation", "page", "pages",
-        "description", "context", "summarize", "summary", "snippet", "snippets",
-        "search", "find examples", "show examples", "browse"
-    ]
-    workitem_terms = ["work item", "work items", "ticket", "tickets", "bug", "bugs", "issue", "issues"]
-    # Member-related structured queries should always go to mongo_query (avoid RAG)
-    member_terms = [
-        "member", "members", "team", "teammate", "teammates", "assignee", "assignees",
-        "user", "users", "staff", "people", "personnel"
-    ]
-    canonical_field_terms = [
-        "state", "assignee", "project", "count", "group", "filter", "sort",
-        "created", "updated", "date", "due", "id", "displaybugno", "priority"
-    ]
-
-    def has_any(terms):
-        return any(term in q for term in terms)
-
-    # Strict default: Mongo for everything unless content/context explicitly requested
-    allow_rag = has_any(content_markers)
-    # Override: if the query is about members/assignees/team, force Mongo only
-    if has_any(member_terms):
-        allow_rag = False
-
-    allowed_names = ["mongo_query"]
-    if allow_rag:
-        # Allow universal RAG search tool
-        allowed_names.append("rag_search")
-        # Allow rag_mongo when user needs semantic search + authoritative Mongo fields
-        # This works for any entity type (work_item, page, project, cycle, module)
-        if has_any(canonical_field_terms):
-            allowed_names.append("rag_mongo")
-
-    # Heuristic: enable composite orchestrator when the query likely needs multi-part handling
-    multi_markers = [
-        " compare ", " versus ", " vs ", " side by side ", " both ", " and also ", " together ", ";", " then ",
-        " in parallel", " simultaneously", " at the same time", " batch ", " run multiple"
-    ]
-    # Detect presence of multiple action intents in one query
-    action_structured = ["count", "group", "breakdown", "distribution", "compare"]
-    action_listing = ["list", "show", "top", "recent", "titles", "items"]
-    action_content = ["summarize", "snippet", "snippets", "context", "explain"]
-    multiple_actions = (
-        (has_any(action_structured) and has_any(action_listing)) or
-        (has_any(action_structured) and has_any(action_content)) or
-        (has_any(action_listing) and has_any(action_content))
-    )
-    # composite_query removed; agent will chain tools internally via planning
-
-    # Map to actual tool objects, keep only those present
+    allowed_names = ["mongo_query", "rag_search"]
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
-    # Fallback safety: if mapping failed for any reason, expose mongo_query only
     if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
     return selected_tools, allowed_names
@@ -494,6 +512,8 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
+
+
 class PhoenixCallbackHandler(AsyncCallbackHandler):
     """WebSocket streaming callback handler for Phoenix events"""
 
@@ -562,13 +582,17 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             print(f"Warning: Error stopping Phoenix span collector: {e}")
 
 class MongoDBAgent:
-    """MongoDB Agent using Tool Calling with Parallel Execution Support
+    """MongoDB Agent using Tool Calling with LLM-Controlled Execution
     
     Features:
-    - Parallel tool execution: When multiple tools are requested by the LLM, they are executed
-      concurrently using asyncio.gather() for improved performance.
-    - Sequential fallback: Single tool calls or when parallel execution is disabled, tools
-      execute sequentially.
+    - LLM-controlled execution: The LLM decides whether tools should run in parallel
+      or sequentially based on dependencies. When the LLM calls multiple tools together,
+      they execute in parallel. When tools need sequential execution, the LLM will
+      make separate calls.
+    - Parallel execution: When the LLM calls multiple independent tools together,
+      they execute concurrently using asyncio.gather() for improved performance.
+    - Sequential execution: When tools have dependencies, the LLM naturally handles
+      this by calling them in separate rounds.
     - Full tracing support: All tool executions (parallel or sequential) are properly traced
       with Phoenix/OpenTelemetry.
     - Conversation memory: Maintains context across multiple turns.
@@ -592,6 +616,7 @@ class MongoDBAgent:
         """Enable Phoenix tracing for this agent."""
         await phoenix_span_manager.initialize()
         self.tracing_enabled = True
+
 
     def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
         if not self.tracing_enabled or phoenix_span_manager.tracer is None:
@@ -761,6 +786,7 @@ class MongoDBAgent:
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
+
                 messages.extend(conversation_context)
 
                 # Add current user message
@@ -818,24 +844,47 @@ class MongoDBAgent:
                 # Lightweight routing hint to bias correct tool choice
                 routing_instructions = SystemMessage(content=(
                     "PLANNING & ROUTING:\n"
-                    "- First, break the user request into minimal sub-steps.\n"
-                    "- For each sub-step, pick exactly one tool using the Decision Guide.\n\n"
+                    "- Break the user request into logical steps.\n"
+                    "- For INDEPENDENT operations: Call multiple tools together.\n"
+                    "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
                     "DECISION GUIDE:\n"
-                    "- Use 'mongo_query' for DB facts (counts, group, filters, dates, assignee/state/project info).\n"
-                    "- Use 'rag_search' for content searches, grouping, breakdowns (semantic meaning, not keywords).\n"
-                    "- Use 'rag_mongo' to find items by semantic search AND get complete MongoDB fields.\n\n"
-                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                    "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
+                    "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
+                    "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
+                    "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
+                    "   - Do NOT answer from memory; run a query.\n"
+                    "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
+                    "   - Returns FULL chunk content for synthesis - analyze and format the actual content in your response.\n"
+                    "   - Find pages/work items by meaning, analyze content patterns, search documentation.\n"
+                    "   - Examples: 'find notes about OAuth', 'show API docs', 'content mentioning authentication', 'analyze patterns in descriptions'.\n"
+                    "   - SMART CONTENT TYPE SELECTION: Choose appropriate content_type based on query semantics:\n"
+                    "     • 'release', 'documentation', 'notes', 'wiki' keywords → content_type='page'\n"
+                    "     • 'work items', 'bugs', 'tasks', 'issues' keywords → content_type='work_item'\n"
+                    "     • 'cycle', 'sprint', 'iteration' keywords → content_type='cycle'\n"
+                    "     • 'module', 'component', 'feature area' keywords → content_type='module'\n"
+                    "     • 'project' keyword → content_type='project'\n"
+                    "     • Unclear/multi-type query → content_type=None (all) OR multiple rag_search calls\n"
+                    "3) Use BOTH tools together when question needs structured data AND content analysis.\n"
+                    "   - Example: 'Show bug counts by priority (mongo_query) and find related documentation (rag_search)'.\n"
+                    "   - Agent decides tool combination based on query complexity and dependencies.\n\n"
+                    "TOOL CHEATSHEET:\n"
+                    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
+                    "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
+                    "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
+                    "  REQUIRED: 'query' - semantic search terms.\n"
+                    "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None), group_by (field), limit, show_content.\n\n"
+                    "CONTENT TYPE EXAMPLES:\n"
+                    "- 'What is next release about?' → rag_search(query='next release', content_type='page')\n"
+                    "- 'Recent work items about auth?' → rag_search(query='recent work items auth', content_type='work_item')\n"
+                    "- 'Active cycle details?' → rag_search(query='active cycle', content_type='cycle')\n"
+                    "- 'CRM module overview?' → rag_search(query='CRM module', content_type='module')\n\n"
+                    "WHEN UNSURE WHICH TOOL:\n"
+                    "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
+                    "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
+                    "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
+                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content)."
                 ))
-                # In non-streaming mode, also support a synthesis pass after tools
                 invoke_messages = messages + [routing_instructions]
-                if need_finalization:
-                    finalization_instructions = SystemMessage(content=(
-                        "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
-                        "Do not paste tool outputs verbatim. Focus on the specific fields requested; if multiple items, present a compact list."
-                    ))
-                    invoke_messages = messages + [routing_instructions, finalization_instructions]
-                    need_finalization = False
-
                 response = await llm_with_tools.ainvoke(invoke_messages)
                 if llm_span and getattr(response, "content", None):
                         try:
@@ -853,12 +902,26 @@ class MongoDBAgent:
                 if not getattr(response, "tool_calls", None):
                     return response.content
 
-                # Execute requested tools (parallel or sequential based on configuration)
+                # Execute requested tools
+                # The LLM decides execution order by how it calls tools:
+                # - Multiple tools in one response = parallel execution
+                # - Sequential needs are handled by the LLM making separate calls
                 messages.append(response)
                 did_any_tool = False
                 
+                # Log execution info
+                tool_names = [tc["name"] for tc in response.tool_calls]
+                execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
+                print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
+                
                 if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                    # Parallel execution for multiple tools
+                    # Multiple tools called together = LLM determined they're independent
+                    if run_span:
+                        run_span.add_event("parallel_tool_execution", {
+                            "tool_count": len(response.tool_calls),
+                            "tools": tool_names
+                        })
+                    
                     tool_tasks = [
                         self._execute_single_tool(None, tool_call, selected_tools, tracer)
                         for tool_call in response.tool_calls
@@ -872,7 +935,7 @@ class MongoDBAgent:
                         if success:
                             did_any_tool = True
                 else:
-                    # Sequential execution (fallback or single tool)
+                    # Single tool or parallel disabled
                     for tool_call in response.tool_calls:
                         tool_message, success = await self._execute_single_tool(
                             None, tool_call, selected_tools, tracer
@@ -901,6 +964,15 @@ class MongoDBAgent:
 
             # If we exit the loop due to step cap, return the best available answer
             if last_response is not None:
+                # Register turn and update summary if needed
+                conversation_memory.register_turn(conversation_id)
+                if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                    try:
+                        asyncio.create_task(
+                            conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to update summary: {e}")
                 return last_response.content
             return "Reached maximum reasoning steps without a final answer."
 
@@ -939,6 +1011,7 @@ class MongoDBAgent:
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
+
                 messages.extend(conversation_context)
 
                 # Add current user message
@@ -982,13 +1055,45 @@ class MongoDBAgent:
                                 pass
                         routing_instructions = SystemMessage(content=(
                             "PLANNING & ROUTING:\n"
-                            "- Decompose the task into ordered sub-steps.\n"
-                            "- Choose exactly one tool per sub-step.\n\n"
+                            "- Break the user request into logical steps.\n"
+                            "- For INDEPENDENT operations: Call multiple tools together.\n"
+                            "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
                             "DECISION GUIDE:\n"
-                            "- 'mongo_query' → DB facts (counts/group/filter/sort/date/assignee/state/project).\n"
-                            "- 'rag_search' → content searches, grouping, breakdowns (semantic, not keywords).\n"
-                            "- 'rag_mongo' → semantic search + complete MongoDB fields (any entity type).\n\n"
-                            "IMPORTANT: Use valid args - mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); rag_mongo needs 'query' and 'entity_type'."
+                            "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
+                            "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
+                            "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
+                            "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
+                            "   - Do NOT answer from memory; run a query.\n"
+                            "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
+                            "   - Returns FULL chunk content for synthesis - analyze and format the actual content in your response.\n"
+                            "   - Find pages/work items by meaning, analyze content patterns, search documentation.\n"
+                            "   - Examples: 'find notes about OAuth', 'show API docs', 'content mentioning authentication', 'analyze patterns in descriptions'.\n"
+                            "   - SMART CONTENT TYPE SELECTION: Choose appropriate content_type based on query semantics:\n"
+                            "     • 'release', 'documentation', 'notes', 'wiki' keywords → content_type='page'\n"
+                            "     • 'work items', 'bugs', 'tasks', 'issues' keywords → content_type='work_item'\n"
+                            "     • 'cycle', 'sprint', 'iteration' keywords → content_type='cycle'\n"
+                            "     • 'module', 'component', 'feature area' keywords → content_type='module'\n"
+                            "     • 'project' keyword → content_type='project'\n"
+                            "     • Unclear/multi-type query → content_type=None (all) OR multiple rag_search calls\n"
+                            "3) Use BOTH tools together when question needs structured data AND content analysis.\n"
+                            "   - Example: 'Show bug counts by priority (mongo_query) and find related documentation (rag_search)'.\n"
+                            "   - Agent decides tool combination based on query complexity and dependencies.\n\n"
+                            "TOOL CHEATSHEET:\n"
+                            "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
+                            "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
+                            "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
+                            "  REQUIRED: 'query' - semantic search terms.\n"
+                            "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None), group_by (field), limit, show_content.\n\n"
+                            "CONTENT TYPE EXAMPLES:\n"
+                            "- 'What is next release about?' → rag_search(query='next release', content_type='page')\n"
+                            "- 'Recent work items about auth?' → rag_search(query='recent work items auth', content_type='work_item')\n"
+                            "- 'Active cycle details?' → rag_search(query='active cycle', content_type='cycle')\n"
+                            "- 'CRM module overview?' → rag_search(query='CRM module', content_type='module')\n\n"
+                            "WHEN UNSURE WHICH TOOL:\n"
+                            "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
+                            "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
+                            "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
+                            "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content)."
                         ))
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
@@ -1020,12 +1125,18 @@ class MongoDBAgent:
                         yield response.content
                         return
 
-                    # Execute requested tools (parallel or sequential) with streaming callbacks
+                    # Execute requested tools with streaming callbacks
+                    # The LLM decides execution order by how it calls tools
                     messages.append(response)
                     did_any_tool = False
                     
+                    # Log execution info
+                    tool_names = [tc["name"] for tc in response.tool_calls]
+                    execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
+                    print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
+                    
                     if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                        # Parallel execution for multiple tools with streaming
+                        # Multiple tools called together = LLM determined they're independent
                         # Send tool_start events for all tools first
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
@@ -1047,7 +1158,7 @@ class MongoDBAgent:
                             if success:
                                 did_any_tool = True
                     else:
-                        # Sequential execution (fallback or single tool)
+                        # Single tool or parallel disabled
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if tool:
@@ -1070,6 +1181,15 @@ class MongoDBAgent:
 
                 # Step cap reached; send best available response
                 if last_response is not None:
+                    # Register turn and update summary if needed
+                    conversation_memory.register_turn(conversation_id)
+                    if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                        try:
+                            asyncio.create_task(
+                                conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to update summary: {e}")
                     yield last_response.content
                 else:
                     yield "Reached maximum reasoning steps without a final answer."

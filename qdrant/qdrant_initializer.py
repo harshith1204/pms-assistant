@@ -4,21 +4,10 @@ import mongo.constants
 import os
 import json
 import re
-from glob import glob
-from datetime import datetime
-from orchestrator import Orchestrator, StepSpec, as_async
-try:
-    # For structured, no-LLM execution path
-    from planner import PipelineGenerator, QueryIntent  # type: ignore
-except Exception:
-    PipelineGenerator = None  # type: ignore
-    QueryIntent = None  # type: ignore
-
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from sentence_transformers import SentenceTransformer
-import numpy as np
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
 class RAGTool:
@@ -66,7 +55,11 @@ class RAGTool:
             return
         try:
             self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL, api_key=mongo.constants.QDRANT_API_KEY)
-            self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
+            try:
+                self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
+            except Exception as e:
+                print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
+                self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             self.connected = True
             print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
         except Exception as e:
@@ -85,16 +78,23 @@ class RAGTool:
             # h
             print("Query embedding generated")
             # Build filter if content_type is specified
-            search_filter = None
+            from mongo.constants import BUSINESS_UUID
+            must_conditions = []
             if content_type:
-                search_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="content_type",
-                            match=MatchValue(value=content_type)
-                        )
-                    ]
+                must_conditions.append(
+                    FieldCondition(
+                        key="content_type",
+                        match=MatchValue(value=content_type)
+                    )
                 )
+            if BUSINESS_UUID:
+                must_conditions.append(
+                    FieldCondition(
+                        key="business_id",
+                        match=MatchValue(value=BUSINESS_UUID)
+                    )
+                )
+            search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Search in Qdrant
             search_results = self.qdrant_client.search(
@@ -110,12 +110,15 @@ class RAGTool:
             # print(f"total results",search_results)
             for result in search_results:
                 payload = result.payload or {}
+                # Prefer 'content'; fallback to 'full_text' or 'title' so content is never empty
+                content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+
                 # Create a result dict with all payload fields
                 result_dict = {
                     "id": result.id,
                     "score": result.score,
                     "title": payload.get("title", "Untitled"),
-                    "content": payload.get("content", ""),
+                    "content": content_text,
                     "content_type": payload.get("content_type", "unknown"),
                     "mongo_id": payload.get("mongo_id"),
                 }

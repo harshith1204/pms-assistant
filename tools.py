@@ -383,31 +383,32 @@ def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None
 
 
 @tool
-async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: bool = True) -> str:
+async def mongo_query(query: str, show_all: bool = False) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
 
     Use this ONLY when the user asks for authoritative data that must come from
-    MongoDB (counts, lists, filters, group-by, state/assignee/project details)
+    MongoDB (counts, lists, filters, group-by, breakdowns, state/assignee/project details)
     across collections: `project`, `workItem`, `cycle`, `module`, `members`,
     `page`, `projectState`.
 
     Do NOT use this for:
-    - Free-form content questions (use `rag_answer_question` or `rag_content_search`).
+    - Free-form content questions (use `rag_search`).
     - Pure summarization or opinion without data retrieval.
     - When you already have the exact answer in prior tool results.
 
     Behavior:
     - Follows a planner to generate a safe aggregation pipeline; avoids
       hallucinated fields.
-    - Can generate complex aggregation pipelines with multiple joins when
-      enable_complex_joins=True (default), reducing need for tool chaining.
-    - Return concise summaries by default; pass `show_all=True` only when the
-      user explicitly requests full records.
+    - Automatically determines when complex joins are beneficial based on query requirements.
+    - Intelligently adds strategic relationships only when they improve query performance:
+        - Multi-hop queries: "work items by business" (workItem→project→business)
+        - Cross-collection analysis: "members working on projects by business"
+        - Complex grouping that spans multiple collections
+    - Only adds joins that provide clear benefits for the specific query, avoiding unnecessary complexity.
 
     Args:
         query: Natural language, structured data request about PM entities.
         show_all: If True, output full details instead of a summary. Use sparingly.
-        enable_complex_joins: If True, allows complex multi-collection aggregation pipelines.
 
     Returns: A compact result suitable for direct user display.
     """
@@ -415,7 +416,7 @@ async def mongo_query(query: str, show_all: bool = False, enable_complex_joins: 
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
 
     try:
-        result = await plan_and_execute_query(query, enable_complex_joins=enable_complex_joins)
+        result = await plan_and_execute_query(query)
 
         if result["success"]:
             response = f"🎯 INTELLIGENT QUERY RESULT:\n"
@@ -711,27 +712,33 @@ async def rag_search(
     content_type: str = None,
     group_by: str = None,
     limit: int = 10,
-    show_content: bool = True
+    show_content: bool = True,
+    use_chunk_aware: bool = True
 ) -> str:
-    """Universal RAG search tool with filtering, grouping, and rich metadata.
+    """Universal RAG search tool - returns FULL chunk content for LLM synthesis.
+    
+    **IMPORTANT**: This tool returns complete, untruncated content chunks so you can:
+    - Analyze and understand the actual content
+    - Generate properly formatted responses based on real data
+    - Answer questions accurately using the retrieved context
+    - Synthesize information from multiple sources
     
     Use this for ANY content-based search or analysis needs:
     - Find relevant pages, work items, projects, cycles, modules
     - Search by semantic meaning (not just keywords)
-    - Group/breakdown results by any dimension
-    - Get context for answering questions
+    - Get full context for answering questions
     - Analyze content patterns and distributions
+    - Group/breakdown results by any dimension
     
     **When to use:**
     - "Find/search/show me pages about X"
     - "What content discusses Y?"
-    - "Break down results by project/date/priority/etc."
     - "Which work items mention authentication?"
     - "Show me recent documentation about APIs"
+    - "Break down results by project/date/priority/etc."
     
     **Do NOT use for:**
     - Structured database queries (counts, filters on structured fields) → use `mongo_query`
-    - Work items when you need authoritative Mongo fields → use `rag_mongo_workitems`
     
     Args:
         query: Search query (semantic meaning, not just keywords)
@@ -739,19 +746,60 @@ async def rag_search(
         group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
                  'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
         limit: Max results to retrieve (default 10, increase for broader searches)
-        show_content: If True, shows content previews; if False, shows only metadata (for summaries)
+        show_content: If True, shows full content; if False, shows only metadata
+        use_chunk_aware: If True, uses chunk-aware retrieval for better context (default True)
     
-    Returns: Search results with rich metadata, optionally grouped and aggregated
+    Returns: FULL chunk content with rich metadata - ready for LLM synthesis and formatting
     
     Examples:
-        query="authentication", group_by="content_type" → breakdown by type
-        query="API documentation", content_type="page", group_by="project_name" → pages by project
-        query="bugs", content_type="work_item", group_by="priority" → work items by priority
+        query="authentication" → finds all content about authentication with full text
+        query="API documentation", content_type="page" → finds API docs pages with complete content
+        query="bugs", content_type="work_item", group_by="priority" → work items grouped by priority
     """
     try:
         from collections import defaultdict
+
+        # Ensure RAGTool is initialized
+        try:
+            rag_tool = RAGTool.get_instance()
+        except RuntimeError:
+            # Try to initialize if not already done
+            await RAGTool.initialize()
+            rag_tool = RAGTool.get_instance()
         
-        rag_tool = RAGTool.get_instance()
+        # Use chunk-aware retrieval if enabled and not grouping
+        if use_chunk_aware and not group_by:
+            from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
+            
+            retriever = ChunkAwareRetriever(
+                qdrant_client=rag_tool.qdrant_client,
+                embedding_model=rag_tool.embedding_model
+            )
+            
+            from mongo.constants import QDRANT_COLLECTION_NAME
+            
+            reconstructed_docs = await retriever.search_with_context(
+                query=query,
+                collection_name=QDRANT_COLLECTION_NAME,
+                content_type=content_type,
+                limit=limit,
+                chunks_per_doc=3,
+                include_adjacent=True,
+                min_score=0.5
+            )
+            
+            if not reconstructed_docs:
+                return f"❌ No results found for query: '{query}'"
+            
+            # Always pass full content chunks to the agent by default for synthesis
+            # Force show_full_content=True so downstream LLM has full context
+            return format_reconstructed_results(
+                docs=reconstructed_docs,
+                show_full_content=True,
+                show_chunk_details=True
+            )
+        
+        # Fallback to standard retrieval
         results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
         
         if not results:
@@ -788,16 +836,17 @@ async def rag_search(
                     meta.append(f"Updated: {date_str}")
                 if result.get('visibility'):
                     meta.append(f"Visibility: {result['visibility']}")
+                if result.get('business_name'):
+                    meta.append(f"Business: {result['business_name']}")
                 
                 if meta:
                     response += f"    {' | '.join(meta)}\n"
                 
-                # Show content preview if requested
-                if show_content and result.get('content'):
-                    preview = result['content'][:200]
-                    if len(result['content']) > 200:
-                        preview += "..."
-                    response += f"    Preview: {preview}\n"
+                # Always include FULL content for LLM synthesis (no truncation)
+                # This enables the LLM to generate properly formatted responses based on actual content
+                if result.get('content'):
+                    content_text = result['content']
+                    response += f"\n    === CONTENT START ===\n{content_text}\n    === CONTENT END ===\n"
                 
                 response += "\n"
             
@@ -806,7 +855,7 @@ async def rag_search(
             
             return response
         
-        # GROUPING - Aggregate and show distribution
+        # GROUPING - Aggregate and show distribution with content snippets
         groups = defaultdict(list)
         
         for result in results:
@@ -832,10 +881,14 @@ async def rag_search(
         for group_key, items in sorted_groups[:20]:
             response += f"▸ {group_key}: {len(items)} item(s)\n"
             
-            # Show sample items
+            # Show sample items with content snippets for context
             for item in items[:3]:
                 title = item['title'][:55] + "..." if len(item['title']) > 55 else item['title']
                 response += f"  • {title} (score: {item['score']:.2f})\n"
+                # Include content snippet for better LLM understanding
+                if show_content and item.get('content'):
+                    snippet = item['content'][:200] + "..." if len(item['content']) > 200 else item['content']
+                    response += f"    Content: {snippet}\n"
             
             if len(items) > 3:
                 response += f"  ... and {len(items) - 3} more\n"
@@ -853,246 +906,10 @@ async def rag_search(
         return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
-@tool
-async def rag_mongo(
-    query: str,
-    entity_type: str,
-    limit: int = 15
-) -> str:
-    """Bridge semantic search to authoritative MongoDB records (RAG → Mongo).
-
-    Use when the user searches by meaning/content and needs COMPLETE, AUTHORITATIVE 
-    records from MongoDB with all structured fields. This tool:
-    1. Uses RAG to find semantically relevant items by content
-    2. Fetches full records from MongoDB with all canonical fields
-    3. Returns BOTH semantic context (what matched, relevance) AND structured data
-
-    **When to use:**
-    - "Find work items about authentication and show their status/assignee"
-    - "Search for security documentation pages and show project/dates"
-    - "Which projects discuss microservices architecture?"
-    - "Find cycles related to Q4 planning with their dates"
-    
-    **Benefits over pure RAG:**
-    - Get authoritative MongoDB fields (state, assignee, dates, counts, etc.)
-    - See WHY items matched (content preview + score)
-    - More reliable than RAG metadata (direct from source)
-    
-    **Benefits over pure mongo_query:**
-    - Search by semantic meaning, not just keywords
-    - Find items by description/content, not just structured fields
-
-    Args:
-        query: Free-text semantic search (describes what you're looking for)
-        entity_type: Type to search - 'work_item', 'page', 'project', 'cycle', 'module'
-        limit: Max records to return (default 15)
-    
-    Returns: Matched items with RAG context + complete MongoDB fields
-    
-    Examples:
-        query="authentication bugs", entity_type="work_item" → work items with state/assignee
-        query="API documentation", entity_type="page" → pages with project/dates
-        query="microservices", entity_type="project" → projects with lead/status
-    """
-    try:
-        # Map entity types to collections and content types
-        entity_config = {
-            "work_item": {"collection": "workItem", "content_type": "work_item", "title_field": "title"},
-            "page": {"collection": "page", "content_type": "page", "title_field": "title"},
-            "project": {"collection": "project", "content_type": "project", "title_field": "name"},
-            "cycle": {"collection": "cycle", "content_type": "cycle", "title_field": "title"},
-            "module": {"collection": "module", "content_type": "module", "title_field": "title"},
-        }
-        
-        if entity_type not in entity_config:
-            return f"❌ Invalid entity_type: '{entity_type}'. Must be one of: {', '.join(entity_config.keys())}"
-        
-        config = entity_config[entity_type]
-        collection_name = config["collection"]
-        content_type = config["content_type"]
-        title_field = config["title_field"]
-        
-        # Step 1: RAG search to find semantically relevant items
-        rag_tool = RAGTool.get_instance()
-        rag_results = await rag_tool.search_content(query, content_type=content_type, limit=min(limit * 2, 30))
-        
-        if not rag_results:
-            return f"❌ No RAG results found for query: '{query}' (type: {entity_type})"
-        
-        # Step 2: Extract IDs and titles from RAG results
-        mongo_ids: List[str] = []
-        rag_context: List[Dict[str, Any]] = []
-        
-        for r in rag_results:
-            mongo_id = str(r.get("mongo_id") or "").strip()
-            if mongo_id and len(mongo_id) == 24:  # Valid ObjectId
-                mongo_ids.append(mongo_id)
-                rag_context.append({
-                    "id": mongo_id,
-                    "title": r.get("title", ""),
-                    "score": r.get("score", 0),
-                    "content_preview": r.get("content", "")[:150]
-                })
-        
-        if not mongo_ids:
-            return f"❌ No valid MongoDB IDs found in RAG results for '{query}'"
-        
-        # Step 3: Fetch full records from MongoDB
-        id_array_expr = {
-            "$map": {
-                "input": mongo_ids[:limit],  # Limit IDs
-                "as": "id",
-                "in": {"$toObjectId": "$$id"}
-            }
-        }
-        
-        pipeline = [
-            {"$match": {"$expr": {"$in": ["$_id", id_array_expr]}}},
-            {"$limit": limit}
-        ]
-        
-        rows = await mongodb_tools.execute_tool("aggregate", {
-            "database": DATABASE_NAME,
-            "collection": collection_name,
-            "pipeline": pipeline,
-        })
-        
-        # Parse MongoDB response
-        def parse_mcp_rows(rows_any: Any) -> List[Dict[str, Any]]:
-            try:
-                parsed = json.loads(rows_any) if isinstance(rows_any, str) else rows_any
-            except Exception:
-                parsed = rows_any
-            
-            docs: List[Dict[str, Any]] = []
-            if isinstance(parsed, list) and parsed:
-                if isinstance(parsed[0], str) and parsed[0].startswith("Found"):
-                    for item in parsed[1:]:
-                        if isinstance(item, str):
-                            try:
-                                doc = json.loads(item)
-                                if isinstance(doc, dict):
-                                    docs.append(doc)
-                            except Exception:
-                                continue
-                        elif isinstance(item, dict):
-                            docs.append(item)
-                else:
-                    docs = [d for d in parsed if isinstance(d, dict)]
-            elif isinstance(parsed, dict):
-                docs = [parsed]
-            return docs
-        
-        mongo_docs = parse_mcp_rows(rows)
-        
-        if not mongo_docs:
-            return f"❌ No MongoDB records found for RAG-matched IDs of '{query}'"
-        
-        # Step 4: Filter and transform MongoDB data
-        cleaned_docs = filter_and_transform_content(mongo_docs, primary_entity=entity_type)
-        
-        # Step 5: Merge RAG context with MongoDB data
-        # Create ID lookup for RAG context
-        rag_lookup = {r["id"]: r for r in rag_context}
-        
-        # Build response showing BOTH RAG context AND Mongo data
-        response = f"🔗 RAG→MONGO RESULTS: '{query}' ({entity_type})\n"
-        response += f"Found {len(cleaned_docs)} record(s) via semantic search\n\n"
-        
-        for i, doc in enumerate(cleaned_docs[:limit], 1):
-            # Get MongoDB ID
-            doc_id = normalize_mongodb_types(doc.get("_id")) if "_id" in doc else None
-            
-            # Get RAG context for this doc
-            rag_info = rag_lookup.get(doc_id, {})
-            score = rag_info.get("score", 0)
-            content_preview = rag_info.get("content_preview", "")
-            
-            response += f"[{i}] "
-            
-            # Entity-specific formatting
-            if entity_type == "work_item":
-                bug_no = doc.get("displayBugNo") or f"WI-{i}"
-                title = doc.get("title", "Untitled")
-                response += f"{bug_no}: {title}\n"
-                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
-                
-                # MongoDB fields
-                if doc.get("stateName"):
-                    response += f"    State: {doc['stateName']}"
-                if doc.get("priority"):
-                    response += f" | Priority: {doc['priority']}"
-                if doc.get("assignees"):
-                    response += f" | Assignee: {', '.join(doc['assignees'][:2])}"
-                if doc.get("projectName"):
-                    response += f" | Project: {doc['projectName']}"
-                response += "\n"
-                
-            elif entity_type == "page":
-                title = doc.get("title", "Untitled")
-                response += f"PAGE: {title}\n"
-                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
-                
-                # MongoDB fields
-                meta = []
-                if doc.get("projectName"):
-                    meta.append(f"Project: {doc['projectName']}")
-                if doc.get("visibility"):
-                    meta.append(f"Visibility: {doc['visibility']}")
-                if doc.get("updatedAt"):
-                    date_str = str(doc['updatedAt']).split('T')[0] if 'T' in str(doc['updatedAt']) else str(doc['updatedAt'])[:10]
-                    meta.append(f"Updated: {date_str}")
-                if meta:
-                    response += f"    {' | '.join(meta)}\n"
-                    
-            elif entity_type == "project":
-                name = doc.get("name", "Unnamed")
-                pid = doc.get("projectDisplayId", "")
-                response += f"PROJECT: {pid or name}\n"
-                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
-                
-                # MongoDB fields
-                meta = []
-                if doc.get("leadName"):
-                    meta.append(f"Lead: {doc['leadName']}")
-                if doc.get("status"):
-                    meta.append(f"Status: {doc['status']}")
-                if doc.get("businessName"):
-                    meta.append(f"Business: {doc['businessName']}")
-                if meta:
-                    response += f"    {' | '.join(meta)}\n"
-                    
-            elif entity_type in ["cycle", "module"]:
-                title = doc.get("title") or doc.get("name", "Untitled")
-                response += f"{entity_type.upper()}: {title}\n"
-                response += f"    RAG Score: {score:.3f} | Matched: \"{content_preview}...\"\n"
-                
-                # MongoDB fields
-                meta = []
-                if doc.get("projectName"):
-                    meta.append(f"Project: {doc['projectName']}")
-                if doc.get("status"):
-                    meta.append(f"Status: {doc['status']}")
-                if doc.get("startDate") and doc.get("endDate"):
-                    meta.append(f"Dates: {doc['startDate']} → {doc['endDate']}")
-                if meta:
-                    response += f"    {' | '.join(meta)}\n"
-            
-            response += "\n"
-        
-        return response
-
-    except ImportError:
-        return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
-    except Exception as e:
-        import traceback
-        return f"❌ RAG→MONGO ERROR: {str(e)}\n{traceback.format_exc()}"
-
 # Define the tools list - streamlined and powerful
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
-    rag_mongo,             # Bridge RAG semantic search to authoritative MongoDB records (any entity type)
 ]
 
 # import asyncio
