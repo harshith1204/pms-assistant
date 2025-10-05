@@ -1,6 +1,10 @@
 import os
 import uuid
 from bson.binary import Binary
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Database configuration
 DATABASE_NAME = "ProjectManagement"
@@ -11,39 +15,6 @@ QDRANT_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfu
 QDRANT_URL = "https://dc88ad91-1e1e-48b4-bf73-0e5c1db1cffd.europe-west3-0.gcp.cloud.qdrant.io"  # Default Qdrant URL
 QDRANT_COLLECTION_NAME = "pms_collection"  # Collection for page and work item content
 EMBEDDING_MODEL = "google/embeddinggemma-300m"  # Sentence transformer model for embeddings
-
-
-# MCP Server Configuration for ProjectManagement
-mongodb_server_config = {
-    "mcpServers": {
-        "mongodb": {
-            "command": "docker",
-            "args": [
-                "run",
-                "-i",
-                "--rm",
-                "-e",
-                "MDB_MCP_CONNECTION_STRING",
-                "mcp/mongodb"
-            ],
-            "env": {
-                "MDB_MCP_CONNECTION_STRING": MONGODB_CONNECTION_STRING
-            },
-            "transport": "stdio"
-        }
-    }
-}
-
-# HTTP-based configuration for Smithery with ProjectManagement focus
-smithery_config = {
-    "mongodb": {
-        "url": "https://server.smithery.ai/@mongodb-js/mongodb-mcp-server/mcp?api_key=4fd11c6a-4c6f-45ce-ab0d-24cb4c051779&profile=furious-lemming-rvSkqO",
-        "transport": "streamable_http"
-    }
-}
-
-# Lazy import and alias for backward compatibility with existing code
-# This avoids circular import issues between mongo.constants and mongo.client
 class _LazyMongoDBTools:
     """Lazy wrapper to avoid circular imports"""
     def __init__(self):

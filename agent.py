@@ -217,7 +217,7 @@ conversation_memory = ConversationMemory()
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatGroq(
     model=os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905"),
-    temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")),
+    temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
     max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
     streaming=True,
     verbose=False,
