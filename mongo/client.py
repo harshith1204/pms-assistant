@@ -17,7 +17,14 @@ except Exception:
         ERROR_MESSAGE = "error.message"
     OI = _OI()
 
-from mongo.constants import DATABASE_NAME, MONGODB_CONNECTION_STRING
+from mongo.constants import (
+    DATABASE_NAME,
+    MONGODB_CONNECTION_STRING,
+    BUSINESS_UUID,
+    ENFORCE_BUSINESS_FILTER,
+    uuid_str_to_mongo_binary,
+    COLLECTIONS_WITH_DIRECT_BUSINESS,
+)
 
 
 class DirectMongoClient:
@@ -121,10 +128,45 @@ class DirectMongoClient:
                 raise RuntimeError("MongoDB client not initialized. Call connect() first.")
             
             try:
+                # Prepare business scoping injection (prepend stages)
+                injected_stages: List[Dict[str, Any]] = []
+                if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
+                    try:
+                        biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
+                        if collection in COLLECTIONS_WITH_DIRECT_BUSINESS:
+                            injected_stages.append({"$match": {"business._id": biz_bin}})
+                        elif collection == "members":
+                            # Join project to filter by its business
+                            injected_stages.extend([
+                                {"$lookup": {
+                                    "from": "project",
+                                    "localField": "project._id",
+                                    "foreignField": "_id",
+                                    "as": "__biz_proj__"
+                                }},
+                                {"$match": {"__biz_proj__.business._id": biz_bin}},
+                                {"$unset": "__biz_proj__"},
+                            ])
+                        elif collection == "projectState":
+                            injected_stages.extend([
+                                {"$lookup": {
+                                    "from": "project",
+                                    "localField": "projectId",
+                                    "foreignField": "_id",
+                                    "as": "__biz_proj__"
+                                }},
+                                {"$match": {"__biz_proj__.business._id": biz_bin}},
+                                {"$unset": "__biz_proj__"},
+                            ])
+                    except Exception:
+                        # Do not fail query if business filter construction fails
+                        injected_stages = []
+
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
                 coll = db[collection]
-                cursor = coll.aggregate(pipeline)
+                effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
+                cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
                 
                 if span:
