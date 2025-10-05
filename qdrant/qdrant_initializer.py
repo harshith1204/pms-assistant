@@ -78,16 +78,23 @@ class RAGTool:
             # h
             print("Query embedding generated")
             # Build filter if content_type is specified
-            search_filter = None
+            from mongo.constants import BUSINESS_UUID
+            must_conditions = []
             if content_type:
-                search_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="content_type",
-                            match=MatchValue(value=content_type)
-                        )
-                    ]
+                must_conditions.append(
+                    FieldCondition(
+                        key="content_type",
+                        match=MatchValue(value=content_type)
+                    )
                 )
+            if BUSINESS_UUID:
+                must_conditions.append(
+                    FieldCondition(
+                        key="business_id",
+                        match=MatchValue(value=BUSINESS_UUID)
+                    )
+                )
+            search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Search in Qdrant
             search_results = self.qdrant_client.search(
