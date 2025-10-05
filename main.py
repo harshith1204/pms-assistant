@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-from agent import MongoDBAgent, phoenix_span_manager, qdrant_memory_store
+from agent import MongoDBAgent, phoenix_span_manager
 from traces.setup import EvaluationPipeline
 from traces.upload_dataset import PhoenixDatasetUploader
 from websocket_handler import handle_chat_websocket, ws_manager
@@ -55,17 +55,6 @@ async def lifespan(app: FastAPI):
     print("MongoDB Agent connected successfully!")
     await RAGTool.initialize()
     print("RAGTool initialized successfully!")
-    
-    # Initialize long-term memory
-    try:
-        await qdrant_memory_store.initialize()
-        if qdrant_memory_store.enabled:
-            print("✅ QdrantMemoryStore initialized successfully!")
-        else:
-            print("⚠️  QdrantMemoryStore disabled (Qdrant not available)")
-    except Exception as e:
-        print(f"⚠️  QdrantMemoryStore initialization failed: {e}")
-    
     yield
 
     # Shutdown
