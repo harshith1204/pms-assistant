@@ -65,7 +65,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
         body.title = "Export";
       }
 
-      const res = await fetch(`http://${window.location.hostname}:8000${endpoint}`, {
+      const res = await fetch(`/api${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -106,7 +106,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
         // Try to parse lists rendered in content is out of scope; expect tool rows
         body.rows = [];
       }
-      const res = await fetch(`http://${window.location.hostname}:8000${endpoint}`, {
+      const res = await fetch(`/api${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
