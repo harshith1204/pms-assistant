@@ -12,6 +12,7 @@ interface Message {
   timestamp: string;
   toolName?: string;
   toolOutput?: any;
+  tools?: any[];
 }
 
 interface ChatMessageProps {
@@ -84,6 +85,44 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
     } catch (e) {
       console.error("Export failed", e);
       // no toast here to avoid importing hooks in this leaf component
+    }
+  };
+
+  const exportFromAssistant = async (format: "csv" | "xlsx" | "docx") => {
+    try {
+      const endpoint = `/export/${format}`;
+      const isDocx = format === "docx";
+      const body: any = { title: "Assistant Export" };
+      // Prefer mongo_query tool in this turn if present
+      const tools = (message as any).tools as any[] | undefined;
+      const mq = tools?.find(t => t?.tool_name === "mongo_query" && t?.args?.query);
+      if (mq) {
+        body.tool = "mongo_query";
+        body.query = mq.args.query;
+        body.params = mq.args;
+      } else if (isDocx) {
+        body.content = message.content;
+      } else {
+        // Try to parse lists rendered in content is out of scope; expect tool rows
+        body.rows = [];
+      }
+      const res = await fetch(`http://${window.location.hostname}:8000${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `export.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Export failed", e);
     }
   };
 
@@ -212,7 +251,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
                 {message.timestamp}
               </div>
               
-              <Button
+            <Button
                 variant="ghost"
                 size="sm"
                 className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
@@ -225,15 +264,15 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
                 )}
               </Button>
 
-            {message.type === "tool" && (
+            {(message.type === "tool" || message.type === "assistant") && (
               <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => exportRows("csv")} title="Export CSV">
+                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => (message.type === "assistant" ? exportFromAssistant("csv") : exportRows("csv"))} title="Export CSV">
                   <FileDown className="h-3 w-3" />
                 </Button>
-                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => exportRows("xlsx")} title="Export Excel">
+                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => (message.type === "assistant" ? exportFromAssistant("xlsx") : exportRows("xlsx"))} title="Export Excel">
                   <FileSpreadsheet className="h-3 w-3" />
                 </Button>
-                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => exportRows("docx")} title="Export Word">
+                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => (message.type === "assistant" ? exportFromAssistant("docx") : exportRows("docx"))} title="Export Word">
                   <FileText className="h-3 w-3" />
                 </Button>
               </div>
