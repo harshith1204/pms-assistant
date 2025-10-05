@@ -14,6 +14,7 @@ interface Message {
   timestamp: string;
   toolName?: string;
   toolOutput?: any;
+  tools?: any[];
 }
 
 const initialMessages: Message[] = [
@@ -42,6 +43,7 @@ export function ChatInterface() {
   const currentThoughtMessageRef = useRef<string>("");
   const currentThoughtIdRef = useRef<string | null>(null);
   const isInThinkingModeRef = useRef<boolean>(false);
+  const currentTurnToolsRef = useRef<any[]>([]);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
@@ -74,6 +76,8 @@ export function ChatInterface() {
         currentThoughtIdRef.current = null;
         setIsInThinkingMode(false);
         isInThinkingModeRef.current = false;
+        // reset tools captured for this turn
+        currentTurnToolsRef.current = [];
         break;
 
       case "token":
@@ -195,6 +199,7 @@ export function ChatInterface() {
             type: "assistant",
             content: currentStreamingMessageRef.current,
             timestamp,
+            tools: currentTurnToolsRef.current.slice(),
           };
           setMessages(prev => [...prev, newMessage]);
         }
@@ -210,6 +215,8 @@ export function ChatInterface() {
         currentThoughtIdRef.current = null;
         setIsInThinkingMode(false);
         isInThinkingModeRef.current = false;
+        // clear captured tools after finishing the turn
+        currentTurnToolsRef.current = [];
         setIsLoading(false);
         break;
         
@@ -231,7 +238,19 @@ export function ChatInterface() {
           content: data.output || "Tool execution completed",
           timestamp,
           toolOutput: data.output,
+          toolName: data.tool_name,
         };
+        // Attach optional metadata for export re-run
+        (toolEndMessage as any).args = data.args;
+        (toolEndMessage as any).input = data.input;
+        try {
+          currentTurnToolsRef.current.push({
+            tool_name: data.tool_name,
+            args: data.args,
+            input: data.input,
+            output: data.output,
+          });
+        } catch {}
         setMessages(prev => [...prev, toolEndMessage]);
         break;
         

@@ -31,6 +31,8 @@ import pandas as pd
 import threading
 import time
 from opentelemetry.sdk.trace.export import SpanProcessor
+import json as _json
+import ast as _ast
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 import math
 
@@ -522,6 +524,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self.websocket = websocket
         self.start_time = None
         # Tool outputs are now always streamed to the frontend for better visibility
+        # Maintain a FIFO of tool contexts so we can attach tool name/args on end events
+        self._tool_queue: deque[dict] = deque()
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -554,6 +558,21 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
         """Called when a tool starts executing"""
         tool_name = serialized.get("name", "Unknown Tool")
+        # Try to parse input string to a structured args object
+        parsed_args = None
+        try:
+            parsed_args = _json.loads(input_str)
+        except Exception:
+            try:
+                parsed_args = _ast.literal_eval(input_str)
+            except Exception:
+                parsed_args = None
+        # Push context for later pairing with tool_end
+        self._tool_queue.append({
+            "name": tool_name,
+            "input_raw": input_str,
+            "args": parsed_args,
+        })
         if self.websocket:
             await self.websocket.send_json({
                 "type": "tool_start",
@@ -566,9 +585,13 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         """Called when a tool finishes executing"""
         if self.websocket:
             # Always send full tool outputs to frontend for better visibility
+            ctx = self._tool_queue.popleft() if self._tool_queue else {"name": None, "input_raw": None, "args": None}
             payload = {
                 "type": "tool_end",
                 "output": output,
+                "tool_name": ctx.get("name"),
+                "input": ctx.get("input_raw"),
+                "args": ctx.get("args"),
                 "timestamp": datetime.now().isoformat()
             }
             await self.websocket.send_json(payload)
