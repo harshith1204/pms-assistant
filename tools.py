@@ -836,6 +836,8 @@ async def rag_search(
                     meta.append(f"Updated: {date_str}")
                 if result.get('visibility'):
                     meta.append(f"Visibility: {result['visibility']}")
+                if result.get('business_name'):
+                    meta.append(f"Business: {result['business_name']}")
                 
                 if meta:
                     response += f"    {' | '.join(meta)}\n"
