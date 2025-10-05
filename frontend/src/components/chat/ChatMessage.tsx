@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { User, Bot, Brain, Wrench, Clock, Copy, Check } from "lucide-react";
+import { User, Bot, Brain, Wrench, Clock, Copy, Check, FileDown, FileSpreadsheet, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
@@ -26,6 +26,65 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
     navigator.clipboard.writeText(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const exportRows = async (format: "csv" | "xlsx" | "docx") => {
+    try {
+      const endpoint = `/export/${format}`;
+      const isDocx = format === "docx";
+      const body: any = {};
+      // If we have tool metadata from backend events, pass them through to re-run
+      // Our backend streams tool_end with optional tool_name, args
+      const toolName = (message as any).toolName || (message as any).tool_name || undefined;
+      const args = (message as any).args || undefined;
+      const inputRaw = (message as any).input || undefined;
+      const content = !toolName && typeof message.content === "string" ? message.content : undefined;
+
+      if (toolName === "mongo_query" && args?.query) {
+        body.tool = "mongo_query";
+        body.query = args.query;
+        body.params = args;
+        body.title = "Mongo Query Export";
+      } else if (isDocx && content) {
+        // Fallback: export current assistant/tool text as DOCX paragraphs
+        body.content = content;
+        body.title = "Conversation Export";
+      } else {
+        // Try to parse toolOutput as JSON rows if possible
+        try {
+          const parsed = typeof message.toolOutput === "string" ? JSON.parse(message.toolOutput) : message.toolOutput;
+          if (Array.isArray(parsed)) {
+            body.rows = parsed;
+          } else if (parsed && typeof parsed === "object") {
+            body.rows = [parsed];
+          }
+        } catch {
+          // ignore
+        }
+        body.title = "Export";
+      }
+
+      const res = await fetch(`http://${window.location.hostname}:8000${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `export.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Export failed", e);
+      // no toast here to avoid importing hooks in this leaf component
+    }
   };
 
   const getMessageIcon = () => {
@@ -165,6 +224,20 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
                   <Copy className="h-3 w-3" />
                 )}
               </Button>
+
+            {message.type === "tool" && (
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => exportRows("csv")} title="Export CSV">
+                  <FileDown className="h-3 w-3" />
+                </Button>
+                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => exportRows("xlsx")} title="Export Excel">
+                  <FileSpreadsheet className="h-3 w-3" />
+                </Button>
+                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => exportRows("docx")} title="Export Word">
+                  <FileText className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
             </div>
           </div>
 

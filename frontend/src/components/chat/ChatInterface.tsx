@@ -231,7 +231,11 @@ export function ChatInterface() {
           content: data.output || "Tool execution completed",
           timestamp,
           toolOutput: data.output,
+          toolName: data.tool_name,
         };
+        // Attach optional metadata for export re-run
+        (toolEndMessage as any).args = data.args;
+        (toolEndMessage as any).input = data.input;
         setMessages(prev => [...prev, toolEndMessage]);
         break;
         
