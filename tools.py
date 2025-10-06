@@ -711,9 +711,10 @@ async def rag_search(
     query: str,
     content_type: str = None,
     group_by: str = None,
-    limit: int = 10,
+    limit: int = 5,
     show_content: bool = True,
-    use_chunk_aware: bool = True
+    use_chunk_aware: bool = True,
+    similarity_cutoff: Optional[float] = None
 ) -> str:
     """Universal RAG search tool - returns FULL chunk content for LLM synthesis.
     
@@ -743,11 +744,12 @@ async def rag_search(
     Args:
         query: Search query (semantic meaning, not just keywords)
         content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', or None (all)
-        group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
-                 'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
-        limit: Max results to retrieve (default 10, increase for broader searches)
+        group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name',
+                  'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
+        limit: Max results to retrieve (default 5; increase for broader searches)
         show_content: If True, shows full content; if False, shows only metadata
         use_chunk_aware: If True, uses chunk-aware retrieval for better context (default True)
+        similarity_cutoff: Minimum relevance score to keep (default from env RAG_MIN_SCORE or 0.35)
     
     Returns: FULL chunk content with rich metadata - ready for LLM synthesis and formatting
     
@@ -767,6 +769,17 @@ async def rag_search(
             await RAGTool.initialize()
             rag_tool = RAGTool.get_instance()
         
+        # Resolve similarity cutoff (min_score)
+        cutoff: float
+        if similarity_cutoff is None:
+            env_val = os.getenv("RAG_MIN_SCORE") or os.getenv("RAG_SIMILARITY_CUTOFF")
+            try:
+                cutoff = float(env_val) if env_val else 0.35
+            except Exception:
+                cutoff = 0.35
+        else:
+            cutoff = similarity_cutoff
+
         # Use chunk-aware retrieval if enabled and not grouping
         if use_chunk_aware and not group_by:
             from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
@@ -785,7 +798,7 @@ async def rag_search(
                 limit=limit,
                 chunks_per_doc=3,
                 include_adjacent=True,
-                min_score=0.5
+                min_score=cutoff
             )
             
             if not reconstructed_docs:
@@ -799,12 +812,21 @@ async def rag_search(
                 show_chunk_details=True
             )
         
-        # Fallback to standard retrieval
-        results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
+        # Fallback to standard retrieval (vector search on single chunks)
+        results = await rag_tool.search_content(
+            query,
+            content_type=content_type,
+            limit=limit,
+            min_score=cutoff
+        )
         
         if not results:
             return f"❌ No results found for query: '{query}'"
         
+        # Extra safety: client-side filter by cutoff (in case backend returned lower scores)
+        if cutoff is not None:
+            results = [r for r in results if float(r.get('score', 0.0)) >= float(cutoff)]
+
         # Build response header
         response = f"🔍 RAG SEARCH: '{query}'\n"
         response += f"Found {len(results)} result(s)"
