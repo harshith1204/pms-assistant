@@ -66,17 +66,7 @@ except AttributeError:
 import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
-from mongo.constants import QDRANT_URL, QDRANT_API_KEY, EMBEDDING_MODEL
 
-# Qdrant / embeddings for long-term memory
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.http.models import Distance, VectorParams
-    from qdrant_client.models import PointStruct
-    from sentence_transformers import SentenceTransformer
-except Exception:
-    QdrantClient = None  # type: ignore
-    SentenceTransformer = None  # type: ignore
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a precise, non-speculative Project Management assistant.\n\n"
@@ -123,6 +113,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "- 'What is the CRM module about?' → rag_search(query='CRM module', content_type='module')\n"
     "- 'Find content about authentication' → rag_search(query='authentication', content_type=None)  # searches all types\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
+    "- If the query is ambiguous or entity/field mapping to Mongo is unclear → prefer rag_search first.\n"
     "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
     "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
     "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
@@ -219,7 +210,7 @@ conversation_memory = ConversationMemory()
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatGroq(
     model=os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905"),
-    temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")),
+    temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
     max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
     streaming=True,
     verbose=False,
@@ -256,94 +247,7 @@ class TTLCache:
         self._evict_if_needed()
 
 
-class QdrantMemoryStore:
-    """Long-term semantic memory for chat/tool records backed by Qdrant."""
 
-    def __init__(self):
-        self.enabled = False
-        self.client = None
-        self.embedding_model = None
-        self.collection = "pms_memory"
-        self.vector_dim: Optional[int] = None
-
-    async def initialize(self):
-        try:
-            if QdrantClient is None or SentenceTransformer is None:
-                return
-            self.client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=30)
-            self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
-            self.vector_dim = len(self.embedding_model.encode("dim_check").tolist())
-            collections = self.client.get_collections().collections
-            names = [c.name for c in collections]
-            if self.collection not in names:
-                self.client.recreate_collection(
-                    collection_name=self.collection,
-                    vectors_config=VectorParams(size=self.vector_dim, distance=Distance.COSINE),
-                )
-            self.enabled = True
-        except Exception:
-            self.enabled = False
-
-    def _embed(self, text: str) -> Optional[List[float]]:
-        try:
-            if not self.enabled or not self.embedding_model:
-                return None
-            return self.embedding_model.encode(text).tolist()
-        except Exception:
-            return None
-
-    def _point(self, text: str, payload: Dict[str, Any]):
-        vec = self._embed(text)
-        if vec is None:
-            return None
-        return PointStruct(id=str(uuid.uuid4()), vector=vec, payload=payload)
-
-    def upsert(self, text: str, payload: Dict[str, Any]) -> None:
-        if not self.enabled or not self.client:
-            return
-        try:
-            p = self._point(text, payload)
-            if p is None:
-                return
-            self.client.upsert(collection_name=self.collection, points=[p])
-        except Exception:
-            pass
-
-    def search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        if not self.enabled or not self.client:
-            return []
-        try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
-            vec = self._embed(query)
-            if vec is None:
-                return []
-            qfilter = None
-            if filters:
-                must = []
-                for k, v in filters.items():
-                    must.append(FieldCondition(key=str(k), match=MatchValue(value=v)))
-                if must:
-                    qfilter = Filter(must=must)
-            hits = self.client.search(
-                collection_name=self.collection,
-                query_vector=vec,
-                limit=top_k,
-                with_payload=True,
-                score_threshold=0.3,
-                query_filter=qfilter,
-            )
-            out: List[Dict[str, Any]] = []
-            for h in hits:
-                out.append({
-                    "score": getattr(h, "score", 0.0),
-                    "payload": getattr(h, "payload", {}) or {},
-                })
-            return out
-        except Exception:
-            return []
-
-# Global long-term memory instance
-qdrant_memory_store = QdrantMemoryStore()
 
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
@@ -611,22 +515,6 @@ phoenix_span_collector = PhoenixSpanCollector()
 # Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
-async def _store_in_long_term_memory(query: str, response: str, conversation_id: str):
-    """Store conversation in QdrantMemoryStore asynchronously."""
-    try:
-        conversation_text = f"User: {query}\n\nAssistant: {response}"
-        qdrant_memory_store.upsert(
-            text=conversation_text,
-            payload={
-                "conversation_id": conversation_id,
-                "timestamp": time.time(),
-                "query": query,
-                "response": response,
-                "type": "conversation_exchange"
-            }
-        )
-    except Exception as e:
-        print(f"Error storing in long-term memory: {e}")
 
 
 class PhoenixCallbackHandler(AsyncCallbackHandler):
@@ -898,37 +786,10 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
-                # Retrieve relevant long-term memories
-                past_memories = []
-                if qdrant_memory_store.enabled:
-                    try:
-                        past_memories = qdrant_memory_store.search(query, top_k=3)
-                    except Exception as e:
-                        print(f"Warning: Failed to retrieve long-term memories: {e}")
-
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
-
-                # Add relevant long-term memories if available
-                if past_memories:
-                    memory_snippets = []
-                    for i, mem in enumerate(past_memories):
-                        payload = mem.get('payload', {})
-                        score = mem.get('score', 0.0)
-                        if score > 0.5:  # Only high-relevance memories
-                            memory_snippets.append(
-                                f"[Past Context {i+1}]\n"
-                                f"Q: {payload.get('query', '')[:150]}\n"
-                                f"A: {payload.get('response', '')[:150]}"
-                            )
-                    
-                    if memory_snippets:
-                        memory_context = "\n\n".join(memory_snippets)
-                        messages.append(SystemMessage(
-                            content=f"Relevant past conversations:\n{memory_context}"
-                        ))
 
                 messages.extend(conversation_context)
 
@@ -1022,6 +883,7 @@ class MongoDBAgent:
                     "- 'Active cycle details?' → rag_search(query='active cycle', content_type='cycle')\n"
                     "- 'CRM module overview?' → rag_search(query='CRM module', content_type='module')\n\n"
                     "WHEN UNSURE WHICH TOOL:\n"
+                    "- If the query is ambiguous or entity/field mapping to Mongo is unclear → prefer rag_search first.\n"
                     "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
                     "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
                     "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
@@ -1116,16 +978,6 @@ class MongoDBAgent:
                         )
                     except Exception as e:
                         print(f"Warning: Failed to update summary: {e}")
-                
-                # Store in long-term memory (non-blocking)
-                if qdrant_memory_store.enabled:
-                    try:
-                        asyncio.create_task(
-                            _store_in_long_term_memory(query, last_response.content, conversation_id)
-                        )
-                    except Exception as e:
-                        print(f"Warning: Failed to store in long-term memory: {e}")
-                
                 return last_response.content
             return "Reached maximum reasoning steps without a final answer."
 
@@ -1160,37 +1012,10 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
-                # Retrieve relevant long-term memories
-                past_memories = []
-                if qdrant_memory_store.enabled:
-                    try:
-                        past_memories = qdrant_memory_store.search(query, top_k=3)
-                    except Exception as e:
-                        print(f"Warning: Failed to retrieve long-term memories: {e}")
-
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
-
-                # Add relevant long-term memories if available
-                if past_memories:
-                    memory_snippets = []
-                    for i, mem in enumerate(past_memories):
-                        payload = mem.get('payload', {})
-                        score = mem.get('score', 0.0)
-                        if score > 0.5:  # Only high-relevance memories
-                            memory_snippets.append(
-                                f"[Past Context {i+1}]\n"
-                                f"Q: {payload.get('query', '')[:150]}\n"
-                                f"A: {payload.get('response', '')[:150]}"
-                            )
-                    
-                    if memory_snippets:
-                        memory_context = "\n\n".join(memory_snippets)
-                        messages.append(SystemMessage(
-                            content=f"Relevant past conversations:\n{memory_context}"
-                        ))
 
                 messages.extend(conversation_context)
 
@@ -1270,6 +1095,7 @@ class MongoDBAgent:
                             "- 'Active cycle details?' → rag_search(query='active cycle', content_type='cycle')\n"
                             "- 'CRM module overview?' → rag_search(query='CRM module', content_type='module')\n\n"
                             "WHEN UNSURE WHICH TOOL:\n"
+                            "- If the query is ambiguous or entity/field mapping to Mongo is unclear → prefer rag_search first.\n"
                             "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
                             "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
                             "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
@@ -1370,16 +1196,6 @@ class MongoDBAgent:
                             )
                         except Exception as e:
                             print(f"Warning: Failed to update summary: {e}")
-                    
-                    # Store in long-term memory (non-blocking)
-                    if qdrant_memory_store.enabled:
-                        try:
-                            asyncio.create_task(
-                                _store_in_long_term_memory(query, last_response.content, conversation_id)
-                            )
-                        except Exception as e:
-                            print(f"Warning: Failed to store in long-term memory: {e}")
-                    
                     yield last_response.content
                 else:
                     yield "Reached maximum reasoning steps without a final answer."
