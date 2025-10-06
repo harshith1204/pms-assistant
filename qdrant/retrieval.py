@@ -9,6 +9,7 @@ Improves context quality by:
 """
 
 from typing import List, Dict, Any, Optional, Set, Tuple
+from mongo.constants import BUSINESS_UUID
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
@@ -80,11 +81,13 @@ class ChunkAwareRetriever:
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
         query_embedding = self.embedding_model.encode(query).tolist()
         
-        search_filter = None
+        # Build filter with optional content_type and global business scoping
+        must_conditions = []
         if content_type:
-            search_filter = Filter(
-                must=[FieldCondition(key="content_type", match=MatchValue(value=content_type))]
-            )
+            must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
+        if BUSINESS_UUID:
+            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
+        search_filter = Filter(must=must_conditions) if must_conditions else None
         
         # Fetch more chunks initially to ensure we have multiple per document
         initial_limit = limit * chunks_per_doc * 2
@@ -190,6 +193,10 @@ class ChunkAwareRetriever:
                     if content_type:
                         filter_conditions.append(
                             FieldCondition(key="content_type", match=MatchValue(value=content_type))
+                        )
+                    if BUSINESS_UUID:
+                        filter_conditions.append(
+                            FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID))
                         )
                     
                     # Use scroll to find specific chunk (more efficient than search for exact match)
