@@ -59,7 +59,7 @@ class ChunkAwareRetriever:
         limit: int = 5,
         chunks_per_doc: int = 2,
         include_adjacent: bool = True,
-        min_score: float = 0.6
+        min_score: float = 0.5
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -87,37 +87,49 @@ class ChunkAwareRetriever:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
         if BUSINESS_UUID:
             must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
-        # Prefer chunked points only (exclude legacy unchunked points)
-        try:
-            # Try importing Range dynamically for compatibility across client versions
-            from qdrant_client.models import Range as _QRange  # type: ignore
-        except Exception:
-            try:
-                from qdrant_client.http.models import Range as _QRange  # type: ignore
-            except Exception:
-                _QRange = None  # type: ignore
-
-        try:
-            if _QRange is not None:
-                must_conditions.append(
-                    FieldCondition(key="chunk_count", range=_QRange(gte=1))
-                )
-        except Exception:
-            # If Range or field is unsupported, proceed without this preference
-            pass
+        # Note: Do not filter by chunk_count to avoid index requirement errors in Qdrant.
         search_filter = Filter(must=must_conditions) if must_conditions else None
         
         # Fetch more chunks initially to ensure we have multiple per document
         initial_limit = max(10, limit * chunks_per_doc * 2)
         
-        search_results = self.qdrant_client.search(
-            collection_name=collection_name,
-            query_vector=query_embedding,
-            query_filter=search_filter,
-            limit=initial_limit,
-            with_payload=True,
-            score_threshold=min_score
-        )
+        # Try with progressively lower thresholds, then no threshold
+        search_results = []
+        for threshold in [min_score, 0.35, None]:
+            try:
+                if threshold is None:
+                    search_results = self.qdrant_client.search(
+                        collection_name=collection_name,
+                        query_vector=query_embedding,
+                        query_filter=search_filter,
+                        limit=initial_limit,
+                        with_payload=True,
+                    )
+                else:
+                    search_results = self.qdrant_client.search(
+                        collection_name=collection_name,
+                        query_vector=query_embedding,
+                        query_filter=search_filter,
+                        limit=initial_limit,
+                        with_payload=True,
+                        score_threshold=threshold,
+                    )
+                if search_results:
+                    break
+            except Exception as e:
+                # If the client doesn't support score_threshold or other issues, retry without it
+                try:
+                    search_results = self.qdrant_client.search(
+                        collection_name=collection_name,
+                        query_vector=query_embedding,
+                        query_filter=search_filter,
+                        limit=initial_limit,
+                        with_payload=True,
+                    )
+                    if search_results:
+                        break
+                except Exception:
+                    pass
         
         if not search_results:
             return []

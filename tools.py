@@ -785,7 +785,7 @@ async def rag_search(
                 limit=limit,
                 chunks_per_doc=2,
                 include_adjacent=True,
-                min_score=0.6
+                min_score=0.5
             )
             
             if not reconstructed_docs:

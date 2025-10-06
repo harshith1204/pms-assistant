@@ -188,6 +188,31 @@ def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
             except Exception as e:
                 if "already exists" not in str(e):
                     print(f"⚠️ Failed to ensure text index on '{text_field}': {e}")
+
+        # Ensure numeric and keyword indexes for chunking-related fields
+        # Helps with future range/equality filtering without 400 errors
+        numeric_fields = ["chunk_index", "chunk_count"]
+        for num_field in numeric_fields:
+            try:
+                qdrant_client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=num_field,
+                    field_schema=PayloadSchemaType.INTEGER,
+                )
+            except Exception as e:
+                if "already exists" not in str(e):
+                    print(f"⚠️ Failed to ensure numeric index on '{num_field}': {e}")
+
+        for kw_field in ["parent_id", "mongo_id"]:
+            try:
+                qdrant_client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=kw_field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception as e:
+                if "already exists" not in str(e):
+                    print(f"⚠️ Failed to ensure keyword index on '{kw_field}': {e}")
     except Exception as e:
         print(f"❌ Error ensuring collection '{collection_name}': {e}")
 
