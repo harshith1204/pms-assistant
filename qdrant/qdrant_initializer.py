@@ -94,6 +94,27 @@ class RAGTool:
                         match=MatchValue(value=BUSINESS_UUID)
                     )
                 )
+            # Prefer chunked points and enforce a modest score threshold
+            try:
+                # Try importing Range dynamically for compatibility across client versions
+                from qdrant_client.models import Range as _QRange  # type: ignore
+            except Exception:
+                try:
+                    from qdrant_client.http.models import Range as _QRange  # type: ignore
+                except Exception:
+                    _QRange = None  # type: ignore
+
+            try:
+                if _QRange is not None:
+                    must_conditions.append(
+                        FieldCondition(
+                            key="chunk_count",
+                            range=_QRange(gte=1)
+                        )
+                    )
+            except Exception:
+                # If Range or field is unsupported, proceed without this preference
+                pass
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Search in Qdrant
@@ -101,8 +122,9 @@ class RAGTool:
                 collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
                 query_vector=query_embedding,
                 query_filter=search_filter,
-                limit=limit,
-                with_payload=True
+                limit=max(5, min(limit, 10)),
+                with_payload=True,
+                score_threshold=0.6
             )
 
             # Format results - include ALL metadata from payload

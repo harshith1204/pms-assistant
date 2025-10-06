@@ -297,33 +297,33 @@ def point_id_from_seed(seed: str) -> str:
 
 # ------------------ Chunking Configuration ------------------
 
-# Chunking settings per content type
-# Adjust these values to control chunking behavior
+# Chunking settings per content type (more aggressive to ensure chunking happens)
+# Smaller chunks improve semantic matching and retrieval scores
 CHUNKING_CONFIG = {
     "page": {
-        "max_words": 320,
-        "overlap_words": 80,
-        "min_words_to_chunk": 320,  # Only chunk if text is longer than this
+        "max_words": 220,
+        "overlap_words": 60,
+        "min_words_to_chunk": 200,
     },
     "work_item": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
     "project": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
     "cycle": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
     "module": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
 }
 

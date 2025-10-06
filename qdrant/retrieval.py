@@ -56,10 +56,10 @@ class ChunkAwareRetriever:
         query: str,
         collection_name: str,
         content_type: Optional[str] = None,
-        limit: int = 10,
-        chunks_per_doc: int = 3,
+        limit: int = 5,
+        chunks_per_doc: int = 2,
         include_adjacent: bool = True,
-        min_score: float = 0.5
+        min_score: float = 0.6
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -87,10 +87,28 @@ class ChunkAwareRetriever:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
         if BUSINESS_UUID:
             must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
+        # Prefer chunked points only (exclude legacy unchunked points)
+        try:
+            # Try importing Range dynamically for compatibility across client versions
+            from qdrant_client.models import Range as _QRange  # type: ignore
+        except Exception:
+            try:
+                from qdrant_client.http.models import Range as _QRange  # type: ignore
+            except Exception:
+                _QRange = None  # type: ignore
+
+        try:
+            if _QRange is not None:
+                must_conditions.append(
+                    FieldCondition(key="chunk_count", range=_QRange(gte=1))
+                )
+        except Exception:
+            # If Range or field is unsupported, proceed without this preference
+            pass
         search_filter = Filter(must=must_conditions) if must_conditions else None
         
         # Fetch more chunks initially to ensure we have multiple per document
-        initial_limit = limit * chunks_per_doc * 2
+        initial_limit = max(10, limit * chunks_per_doc * 2)
         
         search_results = self.qdrant_client.search(
             collection_name=collection_name,

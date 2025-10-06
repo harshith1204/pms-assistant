@@ -711,7 +711,7 @@ async def rag_search(
     query: str,
     content_type: str = None,
     group_by: str = None,
-    limit: int = 10,
+    limit: int = 5,
     show_content: bool = True,
     use_chunk_aware: bool = True
 ) -> str:
@@ -783,9 +783,9 @@ async def rag_search(
                 collection_name=QDRANT_COLLECTION_NAME,
                 content_type=content_type,
                 limit=limit,
-                chunks_per_doc=3,
+                chunks_per_doc=2,
                 include_adjacent=True,
-                min_score=0.5
+                min_score=0.6
             )
             
             if not reconstructed_docs:
