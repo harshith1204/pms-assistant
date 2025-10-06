@@ -1,5 +1,5 @@
 from langchain_core.tools import tool
-from typing import Optional, Dict, List, Any, Union
+from typing import Optional, Dict, List, Any, Union, Tuple
 import mongo.constants
 import os
 import json
@@ -8,6 +8,9 @@ import re
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from sentence_transformers import SentenceTransformer
+from mongo.constants import mongodb_tools, DATABASE_NAME, QDRANT_COLLECTION_NAME
+from bson.objectid import ObjectId
+from bson.binary import Binary
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
 class RAGTool:
@@ -67,6 +70,196 @@ class RAGTool:
             raise
     
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
+
+    def _normalize_mongo_id(self, mongo_id: Any) -> str:
+        try:
+            if isinstance(mongo_id, ObjectId):
+                return str(mongo_id)
+            if isinstance(mongo_id, Binary) and getattr(mongo_id, 'subtype', None) == 3:
+                import uuid as _uuid
+                return str(_uuid.UUID(bytes=mongo_id))
+            return str(mongo_id)
+        except Exception:
+            return str(mongo_id)
+
+    async def hybrid_search_content(
+        self,
+        query: str,
+        content_type: Optional[str] = None,
+        limit: int = 10,
+        k_vector: int = 50,
+        k_text: int = 50,
+        rrf_c: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Hybrid retrieval using vector (Qdrant) + Mongo text search with RRF fusion.
+
+        - Runs both modalities and fuses by Reciprocal Rank Fusion
+        - Dedupe by document (parent/mongo id)
+        - Returns chunk-level content for each fused document
+        """
+        if not self.connected:
+            await self.connect()
+        # Ensure Mongo is connected for text search
+        try:
+            await mongodb_tools.connect()
+        except Exception:
+            pass
+
+        # Map content_type to Mongo collections
+        ct_to_coll = {
+            None: None,
+            "page": "page",
+            "work_item": "workItem",
+            "project": "project",
+            "cycle": "cycle",
+            "module": "module",
+        }
+        if content_type is None:
+            collections: List[str] = ["page", "workItem", "project"]
+        else:
+            coll = ct_to_coll.get(content_type)
+            collections = [coll] if coll else ["page", "workItem", "project"]
+
+        # Vector search (chunk-level)
+        query_embedding = self.embedding_model.encode(query).tolist()
+        must_conditions = []
+        if content_type:
+            must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
+        if mongo.constants.BUSINESS_UUID:
+            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=mongo.constants.BUSINESS_UUID)))
+        v_filter = Filter(must=must_conditions) if must_conditions else None
+
+        vector_points = self.qdrant_client.search(
+            collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
+            query_vector=query_embedding,
+            query_filter=v_filter,
+            limit=max(limit * 6, k_vector),
+            with_payload=True,
+        )
+
+        # best chunk per document from vector list
+        doc_best_vec: Dict[str, Tuple[float, Any]] = {}
+        for pt in vector_points or []:
+            payload = pt.payload or {}
+            doc_id = payload.get("parent_id") or payload.get("mongo_id")
+            if not doc_id:
+                continue
+            sid = str(doc_id)
+            if sid not in doc_best_vec or pt.score > doc_best_vec[sid][0]:
+                doc_best_vec[sid] = (pt.score, pt)
+        vector_ranked_doc_ids = [did for did, _ in sorted(doc_best_vec.items(), key=lambda kv: kv[1][0], reverse=True)]
+
+        # Text search across collections (via $text, fallback to regex)
+        k_per = max(1, int((k_text + len(collections) - 1) / max(1, len(collections))))
+        text_docs: List[Tuple[str, str, float, str]] = []  # (doc_id, collection, score, title)
+        for coll in collections:
+            rows: List[Dict[str, Any]] = []
+            try:
+                pipeline = [
+                    {"$match": {"$text": {"$search": query}}},
+                    {"$addFields": {"_textScore": {"$meta": "textScore"}}},
+                    {"$sort": {"_textScore": -1}},
+                    {"$limit": k_per},
+                    {"$project": {"_id": 1, "title": 1, "name": 1, "_textScore": 1}},
+                ]
+                rows = await mongodb_tools.aggregate(DATABASE_NAME, coll, pipeline)
+            except Exception:
+                # Fallback to regex if $text not available
+                try:
+                    regex_match = {
+                        "$or": [
+                            {"title": {"$regex": query, "$options": "i"}},
+                            {"name": {"$regex": query, "$options": "i"}},
+                            {"description": {"$regex": query, "$options": "i"}},
+                        ]
+                    }
+                    rows = await mongodb_tools.aggregate(DATABASE_NAME, coll, [
+                        {"$match": regex_match},
+                        {"$limit": k_per},
+                        {"$project": {"_id": 1, "title": 1, "name": 1}},
+                    ])
+                except Exception:
+                    rows = []
+
+            for r in rows or []:
+                doc_id = self._normalize_mongo_id(r.get("_id"))
+                score_val = r.get("_textScore")
+                score = float(score_val) if isinstance(score_val, (int, float)) else 1.0
+                title = r.get("title") or r.get("name") or "Untitled"
+                text_docs.append((doc_id, coll, score, title))
+
+        text_best: Dict[str, Tuple[float, str]] = {}
+        text_title: Dict[str, str] = {}
+        for doc_id, coll, score, title in text_docs:
+            if doc_id not in text_best or score > text_best[doc_id][0]:
+                text_best[doc_id] = (score, coll)
+                text_title[doc_id] = title
+        text_ranked_doc_ids = [did for did, _ in sorted(text_best.items(), key=lambda kv: kv[1][0], reverse=True)]
+
+        # Reciprocal Rank Fusion
+        def rrf(ids: List[str]) -> Dict[str, float]:
+            out: Dict[str, float] = {}
+            for rank, did in enumerate(ids, start=1):
+                out[did] = 1.0 / (rrf_c + rank)
+            return out
+
+        r_vec = rrf(vector_ranked_doc_ids)
+        r_txt = rrf(text_ranked_doc_ids)
+        all_ids = list({*vector_ranked_doc_ids, *text_ranked_doc_ids})
+        fused_scores = {did: r_vec.get(did, 0.0) + r_txt.get(did, 0.0) for did in all_ids}
+        fused_sorted = [did for did, _ in sorted(fused_scores.items(), key=lambda kv: kv[1], reverse=True)][:limit]
+
+        results: List[Dict[str, Any]] = []
+
+        def fetch_top_chunk(doc_id: str, expected_ct: Optional[str]) -> Optional[Any]:
+            try:
+                must = [FieldCondition(key="parent_id", match=MatchValue(value=doc_id))]
+                if expected_ct:
+                    must.append(FieldCondition(key="content_type", match=MatchValue(value=expected_ct)))
+                qf = Filter(must=must)
+                pts = self.qdrant_client.search(
+                    collection_name=QDRANT_COLLECTION_NAME,
+                    query_vector=query_embedding,
+                    query_filter=qf,
+                    limit=1,
+                    with_payload=True,
+                )
+                return pts[0] if pts else None
+            except Exception:
+                return None
+
+        coll_to_ct = {"page": "page", "workItem": "work_item", "project": "project", "cycle": "cycle", "module": "module"}
+        for did in fused_sorted:
+            vec_entry = doc_best_vec.get(did, (None, None))[1]
+            text_coll = text_best.get(did, (None, None))[1]
+            ct = None
+            if vec_entry and (vec_entry.payload or {}).get("content_type"):
+                ct = vec_entry.payload.get("content_type")
+            elif text_coll:
+                ct = coll_to_ct.get(text_coll)
+
+            chunk_pt = vec_entry or fetch_top_chunk(did, ct)
+            if not chunk_pt:
+                continue
+            payload = chunk_pt.payload or {}
+            content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+            title = payload.get("title") or text_title.get(did) or "Untitled"
+            score = float(fused_scores.get(did, 0.0))
+
+            result_dict: Dict[str, Any] = {
+                "id": chunk_pt.id,
+                "score": score,
+                "title": title,
+                "content": content_text,
+                "content_type": payload.get("content_type", ct or "unknown"),
+                "mongo_id": payload.get("mongo_id", did),
+            }
+            for k, v in (payload.items() if payload else []):
+                if k not in result_dict and k not in ["full_text"]:
+                    result_dict[k] = v
+            results.append(result_dict)
+
+        return results
     async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
         """Search for relevant content in Qdrant based on the query"""
         if not self.connected:
