@@ -165,7 +165,15 @@ class DirectMongoClient:
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
                 coll = db[collection]
-                effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
+                # Ensure $search remains the first stage for Atlas Search pipelines.
+                # If we need to inject business scoping stages, place them IMMEDIATELY AFTER $search
+                # to satisfy the requirement that $search is the first stage.
+                if injected_stages and pipeline and isinstance(pipeline[0], dict) and (
+                    "$search" in pipeline[0] or "$vectorSearch" in pipeline[0] or "$searchBeta" in pipeline[0]
+                ):
+                    effective_pipeline = [pipeline[0], *injected_stages, *pipeline[1:]]
+                else:
+                    effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
                 

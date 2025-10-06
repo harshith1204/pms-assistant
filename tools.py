@@ -713,7 +713,9 @@ async def rag_search(
     group_by: str = None,
     limit: int = 10,
     show_content: bool = True,
-    use_chunk_aware: bool = True
+    use_chunk_aware: bool = True,
+    use_hybrid: bool = True,
+    alpha: float = 0.5
 ) -> str:
     """Universal RAG search tool - returns FULL chunk content for LLM synthesis.
     
@@ -767,7 +769,56 @@ async def rag_search(
             await RAGTool.initialize()
             rag_tool = RAGTool.get_instance()
         
-        # Use chunk-aware retrieval if enabled and not grouping
+        # Use hybrid retrieval (BM25+$text + Qdrant vectors) when enabled and not grouping
+        if use_hybrid and not group_by:
+            # Prefer hybrid first; falls back to chunk-aware only if hybrid returns nothing
+            try:
+                hybrid_results = await rag_tool.hybrid_search_content(
+                    query=query,
+                    content_type=content_type,
+                    limit=limit,
+                )
+            except Exception as _e:
+                hybrid_results = []
+
+            if hybrid_results:
+                response = f"🔍 HYBRID RAG SEARCH: '{query}'\n"
+                response += f"Found {len(hybrid_results)} result(s)"
+                if content_type:
+                    response += f" (type: {content_type})"
+                response += "\n\n"
+                response += "📋 RESULTS:\n\n"
+                for i, result in enumerate(hybrid_results[:15], 1):
+                    response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
+                    response += f"    Score: {result['score']:.3f}\n"
+                    meta = []
+                    if result.get('project_name'):
+                        meta.append(f"Project: {result['project_name']}")
+                    if result.get('priority'):
+                        meta.append(f"Priority: {result['priority']}")
+                    if result.get('state_name'):
+                        meta.append(f"State: {result['state_name']}")
+                    if result.get('assignee_name'):
+                        meta.append(f"Assignee: {result['assignee_name']}")
+                    if result.get('displayBugNo'):
+                        meta.append(f"Bug#: {result['displayBugNo']}")
+                    if result.get('updatedAt'):
+                        date_str = str(result['updatedAt']).split('T')[0] if 'T' in str(result['updatedAt']) else str(result['updatedAt'])[:10]
+                        meta.append(f"Updated: {date_str}")
+                    if result.get('visibility'):
+                        meta.append(f"Visibility: {result['visibility']}")
+                    if result.get('business_name'):
+                        meta.append(f"Business: {result['business_name']}")
+                    if meta:
+                        response += f"    {' | '.join(meta)}\n"
+                    if result.get('content'):
+                        response += f"\n    === CONTENT START ===\n{result['content']}\n    === CONTENT END ===\n"
+                    response += "\n"
+                if len(hybrid_results) > 15:
+                    response += f"... and {len(hybrid_results) - 15} more results (increase limit to see more)\n"
+                return response
+
+        # Use chunk-aware retrieval if enabled and not grouping (fallback or when hybrid disabled)
         if use_chunk_aware and not group_by:
             from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
             
@@ -799,7 +850,7 @@ async def rag_search(
                 show_chunk_details=True
             )
         
-        # Fallback to standard retrieval
+        # Fallback to standard vector-only retrieval
         results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
         
         if not results:
