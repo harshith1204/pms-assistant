@@ -154,7 +154,7 @@ class LLMIntentParser:
     """
 
     def __init__(self, model_name: Optional[str] = None):
-        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "moonshotai/kimi-k2-instruct-0905")
+        self.model_name = model_name or os.environ.get("QUERY_PLANNER_MODEL", "openai/gpt-oss-120b")
         # Keep the model reasonably deterministic for planning
         self.llm = ChatGroq(
             model=self.model_name,

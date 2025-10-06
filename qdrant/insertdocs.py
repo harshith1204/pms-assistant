@@ -167,6 +167,17 @@ def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
             if "already exists" not in str(e):
                 print(f"⚠️ Failed to ensure index on 'content_type': {e}")
 
+        # Business scoping index
+        try:
+            qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="business_id",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+        except Exception as e:
+            if "already exists" not in str(e):
+                print(f"⚠️ Failed to ensure index on 'business_id': {e}")
+
         for text_field in ["title", "full_text"]:
             try:
                 qdrant_client.create_payload_index(
@@ -467,6 +478,11 @@ def index_pages_to_qdrant():
             if doc.get("business"):
                 if isinstance(doc["business"], dict):
                     metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
             
             if doc.get("createdBy"):
                 if isinstance(doc["createdBy"], dict):
@@ -586,6 +602,11 @@ def index_workitems_to_qdrant():
             if doc.get("business"):
                 if isinstance(doc["business"], dict):
                     metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
             
             # Handle assignee (can be array or single object)
             if doc.get("assignee"):
@@ -649,7 +670,7 @@ def index_projects_to_qdrant():
 
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
 
-        documents = project_collection.find({}, {"_id": 1, "name": 1, "description": 1})
+        documents = project_collection.find({}, {"_id": 1, "name": 1, "description": 1, "business": 1})
         points = []
 
         for doc in documents:
@@ -680,6 +701,16 @@ def index_projects_to_qdrant():
                 print(f"⚠️ Skipping project {mongo_id} - no substantial text content found")
                 continue
 
+            # Build metadata
+            metadata = {}
+            if doc.get("business") and isinstance(doc["business"], dict):
+                metadata["business_name"] = doc["business"].get("name")
+                if doc["business"].get("_id") is not None:
+                    try:
+                        metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                    except Exception:
+                        pass
+
             # Chunk projects with long descriptions
             chunks = get_chunks_for_content(combined_text, "project")
             if not chunks:
@@ -691,19 +722,22 @@ def index_projects_to_qdrant():
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": name,
+                    "content": chunk,
+                    "full_text": f"{name} {chunk}".strip(),
+                    "content_type": "project"
+                }
+                payload.update({k: v for k, v in metadata.items() if v is not None})
+
                 point = PointStruct(
                     id=point_id_from_seed(f"{mongo_id}/project/{idx}"),
                     vector=vector,
-                    payload={
-                        "mongo_id": mongo_id,
-                        "parent_id": mongo_id,
-                        "chunk_index": idx,
-                        "chunk_count": len(chunks),
-                        "title": name,
-                        "content": chunk,
-                        "full_text": f"{name} {chunk}".strip(),
-                        "content_type": "project"
-                    }
+                    payload=payload
                 )
                 points.append(point)
 
@@ -724,7 +758,7 @@ def index_cycles_to_qdrant():
 
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
 
-        documents = cycle_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1})
+        documents = cycle_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
         points = []
 
         for doc in documents:
@@ -755,6 +789,16 @@ def index_cycles_to_qdrant():
                 print(f"⚠️ Skipping cycle {mongo_id} - no substantial text content found")
                 continue
 
+            # Build metadata
+            metadata = {}
+            if doc.get("business") and isinstance(doc["business"], dict):
+                metadata["business_name"] = doc["business"].get("name")
+                if doc["business"].get("_id") is not None:
+                    try:
+                        metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                    except Exception:
+                        pass
+
             # Chunk cycles with long descriptions
             chunks = get_chunks_for_content(combined_text, "cycle")
             if not chunks:
@@ -766,19 +810,22 @@ def index_cycles_to_qdrant():
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": name,
+                    "content": chunk,
+                    "full_text": f"{name} {chunk}".strip(),
+                    "content_type": "cycle"
+                }
+                payload.update({k: v for k, v in metadata.items() if v is not None})
+
                 point = PointStruct(
                     id=point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
                     vector=vector,
-                    payload={
-                        "mongo_id": mongo_id,
-                        "parent_id": mongo_id,
-                        "chunk_index": idx,
-                        "chunk_count": len(chunks),
-                        "title": name,
-                        "content": chunk,
-                        "full_text": f"{name} {chunk}".strip(),
-                        "content_type": "cycle"
-                    }
+                    payload=payload
                 )
                 points.append(point)
 
@@ -799,7 +846,7 @@ def index_modules_to_qdrant():
 
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
 
-        documents = module_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1})
+        documents = module_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
         points = []
 
         for doc in documents:
@@ -830,6 +877,16 @@ def index_modules_to_qdrant():
                 print(f"⚠️ Skipping module {mongo_id} - no substantial text content found")
                 continue
 
+            # Build metadata
+            metadata = {}
+            if doc.get("business") and isinstance(doc["business"], dict):
+                metadata["business_name"] = doc["business"].get("name")
+                if doc["business"].get("_id") is not None:
+                    try:
+                        metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                    except Exception:
+                        pass
+
             # Chunk modules with long descriptions
             chunks = get_chunks_for_content(combined_text, "module")
             if not chunks:
@@ -841,19 +898,22 @@ def index_modules_to_qdrant():
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": name,
+                    "content": chunk,
+                    "full_text": f"{name} {chunk}".strip(),
+                    "content_type": "module"
+                }
+                payload.update({k: v for k, v in metadata.items() if v is not None})
+
                 point = PointStruct(
                     id=point_id_from_seed(f"{mongo_id}/module/{idx}"),
                     vector=vector,
-                    payload={
-                        "mongo_id": mongo_id,
-                        "parent_id": mongo_id,
-                        "chunk_index": idx,
-                        "chunk_count": len(chunks),
-                        "title": name,
-                        "content": chunk,
-                        "full_text": f"{name} {chunk}".strip(),
-                        "content_type": "module"
-                    }
+                    payload=payload
                 )
                 points.append(point)
 
