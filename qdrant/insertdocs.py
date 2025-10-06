@@ -188,6 +188,31 @@ def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
             except Exception as e:
                 if "already exists" not in str(e):
                     print(f"⚠️ Failed to ensure text index on '{text_field}': {e}")
+
+        # Ensure numeric and keyword indexes for chunking-related fields
+        # Helps with future range/equality filtering without 400 errors
+        numeric_fields = ["chunk_index", "chunk_count"]
+        for num_field in numeric_fields:
+            try:
+                qdrant_client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=num_field,
+                    field_schema=PayloadSchemaType.INTEGER,
+                )
+            except Exception as e:
+                if "already exists" not in str(e):
+                    print(f"⚠️ Failed to ensure numeric index on '{num_field}': {e}")
+
+        for kw_field in ["parent_id", "mongo_id"]:
+            try:
+                qdrant_client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=kw_field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception as e:
+                if "already exists" not in str(e):
+                    print(f"⚠️ Failed to ensure keyword index on '{kw_field}': {e}")
     except Exception as e:
         print(f"❌ Error ensuring collection '{collection_name}': {e}")
 
@@ -297,33 +322,33 @@ def point_id_from_seed(seed: str) -> str:
 
 # ------------------ Chunking Configuration ------------------
 
-# Chunking settings per content type
-# Adjust these values to control chunking behavior
+# Chunking settings per content type (more aggressive to ensure chunking happens)
+# Smaller chunks improve semantic matching and retrieval scores
 CHUNKING_CONFIG = {
     "page": {
-        "max_words": 320,
-        "overlap_words": 80,
-        "min_words_to_chunk": 320,  # Only chunk if text is longer than this
+        "max_words": 220,
+        "overlap_words": 60,
+        "min_words_to_chunk": 200,
     },
     "work_item": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
     "project": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
     "cycle": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
     "module": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 180,
+        "overlap_words": 50,
+        "min_words_to_chunk": 160,
     },
 }
 

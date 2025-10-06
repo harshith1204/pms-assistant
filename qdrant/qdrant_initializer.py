@@ -94,6 +94,7 @@ class RAGTool:
                         match=MatchValue(value=BUSINESS_UUID)
                     )
                 )
+            # Do not filter by chunk_count to avoid Qdrant index requirement errors
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Search in Qdrant
@@ -101,8 +102,9 @@ class RAGTool:
                 collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
                 query_vector=query_embedding,
                 query_filter=search_filter,
-                limit=limit,
-                with_payload=True
+                limit=max(5, min(limit, 10)),
+                with_payload=True,
+                score_threshold=0.5
             )
 
             # Format results - include ALL metadata from payload
