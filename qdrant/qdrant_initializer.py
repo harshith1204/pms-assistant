@@ -67,7 +67,7 @@ class RAGTool:
             raise
     
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
-    async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
+    async def search_content(self, query: str, content_type: str = None, limit: int = 5, min_score: Optional[float] = None) -> List[Dict[str, Any]]:
         """Search for relevant content in Qdrant based on the query"""
         if not self.connected:
             await self.connect()
@@ -102,7 +102,8 @@ class RAGTool:
                 query_vector=query_embedding,
                 query_filter=search_filter,
                 limit=limit,
-                with_payload=True
+                with_payload=True,
+                score_threshold=min_score if min_score is not None else None
             )
 
             # Format results - include ALL metadata from payload
@@ -128,7 +129,9 @@ class RAGTool:
                     if key not in result_dict and key not in ["full_text"]:  # Skip duplicates and internal fields
                         result_dict[key] = value
                 
-                results.append(result_dict)
+                # Apply client-side cutoff in case backend threshold wasn't enforced
+                if min_score is None or float(result_dict["score"]) >= float(min_score):
+                    results.append(result_dict)
 
             return results
 
