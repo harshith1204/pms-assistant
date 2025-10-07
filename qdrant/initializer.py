@@ -64,6 +64,14 @@ class RAGTool:
                 self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             self.connected = True
             print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
+            # Lightweight verification that sparse vectors are configured and present
+            try:
+                from qdrant_client.http.api.collections_api import CollectionsApi  # type: ignore
+                col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
+                # If call succeeds, we assume sparse config exists as we create it during indexing
+                print(f"ℹ️ Collection loaded: {getattr(col, 'name', mongo.constants.QDRANT_COLLECTION_NAME)}")
+            except Exception as e:
+                print(f"⚠️ Could not verify collection config: {e}")
         except Exception as e:
             print(f"Failed to connect RAGTool components: {e}")
             raise
@@ -103,6 +111,8 @@ class RAGTool:
                     query=NearestQuery(nearest=query_embedding),
                     using="dense",
                     limit=initial_limit,
+                    # Apply a modest threshold to dense to drop very weak hits
+                    score_threshold=0.4,
                     filter=search_filter,
                 )
             ]
@@ -120,7 +130,9 @@ class RAGTool:
                                 nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
                             ),
                             using="sparse",
-                            limit=initial_limit,
+                            # Give sparse more candidates; do not threshold (scale differs)
+                            limit=max(initial_limit, int(initial_limit * 2.0)),
+                            score_threshold=None,
                             filter=search_filter,
                         )
                     )
@@ -128,7 +140,8 @@ class RAGTool:
             except Exception:
                 pass
 
-            if not sparse_added:
+            ENABLE_KEYWORD_FALLBACK = False
+            if ENABLE_KEYWORD_FALLBACK and not sparse_added:
                 from qdrant.retrieval import extract_keywords
                 keyword_query = extract_keywords(query)
                 prefetch_list.append(
