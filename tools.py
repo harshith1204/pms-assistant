@@ -1,3 +1,4 @@
+import sys
 from langchain_core.tools import tool
 from typing import Optional, Dict, List, Any, Union
 import mongo.constants
@@ -801,6 +802,19 @@ async def rag_search(
         query="API documentation", content_type="page" → finds API docs pages with complete content
         query="bugs", content_type="work_item", group_by="priority" → work items grouped by priority
     """
+    try:
+        # Fix: Add project root to sys.path to resolve module imports
+        # This makes 'qdrant' and 'mongo' modules importable from any script location.
+        # Adjust the number of os.path.dirname if your directory structure is different.
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if project_root not in sys.path:
+            sys.path.append(project_root)
+        from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
+    except ImportError as e:
+        return f"❌ RAG dependency error: {e}. Please ensure all modules are in the correct path."
+    except Exception as e:
+        return f"❌ RAG SEARCH INITIALIZATION ERROR: {str(e)}"
+    
     try:
         from collections import defaultdict
 
