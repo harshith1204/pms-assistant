@@ -105,7 +105,8 @@ class RAGTool:
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
-            initial_limit = max(limit * 6, limit)
+            # Increase initial candidate pool to improve recall with smaller chunks
+            initial_limit = max(limit * 10, 50)
             prefetch_list = [
                 Prefetch(
                     query=NearestQuery(nearest=query_embedding),

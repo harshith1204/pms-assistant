@@ -343,29 +343,29 @@ def point_id_from_seed(seed: str) -> str:
 # Adjust these values to control chunking behavior
 CHUNKING_CONFIG = {
     "page": {
-        "max_words": 320,
-        "overlap_words": 80,
-        "min_words_to_chunk": 320,  # Only chunk if text is longer than this
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,  # Only chunk if text is longer than this
     },
     "work_item": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,
     },
     "project": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,
     },
     "cycle": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,
     },
     "module": {
-        "max_words": 300,
-        "overlap_words": 60,
-        "min_words_to_chunk": 300,
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,
     },
 }
 
