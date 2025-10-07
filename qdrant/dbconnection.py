@@ -41,7 +41,7 @@ try:
         timeout=60 
     )
 
-    QDRANT_COLLECTION= "pms_collection"
+    QDRANT_COLLECTION= "pms_collection_bm25"
 
     # Check if collection exists, if not, create
     if QDRANT_COLLECTION not in [col.name for col in qdrant_client.get_collections().collections]:

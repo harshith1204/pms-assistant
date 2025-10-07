@@ -21,6 +21,8 @@ import asyncio
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion
 )
+from fastembed import SparseTextEmbedding
+from qdrant_client.http import models
 
 @dataclass
 class ChunkResult:
@@ -54,9 +56,10 @@ class ReconstructedDocument:
 class ChunkAwareRetriever:
     """Enhanced RAG retrieval with chunk awareness and context reconstruction"""
     
-    def __init__(self, qdrant_client, embedding_model):
+    def __init__(self, qdrant_client, embedding_model, sparse_embedder):
         self.qdrant_client = qdrant_client
         self.embedding_model = embedding_model
+        self.sparse_embedder = sparse_embedder
     
     async def search_with_context(
         self,
@@ -114,17 +117,24 @@ class ChunkAwareRetriever:
         
         # --- Hybrid Search Logic ---
         # If no explicit text_query provided, extract keywords from query
-        
-        dense_prefetch = Prefetch(
-            query=NearestQuery(nearest=query_embedding),
+        sparse_results_list = list(self.sparse_embedder.embed(text_query))
+        fastembed_sparse_vec = sparse_results_list[0]
+        query_sparse_vector = models.SparseVector(
+            indices=fastembed_sparse_vec.indices.tolist(),
+            values=fastembed_sparse_vec.values.tolist()
+        )
+
+        dense_prefetch = models.Prefetch(
+            query=models.NearestQuery(nearest=query_embedding),
+            using="dense",  # Target the 'dense' named vector
             limit=initial_limit,
-            score_threshold=min_score,
             filter=search_filter
         )
 
-        keyword_prefetch = Prefetch(
-            query=NearestQuery(nearest=text_query), # NearestQuery only contains the 'what'
-            using="full_text", # 'using' specifies which payload field to search
+        # Prefetch for the sparse (keyword) vector
+        sparse_prefetch = models.Prefetch(
+            query=query_sparse_vector, # Use the SparseVector object as the query
+            using="sparse",            # Target the 'sparse' named vector
             limit=initial_limit,
             filter=search_filter
         )
@@ -137,7 +147,7 @@ class ChunkAwareRetriever:
         try:
             search_results = self.qdrant_client.query_points(
                 collection_name=collection_name,
-                prefetch=[dense_prefetch, keyword_prefetch],
+                prefetch=[dense_prefetch, sparse_prefetch],
                 query=hybrid_query,
                 limit=initial_limit, # The final limit is applied after fusion
             ).points
