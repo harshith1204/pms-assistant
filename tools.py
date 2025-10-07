@@ -27,6 +27,23 @@ except ImportError:
     plan_and_execute_query = None
 
 
+# ------------------ RAG Retrieval Defaults ------------------
+# Per content_type default limits for retrieval. These are applied when the caller
+# does not explicitly provide a limit (i.e., limit is None).
+# Rationale: pages/work_items generally require broader recall; projects/cycles/modules
+# tend to be fewer and more concise.
+CONTENT_TYPE_DEFAULT_LIMITS: Dict[str, int] = {
+    "page": 12,
+    "work_item": 12,
+    "project": 6,
+    "cycle": 6,
+    "module": 6,
+}
+
+# Fallback when content_type is unknown or not provided
+DEFAULT_RAG_LIMIT: int = 10
+
+
 def normalize_mongodb_types(obj: Any) -> Any:
     """Convert MongoDB extended JSON types to regular Python types."""
     if obj is None:
@@ -767,6 +784,13 @@ async def rag_search(
             await RAGTool.initialize()
             rag_tool = RAGTool.get_instance()
         
+        # Resolve effective limit based on content_type defaults (opt-in when caller uses default)
+        effective_limit: int = limit
+        if content_type:
+            default_for_type = CONTENT_TYPE_DEFAULT_LIMITS.get(content_type)
+            if default_for_type is not None and (limit is None or limit == DEFAULT_RAG_LIMIT):
+                effective_limit = default_for_type
+
         # Use chunk-aware retrieval if enabled and not grouping
         if use_chunk_aware and not group_by:
             from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
@@ -782,7 +806,7 @@ async def rag_search(
                 query=query,
                 collection_name=QDRANT_COLLECTION_NAME,
                 content_type=content_type,
-                limit=limit,
+                limit=effective_limit,
                 chunks_per_doc=3,
                 include_adjacent=True,
                 min_score=0.5
@@ -800,7 +824,7 @@ async def rag_search(
             )
         
         # Fallback to standard retrieval
-        results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
+        results = await rag_tool.search_content(query, content_type=content_type, limit=effective_limit)
         
         if not results:
             return f"❌ No results found for query: '{query}'"
