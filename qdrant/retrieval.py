@@ -1,3 +1,8 @@
+def extract_keywords(query: str) -> str:
+    """Extract keywords from a query for hybrid search (simple version)."""
+    stopwords = {"the", "is", "at", "which", "on", "and", "a", "an", "of", "to", "in", "for", "with", "by", "as", "it", "this", "that", "are", "was", "be", "or", "from", "but", "not", "have", "has", "had", "will", "would", "can", "could", "should", "do", "does", "did", "so", "if", "then", "than", "about", "into", "over", "after", "before", "between", "under", "again", "further", "more", "most", "some", "such", "no", "nor", "only", "own", "same", "too", "very", "s", "t", "just", "now"}
+    words = [w for w in query.lower().split() if w not in stopwords and len(w) > 2]
+    return " ".join(words)
 """
 Chunk-Aware RAG Retrieval System
 
@@ -13,7 +18,9 @@ from mongo.constants import BUSINESS_UUID
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
-
+from qdrant_client.models import (
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion
+)
 
 @dataclass
 class ChunkResult:
@@ -59,7 +66,8 @@ class ChunkAwareRetriever:
         limit: int = 10,
         chunks_per_doc: int = 3,
         include_adjacent: bool = True,
-        min_score: float = 0.5
+        min_score: float = 0.5,
+        text_query: Optional[str] = None
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -81,6 +89,9 @@ class ChunkAwareRetriever:
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
         query_embedding = self.embedding_model.encode(query).tolist()
         
+        if text_query is None:
+            text_query = extract_keywords(query)
+        
         # Build filter with optional content_type and global business scoping
         must_conditions = []
         if content_type:
@@ -88,19 +99,53 @@ class ChunkAwareRetriever:
         if BUSINESS_UUID:
             must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
         search_filter = Filter(must=must_conditions) if must_conditions else None
-        
+
         # Fetch more chunks initially to ensure we have multiple per document
         initial_limit = limit * chunks_per_doc * 2
+
+        # search_results = self.qdrant_client.search(
+        #     collection_name=collection_name,
+        #     query_vector=query_embedding,
+        #     query_filter=search_filter,
+        #     limit=initial_limit,
+        #     with_payload=True,
+        #     score_threshold=min_score
+        # )
         
-        search_results = self.qdrant_client.search(
-            collection_name=collection_name,
-            query_vector=query_embedding,
-            query_filter=search_filter,
+        # --- Hybrid Search Logic ---
+        # If no explicit text_query provided, extract keywords from query
+        
+        dense_prefetch = Prefetch(
+            query=NearestQuery(nearest=query_embedding),
             limit=initial_limit,
-            with_payload=True,
-            score_threshold=min_score
+            score_threshold=min_score,
+            filter=search_filter
+        )
+
+        keyword_prefetch = Prefetch(
+            query=NearestQuery(nearest=text_query), # NearestQuery only contains the 'what'
+            using="full_text", # 'using' specifies which payload field to search
+            limit=initial_limit,
+            filter=search_filter
         )
         
+
+        hybrid_query = FusionQuery(
+            fusion=Fusion.RRF,  # Reciprocal Rank Fusion is a great default
+        )
+
+        try:
+            search_results = self.qdrant_client.query_points(
+                collection_name=collection_name,
+                prefetch=[dense_prefetch, keyword_prefetch],
+                query=hybrid_query,
+                limit=initial_limit, # The final limit is applied after fusion
+            ).points
+        except Exception as e:
+            print(f"❌ Hybrid search failed: {e}")
+            return []
+        
+
         if not search_results:
             return []
         
