@@ -27,6 +27,51 @@ except ImportError:
     plan_and_execute_query = None
 
 
+# ------------------ RAG Retrieval Defaults ------------------
+# Per content_type default limits for retrieval. These are applied when the caller
+# does not explicitly provide a limit (i.e., limit is None).
+# Rationale: pages/work_items generally require broader recall; projects/cycles/modules
+# tend to be fewer and more concise.
+CONTENT_TYPE_DEFAULT_LIMITS: Dict[str, int] = {
+    "page": 12,
+    "work_item": 12,
+    "project": 6,
+    "cycle": 6,
+    "module": 6,
+}
+
+# Fallback when content_type is unknown or not provided
+DEFAULT_RAG_LIMIT: int = 10
+
+# Optional: per content_type chunk-level tuning for chunk-aware retrieval
+# - chunks_per_doc controls how many high-scoring chunks are kept per reconstructed doc
+# - include_adjacent controls whether to pull neighboring chunks for context
+# - min_score sets a score threshold for initial vector hits
+CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
+    "page": 4,
+    "work_item": 3,
+    "project": 2,
+    "cycle": 2,
+    "module": 2,
+}
+
+CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
+    "page": True,
+    "work_item": True,
+    "project": False,
+    "cycle": False,
+    "module": False,
+}
+
+CONTENT_TYPE_MIN_SCORE: Dict[str, float] = {
+    "page": 0.5,
+    "work_item": 0.5,
+    "project": 0.55,
+    "cycle": 0.55,
+    "module": 0.55,
+}
+
+
 def normalize_mongodb_types(obj: Any) -> Any:
     """Convert MongoDB extended JSON types to regular Python types."""
     if obj is None:
@@ -767,6 +812,13 @@ async def rag_search(
             await RAGTool.initialize()
             rag_tool = RAGTool.get_instance()
         
+        # Resolve effective limit based on content_type defaults (opt-in when caller uses default)
+        effective_limit: int = limit
+        if content_type:
+            default_for_type = CONTENT_TYPE_DEFAULT_LIMITS.get(content_type)
+            if default_for_type is not None and (limit is None or limit == DEFAULT_RAG_LIMIT):
+                effective_limit = default_for_type
+
         # Use chunk-aware retrieval if enabled and not grouping
         if use_chunk_aware and not group_by:
             from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
@@ -778,14 +830,19 @@ async def rag_search(
             
             from mongo.constants import QDRANT_COLLECTION_NAME
             
+            # Per content_type chunk-level tuning
+            chunks_per_doc = CONTENT_TYPE_CHUNKS_PER_DOC.get(content_type or "", 3)
+            include_adjacent = CONTENT_TYPE_INCLUDE_ADJACENT.get(content_type or "", True)
+            min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.5)
+
             reconstructed_docs = await retriever.search_with_context(
                 query=query,
                 collection_name=QDRANT_COLLECTION_NAME,
                 content_type=content_type,
-                limit=limit,
-                chunks_per_doc=3,
-                include_adjacent=True,
-                min_score=0.5
+                limit=effective_limit,
+                chunks_per_doc=chunks_per_doc,
+                include_adjacent=include_adjacent,
+                min_score=min_score
             )
             
             if not reconstructed_docs:
@@ -800,7 +857,7 @@ async def rag_search(
             )
         
         # Fallback to standard retrieval
-        results = await rag_tool.search_content(query, content_type=content_type, limit=limit)
+        results = await rag_tool.search_content(query, content_type=content_type, limit=effective_limit)
         
         if not results:
             return f"❌ No results found for query: '{query}'"
