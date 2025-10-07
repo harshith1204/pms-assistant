@@ -4,21 +4,12 @@ import mongo.constants
 import os
 import json
 import re
-from glob import glob
-from datetime import datetime
-from orchestrator import Orchestrator, StepSpec, as_async
-try:
-    # For structured, no-LLM execution path
-    from planner import PipelineGenerator, QueryIntent  # type: ignore
-except Exception:
-    PipelineGenerator = None  # type: ignore
-    QueryIntent = None  # type: ignore
-
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.models import (
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+)
 from sentence_transformers import SentenceTransformer
-import numpy as np
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
 class RAGTool:
@@ -66,7 +57,11 @@ class RAGTool:
             return
         try:
             self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL, api_key=mongo.constants.QDRANT_API_KEY)
-            self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
+            try:
+                self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
+            except Exception as e:
+                print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
+                self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             self.connected = True
             print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
         except Exception as e:
@@ -75,55 +70,111 @@ class RAGTool:
     
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
     async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant content in Qdrant based on the query"""
+        """Search for relevant content in Qdrant with dense+SPLADE hybrid fusion."""
         if not self.connected:
             await self.connect()
 
         try:
             # Generate embedding for the query
             query_embedding = self.embedding_model.encode(query).tolist()
-            # h
-            print("Query embedding generated")
             # Build filter if content_type is specified
-            search_filter = None
+            from mongo.constants import BUSINESS_UUID
+            must_conditions = []
             if content_type:
-                search_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="content_type",
-                            match=MatchValue(value=content_type)
+                must_conditions.append(
+                    FieldCondition(
+                        key="content_type",
+                        match=MatchValue(value=content_type)
+                    )
+                )
+            if BUSINESS_UUID:
+                must_conditions.append(
+                    FieldCondition(
+                        key="business_id",
+                        match=MatchValue(value=BUSINESS_UUID)
+                    )
+                )
+            search_filter = Filter(must=must_conditions) if must_conditions else None
+
+            # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
+            initial_limit = max(limit * 6, limit)
+            prefetch_list = [
+                Prefetch(
+                    query=NearestQuery(nearest=query_embedding, using="dense"),
+                    limit=initial_limit,
+                    filter=search_filter,
+                )
+            ]
+
+            sparse_added = False
+            try:
+                from qdrant.encoder import get_splade_encoder
+                from qdrant.retrieval import extract_keywords
+                splade = get_splade_encoder()
+                splade_vec = splade.encode_text(query)
+                if splade_vec.get("indices"):
+                    prefetch_list.append(
+                        Prefetch(
+                            query=NearestQuery(
+                                nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
+                                using="sparse",
+                            ),
+                            limit=initial_limit,
+                            filter=search_filter,
                         )
-                    ]
+                    )
+                    sparse_added = True
+            except Exception:
+                pass
+
+            if not sparse_added:
+                from qdrant.retrieval import extract_keywords
+                keyword_query = extract_keywords(query)
+                prefetch_list.append(
+                    Prefetch(
+                        query=NearestQuery(nearest=keyword_query),
+                        using="full_text",
+                        limit=initial_limit,
+                        filter=search_filter,
+                    )
                 )
 
-            # Search in Qdrant
-            search_results = self.qdrant_client.search(
+            fusion = FusionQuery(fusion=Fusion.RRF)
+            response = self.qdrant_client.query_points(
                 collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
-                query_vector=query_embedding,
-                query_filter=search_filter,
-                limit=limit,
-                with_payload=True
+                prefetch=prefetch_list,
+                query=fusion,
+                limit=initial_limit,
             )
+            search_results = response.points if response else []
 
-            # Format results
+            # Format results - include ALL metadata from payload
             results = []
-            # print(f"total results",search_results)
             for result in search_results:
                 payload = result.payload or {}
-                results.append({
+                # Prefer 'content'; fallback to 'full_text' or 'title' so content is never empty
+                content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+
+                # Create a result dict with all payload fields
+                result_dict = {
                     "id": result.id,
                     "score": result.score,
                     "title": payload.get("title", "Untitled"),
-                    "content": payload.get("content", ""),
+                    "content": content_text,
                     "content_type": payload.get("content_type", "unknown"),
                     "mongo_id": payload.get("mongo_id"),
-                    "parent_id": payload.get("parent_id"),
-                    "chunk_index": payload.get("chunk_index"),
-                    "chunk_count": payload.get("chunk_count"),
-                    # "metadata": payload.get("metadata", {})
-                })
+                }
+                
+                # Add all other metadata fields from payload
+                for key, value in payload.items():
+                    if key not in result_dict and key not in ["full_text"]:  # Skip duplicates and internal fields
+                        result_dict[key] = value
+                
+                results.append(result_dict)
 
-            return results
+            # Keep top-N by score
+            results.sort(key=lambda x: x.get("score", 0), reverse=True)
+            return results[:limit]
 
         except Exception as e:
             print(f"Error searching Qdrant: {e}")
