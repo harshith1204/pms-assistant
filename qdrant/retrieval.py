@@ -79,6 +79,9 @@ class ChunkAwareRetriever:
         min_keyword_overlap: float = 0.05,
         # Retrieval behavior flags
         enable_keyword_fallback: bool = False,
+        # Sparse tuning (to ensure SPLADE signal isn't over-filtered)
+        sparse_score_threshold: Optional[float] = None,
+        sparse_limit_multiplier: float = 2.0,
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -149,8 +152,9 @@ class ChunkAwareRetriever:
                         nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
                     ),
                     using="sparse",
-                    limit=initial_limit,
-                    score_threshold=min_score,
+                    limit=max(initial_limit, int(initial_limit * max(1.0, float(sparse_limit_multiplier)))),
+                    # Use dedicated threshold for sparse; default None to avoid over-filtering
+                    score_threshold=sparse_score_threshold,
                     filter=search_filter,
                 )
                 prefetch_list.append(sparse_prefetch)
@@ -555,3 +559,31 @@ def format_reconstructed_results(
     
     return "\n".join(response_parts)
 
+
+def extract_keywords(text: str, max_terms: int = 12) -> str:
+    """
+    Lightweight keyword extractor used for fallback full_text queries.
+    Removes trivial stopwords and non-alphanumerics; returns space-joined terms.
+    """
+    if not text:
+        return ""
+    stop = {
+        "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
+        "for", "with", "about", "against", "between", "into", "through", "during", "before",
+        "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off",
+        "over", "under", "again", "further", "here", "there", "why", "how", "all", "any",
+        "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+        "only", "own", "same", "so", "than", "too", "very", "can", "will", "just"
+    }
+    terms = re.findall(r"[a-z0-9]+", text.lower())
+    terms = [t for t in terms if t and t not in stop]
+    # Deduplicate while keeping order
+    seen = set()
+    unique_terms = []
+    for t in terms:
+        if t not in seen:
+            seen.add(t)
+            unique_terms.append(t)
+        if len(unique_terms) >= max_terms:
+            break
+    return " ".join(unique_terms)
