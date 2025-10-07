@@ -108,7 +108,8 @@ class ChunkAwareRetriever:
         # Prefer dense + SPLADE-sparse fusion; fall back to full_text keyword if SPLADE unavailable
 
         dense_prefetch = Prefetch(
-            query=NearestQuery(nearest=query_embedding, using="dense"),
+            query=NearestQuery(nearest=query_embedding),
+            using="dense",
             limit=initial_limit,
             score_threshold=min_score,
             filter=search_filter
@@ -126,8 +127,8 @@ class ChunkAwareRetriever:
                 sparse_prefetch = Prefetch(
                     query=NearestQuery(
                         nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
-                        using="sparse",
                     ),
+                    using="sparse",
                     limit=initial_limit,
                     filter=search_filter,
                 )
@@ -138,9 +139,10 @@ class ChunkAwareRetriever:
             pass
 
         if not sparse_added:
-            # Fallback to text index keyword search
+            # Fallback to text index keyword search; use provided text_query or original query
+            keyword_query = text_query or query
             keyword_prefetch = Prefetch(
-                query=NearestQuery(nearest=text_query),
+                query=NearestQuery(nearest=keyword_query),
                 using="full_text",
                 limit=initial_limit,
                 filter=search_filter,

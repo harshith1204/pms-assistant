@@ -100,7 +100,8 @@ class RAGTool:
             initial_limit = max(limit * 6, limit)
             prefetch_list = [
                 Prefetch(
-                    query=NearestQuery(nearest=query_embedding, using="dense"),
+                    query=NearestQuery(nearest=query_embedding),
+                    using="dense",
                     limit=initial_limit,
                     filter=search_filter,
                 )
@@ -117,8 +118,8 @@ class RAGTool:
                         Prefetch(
                             query=NearestQuery(
                                 nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
-                                using="sparse",
                             ),
+                            using="sparse",
                             limit=initial_limit,
                             filter=search_filter,
                         )
