@@ -849,6 +849,7 @@ async def rag_search(
             include_adjacent = CONTENT_TYPE_INCLUDE_ADJACENT.get(content_type or "", True)
             min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.5)
 
+            from mongo.constants import RAG_CONTEXT_TOKEN_BUDGET
             reconstructed_docs = await retriever.search_with_context(
                 query=query,
                 collection_name=QDRANT_COLLECTION_NAME,
@@ -856,7 +857,8 @@ async def rag_search(
                 limit=effective_limit,
                 chunks_per_doc=chunks_per_doc,
                 include_adjacent=include_adjacent,
-                min_score=min_score
+                min_score=min_score,
+                context_token_budget=RAG_CONTEXT_TOKEN_BUDGET
             )
             
             if not reconstructed_docs:
