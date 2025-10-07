@@ -82,6 +82,8 @@ class ChunkAwareRetriever:
         # Sparse tuning (to ensure SPLADE signal isn't over-filtered)
         sparse_score_threshold: Optional[float] = None,
         sparse_limit_multiplier: float = 2.0,
+        # Packing budget (approx token budget for merged content)
+        context_token_budget: Optional[int] = None,
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -116,7 +118,8 @@ class ChunkAwareRetriever:
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
         # Fetch more chunks initially to ensure we have multiple per document
-        initial_limit = limit * chunks_per_doc * 2
+        # Increase pool size for smaller chunks to maintain document recall
+        initial_limit = max(limit * max(chunks_per_doc * 3, 10), 50)
 
         # search_results = self.qdrant_client.search(
         #     collection_name=collection_name,
@@ -240,7 +243,11 @@ class ChunkAwareRetriever:
             max_docs=limit,
             chunks_per_doc=chunks_per_doc
         )
-        
+
+        # Optionally pack to a token budget by pruning extra context chunks
+        if context_token_budget is not None and context_token_budget > 0:
+            reconstructed_docs = self._pack_docs_to_budget(reconstructed_docs, context_token_budget)
+
         return reconstructed_docs
 
     # --- Lightweight quality filters ---
@@ -495,6 +502,99 @@ class ChunkAwareRetriever:
         ranges.append(f"{start}-{end}" if start != end else f"{start}")
         
         return f"chunks {','.join(ranges)} of {total}"
+
+    # --- Budget packing utilities ---
+    def _rough_token_count(self, text: str) -> int:
+        # Very rough token estimator: ~0.75 tokens/word, but use 1.0 for safety with punctuation
+        # Using words count as upper-bound to be conservative
+        if not text:
+            return 0
+        return max(1, len(text.split()))
+
+    def _pack_docs_to_budget(self, docs: List[ReconstructedDocument], budget_tokens: int) -> List[ReconstructedDocument]:
+        """
+        Trim merged content across documents to fit within an approximate token budget.
+        Strategy:
+        - Keep documents sorted by score (already is)
+        - For each document, if over budget, drop lowest-utility context chunks first
+          while preserving at least one high-scoring chunk.
+        - Recompute merged content after pruning.
+        """
+        packed: List[ReconstructedDocument] = []
+        remaining = max(1, budget_tokens)
+
+        for doc in docs:
+            # Quick accept if content already small
+            content_tokens = self._rough_token_count(doc.full_content)
+            if content_tokens <= remaining:
+                packed.append(doc)
+                remaining -= content_tokens
+                continue
+
+            # Otherwise, prune chunks: keep scored first then adjacent context around them
+            scored = [c for c in doc.chunks if c.score > 0]
+            if not scored:
+                # If no scored chunks (edge case), keep first chunk only
+                kept = doc.chunks[:1]
+            else:
+                # Start with top scored chunk, then add neighbors until we hit remaining
+                top = sorted(scored, key=lambda c: c.score, reverse=True)
+                kept_indices: Set[int] = set()
+                kept: List[ChunkResult] = []
+                for s in top:
+                    if s.chunk_index in kept_indices:
+                        continue
+                    # Add s
+                    kept.append(s)
+                    kept_indices.add(s.chunk_index)
+                    # Try to add immediate neighbors if present
+                    for delta in (-1, 1):
+                        neighbor_idx = s.chunk_index + delta
+                        for c in doc.chunks:
+                            if c.chunk_index == neighbor_idx and neighbor_idx not in kept_indices:
+                                kept.append(c)
+                                kept_indices.add(neighbor_idx)
+                    # Merge and check size; stop early if we exceed remaining
+                    merged = self._merge_chunks(sorted(kept, key=lambda c: c.chunk_index))
+                    if self._rough_token_count(merged) > remaining:
+                        # Remove last added neighbor(s) if they pushed over budget
+                        # Keep at least the top scored chunk
+                        kept = [s]
+                        break
+
+            # Rebuild document with kept chunks
+            kept_sorted = sorted(kept, key=lambda c: c.chunk_index)
+            merged_content = self._merge_chunks(kept_sorted)
+            merged_tokens = self._rough_token_count(merged_content)
+
+            if merged_tokens <= remaining:
+                remaining -= merged_tokens
+            else:
+                # If still too big, truncate content text conservatively by words
+                words = merged_content.split()
+                if remaining > 10:  # avoid micro snippets
+                    merged_content = " ".join(words[:remaining])
+                    remaining = 0
+                else:
+                    merged_content = " ".join(words[:10])
+                    remaining = 0
+
+            packed.append(ReconstructedDocument(
+                mongo_id=doc.mongo_id,
+                title=doc.title,
+                content_type=doc.content_type,
+                chunks=kept_sorted,
+                max_score=doc.max_score,
+                avg_score=doc.avg_score,
+                full_content=merged_content,
+                metadata=doc.metadata,
+                chunk_coverage=doc.chunk_coverage,
+            ))
+
+            if remaining <= 0:
+                break
+
+        return packed
 
 
 def format_reconstructed_results(
