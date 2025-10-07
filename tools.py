@@ -755,8 +755,8 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 @tool
 async def rag_search(
     query: str,
-    content_type: str = None,
-    group_by: str = None,
+    content_type: Optional[str] = None,
+    group_by: Optional[str] = None,
     limit: int = 10,
     show_content: bool = True,
     use_chunk_aware: bool = True
