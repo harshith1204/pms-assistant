@@ -8,7 +8,7 @@ import re
 from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
-from qdrant.qdrant_initializer import RAGTool
+from qdrant.initializer import RAGTool
 # Qdrant and RAG dependencies
 # try:
 #     from qdrant_client import QdrantClient
