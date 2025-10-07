@@ -9,6 +9,7 @@ Improves context quality by:
 """
 
 from typing import List, Dict, Any, Optional, Set, Tuple
+import re
 from mongo.constants import BUSINESS_UUID
 from collections import defaultdict
 from dataclasses import dataclass
@@ -52,6 +53,15 @@ class ChunkAwareRetriever:
     def __init__(self, qdrant_client, embedding_model):
         self.qdrant_client = qdrant_client
         self.embedding_model = embedding_model
+        # Minimal English stopword list for lightweight keyword-overlap filtering
+        self._STOPWORDS: Set[str] = {
+            "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
+            "for", "with", "about", "against", "between", "into", "through", "during", "before",
+            "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off",
+            "over", "under", "again", "further", "here", "there", "why", "how", "all", "any",
+            "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+            "only", "own", "same", "so", "than", "too", "very", "can", "will", "just"
+        }
     
     async def search_with_context(
         self,
@@ -62,7 +72,13 @@ class ChunkAwareRetriever:
         chunks_per_doc: int = 3,
         include_adjacent: bool = True,
         min_score: float = 0.5,
-        text_query: Optional[str] = None
+        text_query: Optional[str] = None,
+        *,
+        # Quality filters (token cost control)
+        min_content_chars: int = 30,
+        min_keyword_overlap: float = 0.05,
+        # Retrieval behavior flags
+        enable_keyword_fallback: bool = False,
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -75,6 +91,10 @@ class ChunkAwareRetriever:
             chunks_per_doc: Max chunks to retrieve per document
             include_adjacent: Whether to fetch adjacent chunks for context
             min_score: Minimum relevance score threshold
+            text_query: Optional custom keyword query for fallback full_text
+            min_content_chars: Drop chunks with content shorter than this (after strip)
+            min_keyword_overlap: Minimum query-token overlap ratio required
+            enable_keyword_fallback: If True, allow full_text prefetch fallback
             
         Returns:
             List of reconstructed documents with full context
@@ -130,6 +150,7 @@ class ChunkAwareRetriever:
                     ),
                     using="sparse",
                     limit=initial_limit,
+                    score_threshold=min_score,
                     filter=search_filter,
                 )
                 prefetch_list.append(sparse_prefetch)
@@ -138,7 +159,7 @@ class ChunkAwareRetriever:
             # SPLADE optional; fall back to keyword search
             pass
 
-        if not sparse_added:
+        if enable_keyword_fallback and not sparse_added:
             # Fallback to text index keyword search; use provided text_query or original query
             keyword_query = text_query or query
             keyword_prefetch = Prefetch(
@@ -169,11 +190,23 @@ class ChunkAwareRetriever:
         # Step 2: Group chunks by parent document
         doc_chunks: Dict[str, List[ChunkResult]] = defaultdict(list)
         
+        # Pre-tokenize query for lightweight overlap checks
+        query_terms = self._tokenize(query)
+
         for result in search_results:
             payload = result.payload or {}
             
             # Prefer 'content'; fallback to 'full_text' or title if missing
             content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+
+            # Quality gates to prune irrelevant/low-signal chunks early
+            if not self._should_keep_chunk(
+                content_text=content_text,
+                query_terms=query_terms,
+                min_content_chars=min_content_chars,
+                min_keyword_overlap=min_keyword_overlap,
+            ):
+                continue
 
             chunk = ChunkResult(
                 id=str(result.id),
@@ -205,6 +238,42 @@ class ChunkAwareRetriever:
         )
         
         return reconstructed_docs
+
+    # --- Lightweight quality filters ---
+    def _tokenize(self, text: str) -> Set[str]:
+        if not text:
+            return set()
+        # Alphanumeric tokens, lowercased; remove trivial stopwords
+        tokens = re.findall(r"[a-z0-9]+", text.lower())
+        return {t for t in tokens if t and t not in self._STOPWORDS}
+
+    def _keyword_overlap(self, query_terms: Set[str], text: str) -> float:
+        if not query_terms:
+            return 0.0
+        doc_terms = self._tokenize(text)
+        if not doc_terms:
+            return 0.0
+        intersection = query_terms & doc_terms
+        return len(intersection) / max(1, len(query_terms))
+
+    def _should_keep_chunk(
+        self,
+        *,
+        content_text: str,
+        query_terms: Set[str],
+        min_content_chars: int,
+        min_keyword_overlap: float,
+    ) -> bool:
+        if not content_text:
+            return False
+        text = content_text.strip()
+        if len(text) < min_content_chars:
+            # Short snippets (e.g., "Hi") must have stronger lexical signal
+            return self._keyword_overlap(query_terms, text) >= max(min_keyword_overlap, 0.2)
+        # For longer content, apply configured overlap threshold if set (>0)
+        if min_keyword_overlap > 0:
+            return self._keyword_overlap(query_terms, text) >= min_keyword_overlap
+        return True
     
     async def _fetch_adjacent_chunks(
         self,
