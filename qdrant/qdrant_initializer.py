@@ -6,7 +6,9 @@ import json
 import re
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import (
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+)
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
@@ -68,15 +70,13 @@ class RAGTool:
     
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
     async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant content in Qdrant based on the query"""
+        """Search for relevant content in Qdrant with dense+SPLADE hybrid fusion."""
         if not self.connected:
             await self.connect()
 
         try:
             # Generate embedding for the query
             query_embedding = self.embedding_model.encode(query).tolist()
-            # h
-            print("Query embedding generated")
             # Build filter if content_type is specified
             from mongo.constants import BUSINESS_UUID
             must_conditions = []
@@ -96,18 +96,60 @@ class RAGTool:
                 )
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
-            # Search in Qdrant
-            search_results = self.qdrant_client.search(
+            # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
+            initial_limit = max(limit * 6, limit)
+            prefetch_list = [
+                Prefetch(
+                    query=NearestQuery(nearest=query_embedding, using="dense"),
+                    limit=initial_limit,
+                    filter=search_filter,
+                )
+            ]
+
+            sparse_added = False
+            try:
+                from qdrant.splade_encoder import get_splade_encoder
+                from qdrant.retrieval import extract_keywords
+                splade = get_splade_encoder()
+                splade_vec = splade.encode_text(query)
+                if splade_vec.get("indices"):
+                    prefetch_list.append(
+                        Prefetch(
+                            query=NearestQuery(
+                                nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
+                                using="sparse",
+                            ),
+                            limit=initial_limit,
+                            filter=search_filter,
+                        )
+                    )
+                    sparse_added = True
+            except Exception:
+                pass
+
+            if not sparse_added:
+                from qdrant.retrieval import extract_keywords
+                keyword_query = extract_keywords(query)
+                prefetch_list.append(
+                    Prefetch(
+                        query=NearestQuery(nearest=keyword_query),
+                        using="full_text",
+                        limit=initial_limit,
+                        filter=search_filter,
+                    )
+                )
+
+            fusion = FusionQuery(fusion=Fusion.RRF)
+            response = self.qdrant_client.query_points(
                 collection_name=mongo.constants.QDRANT_COLLECTION_NAME,
-                query_vector=query_embedding,
-                query_filter=search_filter,
-                limit=limit,
-                with_payload=True
+                prefetch=prefetch_list,
+                query=fusion,
+                limit=initial_limit,
             )
+            search_results = response.points if response else []
 
             # Format results - include ALL metadata from payload
             results = []
-            # print(f"total results",search_results)
             for result in search_results:
                 payload = result.payload or {}
                 # Prefer 'content'; fallback to 'full_text' or 'title' so content is never empty
@@ -130,7 +172,9 @@ class RAGTool:
                 
                 results.append(result_dict)
 
-            return results
+            # Keep top-N by score
+            results.sort(key=lambda x: x.get("score", 0), reverse=True)
+            return results[:limit]
 
         except Exception as e:
             print(f"Error searching Qdrant: {e}")

@@ -19,7 +19,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
 
 @dataclass
@@ -113,33 +113,56 @@ class ChunkAwareRetriever:
         # )
         
         # --- Hybrid Search Logic ---
-        # If no explicit text_query provided, extract keywords from query
-        
+        # Prefer dense + SPLADE-sparse fusion; fall back to full_text keyword if SPLADE unavailable
+
         dense_prefetch = Prefetch(
-            query=NearestQuery(nearest=query_embedding),
+            query=NearestQuery(nearest=query_embedding, using="dense"),
             limit=initial_limit,
             score_threshold=min_score,
             filter=search_filter
         )
 
-        keyword_prefetch = Prefetch(
-            query=NearestQuery(nearest=text_query), # NearestQuery only contains the 'what'
-            using="full_text", # 'using' specifies which payload field to search
-            limit=initial_limit,
-            filter=search_filter
-        )
-        
+        prefetch_list = [dense_prefetch]
 
-        hybrid_query = FusionQuery(
-            fusion=Fusion.RRF,  # Reciprocal Rank Fusion is a great default
-        )
+        # Try SPLADE for sparse query
+        sparse_added = False
+        try:
+            from qdrant.splade_encoder import get_splade_encoder
+            splade = get_splade_encoder()
+            splade_vec = splade.encode_text(query)
+            if splade_vec.get("indices"):
+                sparse_prefetch = Prefetch(
+                    query=NearestQuery(
+                        nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
+                        using="sparse",
+                    ),
+                    limit=initial_limit,
+                    filter=search_filter,
+                )
+                prefetch_list.append(sparse_prefetch)
+                sparse_added = True
+        except Exception as e:
+            # SPLADE optional; fall back to keyword search
+            pass
+
+        if not sparse_added:
+            # Fallback to text index keyword search
+            keyword_prefetch = Prefetch(
+                query=NearestQuery(nearest=text_query),
+                using="full_text",
+                limit=initial_limit,
+                filter=search_filter,
+            )
+            prefetch_list.append(keyword_prefetch)
+
+        hybrid_query = FusionQuery(fusion=Fusion.RRF)
 
         try:
             search_results = self.qdrant_client.query_points(
                 collection_name=collection_name,
-                prefetch=[dense_prefetch, keyword_prefetch],
+                prefetch=prefetch_list,
                 query=hybrid_query,
-                limit=initial_limit, # The final limit is applied after fusion
+                limit=initial_limit,
             ).points
         except Exception as e:
             print(f"❌ Hybrid search failed: {e}")

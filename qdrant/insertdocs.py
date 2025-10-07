@@ -5,7 +5,15 @@ import uuid
 from itertools import islice
 from bson.binary import Binary
 from bson.objectid import ObjectId
-from qdrant_client.http.models import PointStruct, PayloadSchemaType, Distance, VectorParams, OptimizersConfigDiff
+from qdrant_client.http.models import (
+    PointStruct,
+    PayloadSchemaType,
+    Distance,
+    VectorParams,
+    OptimizersConfigDiff,
+    SparseVectorParams,
+    SparseVector,
+)
 from sentence_transformers import SentenceTransformer
 from collections import defaultdict
 
@@ -24,6 +32,7 @@ from dotenv import load_dotenv
 from huggingface_hub import login
 import re
 import html as html_lib
+from qdrant.splade_encoder import get_splade_encoder
 
 # ------------------ Setup ------------------
 
@@ -130,22 +139,26 @@ _stats = ChunkingStats()
 # ------------------ Helpers ------------------
 
 def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
-    """Ensure Qdrant collection exists with dense vectors and text indexes for hybrid search.
+    """Ensure Qdrant collection supports dense + sparse (SPLADE) hybrid search.
 
-    - Creates collection if missing with cosine distance and specified vector size
+    - Creates collection if missing with named dense vector and sparse vector config
     - Ensures payload indexes for keyword and text fields used by our tools
+    - Sets optimizer threshold for immediate indexing
     """
     try:
-        existing = [col.name for col in qdrant_client.get_collections().collections]
-        if collection_name not in existing:
-            print(f"ℹ️ Creating Qdrant collection '{collection_name}' with vector_size={vector_size}...")
-            # Create basic dense vector collection; sparse/text search uses payload text indexes
-            qdrant_client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
-            )
-            print(f"✅ Collection '{collection_name}' created")
-        
+        # Always recreate to guarantee correct named vector configuration
+        print(f"ℹ️ Recreating Qdrant collection '{collection_name}' with dense+sparse configs...")
+        qdrant_client.recreate_collection(
+            collection_name=collection_name,
+            vectors_config={
+                "dense": VectorParams(size=vector_size, distance=Distance.COSINE),
+            },
+            sparse_vectors_config={
+                "sparse": SparseVectorParams(),
+            },
+        )
+        print(f"✅ Collection '{collection_name}' ready for hybrid (dense+sparse)")
+
         # Force immediate HNSW indexing by lowering the threshold
         try:
             qdrant_client.update_collection(
@@ -436,6 +449,7 @@ def index_pages_to_qdrant():
         })
         points = []
 
+        splade = get_splade_encoder()
         for doc in documents:
             mongo_id = normalize_mongo_id(doc["_id"])
             title = doc.get("title", "")
@@ -499,6 +513,8 @@ def index_pages_to_qdrant():
 
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                full_text = f"{title} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
                 payload = {
                     "mongo_id": mongo_id,
                     "parent_id": mongo_id,
@@ -507,17 +523,22 @@ def index_pages_to_qdrant():
                     "title": title,
                     "content": chunk,
                     # Provide a concatenated text field for full-text search
-                    "full_text": f"{title} {chunk}".strip(),
+                    "full_text": full_text,
                     "content_type": "page"
                 }
                 # Add metadata, filtering out None values
                 payload.update({k: v for k, v in metadata.items() if v is not None})
                 
-                point = PointStruct(
-                    id=point_id_from_seed(f"{mongo_id}/page/{idx}"),
-                    vector=vector,
-                    payload=payload
-                )
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/page/{idx}"),
+                    "vector": {"dense": vector},
+                    "payload": payload,
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["sparse_vectors"] = {"sparse": SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )}
+                point = PointStruct(**point_kwargs)
                 points.append(point)
 
         if not points:
@@ -562,6 +583,7 @@ def index_workitems_to_qdrant():
         })
         points = []
 
+        splade = get_splade_encoder()
         for doc in documents:
             mongo_id = normalize_mongo_id(doc["_id"])
             # Clean HTML/entities before chunking for better retrieval quality
@@ -631,6 +653,8 @@ def index_workitems_to_qdrant():
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                full_text = f"{doc.get('title', '')} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
                 
                 payload = {
                     "mongo_id": mongo_id,
@@ -639,17 +663,22 @@ def index_workitems_to_qdrant():
                     "chunk_count": len(chunks),
                     "title": doc.get("title", ""),
                     "content": chunk,
-                    "full_text": f"{doc.get('title', '')} {chunk}".strip(),
+                    "full_text": full_text,
                     "content_type": "work_item"
                 }
                 # Add metadata, filtering out None values
                 payload.update({k: v for k, v in metadata.items() if v is not None})
 
-                point = PointStruct(
-                    id=point_id_from_seed(f"{mongo_id}/work_item/{idx}"),
-                    vector=vector,
-                    payload=payload
-                )
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/work_item/{idx}"),
+                    "vector": {"dense": vector},
+                    "payload": payload,
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["sparse_vectors"] = {"sparse": SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )}
+                point = PointStruct(**point_kwargs)
                 points.append(point)
 
         if not points:
@@ -673,6 +702,7 @@ def index_projects_to_qdrant():
         documents = project_collection.find({}, {"_id": 1, "name": 1, "description": 1, "business": 1})
         points = []
 
+        splade = get_splade_encoder()
         for doc in documents:
             mongo_id = normalize_mongo_id(doc["_id"])
             name = doc.get("name", "")
@@ -722,6 +752,8 @@ def index_projects_to_qdrant():
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                full_text = f"{name} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
                 payload = {
                     "mongo_id": mongo_id,
                     "parent_id": mongo_id,
@@ -729,16 +761,20 @@ def index_projects_to_qdrant():
                     "chunk_count": len(chunks),
                     "title": name,
                     "content": chunk,
-                    "full_text": f"{name} {chunk}".strip(),
+                    "full_text": full_text,
                     "content_type": "project"
                 }
                 payload.update({k: v for k, v in metadata.items() if v is not None})
-
-                point = PointStruct(
-                    id=point_id_from_seed(f"{mongo_id}/project/{idx}"),
-                    vector=vector,
-                    payload=payload
-                )
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/project/{idx}"),
+                    "vector": {"dense": vector},
+                    "payload": payload,
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["sparse_vectors"] = {"sparse": SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )}
+                point = PointStruct(**point_kwargs)
                 points.append(point)
 
         if not points:
@@ -761,6 +797,7 @@ def index_cycles_to_qdrant():
         documents = cycle_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
         points = []
 
+        splade = get_splade_encoder()
         for doc in documents:
             mongo_id = normalize_mongo_id(doc["_id"])
             name = doc.get("name") or doc.get("title") or ""
@@ -810,6 +847,8 @@ def index_cycles_to_qdrant():
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                full_text = f"{name} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
                 payload = {
                     "mongo_id": mongo_id,
                     "parent_id": mongo_id,
@@ -817,16 +856,20 @@ def index_cycles_to_qdrant():
                     "chunk_count": len(chunks),
                     "title": name,
                     "content": chunk,
-                    "full_text": f"{name} {chunk}".strip(),
+                    "full_text": full_text,
                     "content_type": "cycle"
                 }
                 payload.update({k: v for k, v in metadata.items() if v is not None})
-
-                point = PointStruct(
-                    id=point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
-                    vector=vector,
-                    payload=payload
-                )
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
+                    "vector": {"dense": vector},
+                    "payload": payload,
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["sparse_vectors"] = {"sparse": SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )}
+                point = PointStruct(**point_kwargs)
                 points.append(point)
 
         if not points:
@@ -849,6 +892,7 @@ def index_modules_to_qdrant():
         documents = module_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
         points = []
 
+        splade = get_splade_encoder()
         for doc in documents:
             mongo_id = normalize_mongo_id(doc["_id"])
             name = doc.get("name") or doc.get("title") or ""
@@ -898,6 +942,8 @@ def index_modules_to_qdrant():
             
             for idx, chunk in enumerate(chunks):
                 vector = embedder.encode(chunk).tolist()
+                full_text = f"{name} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
                 payload = {
                     "mongo_id": mongo_id,
                     "parent_id": mongo_id,
@@ -905,16 +951,20 @@ def index_modules_to_qdrant():
                     "chunk_count": len(chunks),
                     "title": name,
                     "content": chunk,
-                    "full_text": f"{name} {chunk}".strip(),
+                    "full_text": full_text,
                     "content_type": "module"
                 }
                 payload.update({k: v for k, v in metadata.items() if v is not None})
-
-                point = PointStruct(
-                    id=point_id_from_seed(f"{mongo_id}/module/{idx}"),
-                    vector=vector,
-                    payload=payload
-                )
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/module/{idx}"),
+                    "vector": {"dense": vector},
+                    "payload": payload,
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["sparse_vectors"] = {"sparse": SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )}
+                point = PointStruct(**point_kwargs)
                 points.append(point)
 
         if not points:
