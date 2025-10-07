@@ -9,6 +9,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
+from fastembed import SparseTextEmbedding
 
 class RAGTool:
     """
@@ -28,6 +29,7 @@ class RAGTool:
             instance = cls.__new__(cls)
             instance.qdrant_client = None
             instance.embedding_model = None
+            instance.sparse_embedder = None
             instance.connected = False
             
             await instance.connect()
@@ -59,9 +61,12 @@ class RAGTool:
                 self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
             except Exception as e:
                 print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
-                self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            try:
+                self.sparse_embedder = SparseTextEmbedding("Qdrant/bm25")
+            except Exception as e:
+                print(f"⚠️ Failed to load sparse embedding model 'Qdrant/bm25': {e}")
             self.connected = True
-            print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
+            print(f"Successfully loaded models and connected to Qdrant at {mongo.constants.QDRANT_URL}")
         except Exception as e:
             print(f"Failed to connect RAGTool components: {e}")
             raise
