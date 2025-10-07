@@ -138,32 +138,61 @@ _stats = ChunkingStats()
 
 # ------------------ Helpers ------------------
 
-def ensure_collection_with_hybrid(collection_name: str, vector_size: int = 768):
-    """Ensure Qdrant collection supports dense + sparse (SPLADE) hybrid search.
+def ensure_collection_with_hybrid(
+    collection_name: str,
+    vector_size: int = 768,
+    force_recreate: bool = False,
+):
+    """Ensure Qdrant collection supports dense + sparse (SPLADE) hybrid search without data loss.
 
-    - Creates collection if missing with named dense vector and sparse vector config
-    - Ensures payload indexes for keyword and text fields used by our tools
-    - Sets optimizer threshold for immediate indexing
+    Behavior:
+    - If the collection does not exist → create it with named dense and sparse vectors.
+    - If the collection exists → do NOT drop it (unless force_recreate=True).
+    - Always ensure optimizer and payload indexes idempotently.
     """
     try:
-        # Always recreate to guarantee correct named vector configuration
-        print(f"ℹ️ Recreating Qdrant collection '{collection_name}' with dense+sparse configs...")
-        qdrant_client.recreate_collection(
-            collection_name=collection_name,
-            vectors_config={
-                "dense": VectorParams(size=vector_size, distance=Distance.COSINE),
-            },
-            sparse_vectors_config={
-                "sparse": SparseVectorParams(),
-            },
-        )
-        print(f"✅ Collection '{collection_name}' ready for hybrid (dense+sparse)")
+        should_create = False
+        try:
+            # Determine existence via list to avoid 404 exceptions
+            existing_names = [c.name for c in qdrant_client.get_collections().collections]
+            should_create = collection_name not in existing_names
+        except Exception as e:
+            # If listing fails, fallback to creation attempt path
+            print(f"⚠️ Could not list collections: {e}")
+            should_create = True
 
-        # Force immediate HNSW indexing by lowering the threshold
+        if force_recreate:
+            print(f"ℹ️ Force recreating Qdrant collection '{collection_name}' (this will replace data)...")
+            qdrant_client.recreate_collection(
+                collection_name=collection_name,
+                vectors_config={
+                    "dense": VectorParams(size=vector_size, distance=Distance.COSINE),
+                },
+                sparse_vectors_config={
+                    "sparse": SparseVectorParams(),
+                },
+            )
+            print(f"✅ Collection '{collection_name}' recreated for hybrid (dense+sparse)")
+        elif should_create:
+            print(f"ℹ️ Creating Qdrant collection '{collection_name}' with dense+sparse configs...")
+            qdrant_client.create_collection(
+                collection_name=collection_name,
+                vectors_config={
+                    "dense": VectorParams(size=vector_size, distance=Distance.COSINE),
+                },
+                sparse_vectors_config={
+                    "sparse": SparseVectorParams(),
+                },
+            )
+            print(f"✅ Collection '{collection_name}' created for hybrid (dense+sparse)")
+        else:
+            print(f"ℹ️ Collection '{collection_name}' already exists; skipping recreation.")
+
+        # Ensure optimizer is set for immediate indexing (idempotent)
         try:
             qdrant_client.update_collection(
                 collection_name=collection_name,
-                optimizer_config=OptimizersConfigDiff(indexing_threshold=1)
+                optimizer_config=OptimizersConfigDiff(indexing_threshold=1),
             )
             print("✅ Set indexing_threshold=1 for immediate indexing")
         except Exception as e:
