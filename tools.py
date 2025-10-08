@@ -49,16 +49,16 @@ DEFAULT_RAG_LIMIT: int = 10
 # - include_adjacent controls whether to pull neighboring chunks for context
 # - min_score sets a score threshold for initial vector hits
 CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
-    "page": 4,
-    "work_item": 3,
+    "page": 2,          # Reduced from 4 to minimize context window usage
+    "work_item": 2,     # Reduced from 3 to minimize context window usage
     "project": 2,
     "cycle": 2,
     "module": 2,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
-    "page": True,
-    "work_item": True,
+    "page": False,      # Disabled to reduce context window usage (was True)
+    "work_item": True,  # Keep adjacent for work items for better context
     "project": False,
     "cycle": False,
     "module": False,
