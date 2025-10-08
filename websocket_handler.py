@@ -12,8 +12,11 @@ import re
 
 from mongo.constants import DATABASE_NAME
 from planner import plan_and_execute_query
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+# Tracing shim
+from traces import noop as _noop
+trace = type("TraceShim", (), {"get_tracer": _noop.get_tracer, "SpanKind": _noop.SpanKind})()
+Status = _noop.Status
+StatusCode = _noop.StatusCode
 
 
 

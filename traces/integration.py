@@ -1,6 +1,6 @@
 """
-Phoenix tracing integration for the PMS Assistant agent
-This module adds comprehensive tracing to the existing agent system.
+Tracing integration (no-op) for the PMS Assistant agent.
+Replaces Phoenix/OpenTelemetry with a safe, no-op shim preserving interfaces.
 """
 
 import asyncio
@@ -9,14 +9,10 @@ from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-# Phoenix imports
-from phoenix.trace import using_project
-from phoenix.trace.schemas import SpanKind, SpanStatusCode
-from phoenix.trace.exporter import HttpExporter
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from traces import noop as _noop
+trace = type("TraceShim", (), {"get_tracer": _noop.get_tracer, "SpanKind": _noop.SpanKind})()
+Status = _noop.Status
+StatusCode = _noop.StatusCode
 
 # File exporter not available - no separate package exists
 FileSpanExporter = None  # Set to None for graceful fallback
@@ -29,7 +25,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 
 class PhoenixSpan:
-    """Real Phoenix span implementation using OpenTelemetry"""
+    """Compatibility span wrapper using no-op tracer"""
 
     def __init__(self, name: str, span_kind: str = "INTERNAL", attributes: Dict[str, Any] = None):
         self.name = name
@@ -38,10 +34,7 @@ class PhoenixSpan:
         self.span = None
         self.start_time = time.time()
 
-        # Create a tracer
         tracer = trace.get_tracer(__name__)
-
-        # Start the span with context
         self.span = tracer.start_span(
             name=name,
             kind=getattr(trace.SpanKind, span_kind.upper(), trace.SpanKind.INTERNAL),
@@ -177,7 +170,7 @@ class TracedMongoDBAgent(MongoDBAgent):
                     if tool_span:
                         tool_span.set_attribute("tool_success", "result" in tool_result)
                         if "error" in tool_result:
-                            tool_span.set_status(SpanStatusCode.ERROR, tool_result["error"])
+                            tool_span.set_status(StatusCode.ERROR, tool_result["error"])
 
                 # Generate response
                 async with self.trace_operation("generate_response") as _:
@@ -253,67 +246,21 @@ class PhoenixTracingManager:
 
     async def initialize(self):
         """Initialize Phoenix tracing"""
-        try:
-            # Set up OpenTelemetry tracer provider
-            self.tracer_provider = TracerProvider()
-            trace.set_tracer_provider(self.tracer_provider)
-
-            # Add console exporter for development
-            try:
-                console_exporter = ConsoleSpanExporter()
-                span_processor = BatchSpanProcessor(console_exporter)
-                self.tracer_provider.add_span_processor(span_processor)
-                print("✅ Console exporter configured")
-            except Exception as e:
-                print(f"⚠️  Console exporter not available: {e}")
-
-            # Add file exporter if available
-            if FileSpanExporter:
-                try:
-                    file_exporter = FileSpanExporter("./logs/traces.json")
-                    file_processor = BatchSpanProcessor(file_exporter)
-                    self.tracer_provider.add_span_processor(file_processor)
-                    print("✅ File exporter configured")
-                except Exception as e:
-                    print(f"⚠️  File exporter failed: {e}")
-
-            # Add Phoenix HTTP exporter if server is running
-            try:
-                phoenix_exporter = HttpExporter(endpoint="http://localhost:6006/v1/traces")
-                phoenix_processor = BatchSpanProcessor(phoenix_exporter)
-                self.tracer_provider.add_span_processor(phoenix_processor)
-                print("✅ Phoenix HTTP exporter configured")
-            except Exception as e:
-                print(f"⚠️  Phoenix server not available, using console export only: {e}")
-
-            # Get the tracer
-            self.tracer = trace.get_tracer(__name__)
-            print("✅ Phoenix tracing initialized successfully")
-
-        except Exception as e:
-            print(f"❌ Failed to initialize Phoenix tracing: {e}")
-            import traceback
-            traceback.print_exc()
+        # No-op initialization; provide tracer from shim
+        self.tracer_provider = None
+        self.tracer = trace.get_tracer(__name__)
+        print("✅ Tracing (noop) initialized")
 
     def cleanup(self):
         """Shutdown tracing and release resources."""
-        try:
-            # TracerProvider in OTel Python supports shutdown()
-            if self.tracer_provider:
-                try:
-                    self.tracer_provider.shutdown()
-                except Exception as e:
-                    print(f"⚠️  Error during tracer provider shutdown: {e}")
-        finally:
-            self.tracer = None
-            self.tracer_provider = None
+        self.tracer = None
+        self.tracer_provider = None
 
     def start_trace(self, name: str, span_kind: str = "INTERNAL", attributes: Dict[str, Any] = None):
         """Start a new trace span"""
         if not self.tracer:
             return PhoenixSpan(name, span_kind, attributes or {})
 
-        # Create span with OpenTelemetry
         span = self.tracer.start_span(
             name=name,
             kind=getattr(trace.SpanKind, span_kind.upper(), trace.SpanKind.INTERNAL),
@@ -323,7 +270,6 @@ class PhoenixTracingManager:
 
     async def trace_agent_interaction(self, query: str, response: str, metadata: Dict[str, Any] = None):
         """Trace a complete agent interaction"""
-        # This would send traces to Phoenix
         trace_data = {
             "timestamp": datetime.now().isoformat(),
             "query": query,
@@ -332,9 +278,6 @@ class PhoenixTracingManager:
         }
 
         print(f"Agent interaction traced: {trace_data}")
-
-        # In production, this would be sent to Phoenix
-        # self.exporter.export(trace_data)
 
 
 # Global tracing instance

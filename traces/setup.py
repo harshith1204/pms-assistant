@@ -14,13 +14,7 @@ import pandas as pd
 # Add parent directory to path for local imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Phoenix imports
-from phoenix import Client
-from phoenix.trace import using_project
-from phoenix.trace.exporter import HttpExporter
-from phoenix.trace.schemas import SpanKind, SpanStatusCode
-from phoenix.evals import RelevanceEvaluator, QAEvaluator, ToxicityEvaluator
-from phoenix.evals.models import OpenAIModel
+# Remove Phoenix imports and rely only on custom evaluators
 
 # Local imports
 from agent import MongoDBAgent
@@ -40,17 +34,12 @@ class PMSEvaluator:
         self.toxicity_evaluator = None
 
     async def initialize_evaluators(self):
-        """Initialize Phoenix evaluators"""
-        try:
-            # Initialize Phoenix evaluators
-            self.relevance_evaluator = RelevanceEvaluator()
-            self.qa_evaluator = QAEvaluator()
-            self.toxicity_evaluator = ToxicityEvaluator()
-
-            print("✅ Phoenix evaluators initialized")
-        except Exception as e:
-            print(f"⚠️  Could not initialize some Phoenix evaluators: {e}")
-            print("💡 Continuing with custom evaluators")
+        """Initialize custom evaluators (no Phoenix)."""
+        # Keep attributes None to force custom fallbacks
+        self.relevance_evaluator = None
+        self.qa_evaluator = None
+        self.toxicity_evaluator = None
+        print("✅ Custom evaluators ready (Phoenix disabled)")
 
     async def evaluate_response_relevance(self, query: str, response: str) -> float:
         """Evaluate if the response is relevant to the query"""
@@ -357,61 +346,27 @@ class MongoDBEvaluationStore:
             return None
 
 class PhoenixTracer:
-    """Handles Phoenix tracing for the PMS Assistant (kept for backward compatibility)"""
+    """Backward-compatible no-op tracer that only logs to MongoDB."""
 
     def __init__(self, project_name: str = "pms-assistant"):
         self.project_name = project_name
-        self.client = None
         self.eval_store = None
 
     async def initialize(self):
-        """Initialize Phoenix client and MongoDB evaluation storage"""
         try:
-            # Initialize Phoenix client
-            self.client = Client()
-            print("✅ Phoenix client initialized successfully")
-
-            # Initialize MongoDB evaluation storage
             self.eval_store = MongoDBEvaluationStore()
             await self.eval_store.initialize()
-
+            print("✅ Evaluation storage initialized (Phoenix disabled)")
         except Exception as e:
-            print(f"❌ Failed to initialize Phoenix tracer: {e}")
-            self.client = None
+            print(f"❌ Failed to initialize evaluation storage: {e}")
             self.eval_store = None
 
     def start_trace(self, name: str, span_kind: str = "INTERNAL"):
-        """Start a new trace span"""
-        if not self.client:
-            return None
-
-        return self.client.trace(
-            name=name,
-            span_kind=span_kind
-        )
+        return None
 
     async def log_evaluation(self, query: str, response: str, metrics: Dict[str, float], trace_id: str = None):
-        """Log evaluation results to both Phoenix and MongoDB"""
-        if not self.client:
-            return
-
-        try:
-            # Log to Phoenix (original functionality)
-            with using_project(self.project_name):
-                eval_data = {
-                    "query": query,
-                    "response": response,
-                    "timestamp": datetime.now().isoformat(),
-                    **metrics
-                }
-                print(f"📊 Evaluation data prepared: {eval_data}")
-
-            # Log to MongoDB for persistent storage
-            if self.eval_store:
-                await self.eval_store.log_evaluation(query, response, metrics, trace_id)
-
-        except Exception as e:
-            print(f"❌ Error logging evaluation: {e}")
+        if self.eval_store:
+            await self.eval_store.log_evaluation(query, response, metrics, trace_id)
 
 
 class EvaluationPipeline:
@@ -599,7 +554,7 @@ async def main():
         print(f"Average Completeness: {report['average_metrics']['avg_completeness']:.2f}")
 
     print("\nEvaluation completed! Check evaluation_report.json for detailed results.")
-    print("Start Phoenix dashboard with: python -m phoenix.server.main serve")
+    print("Tracing dashboard is disabled; evaluations are stored in MongoDB if configured.")
 
 
 if __name__ == "__main__":

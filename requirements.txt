@@ -39,12 +39,4 @@ numpy
 transformers
 torch
 
-# Phoenix for LLM evaluation and tracing
-phoenix
-arize-phoenix
-arize-phoenix-evals
-
-# OpenTelemetry for tracing
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-otlp
+# Phoenix and OpenTelemetry removed (using no-op tracer)

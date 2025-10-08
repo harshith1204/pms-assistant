@@ -87,49 +87,9 @@ def find_and_kill_phoenix():
 
 
 def start_phoenix_server():
-    """Start Phoenix server"""
-    try:
-        print("Starting Phoenix server...")
-
-        # Set environment variables
-        env = os.environ.copy()
-        env.update({
-            'PHOENIX_HOST': 'localhost',
-            'PHOENIX_PORT': '6006',
-            'PHOENIX_LOG_LEVEL': 'INFO'
-        })
-
-        # Start Phoenix server
-        process = subprocess.Popen(
-            [sys.executable, '-m', 'phoenix.server.main', 'serve'],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-
-        print(f"Phoenix server started with PID: {process.pid}")
-        print("Phoenix dashboard: http://localhost:6006")
-
-        # Wait a moment for server to initialize
-        time.sleep(3)
-
-        # Check if process is still running
-        if process.poll() is None:
-            print("✅ Phoenix server started successfully!")
-            return True
-        else:
-            print("❌ Phoenix server failed to start")
-            # Get the error output
-            stdout, stderr = process.communicate()
-            if stderr:
-                print(f"Error output: {stderr.decode()}")
-            if stdout:
-                print(f"Output: {stdout.decode()}")
-            return False
-
-    except Exception as e:
-        print(f"Error starting Phoenix server: {e}")
-        return False
+    """Phoenix disabled: no-op starter."""
+    print("Phoenix server start requested, but Phoenix is disabled.")
+    return False
 
 
 def main():
@@ -144,13 +104,7 @@ def main():
     time.sleep(2)
 
     # Start new server
-    print("\n2️⃣  Starting fresh Phoenix server...")
-    if start_phoenix_server():
-        print("\n🎉 Phoenix server restarted successfully!")
-        print("Ready to use at http://localhost:6006")
-    else:
-        print("\n❌ Failed to start Phoenix server")
-        sys.exit(1)
+    print("\n2️⃣  Phoenix is disabled; skipping server start.")
 
 
 if __name__ == "__main__":
