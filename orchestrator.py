@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import os
-import contextlib
+ 
 
 
 Jsonable = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
@@ -92,45 +92,32 @@ class Orchestrator:
         backoff = step.retry_backoff_s
         while attempt <= step.retries:
             start = time.time()
-            span_cm = contextlib.nullcontext()
-            with span_cm as span:
-                try:
-                    coro = step.coroutine(context)
-                    result = await (asyncio.wait_for(coro, step.timeout_s) if step.timeout_s else coro)
+            try:
+                coro = step.coroutine(context)
+                result = await (asyncio.wait_for(coro, step.timeout_s) if step.timeout_s else coro)
 
-                    # Optional validation gate
-                    if step.validator is not None:
+                # Optional validation gate
+                if step.validator is not None:
+                    is_valid = False
+                    try:
+                        is_valid = bool(step.validator(result, context))
+                    except Exception:
                         is_valid = False
-                        try:
-                            is_valid = bool(step.validator(result, context))
-                        except Exception as ve:
-                            is_valid = False
-                            try:
-                                if hasattr(span, "add_event"):
-                                    span.add_event("validator_exception", {"message": str(ve)})
-                            except Exception:
-                                pass
-                        if not is_valid:
-                            raise RuntimeError(f"Validation failed for step '{step.name}'")
+                    if not is_valid:
+                        raise RuntimeError(f"Validation failed for step '{step.name}'")
 
-                    if cache_key:
-                        self._cache[cache_key] = result
-                    duration_ms = int((time.time() - start) * 1000)
-                    try:
-                        preview = str(result)[:400]
-                    except Exception:
-                        preview = "<unserializable>"
-                    try:
-                        if hasattr(span, "set_attribute"):
-                            span.set_attribute("step.success", True)
-                            span.set_attribute("step.duration_ms", duration_ms)
-                            span.set_attribute("output.preview", preview)
-                    except Exception:
-                        pass
-                    return step.name, result, None
-                except Exception as e:  # noqa: BLE001
-                    last_exc = e
-                    pass
+                if cache_key:
+                    self._cache[cache_key] = result
+                # duration and preview kept for potential future logging (no-op here)
+                _ = int((time.time() - start) * 1000)
+                try:
+                    _ = str(result)[:400]
+                except Exception:
+                    _ = "<unserializable>"
+                return step.name, result, None
+            except Exception as e:  # noqa: BLE001
+                last_exc = e
+                pass
             # Retry with backoff
             attempt += 1
             if attempt <= step.retries:
