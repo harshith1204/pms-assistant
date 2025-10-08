@@ -351,14 +351,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
-        if self.websocket:
-            # Always send full tool outputs to frontend for better visibility
-            payload = {
-                "type": "tool_end",
-                "output": output,
-                "timestamp": datetime.now().isoformat()
-            }
-            await self.websocket.send_json(payload)
+        # Do not send raw tool outputs to the UI; emit only a concise RESULT line
             # Emit concise result statement without internals
             summary = "Ready with findings"
             try:
