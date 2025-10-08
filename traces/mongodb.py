@@ -13,7 +13,7 @@ import json
 
 # MongoDB configuration
 MONGODB_CONFIG = {
-    "connection_string": "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin",
+    "connection_string": "",
     "database": "SimpoAssist",
     "collections": {
         "traces": "SimpoAssist.traces",
