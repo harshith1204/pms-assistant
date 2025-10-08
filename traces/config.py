@@ -187,7 +187,7 @@ def get_export_config() -> Dict[str, Any]:
 
 # Database connection settings for Phoenix
 PHOENIX_DB_CONFIG = {
-    "connection_string": "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin",  # MongoDB connection
+    "connection_string": "",  # MongoDB connection
     "database": "SimpoAssist",
     "collection": "traces",
     "max_pool_size": 100,
