@@ -3,8 +3,11 @@
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Dict, Any, List
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+# Tracing shim
+from traces import noop as _noop
+trace = type("TraceShim", (), {"get_tracer": _noop.get_tracer, "SpanKind": _noop.SpanKind})()
+Status = _noop.Status
+StatusCode = _noop.StatusCode
 import asyncio
 
 try:

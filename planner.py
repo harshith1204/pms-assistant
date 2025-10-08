@@ -21,8 +21,11 @@ from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+# Tracing shim
+from traces import noop as _noop
+trace = type("TraceShim", (), {"get_tracer": _noop.get_tracer, "SpanKind": _noop.SpanKind})()
+Status = _noop.Status
+StatusCode = _noop.StatusCode
 from langchain_groq import ChatGroq
 # Orchestration utilities
 from orchestrator import Orchestrator, StepSpec, as_async

@@ -12,7 +12,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from setup import EvaluationPipeline
-from setup import PhoenixTracer
+# Phoenix tracer not used directly here; left for compatibility if imported elsewhere
 
 
 async def main():
@@ -64,7 +64,7 @@ async def main():
         import traceback
         traceback.print_exc()
 
-    print("\n💡 Tip: Start Phoenix server separately with: python phoenix.py")
+    # Phoenix dashboard disabled
 
 
 if __name__ == "__main__":

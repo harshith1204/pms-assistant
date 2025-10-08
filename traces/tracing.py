@@ -1,26 +1,20 @@
-"""Unified tracing module to avoid circular imports"""
+"""Unified tracing module (no-op) to avoid circular imports"""
 from datetime import datetime
 import json
 import time
 import uuid
 from typing import Dict, Any, List
 
-# Tracing imports (Phoenix via OpenTelemetry exporter)
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from phoenix.trace.exporter import HttpExporter
-from phoenix import Client
-from phoenix.trace.trace_dataset import TraceDataset
-import pandas as pd
+# Tracing shim
+from traces import noop as _noop
+trace = type("TraceShim", (), {"get_tracer": _noop.get_tracer, "SpanKind": _noop.SpanKind})()
+Status = _noop.Status
+StatusCode = _noop.StatusCode
 import threading
 import time
-from opentelemetry.sdk.trace.export import SpanExporter, SpanProcessor
+from typing import Any
 
-# MongoDB imports
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure
+# MongoDB imports (disabled in no-op module)
 
 
 class UnifiedTracingManager:
@@ -35,34 +29,13 @@ class UnifiedTracingManager:
         self.trace_correlations = {}  # Maps operation IDs to trace info
 
     async def initialize(self):
-        """Initialize OpenTelemetry tracer provider with Phoenix exporter."""
+        """Initialize no-op tracer."""
         if self._initialized:
             return
-
-        try:
-            self.tracer_provider = TracerProvider()
-            trace.set_tracer_provider(self.tracer_provider)
-
-            # Console exporter for local dev visibility
-            console_exporter = ConsoleSpanExporter()
-            console_processor = BatchSpanProcessor(console_exporter)
-            self.tracer_provider.add_span_processor(console_processor)
-
-            # MongoDB span processor (our working solution)
-            mongodb_processor = PhoenixSpanProcessor()
-            self.tracer_provider.add_span_processor(mongodb_processor)
-
-            # Start MongoDB span collector
-            mongodb_span_collector.start_periodic_export()
-            print("✅ MongoDB span processor and collector configured")
-
-            self.tracer = trace.get_tracer(__name__)
-            self._initialized = True
-            print("✅ Unified tracing initialized with MongoDB storage")
-        except Exception as e:
-            print(f"❌ Failed to initialize tracing: {e}")
-            import traceback
-            traceback.print_exc()
+        self.tracer_provider = None
+        self.tracer = trace.get_tracer(__name__)
+        self._initialized = True
+        print("✅ Unified tracing (noop) initialized")
 
     def start_span(self, name: str, span_kind: str = "INTERNAL", attributes: Dict[str, Any] = None, parent_span=None):
         """Start a new span with optional parent context"""
@@ -212,7 +185,7 @@ class UnifiedTracingManager:
 
 
 class MongoDBSpanCollector:
-    """Collects and exports spans to MongoDB"""
+    """No-op collector stub (Mongo export disabled)."""
 
     def __init__(self):
         self.collected_spans = []
@@ -227,31 +200,13 @@ class MongoDBSpanCollector:
         self.initialize_mongodb()
 
     def initialize_mongodb(self):
-        """Initialize MongoDB connection"""
-        try:
-            from .config import PHOENIX_DB_CONFIG
-            self.mongodb_client = MongoClient(PHOENIX_DB_CONFIG["connection_string"])
-            self.database = self.mongodb_client[PHOENIX_DB_CONFIG["database"]]
-            self.collection = self.database[PHOENIX_DB_CONFIG["collection"]]
-            # Standardized collections
-            self.events_collection = self.database["trace_events"]
-            self.metrics_collection = self.database["metrics"]
-            print("✅ MongoDB connection initialized for span collection")
-        except Exception as e:
-            print(f"❌ Failed to initialize MongoDB connection: {e}")
-            self.mongodb_client = None
+        """Disabled in no-op mode."""
+        self.mongodb_client = None
 
     def collect_span(self, span):
         """Collect a span for export to MongoDB"""
-        if not self.mongodb_client:
-            print("⚠️  MongoDB not connected, skipping span collection")
-            return
-
+        # No-op
         self.collected_spans.append(span)
-
-        # If we have many spans, export them
-        if len(self.collected_spans) >= self.batch_size:
-            self.export_to_mongodb()
 
     def convert_span_to_dict(self, span):
         """Convert OpenTelemetry span to MongoDB document"""
@@ -317,76 +272,8 @@ class MongoDBSpanCollector:
         return span_dict
 
     def export_to_mongodb(self):
-        """Export collected spans to MongoDB"""
-        if not self.collected_spans or not self.mongodb_client:
-            return
-
-        try:
-            # Build documents for traces, events, and metrics
-            trace_docs = []
-            event_docs = []
-            metric_docs = []
-
-            for span in self.collected_spans:
-                span_doc = self.convert_span_to_dict(span)
-                trace_docs.append(span_doc)
-
-                # Build event documents (one per event)
-                if span.events:
-                    for event in span.events:
-                        event_docs.append({
-                            'trace_id': span_doc['trace_id'],
-                            'span_id': span_doc['span_id'],
-                            'span_name': span_doc['name'],
-                            'name': event.name,
-                            'timestamp': event.timestamp if not isinstance(event.timestamp, (int, float)) else datetime.fromtimestamp(event.timestamp / 1e9),
-                            'attributes': dict(event.attributes),
-                            'created_at': datetime.now()
-                        })
-
-                # Build basic metrics document per span
-                metric_docs.append({
-                    'trace_id': span_doc['trace_id'],
-                    'span_id': span_doc['span_id'],
-                    'span_name': span_doc['name'],
-                    'span_kind': span_doc.get('kind'),
-                    'status_code': span_doc.get('status_code'),
-                    'duration_ms': span_doc.get('duration_ms'),
-                    'start_time': span_doc.get('start_time'),
-                    'end_time': span_doc.get('end_time'),
-                    'attributes_count': len(span_doc.get('attributes', {})),
-                    'events_count': len(span.events or []),
-                    'created_at': datetime.now()
-                })
-
-            # Insert traces
-            if trace_docs:
-                self.collection.insert_many(trace_docs, ordered=False)
-                print(f"✅ Exported {len(trace_docs)} spans to MongoDB collection 'traces'")
-
-                # Optional: Also store in time-based collection for better querying
-                # Uncomment the following lines if you want time-based collections
-                # now = datetime.now()
-                # time_collection_name = f"traces_{now.strftime('%Y_%m')}"
-                # time_collection = self.database[time_collection_name]
-                # time_collection.insert_many(trace_docs, ordered=False)
-                # print(f"✅ Also stored in time-based collection: {time_collection_name}")
-
-            # Insert events
-            if event_docs and self.events_collection is not None:
-                self.events_collection.insert_many(event_docs, ordered=False)
-                print(f"✅ Exported {len(event_docs)} events to MongoDB collection 'trace_events'")
-
-            # Insert metrics
-            if metric_docs and self.metrics_collection is not None:
-                self.metrics_collection.insert_many(metric_docs, ordered=False)
-                print(f"✅ Exported {len(metric_docs)} metrics to MongoDB collection 'metrics'")
-
-            # Clear collected spans
-            self.collected_spans.clear()
-
-        except Exception as e:
-            print(f"❌ Error exporting spans to MongoDB: {e}")
+        """No-op in shim mode."""
+        self.collected_spans.clear()
 
     def start_periodic_export(self):
         """Start periodic export of collected spans"""
@@ -394,7 +281,7 @@ class MongoDBSpanCollector:
             return
 
         self.running = True
-        self.export_thread = threading.Thread(target=self._periodic_export_worker, daemon=True)
+            self.export_thread = threading.Thread(target=self._periodic_export_worker, daemon=True)
         self.export_thread.start()
 
     def stop_periodic_export(self):
@@ -402,7 +289,7 @@ class MongoDBSpanCollector:
         self.running = False
         if self.export_thread:
             self.export_thread.join(timeout=5)
-        self.export_to_mongodb()  # Export any remaining spans
+        self.export_to_mongodb()
 
     def _periodic_export_worker(self):
         """Worker thread for periodic span export"""
@@ -457,8 +344,8 @@ class MongoDBSpanCollector:
             return []
 
 
-class PhoenixSpanProcessor(SpanProcessor):
-    """Custom span processor that sends spans to MongoDB collector"""
+class PhoenixSpanProcessor:
+    """No-op span processor API-compatible."""
 
     def on_start(self, span, parent_context=None):
         """Called when a span starts"""

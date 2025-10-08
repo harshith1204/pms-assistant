@@ -13,9 +13,7 @@ from typing import Dict, Any, List
 from pathlib import Path
 from datetime import datetime
 
-# Phoenix imports
-from phoenix import Client
-from phoenix.trace import using_project
+# Phoenix removed; keep local JSON creation only
 
 # Add parent directory to path for local imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,8 +24,9 @@ from .config import EVALUATION_DATASET_CONFIG
 class PhoenixDatasetUploader:
     """Uploads evaluation dataset to Phoenix"""
 
-    def __init__(self, phoenix_client: Client = None):
-        self.client = phoenix_client or Client()
+    def __init__(self, phoenix_client: object | None = None):
+        # client unused; preserved for signature compatibility
+        self.client = None
         self.dataset_name = EVALUATION_DATASET_CONFIG["name"]
         self.dataset_description = EVALUATION_DATASET_CONFIG["description"]
         self.dataset_version = EVALUATION_DATASET_CONFIG["version"]
@@ -142,39 +141,37 @@ class PhoenixDatasetUploader:
         return list(set(entities))  # Remove duplicates
 
     def create_phoenix_dataset(self, dataset: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Create a Phoenix-compatible dataset"""
+        """Create dataset metadata and dataframe (for local export)."""
         try:
             # Convert to DataFrame for Phoenix
             df = pd.DataFrame(dataset)
 
-            # Create the dataset in Phoenix
-            with using_project("pms-assistant-eval"):
-                # Log dataset creation
-                print(f"📤 Creating Phoenix dataset: {self.dataset_name}")
-                print(f"📊 Dataset contains {len(df)} entries")
+            # Log dataset creation
+            print(f"📤 Creating dataset: {self.dataset_name}")
+            print(f"📊 Dataset contains {len(df)} entries")
 
-                # Save dataset metadata
-                dataset_metadata = {
-                    "name": self.dataset_name,
-                    "description": self.dataset_description,
-                    "version": self.dataset_version,
-                    "total_entries": len(dataset),
-                    "categories": df['query_category'].value_counts().to_dict(),
-                    "expected_entities": df['expected_entities'].explode().value_counts().to_dict(),
-                    "created_at": datetime.now().isoformat()
-                }
+            # Save dataset metadata
+            dataset_metadata = {
+                "name": self.dataset_name,
+                "description": self.dataset_description,
+                "version": self.dataset_version,
+                "total_entries": len(dataset),
+                "categories": df['query_category'].value_counts().to_dict(),
+                "expected_entities": df['expected_entities'].explode().value_counts().to_dict(),
+                "created_at": datetime.now().isoformat()
+            }
 
-                # Save to JSON file for reference
-                with open('phoenix_dataset_metadata.json', 'w') as f:
-                    json.dump(dataset_metadata, f, indent=2)
+            # Save to JSON file for reference
+            with open('phoenix_dataset_metadata.json', 'w') as f:
+                json.dump(dataset_metadata, f, indent=2)
 
-                print(f"✅ Dataset metadata saved to phoenix_dataset_metadata.json")
+            print(f"✅ Dataset metadata saved to phoenix_dataset_metadata.json")
 
-                return {
-                    "dataset": df,
-                    "metadata": dataset_metadata,
-                    "success": True
-                }
+            return {
+                "dataset": df,
+                "metadata": dataset_metadata,
+                "success": True
+            }
 
         except Exception as e:
             print(f"❌ Error creating Phoenix dataset: {e}")
@@ -188,7 +185,7 @@ class PhoenixDatasetUploader:
             }
 
     def upload_to_phoenix(self, dataset_info: Dict[str, Any]) -> bool:
-        """Upload dataset to Phoenix server"""
+        """Save dataset JSON locally (Phoenix disabled)."""
         try:
             if not dataset_info["success"]:
                 print("❌ Cannot upload dataset: creation failed")
@@ -204,9 +201,7 @@ class PhoenixDatasetUploader:
                 json.dump(dataset_info, f, indent=2, default=str)
 
             print(f"📁 Dataset saved to: {dataset_file}")
-            print("💡 To import into Phoenix dashboard:")
-            print("   1. Start Phoenix server: python phoenix.py")
-            print("   2. Open browser to http://localhost:6006")
+            print("💡 Phoenix disabled. Local JSON prepared.")
             print("   3. Go to 'Datasets' section")
             return True
 
@@ -282,10 +277,7 @@ class PhoenixDatasetUploader:
             print("   - Dataset JSON file")
 
             print("\n📋 Next Steps:")
-            print("1. Start Phoenix server: python phoenix.py")
-            print("2. Open browser to http://localhost:6006")
-            print("3. Import the dataset JSON file")
-            print("4. Run evaluations: python run_evaluation.py")
+            print("1. Use the JSON files for any offline evaluation workflows.")
 
         return success
 

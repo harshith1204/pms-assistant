@@ -15,8 +15,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+# Tracing shim (no-op)
+from traces import noop as _noop
+trace = type("TraceShim", (), {"get_tracer": _noop.get_tracer, "SpanKind": _noop.SpanKind})()
+Status = _noop.Status
+StatusCode = _noop.StatusCode
 
 
 Jsonable = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
