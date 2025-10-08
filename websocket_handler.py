@@ -12,8 +12,6 @@ import re
 
 from mongo.constants import DATABASE_NAME
 from planner import plan_and_execute_query
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
 import os
 import contextlib
 
@@ -155,8 +153,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             })
 
             # Create a root span per user message and keep all work nested (disabled if DISABLE_TRACING)
-            tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
-            tracer = None if tracing_disabled else trace.get_tracer(__name__)
+            tracer = None
             user_span_cm = (
                 tracer.start_as_current_span(
                     "user_request",
@@ -173,10 +170,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 # Route ONLY when explicitly forced; default to streaming agent
                 if force_planner:
                     try:
-                        planner_span_cm = (
-                            tracer.start_as_current_span("planner_execute", kind=trace.SpanKind.INTERNAL)
-                            if tracer else contextlib.nullcontext()
-                        )
+                        planner_span_cm = contextlib.nullcontext()
                         with planner_span_cm as planner_span:
                             try:
                                 planner_span.set_attribute("input.value", (message or "")[:1000])
@@ -210,10 +204,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         })
                 else:
                     # Use regular LLM with tool calling
-                    agent_span_cm = (
-                        tracer.start_as_current_span("agent_stream", kind=trace.SpanKind.INTERNAL)
-                        if tracer else contextlib.nullcontext()
-                    )
+                    agent_span_cm = contextlib.nullcontext()
                     with agent_span_cm as agent_span:
                         if agent_span:
                             try:
