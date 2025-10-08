@@ -23,7 +23,7 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-
+from langchain_groq import ChatGroq
 # Orchestration utilities
 from orchestrator import Orchestrator, StepSpec, as_async
 
@@ -40,6 +40,14 @@ except Exception:  # Fallback when OpenInference isn't installed
         ERROR_MESSAGE = "error.message"
 
     OI = _OI()
+from dotenv import load_dotenv
+load_dotenv()
+groq_api_key = os.getenv("GROQ_API_KEY")
+if not groq_api_key:
+    raise ValueError(
+        "FATAL: GROQ_API_KEY environment variable not set.\n"
+        "Please create a .env file and add your Groq API key to it."
+    )
 
 @dataclass
 class QueryIntent:

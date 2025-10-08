@@ -1,3 +1,4 @@
+import sys
 from langchain_core.tools import tool
 from typing import Optional, Dict, List, Any, Union
 import mongo.constants
@@ -7,7 +8,7 @@ import re
 from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
-from qdrant.qdrant_initializer import RAGTool
+from qdrant.initializer import RAGTool
 # Qdrant and RAG dependencies
 # try:
 #     from qdrant_client import QdrantClient
@@ -754,8 +755,8 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 @tool
 async def rag_search(
     query: str,
-    content_type: str = None,
-    group_by: str = None,
+    content_type: Optional[str] = None,
+    group_by: Optional[str] = None,
     limit: int = 10,
     show_content: bool = True,
     use_chunk_aware: bool = True
@@ -802,6 +803,19 @@ async def rag_search(
         query="bugs", content_type="work_item", group_by="priority" → work items grouped by priority
     """
     try:
+        # Fix: Add project root to sys.path to resolve module imports
+        # This makes 'qdrant' and 'mongo' modules importable from any script location.
+        # Adjust the number of os.path.dirname if your directory structure is different.
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if project_root not in sys.path:
+            sys.path.append(project_root)
+        from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
+    except ImportError as e:
+        return f"❌ RAG dependency error: {e}. Please ensure all modules are in the correct path."
+    except Exception as e:
+        return f"❌ RAG SEARCH INITIALIZATION ERROR: {str(e)}"
+    
+    try:
         from collections import defaultdict
 
         # Ensure RAGTool is initialized
@@ -835,6 +849,7 @@ async def rag_search(
             include_adjacent = CONTENT_TYPE_INCLUDE_ADJACENT.get(content_type or "", True)
             min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.5)
 
+            from mongo.constants import RAG_CONTEXT_TOKEN_BUDGET
             reconstructed_docs = await retriever.search_with_context(
                 query=query,
                 collection_name=QDRANT_COLLECTION_NAME,
@@ -842,7 +857,8 @@ async def rag_search(
                 limit=effective_limit,
                 chunks_per_doc=chunks_per_doc,
                 include_adjacent=include_adjacent,
-                min_score=min_score
+                min_score=min_score,
+                context_token_budget=RAG_CONTEXT_TOKEN_BUDGET
             )
             
             if not reconstructed_docs:
