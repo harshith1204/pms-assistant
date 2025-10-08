@@ -366,12 +366,7 @@ class MongoDBAgent:
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
-        # Avoid auto-enabling tracing if globally disabled
-        if not self.tracing_enabled:
-            try:
-                await self.initialize_tracing()
-            except Exception:
-                pass
+        # Tracing initialization removed - method does not exist
         span = None
         try:
             await mongodb_tools.connect()
