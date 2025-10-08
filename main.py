@@ -14,7 +14,7 @@ from agent import MongoDBAgent, phoenix_span_manager
 from traces.setup import EvaluationPipeline
 from traces.upload_dataset import PhoenixDatasetUploader
 from websocket_handler import handle_chat_websocket, ws_manager
-from qdrant.qdrant_initializer import RAGTool
+from qdrant.initializer import RAGTool
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
     message: str

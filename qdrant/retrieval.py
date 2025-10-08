@@ -9,11 +9,14 @@ Improves context quality by:
 """
 
 from typing import List, Dict, Any, Optional, Set, Tuple
+import re
 from mongo.constants import BUSINESS_UUID
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
-
+from qdrant_client.models import (
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+)
 
 @dataclass
 class ChunkResult:
@@ -50,6 +53,15 @@ class ChunkAwareRetriever:
     def __init__(self, qdrant_client, embedding_model):
         self.qdrant_client = qdrant_client
         self.embedding_model = embedding_model
+        # Minimal English stopword list for lightweight keyword-overlap filtering
+        self._STOPWORDS: Set[str] = {
+            "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
+            "for", "with", "about", "against", "between", "into", "through", "during", "before",
+            "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off",
+            "over", "under", "again", "further", "here", "there", "why", "how", "all", "any",
+            "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+            "only", "own", "same", "so", "than", "too", "very", "can", "will", "just"
+        }
     
     async def search_with_context(
         self,
@@ -59,7 +71,19 @@ class ChunkAwareRetriever:
         limit: int = 10,
         chunks_per_doc: int = 3,
         include_adjacent: bool = True,
-        min_score: float = 0.5
+        min_score: float = 0.5,
+        text_query: Optional[str] = None,
+        *,
+        # Quality filters (token cost control)
+        min_content_chars: int = 30,
+        min_keyword_overlap: float = 0.05,
+        # Retrieval behavior flags
+        enable_keyword_fallback: bool = False,
+        # Sparse tuning (to ensure SPLADE signal isn't over-filtered)
+        sparse_score_threshold: Optional[float] = None,
+        sparse_limit_multiplier: float = 2.0,
+        # Packing budget (approx token budget for merged content)
+        context_token_budget: Optional[int] = None,
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -72,6 +96,10 @@ class ChunkAwareRetriever:
             chunks_per_doc: Max chunks to retrieve per document
             include_adjacent: Whether to fetch adjacent chunks for context
             min_score: Minimum relevance score threshold
+            text_query: Optional custom keyword query for fallback full_text
+            min_content_chars: Drop chunks with content shorter than this (after strip)
+            min_keyword_overlap: Minimum query-token overlap ratio required
+            enable_keyword_fallback: If True, allow full_text prefetch fallback
             
         Returns:
             List of reconstructed documents with full context
@@ -88,30 +116,104 @@ class ChunkAwareRetriever:
         if BUSINESS_UUID:
             must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
         search_filter = Filter(must=must_conditions) if must_conditions else None
-        
+
         # Fetch more chunks initially to ensure we have multiple per document
-        initial_limit = limit * chunks_per_doc * 2
+        # Increase pool size for smaller chunks to maintain document recall
+        initial_limit = max(limit * max(chunks_per_doc * 3, 10), 50)
+
+        # search_results = self.qdrant_client.search(
+        #     collection_name=collection_name,
+        #     query_vector=query_embedding,
+        #     query_filter=search_filter,
+        #     limit=initial_limit,
+        #     with_payload=True,
+        #     score_threshold=min_score
+        # )
         
-        search_results = self.qdrant_client.search(
-            collection_name=collection_name,
-            query_vector=query_embedding,
-            query_filter=search_filter,
+        # --- Hybrid Search Logic ---
+        # Prefer dense + SPLADE-sparse fusion; fall back to full_text keyword if SPLADE unavailable
+
+        dense_prefetch = Prefetch(
+            query=NearestQuery(nearest=query_embedding),
+            using="dense",
             limit=initial_limit,
-            with_payload=True,
-            score_threshold=min_score
+            score_threshold=min_score,
+            filter=search_filter
         )
+
+        prefetch_list = [dense_prefetch]
+
+        # Try SPLADE for sparse query
+        sparse_added = False
+        try:
+            from qdrant.encoder import get_splade_encoder
+            splade = get_splade_encoder()
+            splade_vec = splade.encode_text(query)
+            if splade_vec.get("indices"):
+                sparse_prefetch = Prefetch(
+                    query=NearestQuery(
+                        nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
+                    ),
+                    using="sparse",
+                    limit=max(initial_limit, int(initial_limit * max(1.0, float(sparse_limit_multiplier)))),
+                    # Use dedicated threshold for sparse; default None to avoid over-filtering
+                    score_threshold=sparse_score_threshold,
+                    filter=search_filter,
+                )
+                prefetch_list.append(sparse_prefetch)
+                sparse_added = True
+        except Exception as e:
+            # SPLADE optional; fall back to keyword search
+            pass
+
+        if enable_keyword_fallback and not sparse_added:
+            # Fallback to text index keyword search; use provided text_query or original query
+            keyword_query = text_query or query
+            keyword_prefetch = Prefetch(
+                query=NearestQuery(nearest=keyword_query),
+                using="full_text",
+                limit=initial_limit,
+                filter=search_filter,
+            )
+            prefetch_list.append(keyword_prefetch)
+
+        hybrid_query = FusionQuery(fusion=Fusion.RRF)
+
+        try:
+            search_results = self.qdrant_client.query_points(
+                collection_name=collection_name,
+                prefetch=prefetch_list,
+                query=hybrid_query,
+                limit=initial_limit,
+            ).points
+        except Exception as e:
+            print(f"❌ Hybrid search failed: {e}")
+            return []
         
+
         if not search_results:
             return []
         
         # Step 2: Group chunks by parent document
         doc_chunks: Dict[str, List[ChunkResult]] = defaultdict(list)
         
+        # Pre-tokenize query for lightweight overlap checks
+        query_terms = self._tokenize(query)
+
         for result in search_results:
             payload = result.payload or {}
             
             # Prefer 'content'; fallback to 'full_text' or title if missing
             content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+
+            # Quality gates to prune irrelevant/low-signal chunks early
+            if not self._should_keep_chunk(
+                content_text=content_text,
+                query_terms=query_terms,
+                min_content_chars=min_content_chars,
+                min_keyword_overlap=min_keyword_overlap,
+            ):
+                continue
 
             chunk = ChunkResult(
                 id=str(result.id),
@@ -141,8 +243,48 @@ class ChunkAwareRetriever:
             max_docs=limit,
             chunks_per_doc=chunks_per_doc
         )
-        
+
+        # Optionally pack to a token budget by pruning extra context chunks
+        if context_token_budget is not None and context_token_budget > 0:
+            reconstructed_docs = self._pack_docs_to_budget(reconstructed_docs, context_token_budget)
+
         return reconstructed_docs
+
+    # --- Lightweight quality filters ---
+    def _tokenize(self, text: str) -> Set[str]:
+        if not text:
+            return set()
+        # Alphanumeric tokens, lowercased; remove trivial stopwords
+        tokens = re.findall(r"[a-z0-9]+", text.lower())
+        return {t for t in tokens if t and t not in self._STOPWORDS}
+
+    def _keyword_overlap(self, query_terms: Set[str], text: str) -> float:
+        if not query_terms:
+            return 0.0
+        doc_terms = self._tokenize(text)
+        if not doc_terms:
+            return 0.0
+        intersection = query_terms & doc_terms
+        return len(intersection) / max(1, len(query_terms))
+
+    def _should_keep_chunk(
+        self,
+        *,
+        content_text: str,
+        query_terms: Set[str],
+        min_content_chars: int,
+        min_keyword_overlap: float,
+    ) -> bool:
+        if not content_text:
+            return False
+        text = content_text.strip()
+        if len(text) < min_content_chars:
+            # Short snippets (e.g., "Hi") must have stronger lexical signal
+            return self._keyword_overlap(query_terms, text) >= max(min_keyword_overlap, 0.2)
+        # For longer content, apply configured overlap threshold if set (>0)
+        if min_keyword_overlap > 0:
+            return self._keyword_overlap(query_terms, text) >= min_keyword_overlap
+        return True
     
     async def _fetch_adjacent_chunks(
         self,
@@ -361,6 +503,99 @@ class ChunkAwareRetriever:
         
         return f"chunks {','.join(ranges)} of {total}"
 
+    # --- Budget packing utilities ---
+    def _rough_token_count(self, text: str) -> int:
+        # Very rough token estimator: ~0.75 tokens/word, but use 1.0 for safety with punctuation
+        # Using words count as upper-bound to be conservative
+        if not text:
+            return 0
+        return max(1, len(text.split()))
+
+    def _pack_docs_to_budget(self, docs: List[ReconstructedDocument], budget_tokens: int) -> List[ReconstructedDocument]:
+        """
+        Trim merged content across documents to fit within an approximate token budget.
+        Strategy:
+        - Keep documents sorted by score (already is)
+        - For each document, if over budget, drop lowest-utility context chunks first
+          while preserving at least one high-scoring chunk.
+        - Recompute merged content after pruning.
+        """
+        packed: List[ReconstructedDocument] = []
+        remaining = max(1, budget_tokens)
+
+        for doc in docs:
+            # Quick accept if content already small
+            content_tokens = self._rough_token_count(doc.full_content)
+            if content_tokens <= remaining:
+                packed.append(doc)
+                remaining -= content_tokens
+                continue
+
+            # Otherwise, prune chunks: keep scored first then adjacent context around them
+            scored = [c for c in doc.chunks if c.score > 0]
+            if not scored:
+                # If no scored chunks (edge case), keep first chunk only
+                kept = doc.chunks[:1]
+            else:
+                # Start with top scored chunk, then add neighbors until we hit remaining
+                top = sorted(scored, key=lambda c: c.score, reverse=True)
+                kept_indices: Set[int] = set()
+                kept: List[ChunkResult] = []
+                for s in top:
+                    if s.chunk_index in kept_indices:
+                        continue
+                    # Add s
+                    kept.append(s)
+                    kept_indices.add(s.chunk_index)
+                    # Try to add immediate neighbors if present
+                    for delta in (-1, 1):
+                        neighbor_idx = s.chunk_index + delta
+                        for c in doc.chunks:
+                            if c.chunk_index == neighbor_idx and neighbor_idx not in kept_indices:
+                                kept.append(c)
+                                kept_indices.add(neighbor_idx)
+                    # Merge and check size; stop early if we exceed remaining
+                    merged = self._merge_chunks(sorted(kept, key=lambda c: c.chunk_index))
+                    if self._rough_token_count(merged) > remaining:
+                        # Remove last added neighbor(s) if they pushed over budget
+                        # Keep at least the top scored chunk
+                        kept = [s]
+                        break
+
+            # Rebuild document with kept chunks
+            kept_sorted = sorted(kept, key=lambda c: c.chunk_index)
+            merged_content = self._merge_chunks(kept_sorted)
+            merged_tokens = self._rough_token_count(merged_content)
+
+            if merged_tokens <= remaining:
+                remaining -= merged_tokens
+            else:
+                # If still too big, truncate content text conservatively by words
+                words = merged_content.split()
+                if remaining > 10:  # avoid micro snippets
+                    merged_content = " ".join(words[:remaining])
+                    remaining = 0
+                else:
+                    merged_content = " ".join(words[:10])
+                    remaining = 0
+
+            packed.append(ReconstructedDocument(
+                mongo_id=doc.mongo_id,
+                title=doc.title,
+                content_type=doc.content_type,
+                chunks=kept_sorted,
+                max_score=doc.max_score,
+                avg_score=doc.avg_score,
+                full_content=merged_content,
+                metadata=doc.metadata,
+                chunk_coverage=doc.chunk_coverage,
+            ))
+
+            if remaining <= 0:
+                break
+
+        return packed
+
 
 def format_reconstructed_results(
     docs: List[ReconstructedDocument],
@@ -424,3 +659,31 @@ def format_reconstructed_results(
     
     return "\n".join(response_parts)
 
+
+def extract_keywords(text: str, max_terms: int = 12) -> str:
+    """
+    Lightweight keyword extractor used for fallback full_text queries.
+    Removes trivial stopwords and non-alphanumerics; returns space-joined terms.
+    """
+    if not text:
+        return ""
+    stop = {
+        "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
+        "for", "with", "about", "against", "between", "into", "through", "during", "before",
+        "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off",
+        "over", "under", "again", "further", "here", "there", "why", "how", "all", "any",
+        "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+        "only", "own", "same", "so", "than", "too", "very", "can", "will", "just"
+    }
+    terms = re.findall(r"[a-z0-9]+", text.lower())
+    terms = [t for t in terms if t and t not in stop]
+    # Deduplicate while keeping order
+    seen = set()
+    unique_terms = []
+    for t in terms:
+        if t not in seen:
+            seen.add(t)
+            unique_terms.append(t)
+        if len(unique_terms) >= max_terms:
+            break
+    return " ".join(unique_terms)

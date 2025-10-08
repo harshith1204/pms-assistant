@@ -35,6 +35,10 @@ qdrant-client
 sentence-transformers
 numpy
 
+# SPLADE (sparse) dependencies
+transformers
+torch
+
 # Phoenix for LLM evaluation and tracing
 phoenix
 arize-phoenix
