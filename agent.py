@@ -63,6 +63,8 @@ try:
 except AttributeError:
     # Fallback: define empty tools list if import fails
     tools_list = []
+import os
+from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
 
 
