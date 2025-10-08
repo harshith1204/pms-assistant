@@ -7,11 +7,11 @@ import { useState } from "react";
 
 interface Message {
   id: string;
-  type: "user" | "assistant" | "thought" | "tool";
+  type: "user" | "assistant" | "thought" | "tool" | "action" | "result";
   content: string;
   timestamp: string;
   toolName?: string;
-  toolOutput?: any;
+  toolOutput?: unknown;
 }
 
 interface ChatMessageProps {
@@ -38,6 +38,10 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
         return <Brain className="h-4 w-4" />;
       case "tool":
         return <Wrench className="h-4 w-4" />;
+      case "action":
+        return <Clock className="h-4 w-4" />;
+      case "result":
+        return <Check className="h-4 w-4" />;
       default:
         return <Bot className="h-4 w-4" />;
     }
@@ -69,6 +73,18 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
           card: "bg-chat-bubble-tool text-chat-bubble-tool-foreground border border-muted",
           icon: "bg-muted text-muted-foreground",
         };
+      case "action":
+        return {
+          container: "mr-auto max-w-[80%]",
+          card: "bg-muted/40 text-muted-foreground border border-muted/60",
+          icon: "bg-muted text-muted-foreground",
+        };
+      case "result":
+        return {
+          container: "mr-auto max-w-[80%]",
+          card: "bg-muted/30 text-foreground border border-muted/60",
+          icon: "bg-green-500 text-white",
+        };
       default:
         return {
           container: "mr-auto max-w-[80%]",
@@ -88,7 +104,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
         <div className="mt-3 p-3 bg-muted/30 rounded-md">
           <p className="text-xs font-medium mb-2">Output:</p>
           <div className="space-y-1">
-            {message.toolOutput.map((item: any, index: number) => (
+            {(message.toolOutput as unknown[]).map((item: unknown, index: number) => (
               <Badge key={index} variant="outline" className="text-xs mr-1 mb-1">
                 {item}
               </Badge>
@@ -112,7 +128,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
     return (
       <div className="mt-3 p-3 bg-muted/30 rounded-md">
         <p className="text-xs font-medium mb-2">Output:</p>
-        <pre className="text-xs font-mono whitespace-pre-wrap">{JSON.stringify(message.toolOutput, null, 2)}</pre>
+        <pre className="text-xs font-mono whitespace-pre-wrap">{JSON.stringify(message.toolOutput as unknown, null, 2)}</pre>
       </div>
     );
   };
@@ -143,6 +159,16 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
                 <Badge variant="outline" className="text-xs">
                   <Wrench className="h-3 w-3 mr-1" />
                   {message.toolName}
+                </Badge>
+              )}
+              {message.type === "action" && (
+                <Badge variant="secondary" className="text-xs">
+                  In progress
+                </Badge>
+              )}
+              {message.type === "result" && (
+                <Badge variant="outline" className="text-xs">
+                  Completed
                 </Badge>
               )}
             </div>
