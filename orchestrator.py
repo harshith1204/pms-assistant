@@ -15,8 +15,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+import os
+import contextlib
 
 
 Jsonable = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
@@ -70,7 +70,7 @@ class Orchestrator:
     """
 
     def __init__(self, tracer_name: str = __name__, max_parallel: int = 5):
-        self.tracer = trace.get_tracer(tracer_name)
+        self.tracer = None
         self.max_parallel = max_parallel
         self._cache: Dict[str, Any] = {}
 
@@ -92,16 +92,8 @@ class Orchestrator:
         backoff = step.retry_backoff_s
         while attempt <= step.retries:
             start = time.time()
-            with self.tracer.start_as_current_span(
-                f"orchestrator.step:{step.name}",
-                kind=trace.SpanKind.INTERNAL,
-                attributes={
-                    "orchestrator.correlation_id": correlation_id or "",
-                    "step.requires": ",".join(step.requires) if step.requires else "",
-                    "step.provides": step.provides or "",
-                    "step.attempt": attempt,
-                },
-            ) as span:
+            span_cm = contextlib.nullcontext()
+            with span_cm as span:
                 try:
                     coro = step.coroutine(context)
                     result = await (asyncio.wait_for(coro, step.timeout_s) if step.timeout_s else coro)
@@ -130,12 +122,7 @@ class Orchestrator:
                     return step.name, result, None
                 except Exception as e:  # noqa: BLE001
                     last_exc = e
-                    try:
-                        span.set_status(Status(StatusCode.ERROR, str(e)))
-                        span.set_attribute("step.success", False)
-                        span.add_event("step_exception", {"message": str(e)})
-                    except Exception:
-                        pass
+                    pass
             # Retry with backoff
             attempt += 1
             if attempt <= step.retries:
