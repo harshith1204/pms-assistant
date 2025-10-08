@@ -18,44 +18,7 @@ import os
 import uuid
 import hashlib
 
-# Tracing imports (Phoenix via OpenTelemetry exporter)
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from phoenix import Client
-from phoenix.trace.trace_dataset import TraceDataset
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-import pandas as pd
-import threading
-import time
-from opentelemetry.sdk.trace.export import SpanProcessor
-from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 import math
-
-# OpenInference semantic conventions (optional)
-try:
-    from openinference.semconv.trace import SpanAttributes as OI
-except Exception:  # Fallback when OpenInference isn't installed
-    class _OI:
-        INPUT_VALUE = "input.value"
-        OUTPUT_VALUE = "output.value"
-        SPAN_KIND = "openinference.span.kind"
-        LLM_MODEL_NAME = "llm.model_name"
-        LLM_TEMPERATURE = "llm.temperature"
-        LLM_TOP_P = "llm.top_p"
-        LLM_TOP_K = "llm.top_k"
-        LLM_PROMPT = "llm.prompt"
-        LLM_SYSTEM = "llm.system_prompt"
-        LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
-        TOOL_NAME = "tool.name"
-        TOOL_INPUT = "tool.input"
-        TOOL_OUTPUT = "tool.output"
-        ERROR_TYPE = "error.type"
-        ERROR_MESSAGE = "error.message"
-
-    OI = _OI()
 
 # Import tools list
 try:
@@ -268,251 +231,18 @@ def _select_tools_for_query(user_query: str):
 
 
 class PhoenixSpanManager:
-    """Manages Phoenix spans and tracer for the agent."""
+    """No-op tracer manager retained for compatibility after tracing removal."""
 
     def __init__(self):
-        self.tracer_provider = None
         self.tracer = None
-        self._initialized = False
+        self._initialized = True
 
     async def initialize(self):
-        """Initialize OpenTelemetry tracer provider with Phoenix exporter."""
-        if self._initialized:
-            return
+        return
 
-        try:
-            # Add a resource so Phoenix shows a sensible service name
-            resource = Resource.create({
-                "service.name": "pms-assistant",
-                "service.version": "1.0.0",
-            })
-            self.tracer_provider = TracerProvider(resource=resource)
-            trace.set_tracer_provider(self.tracer_provider)
+    def cleanup(self):
+        return
 
-            # Console exporter for local dev visibility
-            console_exporter = ConsoleSpanExporter()
-            console_processor = BatchSpanProcessor(console_exporter)
-            self.tracer_provider.add_span_processor(console_processor)
-
-            # Register MongoDB span processor (stores spans directly in MongoDB)
-            try:
-                mongodb_processor = MongoDBSpanProcessor()
-                self.tracer_provider.add_span_processor(mongodb_processor)
-                mongodb_span_collector.start_periodic_export()
-                print("✅ MongoDB span processor configured for tracing")
-            except Exception as e:
-                print(f"⚠️  Failed to configure MongoDB span processor: {e}")
-
-            # Also export to Phoenix UI via OTLP HTTP so GUI shows new spans
-            try:
-                otlp_http_exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
-                otlp_processor = BatchSpanProcessor(otlp_http_exporter)
-                self.tracer_provider.add_span_processor(otlp_processor)
-                print("✅ OTLP HTTP exporter configured for Phoenix UI (/v1/traces)")
-            except Exception as e:
-                print(f"⚠️  Failed to configure OTLP HTTP exporter: {e}")
-
-            # Disable custom collector-based export to avoid duplicates
-            # (We keep the class around, but do not register the processor or start the collector.)
-
-            self.tracer = trace.get_tracer(__name__)
-            self._initialized = True
-            print("✅ Tracing initialized with MongoDB + Phoenix UI export")
-        except Exception as e:
-            print(f"❌ Failed to initialize tracing: {e}")
-            import traceback
-            traceback.print_exc()
-
-
-class PhoenixSpanCollector:
-    """Collects and exports spans to Phoenix"""
-
-    def __init__(self):
-        self.collected_spans = []
-        self.phoenix_client = Client()
-        self.export_thread = None
-        self.running = False
-
-    def collect_span(self, span):
-        """Collect a span for export to Phoenix"""
-        self.collected_spans.append(span)
-
-        # If we have many spans, export them
-        if len(self.collected_spans) >= 10:
-            self.export_to_phoenix()
-
-    def export_to_phoenix(self):
-        """Export collected spans to Phoenix"""
-        if not self.collected_spans:
-            return
-
-        try:
-            # Convert spans to DataFrame format
-            spans_data = []
-            for span in self.collected_spans:
-                # Extract span information with proper timestamp conversion
-                def format_timestamp(timestamp):
-                    """Convert OpenTelemetry timestamp to ISO format"""
-                    if hasattr(timestamp, 'isoformat'):
-                        return timestamp.isoformat()
-                    elif isinstance(timestamp, (int, float)):
-                        # Convert nanoseconds to datetime
-                        from datetime import datetime
-                        return datetime.fromtimestamp(timestamp / 1e9).isoformat()
-                    else:
-                        return str(timestamp)
-
-                def _to_int(value):
-                    if isinstance(value, int):
-                        return value
-                    if isinstance(value, str):
-                        v = value[2:] if value.startswith('0x') else value
-                        try:
-                            return int(v, 16)
-                        except Exception:
-                            try:
-                                return int(v)
-                            except Exception:
-                                return 0
-                    return 0
-
-                def format_trace_id(value):
-                    """Return 32-char zero-padded lowercase hex trace ID."""
-                    return f"{_to_int(value):032x}"
-
-                def format_span_id(value):
-                    """Return 16-char zero-padded lowercase hex span ID."""
-                    return f"{_to_int(value):016x}"
-
-                span_dict = {
-                    'name': span.name,
-                    'span_kind': str(span.kind),
-                    'kind': getattr(getattr(span, 'kind', None), 'name', str(getattr(span, 'kind', 'INTERNAL'))),
-                    'trace_id': format_trace_id(span.context.trace_id),
-                    'span_id': format_span_id(span.context.span_id),
-                    'parent_id': format_span_id(span.parent.span_id) if span.parent and getattr(span.parent, 'span_id', None) else None,
-                    'start_time': format_timestamp(span.start_time),
-                    'end_time': format_timestamp(span.end_time),
-                    'status_code': span.status.status_code.name,
-                    'status_message': span.status.description or '',
-                    # Keep attributes as structured data (dict) for Phoenix UI parsing
-                    'attributes': dict(span.attributes),
-                    'context.trace_id': format_trace_id(span.context.trace_id),
-                    'context.span_id': format_span_id(span.context.span_id),
-                    'context.trace_state': str(span.context.trace_state)
-                }
-
-                # Extract generic input/output for convenience
-                try:
-                    def _extract_first(attrs, keys):
-                        for k in keys:
-                            if k in attrs:
-                                return attrs.get(k)
-                        return None
-
-                    attrs = dict(span.attributes)
-                    input_val = _extract_first(attrs, [
-                        getattr(OI, 'INPUT_VALUE', 'input.value'),
-                        getattr(OI, 'TOOL_INPUT', 'tool.input'),
-                        'input.value',
-                        'tool.input'
-                    ])
-                    output_val = _extract_first(attrs, [
-                        getattr(OI, 'OUTPUT_VALUE', 'output.value'),
-                        getattr(OI, 'TOOL_OUTPUT', 'tool.output'),
-                        'output.value',
-                        'tool.output'
-                    ])
-                    if input_val is not None:
-                        span_dict['input'] = str(input_val)
-                    if output_val is not None:
-                        span_dict['output'] = str(output_val)
-                except Exception:
-                    pass
-
-                # Add events
-                events_list = []
-                for event in span.events:
-                    events_list.append({
-                        'name': event.name,
-                        'timestamp': format_timestamp(event.timestamp),
-                        'attributes': dict(event.attributes)
-                    })
-                # Keep events as structured list for Phoenix UI
-                span_dict['events'] = events_list
-
-                spans_data.append(span_dict)
-
-            # Create DataFrame and export
-            if spans_data:
-                df = pd.DataFrame(spans_data)
-                trace_dataset = TraceDataset(dataframe=df, name='agent-traces')
-                self.phoenix_client.log_traces(trace_dataset, project_name='default')
-                print(f"✅ Exported {len(spans_data)} spans to Phoenix")
-
-            # Clear collected spans
-            self.collected_spans.clear()
-
-        except Exception as e:
-            print(f"❌ Error exporting spans to Phoenix: {e}")
-
-    def start_periodic_export(self):
-        """Start periodic export of collected spans"""
-        if self.export_thread and self.export_thread.is_alive():
-            return
-
-        self.running = True
-        self.export_thread = threading.Thread(target=self._periodic_export_worker, daemon=True)
-        self.export_thread.start()
-
-    def stop_periodic_export(self):
-        """Stop periodic export"""
-        self.running = False
-        if self.export_thread:
-            self.export_thread.join(timeout=5)
-        self.export_to_phoenix()  # Export any remaining spans
-
-    def _periodic_export_worker(self):
-        """Worker thread for periodic span export"""
-        while self.running:
-            time.sleep(5)  # Export every 5 seconds
-            self.export_to_phoenix()
-
-
-class PhoenixSpanProcessor(SpanProcessor):
-    """Custom span processor that sends spans to Phoenix collector"""
-
-    def on_start(self, span, parent_context=None):
-        """Called when a span starts"""
-        pass
-
-    def on_end(self, span):
-        """Called when a span ends - send to Phoenix"""
-        try:
-            phoenix_span_collector.collect_span(span)
-        except Exception as e:
-            # Don't let span processing errors break the application
-            print(f"Warning: Failed to collect span for Phoenix: {e}")
-
-    def shutdown(self, timeout_millis=30000):
-        """Shutdown the processor"""
-        try:
-            phoenix_span_collector.export_to_phoenix()
-        except Exception as e:
-            print(f"Warning: Failed to export spans during shutdown: {e}")
-
-    def force_flush(self, timeout_millis=30000):
-        """Force flush any pending spans"""
-        try:
-            phoenix_span_collector.export_to_phoenix()
-        except Exception as e:
-            print(f"Warning: Failed to flush spans: {e}")
-
-
-# Global span collector
-phoenix_span_collector = PhoenixSpanCollector()
-
-# Global Phoenix span manager instance
 phoenix_span_manager = PhoenixSpanManager()
 
 
@@ -617,9 +347,8 @@ class MongoDBAgent:
         self.enable_parallel_tools = enable_parallel_tools
 
     async def initialize_tracing(self):
-        """Enable Phoenix tracing for this agent."""
-        await phoenix_span_manager.initialize()
-        self.tracing_enabled = True
+        """Tracing removed: keep method for interface compatibility."""
+        self.tracing_enabled = False
 
 
     def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
@@ -659,14 +388,7 @@ class MongoDBAgent:
             tuple: (ToolMessage, success_flag)
         """
         tool_cm = None
-        if tracer is not None:
-            tool_cm = tracer.start_as_current_span(
-                "tool_execute",
-                kind=trace.SpanKind.INTERNAL,
-                attributes={"tool_name": tool_call["name"]},
-            )
-        
-        with (tool_cm if tool_cm is not None else contextlib.nullcontext()) as tool_span:
+        with contextlib.nullcontext() as tool_span:
             # Enforce router: only allow selected tools
             actual_tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
             if not actual_tool:
@@ -677,44 +399,15 @@ class MongoDBAgent:
                 return error_msg, False
 
             try:
-                if tool_span:
-                    try:
-                        tool_span.set_attribute(getattr(OI, 'TOOL_NAME', 'tool.name'), actual_tool.name)
-                        tool_span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(tool_call.get("args"))[:1000])
-                        tool_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'TOOL')
-                        tool_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), str(tool_call.get("args"))[:1000])
-                        try:
-                            tool_span.set_attribute('openinference.input.value', str(tool_call.get("args"))[:1000])
-                        except Exception:
-                            pass
-                        tool_span.add_event("tool_start", {"tool": actual_tool.name})
-                    except Exception:
-                        pass
+                pass
                 
                 result = await actual_tool.ainvoke(tool_call["args"])
                 
-                if tool_span:
-                    tool_span.set_attribute("tool_success", True)
-                    try:
-                        tool_span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), str(result)[:1200])
-                        tool_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), str(result)[:1200])
-                        try:
-                            tool_span.set_attribute('openinference.output.value', str(result)[:1200])
-                        except Exception:
-                            pass
-                        tool_span.add_event("tool_end", {"tool": actual_tool.name})
-                    except Exception:
-                        pass
+                pass
                         
             except Exception as tool_exc:
                 result = f"Tool execution error: {tool_exc}"
-                if tool_span:
-                    tool_span.set_status(Status(StatusCode.ERROR, str(tool_exc)))
-                    try:
-                        tool_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), tool_exc.__class__.__name__)
-                        tool_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(tool_exc))
-                    except Exception:
-                        pass
+                pass
 
             tool_message = ToolMessage(
                 content=str(result),
@@ -724,34 +417,32 @@ class MongoDBAgent:
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
-        # Ensure tracing is initialized so spans include attributes/events
+        # Avoid auto-enabling tracing if globally disabled
         if not self.tracing_enabled:
             try:
                 await self.initialize_tracing()
-            except Exception as _e:
-                # Proceed without tracing if initialization fails
+            except Exception:
                 pass
-        span = self._start_span("mongodb_connect")
+        span = None
         try:
             await mongodb_tools.connect()
             self.connected = True
             if span:
-                span.set_attribute("connection_success", True)
+                pass
             print("MongoDB Agent connected successfully!")
         except Exception as e:
             if span:
-                span.set_attribute("connection_success", False)
-                span.set_status(Status(StatusCode.ERROR, str(e)))
+                pass
             raise
         finally:
-            self._end_span(span)
+            pass
 
     async def disconnect(self):
         """Disconnect from MongoDB MCP server"""
         await mongodb_tools.disconnect()
         self.connected = False
-        # Clean up Phoenix tracing
-        phoenix_span_manager.cleanup()
+        # Tracing removed: nothing to clean up
+        pass
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
         """Run the agent with a query and optional conversation context"""
@@ -759,7 +450,7 @@ class MongoDBAgent:
             await self.connect()
 
         try:
-            tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+            tracer = None
             if tracer is not None:
                 span_cm = tracer.start_as_current_span(
                     "agent_run",
@@ -774,11 +465,7 @@ class MongoDBAgent:
                 span_cm = None
 
             with (span_cm if span_cm is not None else contextlib.nullcontext()) as run_span:
-                if run_span:
-                    try:
-                        run_span.add_event("agent_start")
-                    except Exception:
-                        pass
+                pass
                 # Use default conversation ID if none provided
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
@@ -809,42 +496,11 @@ class MongoDBAgent:
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
 
-                    if tracer is not None:
-                        llm_cm = tracer.start_as_current_span(
-                            "llm_invoke",
-                            kind=trace.SpanKind.INTERNAL,
-                            attributes={"message_count": len(messages)},
-                        )
-                    else:
-                        llm_cm = None
+                    llm_cm = None
 
                     with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
                         # Record model invocation parameters
-                        if llm_span:
-                            try:
-                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
-                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
-                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
-                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
-                                # Tag span kind for OpenInference UI (uppercase expected)
-                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'LLM')
-                                # Record the current user input as LLM input
-                                try:
-                                    llm_input_preview = str(human_message.content)[:1000]
-                                except Exception:
-                                    llm_input_preview = ""
-                                # Set both generic and OpenInference-prefixed keys
-                                llm_span.set_attribute(getattr(OI, 'INPUT_VALUE', 'input.value'), llm_input_preview)
-                                try:
-                                    llm_span.set_attribute('openinference.input.value', llm_input_preview)
-                                except Exception:
-                                    pass
-                                if self.system_prompt:
-                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
-                                # Add prompt summary event
-                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
-                            except Exception:
-                                pass
+                        pass
                 # Lightweight routing hint to bias correct tool choice
                 routing_instructions = SystemMessage(content=(
                     "PLANNING & ROUTING:\n"
@@ -921,14 +577,10 @@ class MongoDBAgent:
                 
                 if self.enable_parallel_tools and len(response.tool_calls) > 1:
                     # Multiple tools called together = LLM determined they're independent
-                    if run_span:
-                        run_span.add_event("parallel_tool_execution", {
-                            "tool_count": len(response.tool_calls),
-                            "tools": tool_names
-                        })
+                    pass
                     
                     tool_tasks = [
-                        self._execute_single_tool(None, tool_call, selected_tools, tracer)
+                        self._execute_single_tool(None, tool_call, selected_tools, None)
                         for tool_call in response.tool_calls
                     ]
                     tool_results = await asyncio.gather(*tool_tasks)
@@ -942,9 +594,7 @@ class MongoDBAgent:
                 else:
                     # Single tool or parallel disabled
                     for tool_call in response.tool_calls:
-                        tool_message, success = await self._execute_single_tool(
-                            None, tool_call, selected_tools, tracer
-                        )
+                        tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
                         if success:
@@ -958,13 +608,7 @@ class MongoDBAgent:
                 else:
                     # If no tools were executed, return the latest response
                     if last_response is not None:
-                        if run_span:
-                            try:
-                                preview = str(last_response.content)[:500]
-                                run_span.set_attribute(getattr(OI, 'OUTPUT_VALUE', 'output.value'), preview)
-                                run_span.add_event("agent_end", {"steps": steps})
-                            except Exception:
-                                pass
+                        pass
                         return last_response.content
 
             # If we exit the loop due to step cap, return the best available answer
@@ -990,7 +634,7 @@ class MongoDBAgent:
             await self.connect()
 
         try:
-            tracer = phoenix_span_manager.tracer if self.tracing_enabled else None
+            tracer = None
             if tracer is not None:
                 span_cm = tracer.start_as_current_span(
                     "agent_run_streaming",
@@ -1036,28 +680,10 @@ class MongoDBAgent:
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
-                    if tracer is not None:
-                        llm_cm = tracer.start_as_current_span(
-                            "llm_invoke",
-                            kind=trace.SpanKind.INTERNAL,
-                            attributes={"message_count": len(messages)},
-                        )
-                    else:
-                        llm_cm = None
+                    llm_cm = None
 
                     with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
-                        if llm_span:
-                            try:
-                                llm_span.set_attribute(getattr(OI, 'LLM_MODEL_NAME', 'llm.model_name'), getattr(llm, "model", "unknown"))
-                                llm_span.set_attribute(getattr(OI, 'LLM_TEMPERATURE', 'llm.temperature'), getattr(llm, "temperature", None))
-                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_P', 'llm.top_p'), getattr(llm, "top_p", None))
-                                llm_span.set_attribute(getattr(OI, 'LLM_TOP_K', 'llm.top_k'), getattr(llm, "top_k", None))
-                                llm_span.set_attribute(getattr(OI, 'SPAN_KIND', 'openinference.span.kind'), 'llm')
-                                if self.system_prompt:
-                                    llm_span.set_attribute(getattr(OI, 'LLM_SYSTEM', 'llm.system_prompt'), self.system_prompt[:1000])
-                                llm_span.add_event("llm_prompt", {"message_count": len(messages)})
-                            except Exception:
-                                pass
+                        pass
                         routing_instructions = SystemMessage(content=(
                             "PLANNING & ROUTING:\n"
                             "- Break the user request into logical steps.\n"
@@ -1150,10 +776,7 @@ class MongoDBAgent:
                                 await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                         
                         # Execute all tools in parallel
-                        tool_tasks = [
-                            self._execute_single_tool(None, tool_call, selected_tools, tracer)
-                            for tool_call in response.tool_calls
-                        ]
+                        tool_tasks = [self._execute_single_tool(None, tool_call, selected_tools, None) for tool_call in response.tool_calls]
                         tool_results = await asyncio.gather(*tool_tasks)
                         
                         # Process results and send tool_end events
@@ -1170,9 +793,7 @@ class MongoDBAgent:
                             if tool:
                                 await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                             
-                            tool_message, success = await self._execute_single_tool(
-                                None, tool_call, selected_tools, tracer
-                            )
+                            tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
