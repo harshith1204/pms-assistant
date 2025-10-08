@@ -238,6 +238,51 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self.websocket = websocket
         self.start_time = None
         # Tool outputs are now always streamed to the frontend for better visibility
+        # Internal step counter for lightweight progress (not exposed directly)
+        self._step_counter = 0
+
+    def _safe_extract(self, input_str: str) -> dict:
+        """Best-effort parse of tool arg string to a dict without raising.
+
+        Avoids revealing internals; used only to craft short, user-facing action text.
+        """
+        try:
+            import json as _json
+            if isinstance(input_str, str):
+                # Try JSON first
+                return _json.loads(input_str)
+        except Exception:
+            pass
+        try:
+            import ast as _ast
+            if isinstance(input_str, str):
+                val = _ast.literal_eval(input_str)
+                if isinstance(val, dict):
+                    return val
+        except Exception:
+            pass
+        return {}
+
+    async def _emit_action(self, text: str) -> None:
+        if not self.websocket:
+            return
+        self._step_counter += 1
+        await self.websocket.send_json({
+            "type": "agent_action",
+            "text": text,
+            "step": self._step_counter,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    async def _emit_result(self, text: str) -> None:
+        if not self.websocket:
+            return
+        await self.websocket.send_json({
+            "type": "agent_result",
+            "text": text,
+            "step": self._step_counter,
+            "timestamp": datetime.now().isoformat(),
+        })
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -247,6 +292,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "type": "llm_start",
                 "timestamp": datetime.now().isoformat()
             })
+            # Non-revealing action line
+            await self._emit_action("Reviewing the request to decide next steps")
 
     async def on_llm_new_token(self, token: str, **kwargs):
         """Stream each token as it's generated"""
@@ -277,6 +324,30 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "input": input_str,
                 "timestamp": datetime.now().isoformat()
             })
+            # Emit dynamic, user-facing action statement (non-revealing)
+            args = self._safe_extract(input_str)
+            action_text = None
+            try:
+                if tool_name == "mongo_query":
+                    q = str(args.get("query", "")).strip()
+                    preview = (q[:80] + "...") if len(q) > 80 else q
+                    action_text = (f"Checking structured data to answer“{preview}”" if preview
+                                   else "Checking structured data to answer your question")
+                elif tool_name == "rag_search":
+                    q = str(args.get("query", "")).strip()
+                    ctype = str(args.get("content_type", "")).strip()
+                    preview = (q[:80] + "...") if len(q) > 80 else q
+                    if preview and ctype:
+                        action_text = f"Exploring {ctype} content to understand “{preview}”"
+                    elif preview:
+                        action_text = f"Exploring content to understand “{preview}”"
+                    else:
+                        action_text = "Exploring relevant content for context"
+                else:
+                    action_text = f"Preparing to gather information ({tool_name})"
+            except Exception:
+                action_text = "Preparing to gather information"
+            await self._emit_action(action_text)
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
@@ -288,6 +359,21 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "timestamp": datetime.now().isoformat()
             }
             await self.websocket.send_json(payload)
+            # Emit concise result statement without internals
+            summary = "Ready with findings"
+            try:
+                import re as _re
+                # Try to extract a simple count from common patterns
+                m = _re.search(r"Found\s+(\d+)\s+result", str(output), flags=_re.IGNORECASE)
+                if m:
+                    summary = f"Found {m.group(1)} relevant results"
+                elif "RESULTS SUMMARY" in str(output):
+                    summary = "Summarized key results"
+                elif "RESULT:" in str(output) or "RESULTS:" in str(output):
+                    summary = "Results ready"
+            except Exception:
+                pass
+            await self._emit_result(summary)
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
