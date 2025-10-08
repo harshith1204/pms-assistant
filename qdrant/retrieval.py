@@ -15,7 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion
 )
 
 @dataclass
@@ -131,7 +131,7 @@ class ChunkAwareRetriever:
         # )
         
         # --- Hybrid Search Logic ---
-        # Prefer dense + SPLADE-sparse fusion; fall back to full_text keyword if SPLADE unavailable
+        # Use dense + keyword full_text fusion (SPLADE removed)
 
         dense_prefetch = Prefetch(
             query=NearestQuery(nearest=query_embedding),
@@ -143,39 +143,15 @@ class ChunkAwareRetriever:
 
         prefetch_list = [dense_prefetch]
 
-        # Try SPLADE for sparse query
-        sparse_added = False
-        try:
-            from qdrant.encoder import get_splade_encoder
-            splade = get_splade_encoder()
-            splade_vec = splade.encode_text(query)
-            if splade_vec.get("indices"):
-                sparse_prefetch = Prefetch(
-                    query=NearestQuery(
-                        nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
-                    ),
-                    using="sparse",
-                    limit=max(initial_limit, int(initial_limit * max(1.0, float(sparse_limit_multiplier)))),
-                    # Use dedicated threshold for sparse; default None to avoid over-filtering
-                    score_threshold=sparse_score_threshold,
-                    filter=search_filter,
-                )
-                prefetch_list.append(sparse_prefetch)
-                sparse_added = True
-        except Exception as e:
-            # SPLADE optional; fall back to keyword search
-            pass
-
-        if enable_keyword_fallback and not sparse_added:
-            # Fallback to text index keyword search; use provided text_query or original query
-            keyword_query = text_query or query
-            keyword_prefetch = Prefetch(
-                query=NearestQuery(nearest=keyword_query),
-                using="full_text",
-                limit=initial_limit,
-                filter=search_filter,
-            )
-            prefetch_list.append(keyword_prefetch)
+        # Always add keyword full_text as a complementary signal to dense
+        keyword_query = text_query or query
+        keyword_prefetch = Prefetch(
+            query=NearestQuery(nearest=keyword_query),
+            using="full_text",
+            limit=initial_limit,
+            filter=search_filter,
+        )
+        prefetch_list.append(keyword_prefetch)
 
         hybrid_query = FusionQuery(fusion=Fusion.RRF)
 

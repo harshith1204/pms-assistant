@@ -7,7 +7,7 @@ import re
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion
 )
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
@@ -78,7 +78,7 @@ class RAGTool:
     
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
     async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant content in Qdrant with dense+SPLADE hybrid fusion."""
+        """Search for relevant content in Qdrant with dense + full_text hybrid fusion (no SPLADE)."""
         if not self.connected:
             await self.connect()
 
@@ -104,7 +104,7 @@ class RAGTool:
                 )
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
-            # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
+            # Hybrid fusion: dense + keyword over full_text
             # Increase initial candidate pool to improve recall with smaller chunks
             initial_limit = max(limit * 10, 50)
             prefetch_list = [
@@ -118,41 +118,17 @@ class RAGTool:
                 )
             ]
 
-            sparse_added = False
-            try:
-                from qdrant.encoder import get_splade_encoder
-                from qdrant.retrieval import extract_keywords
-                splade = get_splade_encoder()
-                splade_vec = splade.encode_text(query)
-                if splade_vec.get("indices"):
-                    prefetch_list.append(
-                        Prefetch(
-                            query=NearestQuery(
-                                nearest=SparseVector(indices=splade_vec["indices"], values=splade_vec["values"]),
-                            ),
-                            using="sparse",
-                            # Give sparse more candidates; do not threshold (scale differs)
-                            limit=max(initial_limit, int(initial_limit * 2.0)),
-                            score_threshold=None,
-                            filter=search_filter,
-                        )
-                    )
-                    sparse_added = True
-            except Exception:
-                pass
-
-            ENABLE_KEYWORD_FALLBACK = False
-            if ENABLE_KEYWORD_FALLBACK and not sparse_added:
-                from qdrant.retrieval import extract_keywords
-                keyword_query = extract_keywords(query)
-                prefetch_list.append(
-                    Prefetch(
-                        query=NearestQuery(nearest=keyword_query),
-                        using="full_text",
-                        limit=initial_limit,
-                        filter=search_filter,
-                    )
+            # Add keyword full_text as a complementary signal
+            from qdrant.retrieval import extract_keywords
+            keyword_query = extract_keywords(query)
+            prefetch_list.append(
+                Prefetch(
+                    query=NearestQuery(nearest=keyword_query),
+                    using="full_text",
+                    limit=initial_limit,
+                    filter=search_filter,
                 )
+            )
 
             fusion = FusionQuery(fusion=Fusion.RRF)
             response = self.qdrant_client.query_points(

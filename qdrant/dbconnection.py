@@ -1,7 +1,7 @@
 import os
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, OptimizersConfigDiff, SparseVectorParams
+from qdrant_client.http.models import Distance, VectorParams, OptimizersConfigDiff
 from dotenv import load_dotenv
 # from tools import rag_content_search
 
@@ -43,15 +43,12 @@ try:
 
     QDRANT_COLLECTION= "pms_collection"
 
-    # Check if collection exists, if not, create with named vectors + sparse for hybrid search
+    # Check if collection exists, if not, create with named dense vector (no sparse)
     if QDRANT_COLLECTION not in [col.name for col in qdrant_client.get_collections().collections]:
         qdrant_client.create_collection(
             collection_name=QDRANT_COLLECTION,
             vectors_config={
                 "dense": VectorParams(size=768, distance=Distance.COSINE),
-            },
-            sparse_vectors_config={
-                "sparse": SparseVectorParams(),
             },
         )
     
