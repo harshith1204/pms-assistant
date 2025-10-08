@@ -21,8 +21,7 @@ from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+ 
 from langchain_groq import ChatGroq
 # Orchestration utilities
 from orchestrator import Orchestrator, StepSpec, as_async
@@ -1997,17 +1996,7 @@ class Planner:
                 "planner": "llm",
             }
         except Exception as e:
-            try:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
-                    try:
-                        current_span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), e.__class__.__name__)
-                        current_span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(e))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            pass
             return {
                 "success": False,
                 "error": str(e),
