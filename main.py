@@ -46,10 +46,8 @@ async def lifespan(app: FastAPI):
     global mongodb_agent
 
     # Startup
-    tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
     print("Starting MongoDB Agent...")
     mongodb_agent = MongoDBAgent()
-    await mongodb_agent.initialize_tracing()
     await mongodb_agent.connect()
     print("MongoDB Agent connected successfully!")
     await RAGTool.initialize()
