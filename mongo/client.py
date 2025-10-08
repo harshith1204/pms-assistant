@@ -5,6 +5,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Dict, Any, List
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+import os
+import contextlib
 import asyncio
 
 try:
@@ -37,8 +39,10 @@ class DirectMongoClient:
 
     async def connect(self):
         """Initialize direct MongoDB connection with persistent connection pool"""
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("direct_mongo.connect", kind=trace.SpanKind.INTERNAL) as span:
+        tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
+        tracer = None if tracing_disabled else trace.get_tracer(__name__)
+        span_cm = (tracer.start_as_current_span("direct_mongo.connect", kind=trace.SpanKind.INTERNAL) if tracer else contextlib.nullcontext())
+        with span_cm as span:
             try:
                 async with self._connect_lock:
                     if self.connected and self.client:
@@ -106,17 +110,21 @@ class DirectMongoClient:
         Returns:
             List of result documents
         """
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span(
-            "direct_mongo.aggregate",
-            kind=trace.SpanKind.INTERNAL,
-            attributes={
-                "db.system": "mongodb",
-                "db.name": database,
-                "db.mongodb.collection": collection,
-                "db.operation": "aggregate"
-            },
-        ) as span:
+        tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
+        tracer = None if tracing_disabled else trace.get_tracer(__name__)
+        span_cm = (
+            tracer.start_as_current_span(
+                "direct_mongo.aggregate",
+                kind=trace.SpanKind.INTERNAL,
+                attributes={
+                    "db.system": "mongodb",
+                    "db.name": database,
+                    "db.mongodb.collection": collection,
+                    "db.operation": "aggregate"
+                },
+            ) if tracer else contextlib.nullcontext()
+        )
+        with span_cm as span:
             try:
                 span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(pipeline)[:1200])
             except Exception:

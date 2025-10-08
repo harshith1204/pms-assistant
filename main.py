@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from agent import MongoDBAgent, phoenix_span_manager
+import os
 from traces.setup import EvaluationPipeline
 from traces.upload_dataset import PhoenixDatasetUploader
 from websocket_handler import handle_chat_websocket, ws_manager
@@ -47,7 +48,11 @@ async def lifespan(app: FastAPI):
     global mongodb_agent
 
     # Startup
-    print("Starting MongoDB Agent with Phoenix tracing...")
+    tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
+    if tracing_disabled:
+        print("Starting MongoDB Agent (tracing disabled)...")
+    else:
+        print("Starting MongoDB Agent with Phoenix tracing...")
     await phoenix_span_manager.initialize()
     mongodb_agent = MongoDBAgent()
     await mongodb_agent.initialize_tracing()

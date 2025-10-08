@@ -30,7 +30,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 import pandas as pd
 import threading
 import time
-from opentelemetry.sdk.trace.export import SpanProcessor
+from opentelemetry.sdk.trace import SpanProcessor
 from traces.tracing import PhoenixSpanProcessor as MongoDBSpanProcessor, mongodb_span_collector
 import math
 
@@ -280,6 +280,15 @@ class PhoenixSpanManager:
         if self._initialized:
             return
 
+        # Honor environment flag to disable tracing entirely (default: disabled)
+        tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
+        if tracing_disabled:
+            self.tracer_provider = None
+            self.tracer = None
+            self._initialized = True
+            print("ℹ️ Tracing disabled by DISABLE_TRACING env var")
+            return
+
         try:
             # Add a resource so Phoenix shows a sensible service name
             resource = Resource.create({
@@ -322,6 +331,19 @@ class PhoenixSpanManager:
             print(f"❌ Failed to initialize tracing: {e}")
             import traceback
             traceback.print_exc()
+
+    def cleanup(self):
+        """Safely stop any tracing-related background tasks if enabled."""
+        try:
+            # If tracing was disabled or never initialized, nothing to do
+            if not self._initialized or self.tracer_provider is None:
+                return
+            try:
+                mongodb_span_collector.stop_periodic_export()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
 
 class PhoenixSpanCollector:
@@ -618,8 +640,14 @@ class MongoDBAgent:
 
     async def initialize_tracing(self):
         """Enable Phoenix tracing for this agent."""
+        # Respect global disable flag
+        tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
+        if tracing_disabled:
+            self.tracing_enabled = False
+            return
         await phoenix_span_manager.initialize()
-        self.tracing_enabled = True
+        # If manager resolved to no tracer (disabled), keep disabled
+        self.tracing_enabled = phoenix_span_manager.tracer is not None
 
 
     def _start_span(self, name: str, attributes: Dict[str, Any] | None = None):
@@ -724,12 +752,11 @@ class MongoDBAgent:
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
-        # Ensure tracing is initialized so spans include attributes/events
+        # Avoid auto-enabling tracing if globally disabled
         if not self.tracing_enabled:
             try:
                 await self.initialize_tracing()
-            except Exception as _e:
-                # Proceed without tracing if initialization fails
+            except Exception:
                 pass
         span = self._start_span("mongodb_connect")
         try:
@@ -751,7 +778,10 @@ class MongoDBAgent:
         await mongodb_tools.disconnect()
         self.connected = False
         # Clean up Phoenix tracing
-        phoenix_span_manager.cleanup()
+        try:
+            phoenix_span_manager.cleanup()
+        except Exception:
+            pass
 
     async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
         """Run the agent with a query and optional conversation context"""

@@ -17,6 +17,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tup
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+import os
+import contextlib
 
 
 Jsonable = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
@@ -70,7 +72,8 @@ class Orchestrator:
     """
 
     def __init__(self, tracer_name: str = __name__, max_parallel: int = 5):
-        self.tracer = trace.get_tracer(tracer_name)
+        tracing_disabled = os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes")
+        self.tracer = None if tracing_disabled else trace.get_tracer(tracer_name)
         self.max_parallel = max_parallel
         self._cache: Dict[str, Any] = {}
 
@@ -92,16 +95,19 @@ class Orchestrator:
         backoff = step.retry_backoff_s
         while attempt <= step.retries:
             start = time.time()
-            with self.tracer.start_as_current_span(
-                f"orchestrator.step:{step.name}",
-                kind=trace.SpanKind.INTERNAL,
-                attributes={
-                    "orchestrator.correlation_id": correlation_id or "",
-                    "step.requires": ",".join(step.requires) if step.requires else "",
-                    "step.provides": step.provides or "",
-                    "step.attempt": attempt,
-                },
-            ) as span:
+            span_cm = (
+                self.tracer.start_as_current_span(
+                    f"orchestrator.step:{step.name}",
+                    kind=trace.SpanKind.INTERNAL,
+                    attributes={
+                        "orchestrator.correlation_id": correlation_id or "",
+                        "step.requires": ",".join(step.requires) if step.requires else "",
+                        "step.provides": step.provides or "",
+                        "step.attempt": attempt,
+                    },
+                ) if self.tracer else contextlib.nullcontext()
+            )
+            with span_cm as span:
                 try:
                     coro = step.coroutine(context)
                     result = await (asyncio.wait_for(coro, step.timeout_s) if step.timeout_s else coro)

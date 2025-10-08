@@ -1998,7 +1998,11 @@ class Planner:
             }
         except Exception as e:
             try:
-                current_span = trace.get_current_span()
+                # Only interact with tracing if not disabled
+                if os.getenv("DISABLE_TRACING", "true").lower() in ("1", "true", "yes"):
+                    current_span = None
+                else:
+                    current_span = trace.get_current_span()
                 if current_span:
                     current_span.set_status(Status(StatusCode.ERROR, str(e)))
                     try:
