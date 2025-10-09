@@ -47,7 +47,7 @@ export function ChatInterface() {
 	const { toast } = useToast();
 	
 	// WebSocket connection
-	const wsUrl = `ws://${window.location.hostname}:7000/ws/chat`;
+	const wsUrl = `ws://${window.location.hostname}:8000/ws/chat`;
 	
 	type WsEvent = { type: string; [key: string]: unknown };
 	const getString = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
