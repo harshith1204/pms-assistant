@@ -14,6 +14,9 @@ interface Message {
 	timestamp: string;
 	toolName?: string;
 	toolOutput?: unknown;
+	// Rich payloads
+	blocks?: unknown[];
+	title?: string;
 }
 
 const initialMessages: Message[] = [
@@ -232,7 +235,7 @@ export function ChatInterface() {
 				break;
 			}
 			
-			case "agent_result": {
+		case "agent_result": {
 				const resultMsg: Message = {
 					id: (Date.now() + 1).toString(),
 					type: "result",
@@ -240,6 +243,33 @@ export function ChatInterface() {
 					timestamp,
 				};
 				setMessages(prev => [...prev, resultMsg]);
+				break;
+			}
+
+			case "work_item_generated": {
+				const title = getString((data as Record<string, unknown>)["title"]);
+				const description = getString((data as Record<string, unknown>)["description"]);
+				const m: Message = {
+					id: Date.now().toString(),
+					type: "assistant",
+					title: title || undefined,
+					content: description || "",
+					timestamp,
+				};
+				setMessages(prev => [...prev, m]);
+				break;
+			}
+
+			case "page_generated": {
+				const blocks = (data as Record<string, unknown>)["blocks"] as unknown[] | undefined;
+				const m: Message = {
+					id: Date.now().toString(),
+					type: "assistant",
+					content: "", // content is rendered by Editor.js
+					blocks: Array.isArray(blocks) ? blocks : [],
+					timestamp,
+				};
+				setMessages(prev => [...prev, m]);
 				break;
 			}
 

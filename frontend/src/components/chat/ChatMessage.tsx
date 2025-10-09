@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { User, Bot, Brain, Wrench, Clock, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { EditorJsViewer } from "@/components/ui/EditorJsViewer";
 
 interface Message {
   id: string;
@@ -12,6 +13,9 @@ interface Message {
   timestamp: string;
   toolName?: string;
   toolOutput?: unknown;
+  // Optional rich payloads
+  blocks?: unknown[]; // Editor.js blocks
+  title?: string;
 }
 
 interface ChatMessageProps {
@@ -196,10 +200,18 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
 
           {/* Content */}
           <div className="prose prose-sm max-w-none">
-            <div className="whitespace-pre-wrap text-sm">
-              {message.content}
-            </div>
-            
+            {/* Rich: work item or page preview */}
+            {message.title && (
+              <div className="text-base font-semibold mb-2">{message.title}</div>
+            )}
+            {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
+              <EditorJsViewer blocks={message.blocks} />
+            ) : (
+              <div className="whitespace-pre-wrap text-sm">
+                {message.content}
+              </div>
+            )}
+
             {message.type === "tool" && showToolOutputs && renderToolOutput()}
           </div>
         </Card>

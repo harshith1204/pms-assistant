@@ -68,7 +68,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
     "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
     "  REQUIRED: 'query' - semantic search terms.\n"
-    "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None for all), group_by (field name), limit, show_content.\n\n"
+    "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None for all), group_by (field name), limit, show_content.\n"
+    "- generate_work_item(prompt:str, template_title?:str, template_content?:str): Create a concise work item title and markdown description. Returns JSON string with {title, description}.\n"
+    "- generate_page_editorjs(prompt:str, page_type?:str): Generate Editor.js blocks JSON for a page. Returns JSON string with {blocks:[...]}.\n\n"
     "CONTENT TYPE ROUTING EXAMPLES:\n"
     "- 'What is the next release about?' → rag_search(query='next release', content_type='page')\n"
     "- 'What are recent work items about?' → rag_search(query='recent work items', content_type='work_item')\n"
@@ -223,7 +225,12 @@ def _select_tools_for_query(user_query: str):
     - Let the LLM decide routing based on instructions; no keyword gating.
     - Add query analysis hints for complex join decisions.
     """
-    allowed_names = ["mongo_query", "rag_search"]
+    allowed_names = [
+        "mongo_query",
+        "rag_search",
+        "generate_work_item",
+        "generate_page_editorjs",
+    ]
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
     if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
@@ -240,6 +247,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         # Tool outputs are now always streamed to the frontend for better visibility
         # Internal step counter for lightweight progress (not exposed directly)
         self._step_counter = 0
+        self._last_tool_name = None
 
     def _safe_extract(self, input_str: str) -> dict:
         """Best-effort parse of tool arg string to a dict without raising.
@@ -317,6 +325,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
         """Called when a tool starts executing"""
         tool_name = serialized.get("name", "Unknown Tool")
+        self._last_tool_name = tool_name
         if self.websocket:
             await self.websocket.send_json({
                 "type": "tool_start",
@@ -364,6 +373,37 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 summary = "Summarized key results"
             elif "RESULT:" in str(output) or "RESULTS:" in str(output):
                 summary = "Results ready"
+        except Exception:
+            pass
+        # Special handling for generation tools: forward structured payloads
+        try:
+            if self.websocket and isinstance(output, str) and self._last_tool_name in {"generate_work_item", "generate_page_editorjs"}:
+                import json as _json
+                data = None
+                try:
+                    data = _json.loads(output)
+                except Exception:
+                    try:
+                        start = output.find("{")
+                        end = output.rfind("}")
+                        if start != -1 and end != -1 and end > start:
+                            data = _json.loads(output[start:end+1])
+                    except Exception:
+                        data = None
+                if isinstance(data, dict):
+                    if self._last_tool_name == "generate_work_item" and ("title" in data and "description" in data):
+                        await self.websocket.send_json({
+                            "type": "work_item_generated",
+                            "title": data.get("title"),
+                            "description": data.get("description"),
+                            "timestamp": datetime.now().isoformat(),
+                        })
+                    elif self._last_tool_name == "generate_page_editorjs" and isinstance(data.get("blocks"), list):
+                        await self.websocket.send_json({
+                            "type": "page_generated",
+                            "blocks": data.get("blocks"),
+                            "timestamp": datetime.now().isoformat(),
+                        })
         except Exception:
             pass
         await self._emit_result(summary)

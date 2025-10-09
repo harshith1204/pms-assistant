@@ -27,6 +27,18 @@ try:
 except ImportError:
     plan_and_execute_query = None
 
+# Optional Groq dependency for generation tools
+try:  # pragma: no cover - optional
+    from groq import Groq  # type: ignore
+except Exception:  # pragma: no cover - optional
+    Groq = None  # type: ignore
+
+# Generation prompts (shared with API router)
+try:
+    from generate.prompts import PAGE_TYPE_PROMPTS  # type: ignore
+except Exception:  # pragma: no cover - optional
+    PAGE_TYPE_PROMPTS = {}
+
 
 # ------------------ RAG Retrieval Defaults ------------------
 # Per content_type default limits for retrieval. These are applied when the caller
@@ -983,7 +995,198 @@ async def rag_search(
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
+    generate_work_item,       # Generate work item title + markdown
+    generate_page_editorjs,   # Generate Editor.js blocks JSON for a page
 ]
+
+
+# ------------------ Content Generation Tools ------------------
+
+def _extract_json_like_block(text: str) -> Optional[Dict[str, Any]]:
+    """Best-effort extraction of a JSON object from a string.
+
+    Returns dict if parsing succeeds, otherwise None.
+    """
+    if not isinstance(text, str):
+        return None
+    import json as _json
+    try:
+        return _json.loads(text)
+    except Exception:
+        pass
+    try:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return _json.loads(text[start : end + 1])
+    except Exception:
+        return None
+    return None
+
+
+@tool
+async def generate_work_item(
+    prompt: str,
+    template_title: str = "New Work Item",
+    template_content: str = "Add details here"
+) -> str:
+    """Generate a concise work item title and markdown description.
+
+    Args:
+        prompt: Natural language description of the work item to generate.
+        template_title: Seed title used as a structural guide.
+        template_content: Seed content used as a structural guide.
+
+    Returns:
+        JSON string: {"title": str, "description": str}
+    """
+    import os as _os
+    if Groq is None:
+        return "❌ groq package not installed on server"
+    api_key = _os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return "❌ GROQ_API_KEY not configured"
+
+    client = Groq(api_key=api_key)
+
+    system_prompt = (
+        "You are an assistant that generates concise, actionable work item titles and descriptions.\n"
+        "Use the provided template as a structure and the user's prompt for specifics.\n"
+        "Return JSON only with fields 'title' and 'description'. Description should be Markdown.\n"
+        "Keep the title under 120 characters."
+    )
+
+    user_prompt = f"""
+Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line, no surrounding quotes.
+- Description: markdown body with headings/bullets as needed.
+- Example: {{"title": "Code Review: Login Flow", "description": "## Summary\nReview the login flow..."}}
+- Do not wrap the response in code fences or add explanatory text.
+"""
+
+    try:
+        completion = client.chat.completions.create(
+            model=_os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = completion.choices[0].message.content or ""
+    except Exception as exc:
+        return f"❌ Groq API error: {exc}"
+
+    parsed = _extract_json_like_block(content)
+    title = template_title
+    description = template_content
+    if isinstance(parsed, dict):
+        title = str(parsed.get("title") or title)
+        description = str(parsed.get("description") or description)
+    else:
+        description = content.strip() or description
+        first_line = description.splitlines()[0] if description else prompt
+        title = first_line[:120]
+
+    import json as _json
+    return _json.dumps({"title": title.strip(), "description": description.strip()})
+
+
+@tool
+async def generate_page_editorjs(
+    prompt: str,
+    page_type: str = "DOCUMENTATION"
+) -> str:
+    """Generate Editor.js blocks JSON for a page in business context.
+
+    Args:
+        prompt: Natural language description of the page to generate.
+        page_type: One of PROJECT | TASK | MEETING | DOCUMENTATION | KB
+
+    Returns:
+        JSON string with shape: {"blocks": [ ... ]}
+    """
+    import os as _os
+    if Groq is None:
+        return "❌ groq package not installed on server"
+    api_key = _os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return "❌ GROQ_API_KEY not configured"
+
+    client = Groq(api_key=api_key)
+
+    pt = (page_type or "DOCUMENTATION").upper().strip()
+    prompt_dict = PAGE_TYPE_PROMPTS.get(pt, PAGE_TYPE_PROMPTS.get("DOCUMENTATION", ""))
+
+    system_prompt = f"""
+You are an AI assistant specialized in generating professional business content for enterprise project management pages in Editor.js block format.
+
+**Business Context:**
+- Organization Type: Enterprise Business Environment
+- Page Type: {pt}
+
+{prompt_dict}
+
+**Content Requirements:**
+- Generate content in Editor.js block format as a JSON object with a "blocks" array
+- Each block should have: id (unique string), type (header, paragraph, list, table, etc.), and data object
+- Use appropriate block types for business content:
+  * Headers for sections and subsections (levels 1-4)
+  * Paragraphs for detailed explanations
+  * Ordered/unordered lists for action items, milestones, and key points
+  * Tables for metrics, comparisons, and data presentation
+- Structure content with clear hierarchy based on the page type requirements
+- Include specific business metrics, KPIs, and measurable outcomes relevant to {pt}
+- Use professional formatting with proper business terminology
+- Return only valid JSON with "blocks" array, no markdown or other formatting
+
+**Response Format:**
+{{"blocks": [
+  {{"id": "unique_id_1", "type": "header", "data": {{"text": "Executive Summary", "level": 2}}}},
+  {{"id": "unique_id_2", "type": "paragraph", "data": {{"text": "This report provides insights into key performance indicators and milestones."}}}},
+  {{"id": "unique_id_3", "type": "header", "data": {{"text": "Key Performance Indicators", "level": 3}}}},
+  {{"id": "unique_id_4", "type": "list", "data": {{"style": "unordered", "items": ["Revenue Growth: 15%", "CSAT: 92%", "Completion Rate: 85%"]}}}}
+]}}
+"""
+
+    try:
+        completion = client.chat.completions.create(
+            model=_os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Generate professional business content for this {pt} page in the specified Editor.js block format. User request: {prompt}"},
+            ],
+        )
+        content = completion.choices[0].message.content or "{}"
+    except Exception as exc:
+        return f"❌ Groq API error: {exc}"
+
+    parsed = _extract_json_like_block(content)
+    import json as _json
+    if isinstance(parsed, dict) and isinstance(parsed.get("blocks"), list):
+        return _json.dumps({"blocks": parsed["blocks"]})
+    # Fallback: wrap raw content as a paragraph block
+    return _json.dumps({
+        "blocks": [
+            {
+                "id": "fallback_1",
+                "type": "paragraph",
+                "data": {"text": (content.strip() or "Content generation failed")}
+            }
+        ]
+    })
+
 
 # import asyncio
 
