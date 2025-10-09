@@ -15,6 +15,11 @@ QDRANT_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfu
 QDRANT_URL = "https://dc88ad91-1e1e-48b4-bf73-0e5c1db1cffd.europe-west3-0.gcp.cloud.qdrant.io"  # Default Qdrant URL
 QDRANT_COLLECTION_NAME = "pms_collection"  # Collection for page and work item content
 EMBEDDING_MODEL = "google/embeddinggemma-300m"  # Sentence transformer model for embeddings
+ 
+# Retrieval packing configuration
+# Max tokens to allocate for retrieved context before sending to the LLM
+# You can override via env: RAG_CONTEXT_TOKEN_BUDGET
+RAG_CONTEXT_TOKEN_BUDGET: int = int(os.getenv("RAG_CONTEXT_TOKEN_BUDGET", "2200"))
 class _LazyMongoDBTools:
     """Lazy wrapper to avoid circular imports"""
     def __init__(self):

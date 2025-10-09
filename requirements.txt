@@ -35,12 +35,8 @@ qdrant-client
 sentence-transformers
 numpy
 
-# Phoenix for LLM evaluation and tracing
-phoenix
-arize-phoenix
-arize-phoenix-evals
+# SPLADE (sparse) dependencies
+transformers
+torch
 
-# OpenTelemetry for tracing
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-otlp
+# (Phoenix and OpenTelemetry removed; using internal no-op shims)
