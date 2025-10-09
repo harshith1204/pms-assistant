@@ -29,6 +29,7 @@ except AttributeError:
 import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
+from mongo.conversations import save_assistant_message, save_action_event
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -245,11 +246,12 @@ def _select_tools_for_query(user_query: str):
 
 
 class PhoenixCallbackHandler(AsyncCallbackHandler):
-    """WebSocket streaming callback handler for Phoenix events"""
+    """WebSocket streaming callback handler for Phoenix events + DB logging"""
 
-    def __init__(self, websocket=None):
+    def __init__(self, websocket=None, conversation_id: Optional[str] = None):
         super().__init__()
         self.websocket = websocket
+        self.conversation_id = conversation_id
         self.start_time = None
         # Tool outputs are now always streamed to the frontend for better visibility
         # Internal step counter for lightweight progress (not exposed directly)
@@ -279,24 +281,47 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
 
     async def _emit_action(self, text: str) -> None:
         if not self.websocket:
+            # Still log action to DB if possible
+            try:
+                if self.conversation_id:
+                    await save_action_event(self.conversation_id, "action", text, step=self._step_counter + 1)
+            except Exception:
+                pass
             return
         self._step_counter += 1
-        await self.websocket.send_json({
+        payload = {
             "type": "agent_action",
             "text": text,
             "step": self._step_counter,
             "timestamp": datetime.now().isoformat(),
-        })
+        }
+        await self.websocket.send_json(payload)
+        try:
+            if self.conversation_id:
+                await save_action_event(self.conversation_id, "action", text, step=self._step_counter)
+        except Exception:
+            pass
 
     async def _emit_result(self, text: str) -> None:
         if not self.websocket:
+            try:
+                if self.conversation_id:
+                    await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
+            except Exception:
+                pass
             return
-        await self.websocket.send_json({
+        payload = {
             "type": "agent_result",
             "text": text,
             "step": self._step_counter,
             "timestamp": datetime.now().isoformat(),
-        })
+        }
+        await self.websocket.send_json(payload)
+        try:
+            if self.conversation_id:
+                await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
+        except Exception:
+            pass
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -608,6 +633,10 @@ class MongoDBAgent:
 
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
+                try:
+                    await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                except Exception as e:
+                    print(f"Warning: failed to save assistant message: {e}")
 
                 # If no tools requested, we are done
                 if not getattr(response, "tool_calls", None):
@@ -639,6 +668,10 @@ class MongoDBAgent:
                     for tool_message, success in tool_results:
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
+                        try:
+                            await save_action_event(conversation_id, "result", tool_message.content)
+                        except Exception:
+                            pass
                         if success:
                             did_any_tool = True
                 else:
@@ -647,6 +680,10 @@ class MongoDBAgent:
                         tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
+                        try:
+                            await save_action_event(conversation_id, "result", tool_message.content)
+                        except Exception:
+                            pass
                         if success:
                             did_any_tool = True
                 
@@ -717,7 +754,7 @@ class MongoDBAgent:
                 human_message = HumanMessage(content=query)
                 messages.append(human_message)
 
-                callback_handler = PhoenixCallbackHandler(websocket)
+                callback_handler = PhoenixCallbackHandler(websocket, conversation_id)
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
@@ -815,6 +852,10 @@ class MongoDBAgent:
 
                     # Persist assistant message
                     conversation_memory.add_message(conversation_id, response)
+                    try:
+                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                    except Exception as e:
+                        print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
                         yield response.content
@@ -847,6 +888,10 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
+                            try:
+                                await save_action_event(conversation_id, "result", tool_message.content)
+                            except Exception:
+                                pass
                             if success:
                                 did_any_tool = True
                     else:
@@ -860,6 +905,10 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
+                            try:
+                                await save_action_event(conversation_id, "result", tool_message.content)
+                            except Exception:
+                                pass
                             if success:
                                 did_any_tool = True
                     
