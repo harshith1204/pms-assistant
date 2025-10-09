@@ -1,12 +1,6 @@
-import yaml
 from typing import List, Dict, Any
 
 from mongo.constants import uuid_str_to_mongo_binary
-
-
-# Load the roles configuration (kept for future role-based extensions)
-with open("roles.yaml", 'r') as f:
-    ROLES_CONFIG = yaml.safe_load(f)
 
 
 def _project_id_match_stage(collection: str, project_ids_bin: List[Any]) -> List[Dict[str, Any]]:
@@ -87,7 +81,6 @@ def apply_authorization_filter(collection: str, user_context: dict) -> List[Dict
       strings), we match directly against those project IDs.
     """
     role = (user_context or {}).get("role")
-    role_config = (ROLES_CONFIG or {}).get('roles', {}).get(role, {})
 
     # Admin bypasses authorization filtering
     if role == "admin":
@@ -115,13 +108,6 @@ def apply_authorization_filter(collection: str, user_context: dict) -> List[Dict
 
     if member_id_bin is not None:
         return _member_lookup_auth_stages(collection, member_id_bin)
-
-    # Fallback: role-configured project names (legacy support) – use only for 'project'
-    allowed_project_names = role_config.get("allowed_projects") or []
-    if allowed_project_names:
-        if collection == "project":
-            return [{"$match": {"name": {"$in": allowed_project_names}}}]
-        # For other collections, we need project IDs; skip name-based filtering
 
     # If we cannot determine identity or allowed projects, do not inject filters
     # Returning empty list means no additional auth restrictions
