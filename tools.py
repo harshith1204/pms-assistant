@@ -1,6 +1,7 @@
 import sys
 from langchain_core.tools import tool
 from typing import Optional, Dict, List, Any, Union
+from bson.objectid import ObjectId
 import mongo.constants
 import os
 import json
@@ -984,6 +985,257 @@ tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
 ]
+
+# --- Creation tools ---
+
+def _ensure_project_ref(project_name: Optional[str], project_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not project_name and not project_id:
+        return None
+    project: Dict[str, Any] = {}
+    if project_name and isinstance(project_name, str) and project_name.strip():
+        project["name"] = project_name.strip()
+    if project_id and isinstance(project_id, str) and _is_hex_object_id(project_id):
+        try:
+            project["_id"] = ObjectId(project_id)
+        except Exception:
+            # Ignore invalid object id; keep name if provided
+            pass
+    return project or None
+
+def _ensure_state_ref(state: Optional[Union[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    if not state:
+        return None
+    if isinstance(state, str):
+        s = state.strip()
+        return {"name": s} if s else None
+    if isinstance(state, dict):
+        name = state.get("name") or state.get("title")
+        return {"name": name} if isinstance(name, str) and name.strip() else None
+    return None
+
+def _ensure_assignees(assignees: Optional[Union[List[Any], Dict[str, Any], str]]) -> Optional[Union[List[Dict[str, Any]], Dict[str, Any]]]:
+    if not assignees:
+        return None
+    if isinstance(assignees, dict):
+        name = assignees.get("name") or assignees.get("title")
+        return assignees if isinstance(name, str) and name.strip() else None
+    if isinstance(assignees, str):
+        s = assignees.strip()
+        return {"name": s} if s else None
+    if isinstance(assignees, list):
+        cleaned: List[Dict[str, Any]] = []
+        for a in assignees:
+            if isinstance(a, str) and a.strip():
+                cleaned.append({"name": a.strip()})
+            elif isinstance(a, dict):
+                n = a.get("name") or a.get("title")
+                if isinstance(n, str) and n.strip():
+                    # Keep known fields only to avoid dumping large payloads
+                    entry: Dict[str, Any] = {"name": n.strip()}
+                    if isinstance(a.get("email"), str):
+                        entry["email"] = a["email"]
+                    if isinstance(a.get("role"), str):
+                        entry["role"] = a["role"]
+                    cleaned.append(entry)
+        return cleaned or None
+    return None
+
+def _now_time_fields() -> Dict[str, Any]:
+    dt = datetime.utcnow()
+    return {
+        "createdAt": dt.isoformat() + "Z",
+        "updatedAt": dt.isoformat() + "Z",
+        "createdTimeStamp": int(dt.timestamp() * 1000),
+        "updatedTimeStamp": int(dt.timestamp() * 1000),
+    }
+
+def _apply_business_scope(doc: Dict[str, Any]) -> None:
+    try:
+        from mongo.constants import BUSINESS_UUID, uuid_str_to_mongo_binary
+        if BUSINESS_UUID:
+            doc["business"] = doc.get("business") or {}
+            doc["business"]["_id"] = uuid_str_to_mongo_binary(BUSINESS_UUID)
+    except Exception:
+        # If conversion fails, skip scoping rather than erroring
+        pass
+
+
+@tool
+async def create_work_item(
+    title: str,
+    description: Optional[str] = None,
+    priority: Optional[str] = None,
+    state: Optional[Union[str, Dict[str, Any]]] = None,
+    assignees: Optional[Union[List[Any], Dict[str, Any], str]] = None,
+    project_name: Optional[str] = None,
+    project_id: Optional[str] = None,
+    cycle_name: Optional[str] = None,
+    module_name: Optional[str] = None,
+    displayBugNo: Optional[str] = None,
+    label: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Create a work item in MongoDB (collection `workItem`).
+
+    Required: title.
+    Optional: description, priority (URGENT|HIGH|MEDIUM|LOW|NONE), state, assignees,
+    project_name/project_id, cycle_name, module_name, displayBugNo, label, extra fields.
+    Returns a short summary with the new document id.
+    """
+    if not isinstance(title, str) or not title.strip():
+        return "❌ title is required"
+
+    doc: Dict[str, Any] = {"title": title.strip()}
+    if isinstance(description, str) and description.strip():
+        doc["description"] = description.strip()
+    if isinstance(priority, str) and priority.strip():
+        doc["priority"] = priority.strip().upper()
+    if isinstance(label, str) and label.strip():
+        doc["label"] = label.strip()
+    if isinstance(displayBugNo, str) and displayBugNo.strip():
+        doc["displayBugNo"] = displayBugNo.strip()
+
+    state_obj = _ensure_state_ref(state)
+    if state_obj:
+        doc["state"] = state_obj
+        # Maintain a simple "status" mirror for compatibility
+        if state_obj.get("name"):
+            doc["status"] = state_obj["name"]
+
+    assignee_val = _ensure_assignees(assignees)
+    if assignee_val is not None:
+        doc["assignee"] = assignee_val
+
+    project_obj = _ensure_project_ref(project_name, project_id)
+    if project_obj:
+        doc["project"] = project_obj
+
+    if isinstance(cycle_name, str) and cycle_name.strip():
+        doc["cycle"] = {"name": cycle_name.strip()}
+    if isinstance(module_name, str) and module_name.strip():
+        # Schema uses singular 'modules' but holds a subdoc
+        doc["modules"] = {"name": module_name.strip()}
+
+    # Timestamps
+    doc.update(_now_time_fields())
+
+    # Business scoping
+    _apply_business_scope(doc)
+
+    # Merge extra fields conservatively (avoid overriding core keys)
+    if isinstance(extra, dict):
+        for k, v in extra.items():
+            if k not in doc and v is not None:
+                doc[k] = v
+
+    try:
+        await mongodb_tools.connect()
+        if not getattr(mongodb_tools, "client", None):
+            return "❌ MongoDB client not initialized"
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["workItem"]
+        res = await coll.insert_one(doc)
+        oid = str(res.inserted_id)
+        # Return a compact confirmation
+        summary = {
+            "id": oid,
+            "title": doc.get("title"),
+            "priority": doc.get("priority"),
+            "state": (doc.get("state") or {}).get("name"),
+            "project": (doc.get("project") or {}).get("name"),
+            "createdAt": doc.get("createdAt"),
+        }
+        return "✅ Work item created\n" + json.dumps(summary, ensure_ascii=False)
+    except Exception as e:
+        return f"❌ Failed to create work item: {e}"
+
+
+@tool
+async def create_page(
+    title: str,
+    content: Optional[Union[str, Dict[str, Any]]] = None,
+    visibility: Optional[str] = None,
+    project_name: Optional[str] = None,
+    project_id: Optional[str] = None,
+    isFavourite: Optional[bool] = None,
+    created_by_name: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Create a page in MongoDB (collection `page`).
+
+    Required: title.
+    Optional: content (Editor.js JSON string or dict), visibility, project_name/project_id,
+    isFavourite, created_by_name, extra fields.
+    Returns a short summary with the new document id.
+    """
+    if not isinstance(title, str) or not title.strip():
+        return "❌ title is required"
+
+    doc: Dict[str, Any] = {"title": title.strip()}
+    if isinstance(visibility, str) and visibility.strip():
+        doc["visibility"] = visibility.strip().upper()
+    if isinstance(isFavourite, bool):
+        doc["isFavourite"] = isFavourite
+
+    # Content: accept raw string or dict; store as provided
+    if isinstance(content, dict):
+        try:
+            doc["content"] = json.dumps(content, ensure_ascii=False)
+        except Exception:
+            # Fallback to string repr if it cannot be serialized cleanly
+            doc["content"] = str(content)
+    elif isinstance(content, str) and content.strip():
+        doc["content"] = content
+
+    project_obj = _ensure_project_ref(project_name, project_id)
+    if project_obj:
+        doc["project"] = project_obj
+
+    if isinstance(created_by_name, str) and created_by_name.strip():
+        doc["createdBy"] = {"name": created_by_name.strip()}
+
+    # Timestamps (pages use createdAt/updatedAt primarily)
+    time_fields = _now_time_fields()
+    # Keep both styles for compatibility
+    doc["createdAt"] = time_fields["createdAt"]
+    doc["updatedAt"] = time_fields["updatedAt"]
+    doc["createdTimeStamp"] = time_fields["createdTimeStamp"]
+    doc["updatedTimeStamp"] = time_fields["updatedTimeStamp"]
+
+    # Business scoping
+    _apply_business_scope(doc)
+
+    # Merge extra fields conservatively
+    if isinstance(extra, dict):
+        for k, v in extra.items():
+            if k not in doc and v is not None:
+                doc[k] = v
+
+    try:
+        await mongodb_tools.connect()
+        if not getattr(mongodb_tools, "client", None):
+            return "❌ MongoDB client not initialized"
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["page"]
+        res = await coll.insert_one(doc)
+        oid = str(res.inserted_id)
+        summary = {
+            "id": oid,
+            "title": doc.get("title"),
+            "visibility": doc.get("visibility"),
+            "project": (doc.get("project") or {}).get("name"),
+            "createdAt": doc.get("createdAt"),
+        }
+        return "✅ Page created\n" + json.dumps(summary, ensure_ascii=False)
+    except Exception as e:
+        return f"❌ Failed to create page: {e}"
+
+
+# Register creation tools
+tools.extend([
+    create_work_item,
+    create_page,
+])
 
 # import asyncio
 
