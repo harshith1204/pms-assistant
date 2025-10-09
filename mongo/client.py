@@ -3,8 +3,8 @@
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Dict, Any, List
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+import os
+import contextlib
 import asyncio
 
 try:
@@ -37,8 +37,8 @@ class DirectMongoClient:
 
     async def connect(self):
         """Initialize direct MongoDB connection with persistent connection pool"""
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("direct_mongo.connect", kind=trace.SpanKind.INTERNAL) as span:
+        span_cm = contextlib.nullcontext()
+        with span_cm as span:
             try:
                 async with self._connect_lock:
                     if self.connected and self.client:
@@ -63,26 +63,13 @@ class DirectMongoClient:
                     
                     self.connected = True
                     
-                    if span:
-                        try:
-                            span.set_attribute("connection.type", "direct_motor")
-                            span.set_attribute("connection.persistent", True)
-                            span.set_attribute("connection.pool_size", 50)
-                            span.set_attribute("database.name", DATABASE_NAME)
-                        except Exception:
-                            pass
+                    pass
                     
                     print(f"✅ MongoDB connected with persistent connection pool (50 connections)")
                     print(f"   Direct connection - no MCP/Smithery overhead!")
                     
             except Exception as e:
-                if span:
-                    span.set_status(Status(StatusCode.ERROR, str(e)))
-                    try:
-                        span.set_attribute(OI.ERROR_TYPE, e.__class__.__name__)
-                        span.set_attribute(OI.ERROR_MESSAGE, str(e))
-                    except Exception:
-                        pass
+                pass
                 print(f"❌ Failed to connect to MongoDB: {e}")
                 raise
 
@@ -106,21 +93,9 @@ class DirectMongoClient:
         Returns:
             List of result documents
         """
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span(
-            "direct_mongo.aggregate",
-            kind=trace.SpanKind.INTERNAL,
-            attributes={
-                "db.system": "mongodb",
-                "db.name": database,
-                "db.mongodb.collection": collection,
-                "db.operation": "aggregate"
-            },
-        ) as span:
-            try:
-                span.set_attribute(getattr(OI, 'TOOL_INPUT', 'tool.input'), str(pipeline)[:1200])
-            except Exception:
-                pass
+        span_cm = contextlib.nullcontext()
+        with span_cm as span:
+            pass
             
             # Motor maintains persistent connection pool automatically
             # No need to check connection status on every query - massive latency savings!
@@ -169,23 +144,12 @@ class DirectMongoClient:
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
                 
-                if span:
-                    try:
-                        span.set_attribute(getattr(OI, 'TOOL_OUTPUT', 'tool.output'), f"list[{len(results)}]")
-                        span.set_attribute("db.result_count", len(results))
-                    except Exception:
-                        pass
+                pass
                 
                 return results
                 
             except Exception as e:
-                if span:
-                    span.set_status(Status(StatusCode.ERROR, str(e)))
-                    try:
-                        span.set_attribute(getattr(OI, 'ERROR_TYPE', 'error.type'), e.__class__.__name__)
-                        span.set_attribute(getattr(OI, 'ERROR_MESSAGE', 'error.message'), str(e))
-                    except Exception:
-                        pass
+                pass
                 raise
 
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
