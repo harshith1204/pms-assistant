@@ -979,10 +979,144 @@ async def rag_search(
         return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
+@tool
+async def generate_content(
+    content_type: str,
+    prompt: str,
+    template_title: str = "",
+    template_content: str = "",
+    context: Optional[Dict[str, Any]] = None
+) -> str:
+    """Generate work items or pages using LLM - returns SUMMARY only (not full content).
+    
+    **CRITICAL**: This tool returns only a compact summary to avoid expensive token overhead.
+    The full generated content is stored separately and not returned to the agent.
+    
+    Use this to create new content:
+    - Work items: bugs, tasks, features
+    - Pages: documentation, meeting notes, project plans
+    
+    Args:
+        content_type: Type of content - 'work_item' or 'page'
+        prompt: User's instruction for what to generate (e.g., "Create a bug report for login issue")
+        template_title: Optional template title to base generation on
+        template_content: Optional template content to use as structure
+        context: Optional context dict with additional parameters (pageId, projectId, etc.)
+    
+    Returns:
+        Compact summary with title preview and confirmation (NOT full content)
+    
+    Examples:
+        generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
+        generate_content(content_type="page", prompt="Create API documentation", context={...})
+    """
+    import httpx
+    
+    try:
+        if content_type not in ["work_item", "page"]:
+            return f"❌ Invalid content_type: {content_type}. Must be 'work_item' or 'page'"
+        
+        # Get API base URL from environment or use default
+        api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+        
+        if content_type == "work_item":
+            # Call work item generation endpoint
+            url = f"{api_base}/generate-work-item"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Work Item",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Extract ONLY summary info (not full description)
+            title = result.get("title", "Untitled")[:100]  # Truncate title
+            desc_preview = result.get("description", "")[:150]  # Short preview only
+            word_count = len(result.get("description", "").split())
+            
+            # Return compact confirmation
+            return (
+                f"✅ Work item generated successfully!\n"
+                f"Title: {title}\n"
+                f"Content: {word_count} words ({desc_preview}...)\n"
+                f"Status: Ready to save"
+            )
+            
+        else:  # content_type == "page"
+            # Call page generation endpoint
+            url = f"{api_base}/stream-page-content"
+            
+            # Build request context
+            page_context = context or {}
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Page",
+                    "content": template_content or ""
+                },
+                "context": page_context.get("context", {
+                    "tenantId": "",
+                    "page": {"type": "DOCUMENTATION"},
+                    "subject": {},
+                    "timeScope": {},
+                    "retrieval": {},
+                    "privacy": {}
+                }),
+                "pageId": page_context.get("pageId", ""),
+                "projectId": page_context.get("projectId", ""),
+                "tenantId": page_context.get("tenantId", "")
+            }
+            
+            # Send as query param (matching the endpoint's expectation)
+            import json as json_lib
+            params = {"data": json_lib.dumps(payload)}
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Extract ONLY summary info (not full blocks)
+            blocks = result.get("blocks", [])
+            block_count = len(blocks)
+            
+            # Get first header/paragraph for preview
+            preview = "No content"
+            for block in blocks[:3]:  # Check first 3 blocks
+                if block.get("type") == "header":
+                    preview = block.get("data", {}).get("text", "")[:100]
+                    break
+                elif block.get("type") == "paragraph":
+                    preview = block.get("data", {}).get("text", "")[:100]
+                    break
+            
+            # Return compact confirmation
+            return (
+                f"✅ Page generated successfully!\n"
+                f"Content blocks: {block_count}\n"
+                f"Preview: {preview}...\n"
+                f"Status: Ready to save"
+            )
+            
+    except httpx.HTTPStatusError as e:
+        return f"❌ Generation API error: {e.response.status_code} - {e.response.text[:200]}"
+    except httpx.RequestError as e:
+        return f"❌ Connection error: Could not reach generation service - {str(e)[:200]}"
+    except Exception as e:
+        return f"❌ Generation failed: {str(e)[:200]}"
+
+
 # Define the tools list - streamlined and powerful
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
+    generate_content,         # Generate work items/pages (returns summary only, not full content)
 ]
 
 # import asyncio
