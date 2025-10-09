@@ -75,3 +75,8 @@ AUTH_ALLOWED_PROJECT_UUIDS: list[str] = [
     p.strip() for p in _allowed_projects_env.split(",") if p.strip()
 ]
 
+# Agent messaging behavior
+# When true, the agent will append a helpful hint if results are empty due to
+# authorization restriction. Defaults to false to avoid leaking access patterns.
+SHOW_PERMISSION_HINTS: bool = os.getenv("SHOW_PERMISSION_HINTS", "false").lower() in ("1", "true", "yes")
+

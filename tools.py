@@ -554,8 +554,12 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 # Not a list, filter as before
                 filtered = parsed
 
-            # If empty results and auth likely restricted, add a permission hint
-            if (not filtered or (isinstance(filtered, list) and len(filtered) == 0)) and auth_applied and auth_restricted:
+            # If empty results and auth likely restricted, optionally add a permission hint
+            try:
+                from mongo.constants import SHOW_PERMISSION_HINTS
+            except Exception:
+                SHOW_PERMISSION_HINTS = False  # default harden if import fails
+            if SHOW_PERMISSION_HINTS and (not filtered or (isinstance(filtered, list) and len(filtered) == 0)) and auth_applied and auth_restricted:
                 response += "⚠️ No results due to permissions. You may not have access to the requested data.\n\n"
 
 
