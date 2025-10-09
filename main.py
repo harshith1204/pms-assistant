@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import asyncio
@@ -61,6 +62,10 @@ async def lifespan(app: FastAPI):
     print("MongoDB Agent disconnected.")
 
 # Create FastAPI app
+# Allow serving under a subpath when behind a reverse proxy
+# Set ROOT_PATH="/your/subpath" in environment if needed (e.g., "/api")
+ROOT_PATH = os.getenv("ROOT_PATH", "")
+
 app = FastAPI(
     title="PMS Assistant API",
     description="Project Management System Assistant with MongoDB integration and WebSocket support",
@@ -68,7 +73,8 @@ app = FastAPI(
     docs_url="/docs",  # Swagger UI at /docs
     redoc_url="/redoc",  # ReDoc at /redoc
     openapi_url="/openapi.json",  # OpenAPI schema at /openapi.json
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path=ROOT_PATH,
 )
 
 # Configure CORS
@@ -79,6 +85,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trust X-Forwarded-* headers from proxy/load balancer for correct scheme/host
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Include generation-related API routes
 app.include_router(generate_router)
