@@ -12,6 +12,7 @@ import re
 
 from mongo.constants import DATABASE_NAME
 from planner import plan_and_execute_query
+from mongo.conversations import save_user_message
 import os
 import contextlib
 
@@ -151,6 +152,13 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "conversation_id": conversation_id,
                 "timestamp": datetime.now().isoformat()
             })
+
+            # Persist user message to SimpoAssist.conversations
+            try:
+                await save_user_message(conversation_id, message)
+            except Exception as e:
+                # Non-fatal: log to console, continue processing
+                print(f"Warning: failed to save user message: {e}")
 
             # Create a root span per user message and keep all work nested (disabled if DISABLE_TRACING)
             tracer = None
