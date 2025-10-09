@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
+from generate.router import router as generate_router
 
 # Load environment variables from .env file
 load_dotenv()
@@ -75,6 +76,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include generation-related API routes
+app.include_router(generate_router)
 
 @app.get("/")
 async def root():
