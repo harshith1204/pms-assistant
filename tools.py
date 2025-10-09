@@ -979,10 +979,193 @@ async def rag_search(
         return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
+# Global websocket registry for content generation
+_GENERATION_WEBSOCKET = None
+
+def set_generation_websocket(websocket):
+    """Set the websocket connection for direct content streaming."""
+    global _GENERATION_WEBSOCKET
+    _GENERATION_WEBSOCKET = websocket
+
+def get_generation_websocket():
+    """Get the current websocket connection."""
+    return _GENERATION_WEBSOCKET
+
+
+@tool
+async def generate_content(
+    content_type: str,
+    prompt: str,
+    template_title: str = "",
+    template_content: str = "",
+    context: Optional[Dict[str, Any]] = None
+) -> str:
+    """Generate work items or pages - sends content DIRECTLY to frontend, returns minimal confirmation.
+    
+    **CRITICAL TOKEN OPTIMIZATION**: 
+    - Full generated content is sent directly to the frontend via WebSocket
+    - Agent receives only a minimal success/failure signal (no content details)
+    - Prevents generated content from being sent back through the LLM
+    
+    Use this to create new content:
+    - Work items: bugs, tasks, features  
+    - Pages: documentation, meeting notes, project plans
+    
+    Args:
+        content_type: Type of content - 'work_item' or 'page'
+        prompt: User's instruction for what to generate
+        template_title: Optional template title to base generation on
+        template_content: Optional template content to use as structure
+        context: Optional context dict with additional parameters (pageId, projectId, etc.)
+    
+    Returns:
+        Minimal success/failure signal (NOT content details) - saves maximum tokens
+    
+    Examples:
+        generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
+        generate_content(content_type="page", prompt="Create API documentation", context={...})
+    """
+    import httpx
+    
+    try:
+        if content_type not in ["work_item", "page"]:
+            return "❌ Invalid content type"
+        
+        # Get API base URL from environment or use default
+        api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+        
+        if content_type == "work_item":
+            # Call work item generation endpoint
+            url = f"{api_base}/generate-work-item"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Work Item",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "work_item",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+        else:  # content_type == "page"
+            # Call page generation endpoint
+            url = f"{api_base}/stream-page-content"
+            
+            # Build request context
+            page_context = context or {}
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Page",
+                    "content": template_content or ""
+                },
+                "context": page_context.get("context", {
+                    "tenantId": "",
+                    "page": {"type": "DOCUMENTATION"},
+                    "subject": {},
+                    "timeScope": {},
+                    "retrieval": {},
+                    "privacy": {}
+                }),
+                "pageId": page_context.get("pageId", ""),
+                "projectId": page_context.get("projectId", ""),
+                "tenantId": page_context.get("tenantId", "")
+            }
+            
+            # Send as query param (matching the endpoint's expectation)
+            import json as json_lib
+            params = {"data": json_lib.dumps(payload)}
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "page",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+    except httpx.HTTPStatusError as e:
+        error_msg = f"API error: {e.response.status_code}"
+        # Send error to frontend
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+    except httpx.RequestError as e:
+        error_msg = "Connection error"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+    except Exception as e:
+        error_msg = "Generation failed"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": str(e)[:200],
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+
+
 # Define the tools list - streamlined and powerful
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
+    generate_content,         # Generate work items/pages (returns summary only, not full content)
 ]
 
 # import asyncio

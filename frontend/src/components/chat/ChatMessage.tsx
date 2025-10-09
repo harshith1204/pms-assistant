@@ -99,6 +99,76 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
   const renderToolOutput = () => {
     if (!message.toolOutput) return null;
 
+    // Enhanced rendering for generated content and errors
+    const renderGeneratedContent = (data: any) => {
+      // Handle error objects
+      if (data && data.error) {
+        return (
+          <div className="mt-3 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+            <p className="text-xs font-medium mb-2 text-destructive">Generation Error:</p>
+            <div className="text-xs text-destructive">
+              <p><strong>Error:</strong> {data.error}</p>
+              {data.contentType && <p><strong>Content Type:</strong> {data.contentType}</p>}
+            </div>
+          </div>
+        );
+      }
+
+      if (!data || typeof data !== 'object') {
+        return (
+          <div className="mt-3 p-3 bg-muted/30 rounded-md">
+            <p className="text-xs font-medium mb-2">Generated Content:</p>
+            <pre className="text-xs font-mono whitespace-pre-wrap">{JSON.stringify(data, null, 2)}</pre>
+          </div>
+        );
+      }
+
+      // Extract meaningful information from generated content
+      const contentInfo: string[] = [];
+
+      if (data.title) contentInfo.push(`Title: ${data.title}`);
+      if (data.name) contentInfo.push(`Name: ${data.name}`);
+      if (data.content) contentInfo.push(`Content: ${data.content.substring(0, 200)}${data.content.length > 200 ? '...' : ''}`);
+      if (data.description) contentInfo.push(`Description: ${data.description}`);
+      if (data.status) contentInfo.push(`Status: ${data.status}`);
+      if (data.priority) contentInfo.push(`Priority: ${data.priority}`);
+      if (data.id) contentInfo.push(`ID: ${data.id}`);
+      if (data.displayBugNo) contentInfo.push(`Bug #: ${data.displayBugNo}`);
+      if (data.projectDisplayId) contentInfo.push(`Project: ${data.projectDisplayId}`);
+
+      // If we have structured info, show it nicely
+      if (contentInfo.length > 0) {
+        return (
+          <div className="mt-3 p-3 bg-muted/30 rounded-md">
+            <p className="text-xs font-medium mb-2">Generated Content Details:</p>
+            <div className="space-y-1">
+              {contentInfo.map((info, index) => (
+                <div key={index} className="text-xs p-2 bg-background/50 rounded border-l-2 border-primary/30">
+                  {info}
+                </div>
+              ))}
+            </div>
+            {data.content && data.content.length > 200 && (
+              <details className="mt-2">
+                <summary className="text-xs font-medium cursor-pointer">View Full Content</summary>
+                <pre className="text-xs font-mono whitespace-pre-wrap mt-2 p-2 bg-background/30 rounded">
+                  {data.content}
+                </pre>
+              </details>
+            )}
+          </div>
+        );
+      }
+
+      // Fallback for other objects
+      return (
+        <div className="mt-3 p-3 bg-muted/30 rounded-md">
+          <p className="text-xs font-medium mb-2">Generated Content:</p>
+          <pre className="text-xs font-mono whitespace-pre-wrap">{JSON.stringify(data, null, 2)}</pre>
+        </div>
+      );
+    };
+
     if (Array.isArray(message.toolOutput)) {
       return (
         <div className="mt-3 p-3 bg-muted/30 rounded-md">
@@ -106,7 +176,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
           <div className="space-y-1">
             {(message.toolOutput as unknown[]).map((item: unknown, index: number) => (
               <Badge key={index} variant="outline" className="text-xs mr-1 mb-1">
-                {item}
+                {typeof item === 'object' ? JSON.stringify(item) : String(item)}
               </Badge>
             ))}
           </div>
@@ -124,13 +194,8 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
       );
     }
 
-    // Fallback for objects
-    return (
-      <div className="mt-3 p-3 bg-muted/30 rounded-md">
-        <p className="text-xs font-medium mb-2">Output:</p>
-        <pre className="text-xs font-mono whitespace-pre-wrap">{JSON.stringify(message.toolOutput as unknown, null, 2)}</pre>
-      </div>
-    );
+    // Handle generated content objects
+    return renderGeneratedContent(message.toolOutput);
   };
 
   return (
@@ -168,7 +233,8 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
               )}
               {message.type === "result" && (
                 <Badge variant="outline" className="text-xs">
-                  Completed
+                  <Check className="h-3 w-3 mr-1" />
+                  Generated
                 </Badge>
               )}
             </div>
@@ -200,7 +266,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
               {message.content}
             </div>
             
-            {message.type === "tool" && showToolOutputs && renderToolOutput()}
+            {(message.type === "tool" || message.type === "result" || (message.type === "assistant" && message.toolOutput)) && showToolOutputs && renderToolOutput()}
           </div>
         </Card>
       </div>

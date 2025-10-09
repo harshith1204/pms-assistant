@@ -277,6 +277,45 @@ export function ChatInterface() {
 				});
 				setIsLoading(false);
 				break;
+
+			case "content_generated": {
+				const contentType = getString((data as Record<string, unknown>)["content_type"]);
+				const success = (data as Record<string, unknown>)["success"] as boolean;
+				const error = getString((data as Record<string, unknown>)["error"]);
+
+				if (success) {
+					const generatedData = (data as Record<string, unknown>)["data"];
+					const generatedMessage: Message = {
+						id: Date.now().toString(),
+						type: "result",
+						content: `✅ Generated ${contentType} successfully`,
+						timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+						toolOutput: generatedData,
+					};
+					setMessages(prev => [...prev, generatedMessage]);
+
+					toast({
+						title: "Content Generated",
+						description: `${contentType} has been created successfully`,
+					});
+				} else {
+					const errorMessage: Message = {
+						id: Date.now().toString(),
+						type: "assistant",
+						content: `❌ Failed to generate ${contentType}: ${error}`,
+						timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+						toolOutput: { error: error, contentType: contentType },
+					};
+					setMessages(prev => [...prev, errorMessage]);
+
+					toast({
+						title: "Generation Failed",
+						description: `Failed to generate ${contentType}: ${error}`,
+						variant: "destructive",
+					});
+				}
+				break;
+			}
 		}
 	}, [toast, showToolOutputs]);
 	

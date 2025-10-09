@@ -193,6 +193,10 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             "timestamp": datetime.now().isoformat()
                         })
                 else:
+                    # Set websocket for content generation tool (direct streaming to frontend)
+                    from tools import set_generation_websocket
+                    set_generation_websocket(websocket)
+                    
                     # Use regular LLM with tool calling
                     agent_span_cm = contextlib.nullcontext()
                     with agent_span_cm as agent_span:
@@ -209,6 +213,9 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             # The streaming is handled internally by the callback handler
                             # Just iterate through the generator to complete the streaming
                             pass
+                    
+                    # Clean up websocket reference after completion
+                    set_generation_websocket(None)
 
             # Send completion message
             await websocket.send_json({
