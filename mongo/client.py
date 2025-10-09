@@ -24,7 +24,17 @@ from mongo.constants import (
     ENFORCE_BUSINESS_FILTER,
     uuid_str_to_mongo_binary,
     COLLECTIONS_WITH_DIRECT_BUSINESS,
+    USERNAME,
 )
+from auth import apply_authorization_filter
+MOCK_USER_DATABASE = {
+    "harshith": {
+        "role": "developer", "member_id": "M789", "business_id": "B123"
+    },
+    "gaurav": {
+        "role": "admin", "member_id": "M001", "business_id": "B123"
+    }
+}
 
 
 class DirectMongoClient:
@@ -136,7 +146,13 @@ class DirectMongoClient:
                     except Exception:
                         # Do not fail query if business filter construction fails
                         injected_stages = []
-
+                        
+                if USERNAME:
+                    user_context = MOCK_USER_DATABASE[USERNAME]
+                    # Apply authorization filter based on user role
+                    pipe = apply_authorization_filter(pipeline, user_context)
+                    injected_stages.extend(pipe)
+                    print("Index Stages after auth filter:", injected_stages)
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
                 coll = db[collection]
