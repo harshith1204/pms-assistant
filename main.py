@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
+from generate.router import router as generate_router
 
 # Load environment variables from .env file
 load_dotenv()
@@ -62,19 +63,25 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="PMS Assistant API",
-    description="Project Management System Assistant with MongoDB integration",
+    description="Project Management System Assistant with MongoDB integration and WebSocket support",
     version="1.0.0",
+    docs_url="/docs",  # Swagger UI at /docs
+    redoc_url="/redoc",  # ReDoc at /redoc
+    openapi_url="/openapi.json",  # OpenAPI schema at /openapi.json
     lifespan=lifespan
 )
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Vite dev server
+    allow_origins=["*"],  # Vite dev server
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include generation-related API routes
+app.include_router(generate_router)
 
 @app.get("/")
 async def root():
@@ -88,7 +95,51 @@ async def health_check():
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for streaming chat"""
+    """WebSocket endpoint for streaming chat with MongoDB Agent.
+
+    This endpoint provides real-time streaming chat functionality with the following features:
+
+    Message Types:
+    - "connected": Sent when client connects successfully
+    - "user_message": Acknowledgment of received user message
+    - "llm_start": Indicates LLM processing has started
+    - "token": Streams individual tokens as they're generated
+    - "thought": Streams thinking/reasoning tokens
+    - "tool_start": Indicates a tool is being executed
+    - "tool_end": Tool execution completed (with output preview unless explicitly enabled)
+    - "llm_end": LLM processing completed
+    - "planner_result": Result from planner execution (when force_planner=true)
+    - "planner_error": Error from planner execution
+    - "complete": Chat session completed
+    - "error": Error message
+    - "pong": Response to ping for connection keepalive
+
+    Usage Example:
+    ```javascript
+    const ws = new WebSocket('ws://localhost:7000/ws/chat');
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log(data.type, data);
+    };
+
+    // Send a message
+    ws.send(JSON.stringify({
+        message: "Your message here",
+        conversation_id: "optional_conversation_id",
+        planner: false  // Set to true to force planner usage
+    }));
+
+    // Send ping for keepalive
+    ws.send(JSON.stringify({ type: "ping" }));
+    ```
+
+    Args:
+        websocket: The WebSocket connection object
+
+    Returns:
+        None (streaming responses sent via WebSocket)
+    """
     global mongodb_agent
 
     # Initialize agent if not already done (for testing/development)
@@ -105,7 +156,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=7000,
         reload=True,
         log_level="info"
     )
