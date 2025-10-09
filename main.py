@@ -60,6 +60,9 @@ async def lifespan(app: FastAPI):
     await mongodb_agent.disconnect()
     print("MongoDB Agent disconnected.")
 
+# Resolve optional ROOT_PATH for deployments behind a reverse proxy or subpath
+ROOT_PATH = os.getenv("ROOT_PATH", "").rstrip("/")
+
 # Create FastAPI app
 app = FastAPI(
     title="PMS Assistant API",
@@ -68,7 +71,8 @@ app = FastAPI(
     docs_url="/docs",  # Swagger UI at /docs
     redoc_url="/redoc",  # ReDoc at /redoc
     openapi_url="/openapi.json",  # OpenAPI schema at /openapi.json
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path=ROOT_PATH,
 )
 
 # Configure CORS
@@ -158,5 +162,8 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=7000,
         reload=True,
-        log_level="info"
+        log_level="info",
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+        root_path=ROOT_PATH or None,
     )
