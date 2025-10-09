@@ -61,8 +61,8 @@ def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
 # Enable or disable authorization filter injection
 ENFORCE_AUTHZ_FILTER: bool = os.getenv("ENFORCE_AUTHZ_FILTER", "true").lower() in ("1", "true", "yes")
 
-# Role for the current authenticated user (admin/developer/...)
-AUTH_ROLE: str = os.getenv("AUTH_ROLE") or os.getenv("ROLE") or "developer"
+# Role concept removed in favor of membership-based authorization only
+AUTH_ROLE: str | None = None
 
 # Member UUID of the authenticated user (canonical UUID string). If provided,
 # authorization will scope results to projects where this member participates.

@@ -80,11 +80,7 @@ def apply_authorization_filter(collection: str, user_context: dict) -> List[Dict
       `allowed_project_ids` are provided in the user_context (canonical UUID
       strings), we match directly against those project IDs.
     """
-    role = (user_context or {}).get("role")
-
-    # Admin bypasses authorization filtering
-    if role == "admin":
-        return []
+    # Role-based bypass removed: enforce membership or explicit allowed project IDs
 
     # If explicit allowed project UUIDs are provided, use them directly
     allowed_project_ids = (user_context or {}).get("allowed_project_ids") or []

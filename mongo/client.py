@@ -26,7 +26,6 @@ from mongo.constants import (
     COLLECTIONS_WITH_DIRECT_BUSINESS,
     USERNAME,
     ENFORCE_AUTHZ_FILTER,
-    AUTH_ROLE,
     AUTH_MEMBER_UUID,
     AUTH_ALLOWED_PROJECT_UUIDS,
 )
@@ -162,9 +161,8 @@ class DirectMongoClient:
                 if ENFORCE_AUTHZ_FILTER:
                     user_context = None
                     # Prefer explicit AUTH_* env config if provided
-                    if AUTH_ROLE or AUTH_MEMBER_UUID or AUTH_ALLOWED_PROJECT_UUIDS:
+                    if AUTH_MEMBER_UUID or AUTH_ALLOWED_PROJECT_UUIDS:
                         user_context = {
-                            "role": AUTH_ROLE,
                             "member_id": AUTH_MEMBER_UUID,
                             "allowed_project_ids": AUTH_ALLOWED_PROJECT_UUIDS,
                         }
