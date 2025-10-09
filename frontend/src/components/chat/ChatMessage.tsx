@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { User, Bot, Brain, Wrench, Clock, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { WorkItemDisplay } from "./WorkItemDisplay";
 
 interface Message {
   id: string;
@@ -12,6 +13,7 @@ interface Message {
   timestamp: string;
   toolName?: string;
   toolOutput?: unknown;
+  contentType?: string;
 }
 
 interface ChatMessageProps {
@@ -98,6 +100,15 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
 
   const renderToolOutput = () => {
     if (!message.toolOutput) return null;
+
+    // Render work item content using dedicated component
+    if (message.contentType === "work_item") {
+      return (
+        <div className="mt-3">
+          <WorkItemDisplay data={message.toolOutput as any} />
+        </div>
+      );
+    }
 
     // Enhanced rendering for generated content and errors
     const renderGeneratedContent = (data: any) => {

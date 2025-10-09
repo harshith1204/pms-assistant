@@ -14,6 +14,7 @@ interface Message {
 	timestamp: string;
 	toolName?: string;
 	toolOutput?: unknown;
+	contentType?: string;
 }
 
 const initialMessages: Message[] = [
@@ -291,6 +292,7 @@ export function ChatInterface() {
 						content: `✅ Generated ${contentType} successfully`,
 						timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
 						toolOutput: generatedData,
+						contentType: contentType,
 					};
 					setMessages(prev => [...prev, generatedMessage]);
 
@@ -305,6 +307,7 @@ export function ChatInterface() {
 						content: `❌ Failed to generate ${contentType}: ${error}`,
 						timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
 						toolOutput: { error: error, contentType: contentType },
+						contentType: contentType,
 					};
 					setMessages(prev => [...prev, errorMessage]);
 

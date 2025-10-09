@@ -145,7 +145,6 @@ async def websocket_chat(websocket: WebSocket):
     if not mongodb_agent:
         print("Initializing MongoDB Agent for WebSocket...")
         mongodb_agent = MongoDBAgent()
-        await mongodb_agent.initialize_tracing()
         await mongodb_agent.connect()
 
     await handle_chat_websocket(websocket, mongodb_agent)
