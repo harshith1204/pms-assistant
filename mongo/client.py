@@ -25,6 +25,9 @@ from mongo.constants import (
     uuid_str_to_mongo_binary,
     COLLECTIONS_WITH_DIRECT_BUSINESS,
     USERNAME,
+    ENFORCE_AUTHZ_FILTER,
+    AUTH_MEMBER_UUID,
+    AUTH_ALLOWED_PROJECT_UUIDS,
 )
 from auth import apply_authorization_filter
 MOCK_USER_DATABASE = {
@@ -44,6 +47,12 @@ class DirectMongoClient:
         self.client: AsyncIOMotorClient | None = None
         self.connected = False
         self._connect_lock = asyncio.Lock()
+        # Authorization awareness: store metadata about the last aggregate call
+        self.last_auth_meta: Dict[str, Any] = {
+            "auth_applied": False,
+            "auth_restricted": False,
+            "stages": [],
+        }
 
     async def connect(self):
         """Initialize direct MongoDB connection with persistent connection pool"""
@@ -115,6 +124,7 @@ class DirectMongoClient:
             try:
                 # Prepare business scoping injection (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
+                auth_stages: List[Dict[str, Any]] = []
                 if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
                     try:
                         biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
@@ -147,18 +157,37 @@ class DirectMongoClient:
                         # Do not fail query if business filter construction fails
                         injected_stages = []
                         
-                if USERNAME:
-                    user_context = MOCK_USER_DATABASE[USERNAME]
-                    # Apply authorization filter based on user role
-                    pipe = apply_authorization_filter(pipeline, user_context)
-                    injected_stages.extend(pipe)
-                    print("Index Stages after auth filter:", injected_stages)
+                # Inject authorization stages based on authenticated user context
+                if ENFORCE_AUTHZ_FILTER:
+                    user_context = None
+                    # Prefer explicit AUTH_* env config if provided
+                    if AUTH_MEMBER_UUID or AUTH_ALLOWED_PROJECT_UUIDS:
+                        user_context = {
+                            "member_id": AUTH_MEMBER_UUID,
+                            "allowed_project_ids": AUTH_ALLOWED_PROJECT_UUIDS,
+                        }
+                    # Fallback to mock database by USERNAME for local/dev
+                    elif USERNAME and USERNAME in MOCK_USER_DATABASE:
+                        user_context = MOCK_USER_DATABASE[USERNAME]
+
+                    if user_context:
+                        auth_stages = apply_authorization_filter(collection, user_context)
+                        if auth_stages:
+                            injected_stages.extend(auth_stages)
+                            print("Auth stages injected:", auth_stages)
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
                 coll = db[collection]
                 effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
+
+                # Record authorization metadata for agent awareness
+                self.last_auth_meta = {
+                    "auth_applied": bool(auth_stages),
+                    "auth_restricted": bool(auth_stages) and isinstance(results, list) and len(results) == 0,
+                    "stages": auth_stages or [],
+                }
                 
                 pass
                 
@@ -181,6 +210,10 @@ class DirectMongoClient:
             return await self.aggregate(database, collection, pipeline)
         else:
             raise ValueError(f"Tool '{tool_name}' not supported by direct client. Only 'aggregate' is implemented.")
+
+    def get_last_auth_meta(self) -> Dict[str, Any]:
+        """Expose metadata about the last authorization filter injection."""
+        return dict(self.last_auth_meta)
 
 
 # Global instance - drop-in replacement for mongodb_tools

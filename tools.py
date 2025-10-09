@@ -510,6 +510,10 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 
             # Show results (compact preview)
             rows = result.get("result")
+            # Authorization awareness: if no rows and auth restricted, surface a hint
+            auth_meta = result.get("auth") or {}
+            auth_applied = bool(auth_meta.get("auth_applied"))
+            auth_restricted = bool(auth_meta.get("auth_restricted"))
             try:
                 # Attempt to parse stringified JSON results
                 if isinstance(rows, str):
@@ -549,6 +553,14 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             else:
                 # Not a list, filter as before
                 filtered = parsed
+
+            # If empty results and auth likely restricted, optionally add a permission hint
+            try:
+                from mongo.constants import SHOW_PERMISSION_HINTS
+            except Exception:
+                SHOW_PERMISSION_HINTS = False  # default harden if import fails
+            if SHOW_PERMISSION_HINTS and (not filtered or (isinstance(filtered, list) and len(filtered) == 0)) and auth_applied and auth_restricted:
+                response += "⚠️ No results due to permissions. You may not have access to the requested data.\n\n"
 
 
             def format_llm_friendly(data, max_items=20, primary_entity: Optional[str] = None):
