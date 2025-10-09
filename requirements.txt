@@ -24,6 +24,7 @@ fastapi
 uvicorn[standard]
 
 # Development and testing
+groq
 pytest
 pymongo
 motor  # Async MongoDB driver (replaces MongoDB MCP + Smithery)
