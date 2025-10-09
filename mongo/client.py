@@ -25,6 +25,10 @@ from mongo.constants import (
     uuid_str_to_mongo_binary,
     COLLECTIONS_WITH_DIRECT_BUSINESS,
     USERNAME,
+    ENFORCE_AUTHZ_FILTER,
+    AUTH_ROLE,
+    AUTH_MEMBER_UUID,
+    AUTH_ALLOWED_PROJECT_UUIDS,
 )
 from auth import apply_authorization_filter
 MOCK_USER_DATABASE = {
@@ -147,12 +151,25 @@ class DirectMongoClient:
                         # Do not fail query if business filter construction fails
                         injected_stages = []
                         
-                if USERNAME:
-                    user_context = MOCK_USER_DATABASE[USERNAME]
-                    # Apply authorization filter based on user role
-                    pipe = apply_authorization_filter(pipeline, user_context)
-                    injected_stages.extend(pipe)
-                    print("Index Stages after auth filter:", injected_stages)
+                # Inject authorization stages based on authenticated user context
+                if ENFORCE_AUTHZ_FILTER:
+                    user_context = None
+                    # Prefer explicit AUTH_* env config if provided
+                    if AUTH_ROLE or AUTH_MEMBER_UUID or AUTH_ALLOWED_PROJECT_UUIDS:
+                        user_context = {
+                            "role": AUTH_ROLE,
+                            "member_id": AUTH_MEMBER_UUID,
+                            "allowed_project_ids": AUTH_ALLOWED_PROJECT_UUIDS,
+                        }
+                    # Fallback to mock database by USERNAME for local/dev
+                    elif USERNAME and USERNAME in MOCK_USER_DATABASE:
+                        user_context = MOCK_USER_DATABASE[USERNAME]
+
+                    if user_context:
+                        auth_stages = apply_authorization_filter(collection, user_context)
+                        if auth_stages:
+                            injected_stages.extend(auth_stages)
+                            print("Auth stages injected:", auth_stages)
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
                 coll = db[collection]
