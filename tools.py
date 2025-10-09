@@ -1136,16 +1136,13 @@ async def create_work_item(
         coll = db["workItem"]
         res = await coll.insert_one(doc)
         oid = str(res.inserted_id)
-        # Return a compact confirmation
-        summary = {
+        # Return a compact confirmation (token-light)
+        return json.dumps({
+            "ok": True,
             "id": oid,
+            "type": "workItem",
             "title": doc.get("title"),
-            "priority": doc.get("priority"),
-            "state": (doc.get("state") or {}).get("name"),
-            "project": (doc.get("project") or {}).get("name"),
-            "createdAt": doc.get("createdAt"),
-        }
-        return "✅ Work item created\n" + json.dumps(summary, ensure_ascii=False)
+        })
     except Exception as e:
         return f"❌ Failed to create work item: {e}"
 
@@ -1219,14 +1216,12 @@ async def create_page(
         coll = db["page"]
         res = await coll.insert_one(doc)
         oid = str(res.inserted_id)
-        summary = {
+        return json.dumps({
+            "ok": True,
             "id": oid,
+            "type": "page",
             "title": doc.get("title"),
-            "visibility": doc.get("visibility"),
-            "project": (doc.get("project") or {}).get("name"),
-            "createdAt": doc.get("createdAt"),
-        }
-        return "✅ Page created\n" + json.dumps(summary, ensure_ascii=False)
+        })
     except Exception as e:
         return f"❌ Failed to create page: {e}"
 
@@ -1236,6 +1231,13 @@ tools.extend([
     create_work_item,
     create_page,
 ])
+
+# Mark token-light tools to avoid echoing large payloads back into LLM context
+try:
+    create_work_item.no_echo = True  # type: ignore[attr-defined]
+    create_page.no_echo = True       # type: ignore[attr-defined]
+except Exception:
+    pass
 
 # import asyncio
 

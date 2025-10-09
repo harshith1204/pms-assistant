@@ -9,6 +9,7 @@ from langchain_core.callbacks import AsyncCallbackHandler
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
+import json
 from typing import Tuple
 import tools
 from datetime import datetime
@@ -223,7 +224,7 @@ def _select_tools_for_query(user_query: str):
     - Let the LLM decide routing based on instructions; no keyword gating.
     - Add query analysis hints for complex join decisions.
     """
-    allowed_names = ["mongo_query", "rag_search"]
+    allowed_names = ["mongo_query", "rag_search", "create_work_item", "create_page"]
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
     if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
@@ -368,6 +369,24 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             pass
         await self._emit_result(summary)
 
+        # Additionally, if a creation tool returned a compact JSON, emit a resource_created event for the UI
+        try:
+            obj = None
+            if isinstance(output, str) and output.strip().startswith("{"):
+                obj = json.loads(output)
+            if isinstance(obj, dict) and obj.get("ok") and obj.get("id"):
+                if self.websocket:
+                    await self.websocket.send_json({
+                        "type": "resource_created",
+                        "id": obj.get("id"),
+                        "resource_type": obj.get("type"),
+                        "title": obj.get("title"),
+                        "timestamp": datetime.now().isoformat(),
+                    })
+        except Exception:
+            # Non-fatal; UI hint is best-effort
+            pass
+
     def cleanup(self):
         """Clean up Phoenix span collector"""
         pass
@@ -428,19 +447,33 @@ class MongoDBAgent:
 
             try:
                 pass
-                
                 result = await actual_tool.ainvoke(tool_call["args"])
-                
                 pass
-                        
             except Exception as tool_exc:
                 result = f"Tool execution error: {tool_exc}"
                 pass
 
-            tool_message = ToolMessage(
-                content=str(result),
-                tool_call_id=tool_call["id"],
-            )
+            # Reduce token echo for creation/generation tools: send only compact summary back to LLM
+            no_echo = getattr(actual_tool, "no_echo", False)
+            if no_echo:
+                compact: str
+                try:
+                    # If tool returned JSON-like summary, keep it; otherwise, truncate
+                    if isinstance(result, str):
+                        compact = result[:300]
+                    else:
+                        compact = str(result)[:300]
+                except Exception:
+                    compact = "OK"
+                tool_message = ToolMessage(
+                    content=compact,
+                    tool_call_id=tool_call["id"],
+                )
+            else:
+                tool_message = ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_call["id"],
+                )
             return tool_message, True
 
     async def connect(self):
