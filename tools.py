@@ -8,7 +8,7 @@ import re
 from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
-from qdrant.qdrant_initializer import RAGTool
+from qdrant.initializer import RAGTool
 # Qdrant and RAG dependencies
 # try:
 #     from qdrant_client import QdrantClient
@@ -49,16 +49,16 @@ DEFAULT_RAG_LIMIT: int = 10
 # - include_adjacent controls whether to pull neighboring chunks for context
 # - min_score sets a score threshold for initial vector hits
 CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
-    "page": 4,
-    "work_item": 3,
+    "page": 2,          # Reduced from 4 to minimize context window usage
+    "work_item": 2,     # Reduced from 3 to minimize context window usage
     "project": 2,
     "cycle": 2,
     "module": 2,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
-    "page": True,
-    "work_item": True,
+    "page": False,      # Disabled to reduce context window usage (was True)
+    "work_item": True,  # Keep adjacent for work items for better context
     "project": False,
     "cycle": False,
     "module": False,
@@ -755,8 +755,8 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 @tool
 async def rag_search(
     query: str,
-    content_type: str = None,
-    group_by: str = None,
+    content_type: Optional[str] = None,
+    group_by: Optional[str] = None,
     limit: int = 10,
     show_content: bool = True,
     use_chunk_aware: bool = True
@@ -850,6 +850,7 @@ async def rag_search(
             include_adjacent = CONTENT_TYPE_INCLUDE_ADJACENT.get(content_type or "", True)
             min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.5)
 
+            from mongo.constants import RAG_CONTEXT_TOKEN_BUDGET
             reconstructed_docs = await retriever.search_with_context(
                 query=query,
                 collection_name=QDRANT_COLLECTION_NAME,
@@ -857,7 +858,8 @@ async def rag_search(
                 limit=effective_limit,
                 chunks_per_doc=chunks_per_doc,
                 include_adjacent=include_adjacent,
-                min_score=min_score
+                min_score=min_score,
+                context_token_budget=RAG_CONTEXT_TOKEN_BUDGET
             )
             
             if not reconstructed_docs:
