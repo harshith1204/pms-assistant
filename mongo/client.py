@@ -48,6 +48,12 @@ class DirectMongoClient:
         self.client: AsyncIOMotorClient | None = None
         self.connected = False
         self._connect_lock = asyncio.Lock()
+        # Authorization awareness: store metadata about the last aggregate call
+        self.last_auth_meta: Dict[str, Any] = {
+            "auth_applied": False,
+            "auth_restricted": False,
+            "stages": [],
+        }
 
     async def connect(self):
         """Initialize direct MongoDB connection with persistent connection pool"""
@@ -119,6 +125,7 @@ class DirectMongoClient:
             try:
                 # Prepare business scoping injection (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
+                auth_stages: List[Dict[str, Any]] = []
                 if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
                     try:
                         biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
@@ -176,6 +183,13 @@ class DirectMongoClient:
                 effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
+
+                # Record authorization metadata for agent awareness
+                self.last_auth_meta = {
+                    "auth_applied": bool(auth_stages),
+                    "auth_restricted": bool(auth_stages) and isinstance(results, list) and len(results) == 0,
+                    "stages": auth_stages or [],
+                }
                 
                 pass
                 
@@ -198,6 +212,10 @@ class DirectMongoClient:
             return await self.aggregate(database, collection, pipeline)
         else:
             raise ValueError(f"Tool '{tool_name}' not supported by direct client. Only 'aggregate' is implemented.")
+
+    def get_last_auth_meta(self) -> Dict[str, Any]:
+        """Expose metadata about the last authorization filter injection."""
+        return dict(self.last_auth_meta)
 
 
 # Global instance - drop-in replacement for mongodb_tools
