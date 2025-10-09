@@ -38,7 +38,7 @@ mongodb_tools = _LazyMongoDBTools()
 # Business UUID to scope all queries/searches. Set via env BUSINESS_UUID.
 # Example: BUSINESS_UUID=3f2504e0-4f89-11d3-9a0c-0305e82c3301
 BUSINESS_UUID: str | None = os.getenv("BUSINESS_UUID")
-
+USERNAME : str | None = os.getenv("USERNAME")
 # Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
 ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
 
