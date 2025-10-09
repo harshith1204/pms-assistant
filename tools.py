@@ -979,6 +979,19 @@ async def rag_search(
         return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
+# Global websocket registry for content generation
+_GENERATION_WEBSOCKET = None
+
+def set_generation_websocket(websocket):
+    """Set the websocket connection for direct content streaming."""
+    global _GENERATION_WEBSOCKET
+    _GENERATION_WEBSOCKET = websocket
+
+def get_generation_websocket():
+    """Get the current websocket connection."""
+    return _GENERATION_WEBSOCKET
+
+
 @tool
 async def generate_content(
     content_type: str,
@@ -987,24 +1000,26 @@ async def generate_content(
     template_content: str = "",
     context: Optional[Dict[str, Any]] = None
 ) -> str:
-    """Generate work items or pages using LLM - returns SUMMARY only (not full content).
+    """Generate work items or pages - sends content DIRECTLY to frontend, returns minimal confirmation.
     
-    **CRITICAL**: This tool returns only a compact summary to avoid expensive token overhead.
-    The full generated content is stored separately and not returned to the agent.
+    **CRITICAL TOKEN OPTIMIZATION**: 
+    - Full generated content is sent directly to the frontend via WebSocket
+    - Agent receives only a minimal success/failure signal (no content details)
+    - Prevents generated content from being sent back through the LLM
     
     Use this to create new content:
-    - Work items: bugs, tasks, features
+    - Work items: bugs, tasks, features  
     - Pages: documentation, meeting notes, project plans
     
     Args:
         content_type: Type of content - 'work_item' or 'page'
-        prompt: User's instruction for what to generate (e.g., "Create a bug report for login issue")
+        prompt: User's instruction for what to generate
         template_title: Optional template title to base generation on
         template_content: Optional template content to use as structure
         context: Optional context dict with additional parameters (pageId, projectId, etc.)
     
     Returns:
-        Compact summary with title preview and confirmation (NOT full content)
+        Minimal success/failure signal (NOT content details) - saves maximum tokens
     
     Examples:
         generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
@@ -1014,7 +1029,7 @@ async def generate_content(
     
     try:
         if content_type not in ["work_item", "page"]:
-            return f"❌ Invalid content_type: {content_type}. Must be 'work_item' or 'page'"
+            return "❌ Invalid content type"
         
         # Get API base URL from environment or use default
         api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -1035,18 +1050,21 @@ async def generate_content(
                 response.raise_for_status()
                 result = response.json()
             
-            # Extract ONLY summary info (not full description)
-            title = result.get("title", "Untitled")[:100]  # Truncate title
-            desc_preview = result.get("description", "")[:150]  # Short preview only
-            word_count = len(result.get("description", "").split())
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "work_item",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
             
-            # Return compact confirmation
-            return (
-                f"✅ Work item generated successfully!\n"
-                f"Title: {title}\n"
-                f"Content: {word_count} words ({desc_preview}...)\n"
-                f"Status: Ready to save"
-            )
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
             
         else:  # content_type == "page"
             # Call page generation endpoint
@@ -1082,34 +1100,65 @@ async def generate_content(
                 response.raise_for_status()
                 result = response.json()
             
-            # Extract ONLY summary info (not full blocks)
-            blocks = result.get("blocks", [])
-            block_count = len(blocks)
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "page",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
             
-            # Get first header/paragraph for preview
-            preview = "No content"
-            for block in blocks[:3]:  # Check first 3 blocks
-                if block.get("type") == "header":
-                    preview = block.get("data", {}).get("text", "")[:100]
-                    break
-                elif block.get("type") == "paragraph":
-                    preview = block.get("data", {}).get("text", "")[:100]
-                    break
-            
-            # Return compact confirmation
-            return (
-                f"✅ Page generated successfully!\n"
-                f"Content blocks: {block_count}\n"
-                f"Preview: {preview}...\n"
-                f"Status: Ready to save"
-            )
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
             
     except httpx.HTTPStatusError as e:
-        return f"❌ Generation API error: {e.response.status_code} - {e.response.text[:200]}"
+        error_msg = f"API error: {e.response.status_code}"
+        # Send error to frontend
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
     except httpx.RequestError as e:
-        return f"❌ Connection error: Could not reach generation service - {str(e)[:200]}"
+        error_msg = "Connection error"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
     except Exception as e:
-        return f"❌ Generation failed: {str(e)[:200]}"
+        error_msg = "Generation failed"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": str(e)[:200],
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
 
 
 # Define the tools list - streamlined and powerful

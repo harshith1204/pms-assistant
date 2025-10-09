@@ -7,7 +7,10 @@ When generating large content (work items, pages) through the agent, the full ge
 - **Wasted costs**: Paying for tokens that provide no value
 
 ## Solution
-Created a new `generate_content` tool that returns **ONLY a compact summary** instead of full content.
+Created a new `generate_content` tool that:
+1. **Sends content DIRECTLY to the frontend** via WebSocket (bypasses agent completely)
+2. **Returns only a minimal success signal** to the agent (`✅ Content generated`)
+3. **Agent just acknowledges** without needing to process or talk about the content
 
 ### Key Changes
 
@@ -27,17 +30,31 @@ async def generate_content(
 **What it does:**
 - Calls your existing generation API (`/generate-work-item` or `/stream-page-content`)
 - Receives the full generated content from the API
-- **Returns only a summary** to the agent:
-  - Work items: Title preview + word count + status
-  - Pages: Block count + content preview + status
-- Full content is available from the API response but NOT sent back to the LLM
+- **Sends full content directly to frontend** via WebSocket message:
+  ```json
+  {
+    "type": "content_generated",
+    "content_type": "work_item",
+    "data": { /* full content here */ },
+    "success": true
+  }
+  ```
+- **Returns minimal signal to agent**: `✅ Content generated` (only 3 tokens!)
+- Agent sees only success/failure - no content details
 
-**Example output (instead of full content):**
+**Example flow:**
 ```
-✅ Work item generated successfully!
-Title: Fix login authentication bug on mobile devices
-Content: 245 words (This work item addresses the critical issue where users are unable to log in on mobile devices...)
-Status: Ready to save
+User: "Generate a bug report for login issue"
+↓
+Agent calls generate_content tool
+↓
+Tool generates 2000 tokens → Sends to frontend via WebSocket
+↓
+Tool returns to agent: "✅ Content generated" (3 tokens)
+↓
+Agent responds: "I've generated the bug report for you"
+↓
+User sees full content on screen (sent directly, not through agent)
 ```
 
 #### 2. Updated Agent Instructions (agent.py)
@@ -70,19 +87,22 @@ User: "Generate a bug report for login issue"
 → Tool generates 2000 tokens of content
 → Returns full 2000 tokens to agent
 → Agent sends 2000 tokens back to LLM for processing
-→ Total: ~4000 tokens (generation + re-processing)
+→ Agent synthesizes response using those 2000 tokens
+→ Total: ~6000+ tokens (generation + return + synthesis)
 ```
 
-**After (with optimization):**
+**After (with direct frontend streaming):**
 ```
 User: "Generate a bug report for login issue"
 → Tool generates 2000 tokens of content
-→ Returns ~50 token summary to agent
-→ Agent sends 50 tokens to LLM for synthesis
-→ Total: ~2050 tokens (generation + summary)
+→ Content sent DIRECTLY to frontend via WebSocket (bypasses agent)
+→ Tool returns to agent: "✅ Content generated" (3 tokens)
+→ Agent sends 3 tokens to LLM
+→ Agent responds: "I've generated the bug report" (~10 tokens)
+→ Total: ~2013 tokens (generation + minimal signal)
 ```
 
-**Savings: ~50% reduction in token usage for generation tasks**
+**Savings: ~67% reduction in token usage for generation tasks!**
 
 ### Architecture Flow
 
@@ -97,15 +117,18 @@ Generation API (/generate-work-item or /stream-page-content)
     ↓
 Full content generated (2000+ tokens)
     ↓
-[OPTIMIZATION POINT]
+[OPTIMIZATION POINT - DIRECT STREAMING]
     ↓
-Return summary only (~50 tokens) ← Agent receives this
-    ↓
-Agent synthesizes response with summary
-    ↓
-User sees confirmation
-
-Note: Full content is available from API but never sent back to LLM
+    ├─→ WebSocket → Frontend (full 2000 tokens)
+    │   User sees full content immediately!
+    │
+    └─→ Agent (minimal "✅ Content generated" - 3 tokens)
+        ↓
+        Agent: "I've generated the bug report"
+        
+Flow comparison:
+OLD: Generate → Agent → LLM → User (6000+ tokens)
+NEW: Generate → Frontend (direct) + Agent gets signal (2013 tokens)
 ```
 
 ### Configuration
@@ -117,17 +140,43 @@ API_BASE_URL=http://localhost:8000  # Default value
 
 ### Benefits
 
-1. **Cost Reduction**: ~50% less tokens for generation tasks
-2. **Faster Response**: Less data to process
-3. **Same Functionality**: Full content still generated and available
-4. **Better UX**: User gets concise confirmation instead of overwhelming output
+1. **Massive Cost Reduction**: ~67% less tokens for generation tasks
+2. **Faster Response**: Minimal data through LLM pipeline
+3. **Better UX**: User sees full content immediately (direct streaming)
+4. **Cleaner Agent Responses**: Agent just confirms success, no content regurgitation
+5. **Scalable**: Works for any size content without token concerns
+
+### Frontend Integration
+
+Your frontend needs to listen for the `content_generated` WebSocket event:
+
+```javascript
+// Frontend WebSocket listener
+websocket.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  if (message.type === 'content_generated') {
+    if (message.success) {
+      // Display the generated content
+      if (message.content_type === 'work_item') {
+        displayWorkItem(message.data);
+      } else if (message.content_type === 'page') {
+        displayPageContent(message.data);
+      }
+    } else {
+      // Show error
+      showError(message.error);
+    }
+  }
+};
+```
 
 ### Next Steps (Optional Enhancements)
 
-1. **Direct DB Storage**: Modify tool to save generated content directly to MongoDB
-2. **Frontend Integration**: Return content ID for frontend to fetch/display separately
-3. **Streaming Support**: Stream only progress updates, not full content
-4. **Webhook Pattern**: Generate content async, notify when complete
+1. **Direct DB Storage**: Modify tool to save generated content directly to MongoDB (no frontend needed)
+2. **Progress Streaming**: Stream generation progress in real-time
+3. **Batch Generation**: Generate multiple items with single confirmation
+4. **Template Library**: Pre-defined templates for common generation tasks
 
 ## Usage
 
