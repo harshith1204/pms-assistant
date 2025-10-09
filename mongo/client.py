@@ -28,27 +28,57 @@ from mongo.constants import (
 
 
 class DirectMongoClient:
-    """Direct MongoDB client using Motor (async PyMongo) - replaces MongoDB MCP"""
+    """Direct MongoDB client using Motor (async PyMongo) - replaces MongoDB MCP
+
+    Supports dynamic connection strings per-call or per-session. When a
+    connection string override is provided, the client will (re)connect using
+    that URI and reuse the persistent pool for subsequent calls until changed
+    again.
+    """
 
     def __init__(self):
         self.client: AsyncIOMotorClient | None = None
         self.connected = False
         self._connect_lock = asyncio.Lock()
+        self._connection_string: str | None = None
 
-    async def connect(self):
-        """Initialize direct MongoDB connection with persistent connection pool"""
+        
+    async def connect(self, connection_string: str | None = None):
+        """Initialize or switch MongoDB connection with persistent connection pool
+
+        Args:
+            connection_string: Optional MongoDB URI to use for this connection.
+                If not provided, falls back to env var MONGODB_CONNECTION_STRING
+                when set, otherwise to the codebase default from
+                `mongo.constants.MONGODB_CONNECTION_STRING`.
+        """
         span_cm = contextlib.nullcontext()
         with span_cm as span:
             try:
                 async with self._connect_lock:
-                    if self.connected and self.client:
+                    # Resolve target connection string with sensible fallbacks
+                    target_conn_str = (
+                        connection_string
+                        or os.getenv("MONGODB_CONNECTION_STRING")
+                        or MONGODB_CONNECTION_STRING
+                    )
+
+                    # If already connected with the same URI, reuse the pool
+                    if self.connected and self.client and self._connection_string == target_conn_str:
                         print("✅ MongoDB already connected (reusing persistent connection)")
                         return
-                    
+
+                    # If connected to a different URI, close before switching
+                    if self.connected and self.client and self._connection_string != target_conn_str:
+                        print("🔄 Switching MongoDB connection URI; closing previous client")
+                        self.client.close()
+                        self.connected = False
+                        self.client = None
+
                     # Create Motor client with optimized connection pool settings
                     # Motor maintains persistent connections automatically
                     self.client = AsyncIOMotorClient(
-                        MONGODB_CONNECTION_STRING,
+                        target_conn_str,
                         maxPoolSize=50,          # Max connections in pool
                         minPoolSize=10,          # Keep minimum connections alive
                         maxIdleTimeMS=45000,     # Keep idle connections for 45s
@@ -57,17 +87,19 @@ class DirectMongoClient:
                         connectTimeoutMS=10000,  # Connection timeout
                         socketTimeoutMS=20000,   # Socket timeout
                     )
-                    
+
                     # Test connection
                     await self.client.admin.command('ping')
-                    
+
+                    # Mark connected and remember URI in use
                     self.connected = True
-                    
+                    self._connection_string = target_conn_str
+
                     pass
-                    
-                    print(f"✅ MongoDB connected with persistent connection pool (50 connections)")
-                    print(f"   Direct connection - no MCP/Smithery overhead!")
-                    
+
+                    print("✅ MongoDB connected with persistent connection pool (50 connections)")
+                    print("   Direct connection - no MCP/Smithery overhead!")
+
             except Exception as e:
                 pass
                 print(f"❌ Failed to connect to MongoDB: {e}")
@@ -79,8 +111,9 @@ class DirectMongoClient:
             self.client.close()
         self.connected = False
         self.client = None
+        self._connection_string = None
 
-    async def aggregate(self, database: str, collection: str, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def aggregate(self, database: str, collection: str, pipeline: List[Dict[str, Any]], connection_string: str | None = None) -> List[Dict[str, Any]]:
         """Execute MongoDB aggregation pipeline directly
         
         This replaces mongodb_tools.execute_tool("aggregate", {...})
@@ -89,6 +122,9 @@ class DirectMongoClient:
             database: Database name
             collection: Collection name
             pipeline: MongoDB aggregation pipeline
+            connection_string: Optional MongoDB URI to override the current
+                connection for this call. When provided and different from the
+                active one, a reconnection will occur automatically.
             
         Returns:
             List of result documents
@@ -97,10 +133,9 @@ class DirectMongoClient:
         with span_cm as span:
             pass
             
-            # Motor maintains persistent connection pool automatically
-            # No need to check connection status on every query - massive latency savings!
-            if not self.client:
-                raise RuntimeError("MongoDB client not initialized. Call connect() first.")
+            # Ensure connection exists and matches requested URI (if provided)
+            if (not self.client) or (connection_string is not None and connection_string != self._connection_string):
+                await self.connect(connection_string=connection_string)
             
             try:
                 # Prepare business scoping injection (prepend stages)
@@ -157,12 +192,23 @@ class DirectMongoClient:
         
         This maintains API compatibility with existing code that calls:
         mongodb_tools.execute_tool("aggregate", args)
+
+        Supported tools and arguments:
+        - aggregate: {
+            database?: str,
+            collection: str,
+            pipeline: list[dict],
+            connection_string?: str  # optional per-call MongoDB URI override
+          }
         """
         if tool_name == "aggregate":
             database = arguments.get("database", DATABASE_NAME)
             collection = arguments["collection"]
             pipeline = arguments["pipeline"]
-            return await self.aggregate(database, collection, pipeline)
+            connection_string = (
+                arguments.get("connection_string")
+            )
+            return await self.aggregate(database, collection, pipeline, connection_string=connection_string)
         else:
             raise ValueError(f"Tool '{tool_name}' not supported by direct client. Only 'aggregate' is implemented.")
 
