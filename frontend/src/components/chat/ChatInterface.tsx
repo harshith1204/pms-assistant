@@ -9,7 +9,7 @@ import { useWebSocket } from "@/hooks/use-websocket";
 
 interface Message {
 	id: string;
-	type: "user" | "assistant" | "thought" | "tool" | "action" | "result";
+	type: "user" | "assistant" | "thought" | "tool" | "action" | "result" | "work_item" | "page";
 	content: string;
 	timestamp: string;
 	toolName?: string;
@@ -59,6 +59,38 @@ export function ChatInterface() {
 		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 		
 		switch (data.type) {
+			case "work_item_generated": {
+				const title = getString((data as Record<string, unknown>)["title"]);
+				const description = getString((data as Record<string, unknown>)["description"]);
+				const id = Date.now().toString();
+				setMessages(prev => [
+					...prev,
+					{
+						id,
+						type: "work_item",
+						content: description,
+						timestamp,
+						title,
+					},
+				]);
+				break;
+			}
+
+			case "page_generated": {
+				const blocks = (data as Record<string, unknown>)["blocks"] as unknown[] | undefined;
+				const id = Date.now().toString();
+				setMessages(prev => [
+					...prev,
+					{
+						id,
+						type: "page",
+						content: "",
+						timestamp,
+						blocks: Array.isArray(blocks) ? blocks : [],
+					},
+				]);
+				break;
+			}
 			case "connected": {
 				console.log("Connected to chat server", getString((data as Record<string, unknown>)["client_id"]));
 				break;

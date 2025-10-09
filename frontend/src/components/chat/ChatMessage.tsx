@@ -8,7 +8,7 @@ import { EditorJsViewer } from "@/components/ui/EditorJsViewer";
 
 interface Message {
   id: string;
-  type: "user" | "assistant" | "thought" | "tool" | "action" | "result";
+  type: "user" | "assistant" | "thought" | "tool" | "action" | "result" | "work_item" | "page";
   content: string;
   timestamp: string;
   toolName?: string;
@@ -38,6 +38,10 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
         return <User className="h-4 w-4" />;
       case "assistant":
         return <Bot className="h-4 w-4" />;
+      case "work_item":
+        return <Bot className="h-4 w-4" />;
+      case "page":
+        return <Bot className="h-4 w-4" />;
       case "thought":
         return <Brain className="h-4 w-4" />;
       case "tool":
@@ -60,6 +64,13 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
           icon: "bg-chat-bubble-user text-chat-bubble-user-foreground",
         };
       case "assistant":
+        return {
+          container: "mr-auto max-w-[80%]",
+          card: "bg-chat-bubble-assistant text-chat-bubble-assistant-foreground border",
+          icon: "bg-primary text-primary-foreground",
+        };
+      case "work_item":
+      case "page":
         return {
           container: "mr-auto max-w-[80%]",
           card: "bg-chat-bubble-assistant text-chat-bubble-assistant-foreground border",
@@ -204,7 +215,7 @@ export function ChatMessage({ message, showToolOutputs = true }: ChatMessageProp
             {message.title && (
               <div className="text-base font-semibold mb-2">{message.title}</div>
             )}
-            {Array.isArray(message.blocks) && message.blocks.length > 0 ? (
+            {message.type === "page" && Array.isArray(message.blocks) && message.blocks.length > 0 ? (
               <EditorJsViewer blocks={message.blocks} />
             ) : (
               <div className="whitespace-pre-wrap text-sm">

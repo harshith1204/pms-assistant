@@ -1,58 +1,66 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-// Lazy import EditorJS and tools to avoid SSR issues
-export interface EditorJsViewerProps {
-  blocks: unknown[];
+type EditorJsData = {
+  blocks: Array<Record<string, unknown>>;
+};
+
+interface EditorJsViewerProps {
+  blocks: EditorJsData["blocks"];
+  minHeight?: number;
 }
 
-export function EditorJsViewer({ blocks }: EditorJsViewerProps) {
+// Read-only viewer for Editor.js JSON
+export function EditorJsViewer({ blocks, minHeight = 200 }: EditorJsViewerProps) {
   const holderRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     async function init() {
-      if (!holderRef.current) return;
-      const EditorJS = (await import("@editorjs/editorjs")).default;
-      const Header = (await import("@editorjs/header")).default;
-      const List = (await import("@editorjs/list")).default;
-      const Table = (await import("@editorjs/table")).default;
-      const Paragraph = (await import("@editorjs/paragraph")).default;
-
-      if (!isMounted) return;
-      if (editorRef.current) {
-        try { await editorRef.current.destroy?.(); } catch {}
-        editorRef.current = null;
+      try {
+        const EditorJS = (await import("@editorjs/editorjs")).default as any;
+        const Header = (await import("@editorjs/header")).default as any;
+        const List = (await import("@editorjs/list")).default as any;
+        const Table = (await import("@editorjs/table")).default as any;
+        const Paragraph = (await import("@editorjs/paragraph")).default as any;
+        if (!isMounted) return;
+        editorRef.current = new EditorJS({
+          holder: holderRef.current!,
+          readOnly: true,
+          data: { blocks: Array.isArray(blocks) ? blocks : [] },
+          tools: {
+            header: Header,
+            list: List,
+            table: Table,
+            paragraph: Paragraph,
+          },
+          minHeight,
+        });
+      } catch (e: any) {
+        setError(e?.message || "Failed to load Editor.js");
       }
-
-      editorRef.current = new EditorJS({
-        holder: holderRef.current!,
-        readOnly: true,
-        tools: {
-          header: Header,
-          list: List,
-          table: Table,
-          paragraph: Paragraph,
-        },
-        data: {
-          blocks: Array.isArray(blocks) ? (blocks as any) : [],
-        },
-      });
     }
     init();
     return () => {
       isMounted = false;
-      const ed = editorRef.current;
-      if (ed && ed.destroy) {
-        try { ed.destroy(); } catch {}
+      try {
+        if (editorRef.current && editorRef.current.destroy) {
+          editorRef.current.destroy();
+        }
+      } catch {
+        // ignore
       }
-      editorRef.current = null;
     };
-  }, [blocks]);
+  }, [blocks, minHeight]);
 
-  return (
-    <div className="prose max-w-none">
-      <div ref={holderRef} />
-    </div>
-  );
+  if (error) {
+    return (
+      <div className="text-sm text-destructive">
+        Failed to load Editor.js viewer: {error}
+      </div>
+    );
+  }
+
+  return <div ref={holderRef} className="border rounded-md p-3 bg-card" />;
 }
