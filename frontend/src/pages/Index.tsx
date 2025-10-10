@@ -9,6 +9,8 @@ import PromptLibrary from "@/components/PromptLibrary";
 import Settings from "@/pages/Settings";
 import { useChatSocket, type ChatEvent } from "@/hooks/useChatSocket";
 import { getConversations, getConversationMessages } from "@/api/conversations";
+import { ThinkingBubble } from "@/components/ThinkingBubble";
+import { AnimatePresence } from "framer-motion";
 
 interface Message {
   id: string;
@@ -37,6 +39,7 @@ const Index = () => {
   const [showGettingStarted, setShowGettingStarted] = useState<boolean>(false);
   const [showPersonalization, setShowPersonalization] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const isEmpty = messages.length === 0;
 
   // Track the current streaming assistant message id
@@ -45,6 +48,8 @@ const Index = () => {
   // Socket integration: handle backend events
   const handleSocketEvent = useCallback((evt: ChatEvent) => {
     if (evt.type === "llm_start") {
+      // Turn off thinking state when LLM starts
+      setIsThinking(false);
       // Start a new assistant streaming message if not present
       if (!streamingAssistantIdRef.current) {
         const id = `assistant-${Date.now()}`;
@@ -55,6 +60,8 @@ const Index = () => {
         ]);
       }
     } else if (evt.type === "token") {
+      // Turn off thinking state when first token arrives
+      setIsThinking(false);
       const id = streamingAssistantIdRef.current;
       if (!id) return;
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
@@ -231,6 +238,7 @@ const Index = () => {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
+    setIsThinking(true);
 
     // Ensure we have an active conversation id
     let convId = activeConversationId;
@@ -331,6 +339,9 @@ const Index = () => {
               {messages.map((message) => (
                 <ChatMessage key={message.id} {...message} />
               ))}
+              <AnimatePresence>
+                {isThinking && <ThinkingBubble />}
+              </AnimatePresence>
             </div>
           </ScrollArea>
         )}
