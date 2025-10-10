@@ -1987,6 +1987,18 @@ class Planner:
             pipeline: List[Dict[str, Any]] = ctx["pipeline"]  # type: ignore[assignment]
             result = ctx.get("result")
 
+            # Pull authorization metadata from the direct client to make agent-aware
+            try:
+                from mongo.constants import mongodb_tools
+                auth_meta = getattr(mongodb_tools, "get_last_auth_meta", None)
+                if callable(auth_meta):
+                    last_auth = auth_meta()  # type: ignore[assignment]
+                else:
+                    # Access through underlying direct client if available
+                    last_auth = getattr(mongodb_tools, "last_auth_meta", {})  # type: ignore[assignment]
+            except Exception:
+                last_auth = {}
+
             return {
                 "success": True,
                 "intent": intent.__dict__,
@@ -1994,6 +2006,7 @@ class Planner:
                 "pipeline_js": _format_pipeline_for_display(pipeline),
                 "result": result,
                 "planner": "llm",
+                "auth": last_auth,
             }
         except Exception as e:
             pass
