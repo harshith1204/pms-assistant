@@ -75,42 +75,11 @@ const Index = () => {
       streamingAssistantIdRef.current = null;
       setIsLoading(false);
     } else if (evt.type === "tool_start") {
-      const id = ensureAssistantStreamMessage();
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `Starting ${evt.tool_name || "tool"}`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
-              },
-            }
-          : m
-      )));
+      // Ensure live assistant message exists; tool events no longer add bullets
+      ensureAssistantStreamMessage();
     } else if (evt.type === "tool_end") {
-      const id = ensureAssistantStreamMessage();
-      const preview = (evt as any).output_preview || (evt as any).output || "Done";
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `Completed tool (${String(preview).slice(0, 80)}${String(preview).length > 80 ? "..." : ""})`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
-              },
-            }
-          : m
-      )));
+      // Ensure live assistant message exists; tool events no longer add bullets
+      ensureAssistantStreamMessage();
     } else if (evt.type === "agent_action") {
       const id = ensureAssistantStreamMessage();
       const e: any = evt as any;

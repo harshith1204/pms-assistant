@@ -468,7 +468,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         """Called when a tool starts executing"""
         tool_name = serialized.get("name", "Unknown Tool")
         tool_call_id = serialized.get("id") or kwargs.get("tool_call_id")
-        action_id = None
+        # We no longer emit agent_action here to avoid duplication; actions are emitted per LLM step
         if self.websocket:
             await self.websocket.send_json({
                 "type": "tool_start",
@@ -476,49 +476,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "input": input_str,
                 "timestamp": datetime.now().isoformat()
             })
-            # Emit dynamic, user-facing action statement (non-revealing)
-            args = self._safe_extract(input_str)
-            action_text = None
-            phase = None
-            subject = None
-            try:
-                if tool_name == "mongo_query":
-                    q = str(args.get("query", "")).strip()
-                    preview = (q[:80] + "...") if len(q) > 80 else q
-                    subject = preview or "structured data"
-                    phase = "lookup"
-                elif tool_name == "rag_search":
-                    q = str(args.get("query", "")).strip()
-                    ctype = str(args.get("content_type", "")).strip()
-                    preview = (q[:80] + "...") if len(q) > 80 else q
-                    subject = preview or (ctype or "relevant content")
-                    phase = "lookup"
-                else:
-                    subject = tool_name
-                    phase = "execute"
-                # Prefer LLM-generated action line; fallback to template
-                action_text = await self._llm_generate_line(
-                    kind="action",
-                    subject=subject,
-                    phase=phase,
-                    tool_name=tool_name,
-                ) or (f"I'm going to look into {subject}.")
-                activity_label = f"{(phase or '').capitalize()}" + (f": {subject}" if subject else "")
-            except Exception:
-                action_text = "Working on it."
-                activity_label = None
-            await self._emit_action(
-                action_text,
-                action_id=action_id,
-                phase=phase,
-                subject=subject,
-                activity_label=activity_label,
-            )
-            # After emitting, record mapping of tool_call_id->action_id if available
-            if tool_call_id and self._last_action_id:
-                self._action_id_by_tool_call_id[tool_call_id] = self._last_action_id
-                # Track phase for this action id
-                self._action_phase_by_id[self._last_action_id] = phase or ""
+            # No action emission or mapping here; mapping is created at LLM step
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
