@@ -955,15 +955,15 @@ class MongoDBAgent:
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if tool:
-                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                                await callback_handler.on_tool_start({"name": tool.name, "id": tool_call["id"]}, str(tool_call["args"]), tool_call_id=tool_call["id"]) 
                         
                         # Execute all tools in parallel
                         tool_tasks = [self._execute_single_tool(None, tool_call, selected_tools, None) for tool_call in response.tool_calls]
                         tool_results = await asyncio.gather(*tool_tasks)
                         
                         # Process results and send tool_end events
-                        for tool_message, success in tool_results:
-                            await callback_handler.on_tool_end(tool_message.content)
+                        for (tool_message, success), tool_call in zip(tool_results, response.tool_calls):
+                            await callback_handler.on_tool_end(tool_message.content, tool_call_id=tool_call["id"]) 
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
                             try:
@@ -977,10 +977,10 @@ class MongoDBAgent:
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if tool:
-                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                                await callback_handler.on_tool_start({"name": tool.name, "id": tool_call["id"]}, str(tool_call["args"]), tool_call_id=tool_call["id"]) 
                             
                             tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
-                            await callback_handler.on_tool_end(tool_message.content)
+                            await callback_handler.on_tool_end(tool_message.content, tool_call_id=tool_call["id"]) 
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
                             try:
