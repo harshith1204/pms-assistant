@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { ChatMessage } from "@/components/ChatMessage";
@@ -7,6 +7,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sparkles } from "lucide-react";
 import PromptLibrary from "@/components/PromptLibrary";
 import Settings from "@/pages/Settings";
+import { useChatSocket, type ChatEvent } from "@/hooks/useChatSocket";
+import { getConversations, getConversationMessages } from "@/api/conversations";
 
 interface Message {
   id: string;
@@ -28,18 +30,7 @@ interface Conversation {
 }
 
 const Index = () => {
-  const [conversations, setConversations] = useState<Conversation[]>([
-    {
-      id: "1",
-      title: "Product Roadmap Planning",
-      timestamp: new Date(Date.now() - 86400000),
-    },
-    {
-      id: "2",
-      title: "Sprint Task Breakdown",
-      timestamp: new Date(Date.now() - 172800000),
-    },
-  ]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -48,6 +39,151 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const isEmpty = messages.length === 0;
 
+  // Track the current streaming assistant message id
+  const streamingAssistantIdRef = useRef<string | null>(null);
+
+  // Socket integration: handle backend events
+  const handleSocketEvent = useCallback((evt: ChatEvent) => {
+    if (evt.type === "llm_start") {
+      // Start a new assistant streaming message if not present
+      if (!streamingAssistantIdRef.current) {
+        const id = `assistant-${Date.now()}`;
+        streamingAssistantIdRef.current = id;
+        setMessages((prev) => [
+          ...prev,
+          { id, role: "assistant", content: "", isStreaming: true, internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" } },
+        ]);
+      }
+    } else if (evt.type === "token") {
+      const id = streamingAssistantIdRef.current;
+      if (!id) return;
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
+    } else if (evt.type === "llm_end") {
+      const id = streamingAssistantIdRef.current;
+      if (!id) return;
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
+      streamingAssistantIdRef.current = null;
+      setIsLoading(false);
+    } else if (evt.type === "tool_start") {
+      const id = streamingAssistantIdRef.current;
+      if (!id) return;
+      setMessages((prev) => prev.map((m) => (
+        m.id === id
+          ? {
+              ...m,
+              internalActivity: {
+                summary: m.internalActivity?.summary || "Actions",
+                bullets: [
+                  ...(m.internalActivity?.bullets || []),
+                  `Starting ${evt.tool_name || "tool"}`,
+                ],
+                doneLabel: m.internalActivity?.doneLabel || "Done",
+                body: m.internalActivity?.body,
+              },
+            }
+          : m
+      )));
+    } else if (evt.type === "tool_end") {
+      const id = streamingAssistantIdRef.current;
+      if (!id) return;
+      const preview = (evt as any).output_preview || (evt as any).output || "Done";
+      setMessages((prev) => prev.map((m) => (
+        m.id === id
+          ? {
+              ...m,
+              internalActivity: {
+                summary: m.internalActivity?.summary || "Actions",
+                bullets: [
+                  ...(m.internalActivity?.bullets || []),
+                  `Completed tool (${String(preview).slice(0, 80)}${String(preview).length > 80 ? "..." : ""})`,
+                ],
+                doneLabel: m.internalActivity?.doneLabel || "Done",
+                body: m.internalActivity?.body,
+              },
+            }
+          : m
+      )));
+    } else if (evt.type === "agent_action") {
+      const id = streamingAssistantIdRef.current;
+      if (!id) return;
+      setMessages((prev) => prev.map((m) => (
+        m.id === id
+          ? {
+              ...m,
+              internalActivity: {
+                summary: m.internalActivity?.summary || "Actions",
+                bullets: [
+                  ...(m.internalActivity?.bullets || []),
+                  `${evt.text}`,
+                ],
+                doneLabel: m.internalActivity?.doneLabel || "Done",
+                body: m.internalActivity?.body,
+              },
+            }
+          : m
+      )));
+    } else if (evt.type === "agent_result") {
+      const id = streamingAssistantIdRef.current;
+      if (!id) return;
+      setMessages((prev) => prev.map((m) => (
+        m.id === id
+          ? {
+              ...m,
+              internalActivity: {
+                summary: m.internalActivity?.summary || "Actions",
+                bullets: [
+                  ...(m.internalActivity?.bullets || []),
+                  `${evt.text}`,
+                ],
+                doneLabel: m.internalActivity?.doneLabel || "Done",
+                body: m.internalActivity?.body,
+              },
+            }
+          : m
+      )));
+    } else if (evt.type === "content_generated") {
+      // Show a brief confirmation message
+      const id = `assistant-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id,
+          role: "assistant",
+          content: evt.success
+            ? `Generated ${evt.content_type.replace("_", " ")} content.`
+            : `Generation failed: ${evt.error || "Unknown error"}`,
+        },
+      ]);
+    } else if (evt.type === "error") {
+      const id = `assistant-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        { id, role: "assistant", content: `Error: ${evt.message}` },
+      ]);
+      setIsLoading(false);
+      streamingAssistantIdRef.current = null;
+    } else if (evt.type === "complete") {
+      setIsLoading(false);
+      streamingAssistantIdRef.current = null;
+    }
+  }, []);
+
+  const { connected, send } = useChatSocket({ onEvent: handleSocketEvent });
+
+  // Load conversations on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await getConversations();
+        setConversations(
+          list.map((c) => ({ id: c.id, title: c.title, timestamp: new Date(c.updatedAt || Date.now()) }))
+        );
+      } catch (e) {
+        // ignore errors in dev
+      }
+    })();
+  }, []);
+
   const handleNewChat = () => {
     setActiveConversationId(null);
     setMessages([]);
@@ -55,17 +191,21 @@ const Index = () => {
     setShowPersonalization(false);
   };
 
-  const handleSelectConversation = (id: string) => {
+  const handleSelectConversation = async (id: string) => {
     setActiveConversationId(id);
-    // In a real app, load messages for this conversation
-    setMessages([
-      {
-        id: "1",
-        role: "assistant",
-        content: "Hello! I'm your AI Project Manager assistant. I can help you create pages, manage tasks, plan sprints, and organize your product development workflow. What would you like to work on today?",
-      },
-    ]);
     setShowGettingStarted(false);
+    try {
+      const msgs = await getConversationMessages(id);
+      setMessages(
+        msgs.map((m) => ({
+          id: m.id,
+          role: m.type === "user" ? "user" : "assistant",
+          content: m.content || "",
+        }))
+      );
+    } catch (e) {
+      setMessages([]);
+    }
   };
 
   const handleShowGettingStarted = () => {
@@ -92,37 +232,29 @@ const Index = () => {
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
-    // Simulate AI response with streaming effect
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "I understand you want to work on that. As your AI Project Manager, I can help you break this down into actionable tasks, create a structured plan, and organize it into our canvas. Let me help you get started with a detailed breakdown...",
-        isStreaming: true,
-        internalActivity: {
-          summary: "Actions",
-          bullets: [
-            "The user wants a plan; include UI/UX vocabulary",
-            "Provide structured phases and keep tone professional"
-          ],
-          doneLabel: "Done",
-          body: "Below is a high-level blueprint for building a flexible, scalable design system that spans both web and mobile. I've organized it into four phases—Strategy, Foundations, Components & Patterns, and Governance & Documentation—and used UI/UX professional vocabulary throughout.",
-        },
+    // Ensure we have an active conversation id
+    let convId = activeConversationId;
+    if (!convId) {
+      convId = `conv_${Date.now()}`;
+      setActiveConversationId(convId);
+      const newConversation: Conversation = {
+        id: convId,
+        title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
+        timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, assistantMessage]);
-      setIsLoading(false);
+      setConversations((prev) => [newConversation, ...prev]);
+    }
 
-      // Create new conversation if this is the first message
-      if (!activeConversationId) {
-        const newConversation: Conversation = {
-          id: Date.now().toString(),
-          title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
-          timestamp: new Date(),
-        };
-        setConversations((prev) => [newConversation, ...prev]);
-        setActiveConversationId(newConversation.id);
-      }
-    }, 1000);
+    // Send to backend via WebSocket
+    const ok = send({ message: content, conversation_id: convId });
+    if (!ok) {
+      // Fallback: show error and stop loading
+      setMessages((prev) => [
+        ...prev,
+        { id: `assistant-${Date.now()}`, role: "assistant", content: "Connection error. Please try again." },
+      ]);
+      setIsLoading(false);
+    }
   };
 
   return (
