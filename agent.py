@@ -19,6 +19,8 @@ import uuid
 import hashlib
 
 import math
+import json
+from events import emitter
 
 # Import tools list
 try:
@@ -97,6 +99,25 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
     "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
 )
+
+def _safe_preview(value: Any, max_chars: int = 600) -> str:
+    try:
+        text = str(value)
+        return text[:max_chars]
+    except Exception:
+        return "<unpreviewable>"
+
+def _summarize_result(result: Any) -> Dict[str, Any]:
+    try:
+        if isinstance(result, dict):
+            return {"type": "dict", "keys": list(result.keys())[:10], "len": len(result)}
+        if isinstance(result, (list, tuple)):
+            return {"type": type(result).__name__, "len": len(result)}
+        if isinstance(result, str):
+            return {"type": "str", "len": len(result), "preview": result[:200]}
+        return {"type": type(result).__name__}
+    except Exception:
+        return {"type": "unknown"}
 
 class ConversationMemory:
     """Manages conversation history for maintaining context"""
@@ -465,16 +486,51 @@ class MongoDBAgent:
                 )
                 return error_msg, False
 
+            # Emit tool start event
+            action_id = f"tool-{int(time.time()*1000)}"
             try:
+                await emitter.emit({
+                    "type": "agent_action",
+                    "action_id": action_id,
+                    "phase": "tool_call",
+                    "subject": actual_tool.name,
+                    "text": f"Calling tool {actual_tool.name}",
+                    "action": "call_tool",
+                    "meta": {"args": _safe_preview(tool_call.get("args", {}), 600)}
+                })
+            except Exception:
                 pass
-                
+
+            try:
                 result = await actual_tool.ainvoke(tool_call["args"])
-                
-                pass
-                        
             except Exception as tool_exc:
+                # Emit error event and return failure ToolMessage
+                try:
+                    await emitter.emit({
+                        "type": "agent_error",
+                        "action_id": action_id,
+                        "phase": "tool_call",
+                        "subject": actual_tool.name,
+                        "text": str(tool_exc),
+                        "action": "call_tool",
+                        "meta": {"exception": type(tool_exc).__name__}
+                    })
+                except Exception:
+                    pass
                 result = f"Tool execution error: {tool_exc}"
-                pass
+            else:
+                try:
+                    await emitter.emit({
+                        "type": "agent_result",
+                        "action_id": action_id,
+                        "phase": "tool_call",
+                        "subject": actual_tool.name,
+                        "text": f"Tool {actual_tool.name} returned",
+                        "action": "call_tool",
+                        "meta": {"summary": _summarize_result(result)}
+                    })
+                except Exception:
+                    pass
 
             tool_message = ToolMessage(
                 content=str(result),
@@ -621,7 +677,35 @@ class MongoDBAgent:
                     "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); generate_content needs content_type + prompt."
                 ))
                 invoke_messages = messages + [routing_instructions]
+                # Emit LLM call start event
+                llm_action = "finalize_answer" if need_finalization else "decide_next_step"
+                try:
+                    await emitter.emit({
+                        "type": "agent_action",
+                        "action_id": f"llm-{int(time.time()*1000)}",
+                        "phase": "llm_call",
+                        "subject": "LLM",
+                        "text": f"LLM call for action '{llm_action}'",
+                        "action": llm_action,
+                        "meta": {"message_count": len(messages) + 1}
+                    })
+                except Exception:
+                    pass
+
                 response = await llm_with_tools.ainvoke(invoke_messages)
+
+                # Emit LLM call result event
+                try:
+                    await emitter.emit({
+                        "type": "agent_result",
+                        "phase": "llm_call",
+                        "subject": "LLM",
+                        "text": f"LLM returned for action '{llm_action}'",
+                        "action": llm_action,
+                        "meta": {"response_preview": _safe_preview(getattr(response, "content", ""), 600)}
+                    })
+                except Exception:
+                    pass
                 if llm_span and getattr(response, "content", None):
                         try:
                             preview = str(response.content)[:500]
@@ -640,6 +724,17 @@ class MongoDBAgent:
 
                 # If no tools requested, we are done
                 if not getattr(response, "tool_calls", None):
+                    try:
+                        await emitter.emit({
+                            "type": "agent_done",
+                            "phase": "finish",
+                            "subject": "agent",
+                            "text": "Agent finished (no tools)",
+                            "action": "finish",
+                            "meta": {"answer_len": len(str(response.content or ""))}
+                        })
+                    except Exception:
+                        pass
                     return response.content
 
                 # Execute requested tools
@@ -696,6 +791,17 @@ class MongoDBAgent:
                     # If no tools were executed, return the latest response
                     if last_response is not None:
                         pass
+                        try:
+                            await emitter.emit({
+                                "type": "agent_done",
+                                "phase": "finish",
+                                "subject": "agent",
+                                "text": "Agent finished (no tool execution)",
+                                "action": "finish",
+                                "meta": {"answer_len": len(str(last_response.content or ""))}
+                            })
+                        except Exception:
+                            pass
                         return last_response.content
 
             # If we exit the loop due to step cap, return the best available answer
@@ -709,10 +815,31 @@ class MongoDBAgent:
                         )
                     except Exception as e:
                         print(f"Warning: Failed to update summary: {e}")
+                try:
+                    await emitter.emit({
+                        "type": "agent_done",
+                        "phase": "finish",
+                        "subject": "agent",
+                        "text": "Agent finished",
+                        "action": "finish",
+                        "meta": {"answer_len": len(str(last_response.content or ""))}
+                    })
+                except Exception:
+                    pass
                 return last_response.content
             return "Reached maximum reasoning steps without a final answer."
 
         except Exception as e:
+            try:
+                await emitter.emit({
+                    "type": "agent_error",
+                    "phase": "run",
+                    "subject": "agent",
+                    "text": str(e),
+                    "action": "run"
+                })
+            except Exception:
+                pass
             return f"Error running agent: {str(e)}"
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
@@ -762,6 +889,32 @@ class MongoDBAgent:
                 steps = 0
                 last_response: Optional[AIMessage] = None
                 need_finalization: bool = False
+
+                # Subscribe to forward emitter events to websocket and DB
+                async def _forward_emitter_event(ev: Dict[str, Any]):
+                    try:
+                        if websocket:
+                            await websocket.send_json(ev)
+                    except Exception:
+                        pass
+                    # Persist concise log to DB
+                    try:
+                        if conversation_id:
+                            ev_type = str(ev.get("type", "log"))
+                            kind_map = {
+                                "agent_action": "action",
+                                "agent_result": "result",
+                                "agent_error": "error",
+                                "agent_log": "log",
+                                "agent_done": "done",
+                            }
+                            kind = kind_map.get(ev_type, "log")
+                            text = str(ev.get("text", ev_type))
+                            await save_action_event(conversation_id, kind, text)
+                    except Exception:
+                        pass
+
+                emitter.subscribe(_forward_emitter_event)
 
                 while steps < self.max_steps:
                     # Choose tools for this query iteration
@@ -837,10 +990,38 @@ class MongoDBAgent:
                             ))
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
+                        # Emit LLM call start event
+                        llm_action = "finalize_answer" if need_finalization else "decide_next_step"
+                        try:
+                            await emitter.emit({
+                                "type": "agent_action",
+                                "action_id": f"llm-{int(time.time()*1000)}",
+                                "phase": "llm_call",
+                                "subject": "LLM",
+                                "text": f"LLM call for action '{llm_action}'",
+                                "action": llm_action,
+                                "meta": {"message_count": len(messages) + 1}
+                            })
+                        except Exception:
+                            pass
+
                         response = await llm_with_tools.ainvoke(
                             invoke_messages,
                             config={"callbacks": [callback_handler]},
                         )
+
+                        # Emit LLM call result event
+                        try:
+                            await emitter.emit({
+                                "type": "agent_result",
+                                "phase": "llm_call",
+                                "subject": "LLM",
+                                "text": f"LLM returned for action '{llm_action}'",
+                                "action": llm_action,
+                                "meta": {"response_preview": _safe_preview(getattr(response, "content", ""), 600)}
+                            })
+                        except Exception:
+                            pass
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
@@ -858,6 +1039,17 @@ class MongoDBAgent:
                         print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
+                        try:
+                            await emitter.emit({
+                                "type": "agent_done",
+                                "phase": "finish",
+                                "subject": "agent",
+                                "text": "Agent finished (no tools)",
+                                "action": "finish",
+                                "meta": {"answer_len": len(str(response.content or ""))}
+                            })
+                        except Exception:
+                            pass
                         yield response.content
                         return
 
@@ -929,12 +1121,43 @@ class MongoDBAgent:
                             )
                         except Exception as e:
                             print(f"Warning: Failed to update summary: {e}")
+                    try:
+                        await emitter.emit({
+                            "type": "agent_done",
+                            "phase": "finish",
+                            "subject": "agent",
+                            "text": "Agent finished",
+                            "action": "finish",
+                            "meta": {"answer_len": len(str(last_response.content or ""))}
+                        })
+                    except Exception:
+                        pass
                     yield last_response.content
                 else:
+                    try:
+                        await emitter.emit({
+                            "type": "agent_error",
+                            "phase": "finish",
+                            "subject": "agent",
+                            "text": "Reached maximum reasoning steps without a final answer.",
+                            "action": "finish"
+                        })
+                    except Exception:
+                        pass
                     yield "Reached maximum reasoning steps without a final answer."
                 return
 
         except Exception as e:
+            try:
+                await emitter.emit({
+                    "type": "agent_error",
+                    "phase": "run_streaming",
+                    "subject": "agent",
+                    "text": str(e),
+                    "action": "run_streaming"
+                })
+            except Exception:
+                pass
             yield f"Error running streaming agent: {str(e)}"
 
 # ProjectManagement Insights Examples
