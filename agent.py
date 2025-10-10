@@ -679,10 +679,11 @@ class MongoDBAgent:
                 invoke_messages = messages + [routing_instructions]
                 # Emit LLM call start event
                 llm_action = "finalize_answer" if need_finalization else "decide_next_step"
+                llm_action_id = f"llm-{int(time.time()*1000)}"
                 try:
                     await emitter.emit({
                         "type": "agent_action",
-                        "action_id": f"llm-{int(time.time()*1000)}",
+                        "action_id": llm_action_id,
                         "phase": "llm_call",
                         "subject": "LLM",
                         "text": f"LLM call for action '{llm_action}'",
@@ -698,6 +699,7 @@ class MongoDBAgent:
                 try:
                     await emitter.emit({
                         "type": "agent_result",
+                        "action_id": llm_action_id,
                         "phase": "llm_call",
                         "subject": "LLM",
                         "text": f"LLM returned for action '{llm_action}'",
@@ -992,10 +994,11 @@ class MongoDBAgent:
                             need_finalization = False
                         # Emit LLM call start event
                         llm_action = "finalize_answer" if need_finalization else "decide_next_step"
+                        llm_action_id = f"llm-{int(time.time()*1000)}"
                         try:
                             await emitter.emit({
                                 "type": "agent_action",
-                                "action_id": f"llm-{int(time.time()*1000)}",
+                                "action_id": llm_action_id,
                                 "phase": "llm_call",
                                 "subject": "LLM",
                                 "text": f"LLM call for action '{llm_action}'",
@@ -1014,6 +1017,7 @@ class MongoDBAgent:
                         try:
                             await emitter.emit({
                                 "type": "agent_result",
+                                "action_id": llm_action_id,
                                 "phase": "llm_call",
                                 "subject": "LLM",
                                 "text": f"LLM returned for action '{llm_action}'",

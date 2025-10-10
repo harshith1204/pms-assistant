@@ -1,5 +1,7 @@
 import sys
 from langchain_core.tools import tool
+from events import emitter
+from instrument import safe_shallow, summarize_result
 from typing import Optional, Dict, List, Any, Union
 import mongo.constants
 import os
@@ -462,6 +464,15 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
 
     try:
+        # Emit adapter-level start event
+        await emitter.emit({
+            "type": "agent_action",
+            "phase": "tool_call",
+            "subject": "mongo_query",
+            "text": "Executing Mongo planner and aggregation",
+            "action": "call_tool",
+            "meta": {"query": query[:200], "show_all": show_all}
+        })
         result = await plan_and_execute_query(query)
 
         if result["success"]:
@@ -743,12 +754,33 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             except Exception:
                 pass
             response += formatted_result
-            print(response)
+            # Emit adapter-level result summary
+            try:
+                await emitter.emit({
+                    "type": "agent_result",
+                    "phase": "tool_call",
+                    "subject": "mongo_query",
+                    "text": "Mongo query returned",
+                    "action": "call_tool",
+                    "meta": {"intent_primary": intent.get('primary_entity') if isinstance(intent, dict) else None}
+                })
+            except Exception:
+                pass
             return response
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
 
     except Exception as e:
+        try:
+            await emitter.emit({
+                "type": "agent_error",
+                "phase": "tool_call",
+                "subject": "mongo_query",
+                "text": str(e),
+                "action": "call_tool",
+            })
+        except Exception:
+            pass
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
 
@@ -816,6 +848,14 @@ async def rag_search(
         return f"❌ RAG SEARCH INITIALIZATION ERROR: {str(e)}"
     
     try:
+        await emitter.emit({
+            "type": "agent_action",
+            "phase": "tool_call",
+            "subject": "rag_search",
+            "text": "Executing RAG search",
+            "action": "call_tool",
+            "meta": {"query": query[:200], "content_type": content_type, "group_by": group_by, "limit": limit}
+        })
         from collections import defaultdict
 
         # Ensure RAGTool is initialized
@@ -866,11 +906,23 @@ async def rag_search(
             
             # Always pass full content chunks to the agent by default for synthesis
             # Force show_full_content=True so downstream LLM has full context
-            return format_reconstructed_results(
+            result_payload = format_reconstructed_results(
                 docs=reconstructed_docs,
                 show_full_content=True,
                 show_chunk_details=True
             )
+            try:
+                await emitter.emit({
+                    "type": "agent_result",
+                    "phase": "tool_call",
+                    "subject": "rag_search",
+                    "text": "RAG search returned (chunk-aware)",
+                    "action": "call_tool",
+                    "meta": {"len": len(result_payload)}
+                })
+            except Exception:
+                pass
+            return result_payload
         
         # Fallback to standard retrieval
         results = await rag_tool.search_content(query, content_type=content_type, limit=effective_limit)
@@ -926,6 +978,17 @@ async def rag_search(
             if len(results) > 15:
                 response += f"... and {len(results) - 15} more results (increase limit to see more)\n"
             
+            try:
+                await emitter.emit({
+                    "type": "agent_result",
+                    "phase": "tool_call",
+                    "subject": "rag_search",
+                    "text": "RAG search returned",
+                    "action": "call_tool",
+                    "meta": {"results": len(results)}
+                })
+            except Exception:
+                pass
             return response
         
         # GROUPING - Aggregate and show distribution with content snippets
@@ -971,11 +1034,32 @@ async def rag_search(
             remaining_items = sum(len(items) for _, items in sorted_groups[20:])
             response += f"... and {len(sorted_groups) - 20} more groups ({remaining_items} items)\n"
         
+        try:
+            await emitter.emit({
+                "type": "agent_result",
+                "phase": "tool_call",
+                "subject": "rag_search",
+                "text": "RAG search returned (grouped)",
+                "action": "call_tool",
+                "meta": {"groups": len(sorted_groups)}
+            })
+        except Exception:
+            pass
         return response
         
     except ImportError:
         return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
     except Exception as e:
+        try:
+            await emitter.emit({
+                "type": "agent_error",
+                "phase": "tool_call",
+                "subject": "rag_search",
+                "text": str(e),
+                "action": "call_tool",
+            })
+        except Exception:
+            pass
         return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
@@ -1028,6 +1112,14 @@ async def generate_content(
     import httpx
     
     try:
+        await emitter.emit({
+            "type": "agent_action",
+            "phase": "tool_call",
+            "subject": "generate_content",
+            "text": "Generating content via API",
+            "action": "call_tool",
+            "meta": {"content_type": content_type, "prompt_preview": (prompt[:120] if isinstance(prompt, str) else None)}
+        })
         if content_type not in ["work_item", "page"]:
             return "❌ Invalid content type"
         
@@ -1064,6 +1156,16 @@ async def generate_content(
                     print(f"Warning: Could not send to websocket: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
+            try:
+                await emitter.emit({
+                    "type": "agent_result",
+                    "phase": "tool_call",
+                    "subject": "generate_content",
+                    "text": "Work item generated",
+                    "action": "call_tool",
+                })
+            except Exception:
+                pass
             return "✅ Content generated"
             
         else:  # content_type == "page"
@@ -1114,6 +1216,16 @@ async def generate_content(
                     print(f"Warning: Could not send to websocket: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
+            try:
+                await emitter.emit({
+                    "type": "agent_result",
+                    "phase": "tool_call",
+                    "subject": "generate_content",
+                    "text": "Page generated",
+                    "action": "call_tool",
+                })
+            except Exception:
+                pass
             return "✅ Content generated"
             
     except httpx.HTTPStatusError as e:
@@ -1130,6 +1242,16 @@ async def generate_content(
                 })
             except Exception:
                 pass
+        try:
+            await emitter.emit({
+                "type": "agent_error",
+                "phase": "tool_call",
+                "subject": "generate_content",
+                "text": error_msg,
+                "action": "call_tool",
+            })
+        except Exception:
+            pass
         return f"❌ {error_msg}"
     except httpx.RequestError as e:
         error_msg = "Connection error"
@@ -1144,6 +1266,16 @@ async def generate_content(
                 })
             except Exception:
                 pass
+        try:
+            await emitter.emit({
+                "type": "agent_error",
+                "phase": "tool_call",
+                "subject": "generate_content",
+                "text": error_msg,
+                "action": "call_tool",
+            })
+        except Exception:
+            pass
         return f"❌ {error_msg}"
     except Exception as e:
         error_msg = "Generation failed"
@@ -1158,6 +1290,16 @@ async def generate_content(
                 })
             except Exception:
                 pass
+        try:
+            await emitter.emit({
+                "type": "agent_error",
+                "phase": "tool_call",
+                "subject": "generate_content",
+                "text": error_msg,
+                "action": "call_tool",
+            })
+        except Exception:
+            pass
         return f"❌ {error_msg}"
 
 
