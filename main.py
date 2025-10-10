@@ -15,6 +15,8 @@ from agent import MongoDBAgent
 import os
 from websocket_handler import handle_chat_websocket, ws_manager
 from qdrant.initializer import RAGTool
+from mongo.conversations import ensure_conversation_client_connected
+from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
     message: str
@@ -52,6 +54,11 @@ async def lifespan(app: FastAPI):
     await mongodb_agent.connect()
     print("MongoDB Agent connected successfully!")
     await RAGTool.initialize()
+    # Ensure conversation DB connection pool is ready
+    try:
+        await ensure_conversation_client_connected()
+    except Exception as e:
+        print(f"Warning: Conversations DB not connected: {e}")
     print("RAGTool initialized successfully!")
     yield
 
@@ -92,53 +99,59 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
 
+
+@app.get("/conversations")
+async def list_conversations():
+    """List conversation ids and titles from Mongo."""
+    try:
+        coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
+        cursor = coll.find({}, {"conversationId": 1, "messages": {"$slice": -1}, "updatedAt": 1}).sort("updatedAt", -1).limit(100)
+        results = []
+        async for doc in cursor:
+            conv_id = doc.get("conversationId")
+            last = (doc.get("messages") or [{}])[-1] if doc.get("messages") else None
+            title = None
+            if last and isinstance(last, dict):
+                content = str(last.get("content") or "").strip()
+                if content:
+                    title = content[:60]
+            results.append({
+                "id": conv_id,
+                "title": title or f"Conversation {conv_id}",
+                "updatedAt": doc.get("updatedAt"),
+            })
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get a conversation's messages."""
+    try:
+        coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
+        doc = await coll.find_one({"conversationId": conversation_id})
+        if not doc:
+            return {"id": conversation_id, "messages": []}
+        messages = doc.get("messages") or []
+        # Normalize
+        norm = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            norm.append({
+                "id": m.get("id") or "",
+                "type": m.get("type") or "assistant",
+                "content": m.get("content") or "",
+                "timestamp": m.get("timestamp") or "",
+            })
+        return {"id": conversation_id, "messages": norm}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for streaming chat with MongoDB Agent.
-
-    This endpoint provides real-time streaming chat functionality with the following features:
-
-    Message Types:
-    - "connected": Sent when client connects successfully
-    - "user_message": Acknowledgment of received user message
-    - "llm_start": Indicates LLM processing has started
-    - "token": Streams individual tokens as they're generated
-    - "thought": Streams thinking/reasoning tokens
-    - "tool_start": Indicates a tool is being executed
-    - "tool_end": Tool execution completed (with output preview unless explicitly enabled)
-    - "llm_end": LLM processing completed
-    - "planner_result": Result from planner execution (when force_planner=true)
-    - "planner_error": Error from planner execution
-    - "complete": Chat session completed
-    - "error": Error message
-    - "pong": Response to ping for connection keepalive
-
-    Usage Example:
-    ```javascript
-    const ws = new WebSocket('ws://localhost:7000/ws/chat');
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        console.log(data.type, data);
-    };
-
-    // Send a message
-    ws.send(JSON.stringify({
-        message: "Your message here",
-        conversation_id: "optional_conversation_id",
-        planner: false  // Set to true to force planner usage
-    }));
-
-    // Send ping for keepalive
-    ws.send(JSON.stringify({ type: "ping" }));
-    ```
-
-    Args:
-        websocket: The WebSocket connection object
-
-    Returns:
-        None (streaming responses sent via WebSocket)
-    """
+    """WebSocket endpoint for streaming chat with MongoDB Agent."""
     global mongodb_agent
 
     # Initialize agent if not already done (for testing/development)
