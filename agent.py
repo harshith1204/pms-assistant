@@ -195,6 +195,16 @@ llm = ChatGroq(
     top_p=0.8,
 )
 
+# Short-form LLM for generating concise action/result lines (non-streaming)
+llm_for_actions = ChatGroq(
+    model=os.getenv("GROQ_ACTIONS_MODEL", os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905")),
+    temperature=float(os.getenv("GROQ_ACTIONS_TEMP", "0.6")),
+    max_tokens=int(os.getenv("GROQ_ACTIONS_MAX_TOKENS", "64")),
+    streaming=False,
+    verbose=False,
+    top_p=0.9,
+)
+
 
 class TTLCache:
     """Simple TTL cache for tool results to reduce repeat latency."""
@@ -248,10 +258,11 @@ def _select_tools_for_query(user_query: str):
 class PhoenixCallbackHandler(AsyncCallbackHandler):
     """WebSocket streaming callback handler for Phoenix events + DB logging"""
 
-    def __init__(self, websocket=None, conversation_id: Optional[str] = None):
+    def __init__(self, websocket=None, conversation_id: Optional[str] = None, user_query: Optional[str] = None):
         super().__init__()
         self.websocket = websocket
         self.conversation_id = conversation_id
+        self.user_query = user_query or ""
         self.start_time = None
         # Tool outputs are now always streamed to the frontend for better visibility
         # Internal step counter for lightweight progress (not exposed directly)
@@ -262,6 +273,9 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self._last_action_id: Optional[str] = None
         # Map tool_call_id -> action_id to pair tool results consistently
         self._action_id_by_tool_call_id: Dict[str, str] = {}
+        # Controls whether to use LLM to generate action/result lines
+        self.llm_actions_enabled = os.getenv("LLM_GENERATED_ACTIONS", "true").lower() == "true"
+        self.llm_actions = llm_for_actions
 
     def _safe_extract(self, input_str: str) -> dict:
         """Best-effort parse of tool arg string to a dict without raising.
@@ -284,6 +298,52 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         except Exception:
             pass
         return {}
+
+    async def _llm_generate_line(
+        self,
+        *,
+        kind: str,  # "action" | "result" | "process" | "process_result"
+        subject: Optional[str] = None,
+        phase: Optional[str] = None,
+        tool_name: Optional[str] = None,
+        output_preview: Optional[str] = None,
+    ) -> Optional[str]:
+        if not self.llm_actions_enabled:
+            return None
+        try:
+            from langchain_core.messages import SystemMessage, HumanMessage
+            sys = SystemMessage(content=(
+                "You write brief, user-safe action updates for a live AI assistant. "
+                "Rules: 1 sentence; first-person, present tense; clear; 6-16 words; "
+                "no chain-of-thought, no private data, no tool or prompt internals; "
+                "avoid repetition; vary verbs; do not include code blocks or emojis."
+            ))
+            subj = subject or ""
+            qp = (self.user_query or "")[:120]
+            outp = (output_preview or "")[:180]
+            details = {
+                "kind": kind,
+                "phase": phase or "",
+                "subject": subj,
+                "tool": tool_name or "",
+                "user_query": qp,
+                "output_preview": outp,
+            }
+            prompt = (
+                f"Context: {details}.\n"
+                f"Task: Write the single line now."
+            )
+            msg = HumanMessage(content=prompt)
+            resp = await self.llm_actions.ainvoke([sys, msg])
+            text = (getattr(resp, "content", "") or "").strip()
+            # Sanitize overly long outputs
+            if len(text) > 160:
+                text = text[:157] + "..."
+            # Ensure it's one line
+            text = text.replace("\n", " ").strip()
+            return text or None
+        except Exception:
+            return None
 
     async def _emit_action(
         self,
@@ -419,20 +479,24 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                     preview = (q[:80] + "...") if len(q) > 80 else q
                     subject = preview or "structured data"
                     phase = "lookup"
-                    action_text = (f"I'm going to look into {subject}.")
                 elif tool_name == "rag_search":
                     q = str(args.get("query", "")).strip()
                     ctype = str(args.get("content_type", "")).strip()
                     preview = (q[:80] + "...") if len(q) > 80 else q
                     subject = preview or (ctype or "relevant content")
                     phase = "lookup"
-                    action_text = (f"I'm going to look into {subject}.")
                 else:
                     subject = tool_name
                     phase = "execute"
-                    action_text = f"Starting {tool_name}."
+                # Prefer LLM-generated action line; fallback to template
+                action_text = await self._llm_generate_line(
+                    kind="action",
+                    subject=subject,
+                    phase=phase,
+                    tool_name=tool_name,
+                ) or (f"I'm going to look into {subject}.")
             except Exception:
-                action_text = "Starting a tool."
+                action_text = "Working on it."
             await self._emit_action(action_text, action_id=action_id, phase=phase, subject=subject)
             # After emitting, record mapping of tool_call_id->action_id if available
             if tool_call_id and self._last_action_id:
@@ -458,11 +522,13 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 summary = "Results ready"
         except Exception:
             pass
-        # If we know the subject, tailor the result to sound natural
-        if subject:
-            text = f"I looked into {subject}."
-        else:
-            text = summary
+        # Prefer LLM-generated result line; fallback to concise summary
+        text = await self._llm_generate_line(
+            kind="result",
+            subject=subject,
+            tool_name=None,
+            output_preview=str(output)[:160],
+        ) or (f"I looked into {subject}." if subject else summary)
         await self._emit_result(text, action_id=action_id, subject=subject)
 
     def cleanup(self):
@@ -888,10 +954,15 @@ class MongoDBAgent:
                         invoke_messages = messages + [routing_instructions]
                         is_finalization_turn = False
                         if need_finalization:
-                            # Emit a dynamic processing action before final synthesis
+                            # Emit a LLM-generated processing action before final synthesis
                             try:
+                                line = await callback_handler._llm_generate_line(
+                                    kind="process",
+                                    subject="results",
+                                    phase="process",
+                                )
                                 await callback_handler._emit_action(
-                                    "Let me process the data I just found.",
+                                    line or "Let me process the data I just found.",
                                     phase="process",
                                     subject="results",
                                 )
@@ -927,11 +998,15 @@ class MongoDBAgent:
                         print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
-                        # Emit a dynamic process result line after final synthesis
+                        # Emit a LLM-generated process result line after final synthesis
                         if is_finalization_turn:
                             try:
+                                line = await callback_handler._llm_generate_line(
+                                    kind="process_result",
+                                    subject="results",
+                                )
                                 await callback_handler._emit_result(
-                                    "I processed the results and extracted the relevant points.",
+                                    line or "I processed the results and extracted the relevant points.",
                                     subject="results",
                                 )
                             except Exception:
