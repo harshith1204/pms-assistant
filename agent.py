@@ -860,7 +860,7 @@ class MongoDBAgent:
                 human_message = HumanMessage(content=query)
                 messages.append(human_message)
 
-                callback_handler = PhoenixCallbackHandler(websocket, conversation_id)
+                callback_handler = PhoenixCallbackHandler(websocket, conversation_id, user_query=query)
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
@@ -872,7 +872,13 @@ class MongoDBAgent:
                 while steps < self.max_steps:
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
-                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
+                    # Always expose a report_activity tool to allow the LLM to narrate its step
+                    try:
+                        from tools import report_activity as _report_activity
+                        selected_tools_with_activity = selected_tools + [_report_activity]
+                    except Exception:
+                        selected_tools_with_activity = selected_tools
+                    llm_with_tools = self.llm_base.bind_tools(selected_tools_with_activity)
                     llm_cm = None
 
                     with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
@@ -1006,6 +1012,26 @@ class MongoDBAgent:
                     execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
                     print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
                     
+                    # Let the LLM explicitly report its current step as an action through report_activity
+                    try:
+                        for tc in response.tool_calls:
+                            if tc["name"] == "report_activity":
+                                args = tc.get("args", {})
+                                kind = str(args.get("kind", "action")).lower()
+                                phase = args.get("phase")
+                                subject = args.get("subject")
+                                text_line = args.get("text") or await callback_handler._llm_generate_line(
+                                    kind="action", subject=subject, phase=phase
+                                ) or "Working on it."
+                                if kind == "action":
+                                    await callback_handler._emit_action(text_line, phase=phase, subject=subject)
+                                elif kind == "result":
+                                    await callback_handler._emit_result(text_line, subject=subject)
+                        # Remove report_activity tool-calls before execution
+                        response.tool_calls = [tc for tc in response.tool_calls if tc["name"] != "report_activity"]
+                    except Exception:
+                        pass
+
                     if self.enable_parallel_tools and len(response.tool_calls) > 1:
                         # Multiple tools called together = LLM determined they're independent
                         # Send tool_start events for all tools first

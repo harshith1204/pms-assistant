@@ -1162,10 +1162,31 @@ async def generate_content(
 
 
 # Define the tools list - streamlined and powerful
+@tool
+async def report_activity(
+    kind: str,
+    phase: Optional[str] = None,
+    subject: Optional[str] = None,
+    text: str = "",
+    action_id: Optional[str] = None,
+) -> str:
+    """Report live agent activity for the UI.
+
+    Use this to narrate each step WITHOUT revealing internals.
+    - kind: "action" (start of step) or "result" (end of step)
+    - phase: optional phase: lookup | process | finalize | execute
+    - subject: short topic label for the step
+    - text: 1 short sentence describing what you're doing/did
+    - action_id: optional explicit id to pair result with an earlier action
+    """
+    return "ok"
+
+
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
     generate_content,         # Generate work items/pages (returns summary only, not full content)
+    report_activity,          # UI narration tool (no-op; used to emit events)
 ]
 
 # import asyncio
