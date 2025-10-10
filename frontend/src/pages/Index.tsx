@@ -113,6 +113,8 @@ const Index = () => {
       )));
     } else if (evt.type === "agent_action") {
       const id = ensureAssistantStreamMessage();
+      const e: any = evt as any;
+      const bullet = `${e.phase ? `[${e.phase}] ` : ""}${e.subject ? `${e.subject}: ` : ""}${e.text || ""}`.trim();
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {
@@ -121,7 +123,7 @@ const Index = () => {
                 summary: m.internalActivity?.summary || "Actions",
                 bullets: [
                   ...(m.internalActivity?.bullets || []),
-                  `${(evt as any).text}`,
+                  bullet,
                 ],
                 doneLabel: m.internalActivity?.doneLabel || "Done",
                 body: m.internalActivity?.body,
@@ -131,6 +133,8 @@ const Index = () => {
       )));
     } else if (evt.type === "agent_result") {
       const id = ensureAssistantStreamMessage();
+      const e: any = evt as any;
+      const bullet = `${e.subject ? `${e.subject}: ` : ""}${e.text || ""}`.trim();
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {
@@ -139,7 +143,7 @@ const Index = () => {
                 summary: m.internalActivity?.summary || "Actions",
                 bullets: [
                   ...(m.internalActivity?.bullets || []),
-                  `${(evt as any).text}`,
+                  bullet,
                 ],
                 doneLabel: m.internalActivity?.doneLabel || "Done",
                 body: m.internalActivity?.body,
