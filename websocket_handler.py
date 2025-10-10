@@ -129,6 +129,24 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             "timestamp": datetime.now().isoformat()
         })
 
+        # Send actions catalog for frontend actions dropdown
+        try:
+            if hasattr(mongodb_agent, "get_actions_catalog"):
+                actions = mongodb_agent.get_actions_catalog()
+                await websocket.send_json({
+                    "type": "actions_available",
+                    "actions": actions,
+                    "timestamp": datetime.now().isoformat()
+                })
+        except Exception as e:
+            # Non-fatal: skip catalog if unavailable
+            await websocket.send_json({
+                "type": "actions_available",
+                "actions": [],
+                "error": str(e)[:160],
+                "timestamp": datetime.now().isoformat()
+            })
+
         while True:
             # Receive message from client
             data = await websocket.receive_json()

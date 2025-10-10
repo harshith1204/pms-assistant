@@ -245,6 +245,79 @@ def _select_tools_for_query(user_query: str):
     return selected_tools, allowed_names
 
 
+def _build_actions_catalog(allowed_names: List[str]) -> List[Dict[str, Any]]:
+    """Build a frontend-friendly catalog of available actions for the dropdown.
+
+    The catalog is intentionally small and human-oriented. It avoids exposing
+    internal schemas and focuses on safe, high-level intent fields the UI can
+    render as form inputs.
+    """
+    action_defs: Dict[str, Dict[str, Any]] = {
+        "mongo_query": {
+            "label": "Mongo query",
+            "description": "Structured counts/lists/breakdowns from Mongo collections.",
+            "args": [
+                {"name": "query", "type": "string", "required": True, "placeholder": "count bugs by priority"},
+                {"name": "show_all", "type": "boolean", "required": False, "default": False},
+            ],
+            "examples": [
+                "count bugs by priority",
+                "list work items assigned to Alice",
+                "group projects by business",
+            ],
+        },
+        "rag_search": {
+            "label": "RAG search",
+            "description": "Semantic search across pages, work items, and more.",
+            "args": [
+                {"name": "query", "type": "string", "required": True, "placeholder": "authentication docs"},
+                {
+                    "name": "content_type",
+                    "type": "enum",
+                    "required": False,
+                    "options": ["page", "work_item", "project", "cycle", "module"],
+                },
+                {"name": "group_by", "type": "string", "required": False, "placeholder": "priority"},
+                {"name": "limit", "type": "number", "required": False, "default": 10},
+                {"name": "show_content", "type": "boolean", "required": False, "default": True},
+            ],
+            "examples": [
+                "authentication",
+                "API documentation",
+                "work items mentioning cache",
+            ],
+        },
+        "generate_content": {
+            "label": "Generate content",
+            "description": "Create a work item or page (content streams to UI).",
+            "args": [
+                {"name": "content_type", "type": "enum", "required": True, "options": ["work_item", "page"]},
+                {"name": "prompt", "type": "string", "required": True, "placeholder": "Bug: login fails on mobile"},
+                {"name": "template_title", "type": "string", "required": False},
+                {"name": "template_content", "type": "string", "required": False},
+                {"name": "context", "type": "object", "required": False},
+            ],
+            "examples": [
+                "Bug: login fails on mobile",
+                "Create API docs for auth endpoints",
+            ],
+        },
+    }
+
+    catalog: List[Dict[str, Any]] = []
+    for name in allowed_names:
+        meta = action_defs.get(name)
+        if not meta:
+            # Skip tools that are not intended for the dropdown
+            continue
+        catalog.append({
+            "id": name,
+            "name": name,
+            **meta,
+        })
+    return catalog
+
+
 class PhoenixCallbackHandler(AsyncCallbackHandler):
     """WebSocket streaming callback handler for Phoenix events + DB logging"""
 
@@ -441,6 +514,12 @@ class MongoDBAgent:
         self.system_prompt = system_prompt
         self.tracing_enabled = False
         self.enable_parallel_tools = enable_parallel_tools
+
+    def get_actions_catalog(self) -> List[Dict[str, Any]]:
+        """Return actions metadata for populating the frontend actions dropdown."""
+        # Use the router to discover allowed tool names; for now it's static
+        _selected, allowed_names = _select_tools_for_query("catalog")
+        return _build_actions_catalog(allowed_names)
 
     async def _execute_single_tool(
         self, 
@@ -656,7 +735,37 @@ class MongoDBAgent:
                 
                 if self.enable_parallel_tools and len(response.tool_calls) > 1:
                     # Multiple tools called together = LLM determined they're independent
-                    pass
+                    # Emit non-streaming 'action' events for visibility in timelines
+                    try:
+                        for tool_call in response.tool_calls:
+                            tname = tool_call.get("name", "")
+                            args = tool_call.get("args", {})
+                            # Craft concise action text similar to streaming handler
+                            action_text = "Preparing to gather information"
+                            try:
+                                q = str(args.get("query", "")).strip()
+                                preview = (q[:80] + "...") if len(q) > 80 else q
+                                if tname == "mongo_query":
+                                    action_text = (
+                                        f"Checking structured data to answer“{preview}”" if preview else
+                                        "Checking structured data to answer your question"
+                                    )
+                                elif tname == "rag_search":
+                                    ctype = str(args.get("content_type", "")).strip()
+                                    if preview and ctype:
+                                        action_text = f"Exploring {ctype} content to understand “{preview}”"
+                                    elif preview:
+                                        action_text = f"Exploring content to understand “{preview}”"
+                                    else:
+                                        action_text = "Exploring relevant content for context"
+                            except Exception:
+                                pass
+                            try:
+                                await save_action_event(conversation_id, "action", action_text)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
                     
                     tool_tasks = [
                         self._execute_single_tool(None, tool_call, selected_tools, None)
@@ -677,6 +786,35 @@ class MongoDBAgent:
                 else:
                     # Single tool or parallel disabled
                     for tool_call in response.tool_calls:
+                        # Emit non-streaming 'action' event before execution
+                        try:
+                            tname = tool_call.get("name", "")
+                            args = tool_call.get("args", {})
+                            action_text = "Preparing to gather information"
+                            try:
+                                q = str(args.get("query", "")).strip()
+                                preview = (q[:80] + "...") if len(q) > 80 else q
+                                if tname == "mongo_query":
+                                    action_text = (
+                                        f"Checking structured data to answer“{preview}”" if preview else
+                                        "Checking structured data to answer your question"
+                                    )
+                                elif tname == "rag_search":
+                                    ctype = str(args.get("content_type", "")).strip()
+                                    if preview and ctype:
+                                        action_text = f"Exploring {ctype} content to understand “{preview}”"
+                                    elif preview:
+                                        action_text = f"Exploring content to understand “{preview}”"
+                                    else:
+                                        action_text = "Exploring relevant content for context"
+                            except Exception:
+                                pass
+                            try:
+                                await save_action_event(conversation_id, "action", action_text)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
                         tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
