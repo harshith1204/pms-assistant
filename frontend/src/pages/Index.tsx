@@ -114,7 +114,10 @@ const Index = () => {
     } else if (evt.type === "agent_action") {
       const id = ensureAssistantStreamMessage();
       const e: any = evt as any;
-      const bullet = `${e.phase ? `[${e.phase}] ` : ""}${e.subject ? `${e.subject}: ` : ""}${e.text || ""}`.trim();
+      const label = e.activity_label as string | undefined;
+      const bullet = label
+        ? `${label}${e.text ? ` — ${e.text}` : ""}`
+        : `${e.phase ? `[${e.phase}] ` : ""}${e.subject ? `${e.subject}: ` : ""}${e.text || ""}`.trim()`;
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {
@@ -134,7 +137,10 @@ const Index = () => {
     } else if (evt.type === "agent_result") {
       const id = ensureAssistantStreamMessage();
       const e: any = evt as any;
-      const bullet = `${e.subject ? `${e.subject}: ` : ""}${e.text || ""}`.trim();
+      const label = e.activity_label as string | undefined;
+      const bullet = label
+        ? `${label}${e.text ? ` — ${e.text}` : ""}`
+        : `${e.subject ? `${e.subject}: ` : ""}${e.text || ""}`.trim()`;
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {

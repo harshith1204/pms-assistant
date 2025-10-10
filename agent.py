@@ -273,8 +273,10 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self._last_action_id: Optional[str] = None
         # Map tool_call_id -> action_id to pair tool results consistently
         self._action_id_by_tool_call_id: Dict[str, str] = {}
+        # Track phase per action for better result labeling
+        self._action_phase_by_id: Dict[str, str] = {}
         # Controls whether to use LLM to generate action/result lines
-        self.llm_actions_enabled = os.getenv("LLM_GENERATED_ACTIONS", "true").lower() == "true"
+        self.llm_actions_enabled = os.getenv("LLM_GENERATED_ACTIONS", "false").lower() == "true"
         self.llm_actions = llm_for_actions
 
     def _safe_extract(self, input_str: str) -> dict:
@@ -352,6 +354,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         action_id: Optional[str] = None,
         phase: Optional[str] = None,
         subject: Optional[str] = None,
+        activity_label: Optional[str] = None,
     ) -> None:
         # Log to DB best-effort even if no websocket
         try:
@@ -383,6 +386,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             # Remember subject for the action id (used to craft result line)
             if action_id:
                 self._action_subject_by_id[action_id] = subject
+        if activity_label is not None:
+            payload["activity_label"] = activity_label
         await self.websocket.send_json(payload)
         # Remember last action id
         self._last_action_id = action_id
@@ -398,6 +403,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         *,
         action_id: Optional[str] = None,
         subject: Optional[str] = None,
+        activity_label: Optional[str] = None,
     ) -> None:
         # Log to DB best-effort even if no websocket
         try:
@@ -421,6 +427,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             payload["action_id"] = action_id
         if subject is not None:
             payload["subject"] = subject
+        if activity_label is not None:
+            payload["activity_label"] = activity_label
         await self.websocket.send_json(payload)
         try:
             if self.conversation_id:
@@ -495,12 +503,22 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                     phase=phase,
                     tool_name=tool_name,
                 ) or (f"I'm going to look into {subject}.")
+                activity_label = f"{(phase or '').capitalize()}" + (f": {subject}" if subject else "")
             except Exception:
                 action_text = "Working on it."
-            await self._emit_action(action_text, action_id=action_id, phase=phase, subject=subject)
+                activity_label = None
+            await self._emit_action(
+                action_text,
+                action_id=action_id,
+                phase=phase,
+                subject=subject,
+                activity_label=activity_label,
+            )
             # After emitting, record mapping of tool_call_id->action_id if available
             if tool_call_id and self._last_action_id:
                 self._action_id_by_tool_call_id[tool_call_id] = self._last_action_id
+                # Track phase for this action id
+                self._action_phase_by_id[self._last_action_id] = phase or ""
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
@@ -529,7 +547,13 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             tool_name=None,
             output_preview=str(output)[:160],
         ) or (f"I looked into {subject}." if subject else summary)
-        await self._emit_result(text, action_id=action_id, subject=subject)
+        # Derive a deterministic activity label (no extra LLM): "Lookup complete: Subject"
+        phase_for_action = self._action_phase_by_id.get(action_id or "", "")
+        activity_label = (
+            (f"{phase_for_action.capitalize()} complete" + (f": {subject}" if subject else ""))
+            if phase_for_action else (f"Completed" + (f": {subject}" if subject else ""))
+        )
+        await self._emit_result(text, action_id=action_id, subject=subject, activity_label=activity_label)
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
