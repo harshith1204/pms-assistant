@@ -11,7 +11,6 @@ from qdrant_client.models import (
 )
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
-from fastembed import SparseTextEmbedding
 
 class RAGTool:
     """
@@ -63,13 +62,7 @@ class RAGTool:
                 self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
             except Exception as e:
                 print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
-            try:
-                self.sparse_embedder = SparseTextEmbedding("Qdrant/bm25")
-            except Exception as e:
-                print(f"⚠️ Failed to load sparse embedding model 'Qdrant/bm25': {e}")
-            self.connected = True
-            print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
-            # Lightweight verification that sparse vectors are configured and present
+            
             try:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
                 # If call succeeds, we assume sparse config exists as we create it during indexing
