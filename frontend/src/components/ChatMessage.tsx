@@ -3,6 +3,7 @@ import { Bot, User, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { AgentActivity } from "@/components/AgentActivity";
+import type { ActivityStep } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
 
 interface ChatMessageProps {
@@ -14,6 +15,7 @@ interface ChatMessageProps {
     bullets?: string[];
     doneLabel?: string;
     body?: string;
+    steps?: ActivityStep[];
   };
 }
 
@@ -87,6 +89,7 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
               doneLabel={internalActivity.doneLabel}
               body={internalActivity.body}
               defaultOpen={false}
+              steps={internalActivity.steps}
             />
           )}
 

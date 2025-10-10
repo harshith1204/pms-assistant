@@ -20,6 +20,16 @@ interface Message {
     bullets?: string[];
     doneLabel?: string;
     body?: string;
+    steps?: Array<{
+      id: string;
+      title: string;
+      status: "running" | "success" | "error" | "note";
+      subtitle?: string;
+      input?: string;
+      output?: string;
+      startedAt?: string;
+      endedAt?: string;
+    }>;
   };
 }
 
@@ -51,7 +61,13 @@ const Index = () => {
         streamingAssistantIdRef.current = id;
         setMessages((prev) => [
           ...prev,
-          { id, role: "assistant", content: "", isStreaming: true, internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" } },
+          {
+            id,
+            role: "assistant",
+            content: "",
+            isStreaming: true,
+            internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done", steps: [] },
+          },
         ]);
       }
     } else if (evt.type === "token") {
@@ -67,80 +83,129 @@ const Index = () => {
     } else if (evt.type === "tool_start") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `Starting ${evt.tool_name || "tool"}`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
+      const now = (evt as any).timestamp || new Date().toISOString();
+      const stepId = `${(evt as any).tool_name || "tool"}-${now}`;
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== id) return m;
+        const existingSteps = m.internalActivity?.steps || [];
+        return {
+          ...m,
+          internalActivity: {
+            summary: m.internalActivity?.summary || "Actions",
+            bullets: [
+              ...(m.internalActivity?.bullets || []),
+              `Starting ${(evt as any).tool_name || "tool"}`,
+            ],
+            doneLabel: m.internalActivity?.doneLabel || "Done",
+            body: m.internalActivity?.body,
+            steps: [
+              ...existingSteps,
+              {
+                id: stepId,
+                title: `Running ${(evt as any).tool_name || "tool"}`,
+                status: "running",
+                subtitle: (evt as any).tool_name,
+                input: (evt as any).input,
+                startedAt: now,
               },
-            }
-          : m
-      )));
+            ],
+          },
+        };
+      }));
     } else if (evt.type === "tool_end") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
       const preview = (evt as any).output_preview || (evt as any).output || "Done";
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `Completed tool (${String(preview).slice(0, 80)}${String(preview).length > 80 ? "..." : ""})`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
-              },
-            }
-          : m
-      )));
+      const endTs = (evt as any).timestamp || new Date().toISOString();
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== id) return m;
+        const steps = m.internalActivity?.steps || [];
+        const lastIdxFromEnd = [...steps].reverse().findIndex((s) => s.status === "running");
+        const idxToUpdate = lastIdxFromEnd >= 0 ? steps.length - 1 - lastIdxFromEnd : -1;
+        const updatedSteps = steps.map((s, idx) =>
+          idx === idxToUpdate
+            ? {
+                ...s,
+                status: (evt as any).hidden ? "note" : "success",
+                output: typeof (evt as any).output === "string" ? (evt as any).output : preview,
+                endedAt: endTs,
+              }
+            : s
+        );
+        return {
+          ...m,
+          internalActivity: {
+            summary: m.internalActivity?.summary || "Actions",
+            bullets: [
+              ...(m.internalActivity?.bullets || []),
+              `Completed tool (${String(preview).slice(0, 80)}${String(preview).length > 80 ? "..." : ""})`,
+            ],
+            doneLabel: m.internalActivity?.doneLabel || "Done",
+            body: m.internalActivity?.body,
+            steps: updatedSteps,
+          },
+        };
+      }));
     } else if (evt.type === "agent_action") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `${evt.text}`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
+      const now = (evt as any).timestamp || new Date().toISOString();
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== id) return m;
+        const steps = m.internalActivity?.steps || [];
+        return {
+          ...m,
+          internalActivity: {
+            summary: m.internalActivity?.summary || "Actions",
+            bullets: [
+              ...(m.internalActivity?.bullets || []),
+              `${evt.text}`,
+            ],
+            doneLabel: m.internalActivity?.doneLabel || "Done",
+            body: m.internalActivity?.body,
+            steps: [
+              ...steps,
+              {
+                id: `agent-action-${now}`,
+                title: String(evt.text),
+                status: "note",
+                startedAt: now,
+                endedAt: now,
               },
-            }
-          : m
-      )));
+            ],
+          },
+        };
+      }));
     } else if (evt.type === "agent_result") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `${evt.text}`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
+      const now = (evt as any).timestamp || new Date().toISOString();
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== id) return m;
+        const steps = m.internalActivity?.steps || [];
+        return {
+          ...m,
+          internalActivity: {
+            summary: m.internalActivity?.summary || "Actions",
+            bullets: [
+              ...(m.internalActivity?.bullets || []),
+              `${evt.text}`,
+            ],
+            doneLabel: m.internalActivity?.doneLabel || "Done",
+            body: m.internalActivity?.body,
+            steps: [
+              ...steps,
+              {
+                id: `agent-result-${now}`,
+                title: String(evt.text),
+                status: "success",
+                startedAt: now,
+                endedAt: now,
               },
-            }
-          : m
-      )));
+            ],
+          },
+        };
+      }));
     } else if (evt.type === "content_generated") {
       // Show a brief confirmation message
       const id = `assistant-${Date.now()}`;
