@@ -258,6 +258,10 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self._step_counter = 0
         # Track contextual info per action (e.g., subject) keyed by action_id
         self._action_subject_by_id: Dict[str, str] = {}
+        # Track last emitted action id to pair a following result when needed
+        self._last_action_id: Optional[str] = None
+        # Map tool_call_id -> action_id to pair tool results consistently
+        self._action_id_by_tool_call_id: Dict[str, str] = {}
 
     def _safe_extract(self, input_str: str) -> dict:
         """Best-effort parse of tool arg string to a dict without raising.
@@ -299,15 +303,19 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         if not self.websocket:
             return
 
-        self._step_counter += 1
+        # Compute action id if not provided
+        next_step = self._step_counter + 1
+        if action_id is None:
+            action_id = f"a{next_step}"
+
+        self._step_counter = next_step
         payload: Dict[str, Any] = {
             "type": "agent_action",
             "text": text,
             "step": self._step_counter,
             "timestamp": datetime.now().isoformat(),
         }
-        if action_id is not None:
-            payload["action_id"] = action_id
+        payload["action_id"] = action_id
         if phase is not None:
             payload["phase"] = phase
         if subject is not None:
@@ -316,6 +324,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             if action_id:
                 self._action_subject_by_id[action_id] = subject
         await self.websocket.send_json(payload)
+        # Remember last action id
+        self._last_action_id = action_id
         try:
             if self.conversation_id:
                 await save_action_event(self.conversation_id, "action", text, step=self._step_counter)
@@ -345,6 +355,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             "step": self._step_counter,
             "timestamp": datetime.now().isoformat(),
         }
+        if action_id is None:
+            action_id = self._last_action_id
         if action_id is not None:
             payload["action_id"] = action_id
         if subject is not None:
@@ -387,7 +399,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
         """Called when a tool starts executing"""
         tool_name = serialized.get("name", "Unknown Tool")
-        action_id = serialized.get("id") or kwargs.get("tool_call_id")
+        tool_call_id = serialized.get("id") or kwargs.get("tool_call_id")
+        action_id = None
         if self.websocket:
             await self.websocket.send_json({
                 "type": "tool_start",
@@ -421,12 +434,17 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             except Exception:
                 action_text = "Starting a tool."
             await self._emit_action(action_text, action_id=action_id, phase=phase, subject=subject)
+            # After emitting, record mapping of tool_call_id->action_id if available
+            if tool_call_id and self._last_action_id:
+                self._action_id_by_tool_call_id[tool_call_id] = self._last_action_id
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
         # Emit concise result statement without internals
         summary = "Ready with findings"
-        action_id = kwargs.get("tool_call_id")
+        tool_call_id = kwargs.get("tool_call_id")
+        # Map back to action id if possible
+        action_id = self._action_id_by_tool_call_id.get(tool_call_id or "", None)
         subject = self._action_subject_by_id.get(action_id or "", None)
         try:
             import re as _re
