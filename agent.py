@@ -256,6 +256,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         # Tool outputs are now always streamed to the frontend for better visibility
         # Internal step counter for lightweight progress (not exposed directly)
         self._step_counter = 0
+        # Track contextual info per action (e.g., subject) keyed by action_id
+        self._action_subject_by_id: Dict[str, str] = {}
 
     def _safe_extract(self, input_str: str) -> dict:
         """Best-effort parse of tool arg string to a dict without raising.
@@ -279,22 +281,40 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             pass
         return {}
 
-    async def _emit_action(self, text: str) -> None:
+    async def _emit_action(
+        self,
+        text: str,
+        *,
+        action_id: Optional[str] = None,
+        phase: Optional[str] = None,
+        subject: Optional[str] = None,
+    ) -> None:
+        # Log to DB best-effort even if no websocket
+        try:
+            if self.conversation_id:
+                await save_action_event(self.conversation_id, "action", text, step=self._step_counter + 1)
+        except Exception:
+            pass
+
         if not self.websocket:
-            # Still log action to DB if possible
-            try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "action", text, step=self._step_counter + 1)
-            except Exception:
-                pass
             return
+
         self._step_counter += 1
-        payload = {
+        payload: Dict[str, Any] = {
             "type": "agent_action",
             "text": text,
             "step": self._step_counter,
             "timestamp": datetime.now().isoformat(),
         }
+        if action_id is not None:
+            payload["action_id"] = action_id
+        if phase is not None:
+            payload["phase"] = phase
+        if subject is not None:
+            payload["subject"] = subject
+            # Remember subject for the action id (used to craft result line)
+            if action_id:
+                self._action_subject_by_id[action_id] = subject
         await self.websocket.send_json(payload)
         try:
             if self.conversation_id:
@@ -302,20 +322,33 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         except Exception:
             pass
 
-    async def _emit_result(self, text: str) -> None:
+    async def _emit_result(
+        self,
+        text: str,
+        *,
+        action_id: Optional[str] = None,
+        subject: Optional[str] = None,
+    ) -> None:
+        # Log to DB best-effort even if no websocket
+        try:
+            if self.conversation_id:
+                await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
+        except Exception:
+            pass
+
         if not self.websocket:
-            try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
-            except Exception:
-                pass
             return
-        payload = {
+
+        payload: Dict[str, Any] = {
             "type": "agent_result",
             "text": text,
             "step": self._step_counter,
             "timestamp": datetime.now().isoformat(),
         }
+        if action_id is not None:
+            payload["action_id"] = action_id
+        if subject is not None:
+            payload["subject"] = subject
         await self.websocket.send_json(payload)
         try:
             if self.conversation_id:
@@ -331,8 +364,6 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "type": "llm_start",
                 "timestamp": datetime.now().isoformat()
             })
-            # Non-revealing action line
-            await self._emit_action("Reviewing the request to decide next steps")
 
     async def on_llm_new_token(self, token: str, **kwargs):
         """Stream each token as it's generated"""
@@ -356,6 +387,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
         """Called when a tool starts executing"""
         tool_name = serialized.get("name", "Unknown Tool")
+        action_id = serialized.get("id") or kwargs.get("tool_call_id")
         if self.websocket:
             await self.websocket.send_json({
                 "type": "tool_start",
@@ -366,33 +398,36 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             # Emit dynamic, user-facing action statement (non-revealing)
             args = self._safe_extract(input_str)
             action_text = None
+            phase = None
+            subject = None
             try:
                 if tool_name == "mongo_query":
                     q = str(args.get("query", "")).strip()
                     preview = (q[:80] + "...") if len(q) > 80 else q
-                    action_text = (f"Checking structured data to answer“{preview}”" if preview
-                                   else "Checking structured data to answer your question")
+                    subject = preview or "structured data"
+                    phase = "lookup"
+                    action_text = (f"I'm going to look into {subject}.")
                 elif tool_name == "rag_search":
                     q = str(args.get("query", "")).strip()
                     ctype = str(args.get("content_type", "")).strip()
                     preview = (q[:80] + "...") if len(q) > 80 else q
-                    if preview and ctype:
-                        action_text = f"Exploring {ctype} content to understand “{preview}”"
-                    elif preview:
-                        action_text = f"Exploring content to understand “{preview}”"
-                    else:
-                        action_text = "Exploring relevant content for context"
+                    subject = preview or (ctype or "relevant content")
+                    phase = "lookup"
+                    action_text = (f"I'm going to look into {subject}.")
                 else:
-                    action_text = f"Preparing to gather information ({tool_name})"
+                    subject = tool_name
+                    phase = "execute"
+                    action_text = f"Starting {tool_name}."
             except Exception:
-                action_text = "Preparing to gather information"
-            await self._emit_action(action_text)
+                action_text = "Starting a tool."
+            await self._emit_action(action_text, action_id=action_id, phase=phase, subject=subject)
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
-        # Do not send raw tool outputs to the UI; emit only a concise RESULT line
-            # Emit concise result statement without internals
+        # Emit concise result statement without internals
         summary = "Ready with findings"
+        action_id = kwargs.get("tool_call_id")
+        subject = self._action_subject_by_id.get(action_id or "", None)
         try:
             import re as _re
             # Try to extract a simple count from common patterns
@@ -405,7 +440,12 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 summary = "Results ready"
         except Exception:
             pass
-        await self._emit_result(summary)
+        # If we know the subject, tailor the result to sound natural
+        if subject:
+            text = f"I looked into {subject}."
+        else:
+            text = summary
+        await self._emit_result(text, action_id=action_id, subject=subject)
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
