@@ -868,7 +868,17 @@ class MongoDBAgent:
                             "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); generate_content needs content_type + prompt."
                         ))
                         invoke_messages = messages + [routing_instructions]
+                        is_finalization_turn = False
                         if need_finalization:
+                            # Emit a dynamic processing action before final synthesis
+                            try:
+                                await callback_handler._emit_action(
+                                    "Let me process the data I just found.",
+                                    phase="process",
+                                    subject="results",
+                                )
+                            except Exception:
+                                pass
                             finalization_instructions = SystemMessage(content=(
                                 "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
                                 "Do not paste tool outputs verbatim or include banners/emojis. "
@@ -877,6 +887,7 @@ class MongoDBAgent:
                             ))
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
+                            is_finalization_turn = True
                         response = await llm_with_tools.ainvoke(
                             invoke_messages,
                             config={"callbacks": [callback_handler]},
@@ -898,6 +909,15 @@ class MongoDBAgent:
                         print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
+                        # Emit a dynamic process result line after final synthesis
+                        if is_finalization_turn:
+                            try:
+                                await callback_handler._emit_result(
+                                    "I processed the results and extracted the relevant points.",
+                                    subject="results",
+                                )
+                            except Exception:
+                                pass
                         yield response.content
                         return
 
