@@ -44,19 +44,29 @@ const Index = () => {
 
   // Socket integration: handle backend events
   const handleSocketEvent = useCallback((evt: ChatEvent) => {
+    // Ensure there is a single streaming assistant message used to accumulate
+    // all live agent/tool activities and stream tokens into its content
+    const ensureAssistantStreamMessage = (): string => {
+      if (streamingAssistantIdRef.current) return streamingAssistantIdRef.current;
+      const id = `assistant-${Date.now()}`;
+      streamingAssistantIdRef.current = id;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id,
+          role: "assistant",
+          content: "",
+          isStreaming: true,
+          internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" },
+        },
+      ]);
+      return id;
+    };
+
     if (evt.type === "llm_start") {
-      // Start a new assistant streaming message if not present
-      if (!streamingAssistantIdRef.current) {
-        const id = `assistant-${Date.now()}`;
-        streamingAssistantIdRef.current = id;
-        setMessages((prev) => [
-          ...prev,
-          { id, role: "assistant", content: "", isStreaming: true, internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" } },
-        ]);
-      }
+      ensureAssistantStreamMessage();
     } else if (evt.type === "token") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
+      const id = ensureAssistantStreamMessage();
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
     } else if (evt.type === "llm_end") {
       const id = streamingAssistantIdRef.current;
@@ -65,8 +75,7 @@ const Index = () => {
       streamingAssistantIdRef.current = null;
       setIsLoading(false);
     } else if (evt.type === "tool_start") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
+      const id = ensureAssistantStreamMessage();
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {
@@ -84,8 +93,7 @@ const Index = () => {
           : m
       )));
     } else if (evt.type === "tool_end") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
+      const id = ensureAssistantStreamMessage();
       const preview = (evt as any).output_preview || (evt as any).output || "Done";
       setMessages((prev) => prev.map((m) => (
         m.id === id
@@ -104,8 +112,7 @@ const Index = () => {
           : m
       )));
     } else if (evt.type === "agent_action") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
+      const id = ensureAssistantStreamMessage();
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {
@@ -114,7 +121,7 @@ const Index = () => {
                 summary: m.internalActivity?.summary || "Actions",
                 bullets: [
                   ...(m.internalActivity?.bullets || []),
-                  `${evt.text}`,
+                  `${(evt as any).text}`,
                 ],
                 doneLabel: m.internalActivity?.doneLabel || "Done",
                 body: m.internalActivity?.body,
@@ -123,8 +130,7 @@ const Index = () => {
           : m
       )));
     } else if (evt.type === "agent_result") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
+      const id = ensureAssistantStreamMessage();
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {
@@ -133,7 +139,45 @@ const Index = () => {
                 summary: m.internalActivity?.summary || "Actions",
                 bullets: [
                   ...(m.internalActivity?.bullets || []),
-                  `${evt.text}`,
+                  `${(evt as any).text}`,
+                ],
+                doneLabel: m.internalActivity?.doneLabel || "Done",
+                body: m.internalActivity?.body,
+              },
+            }
+          : m
+      )));
+    } else if (evt.type === "planner_result") {
+      const id = ensureAssistantStreamMessage();
+      const text = (evt as any).text || "Planner completed";
+      setMessages((prev) => prev.map((m) => (
+        m.id === id
+          ? {
+              ...m,
+              internalActivity: {
+                summary: m.internalActivity?.summary || "Actions",
+                bullets: [
+                  ...(m.internalActivity?.bullets || []),
+                  `${text}`,
+                ],
+                doneLabel: m.internalActivity?.doneLabel || "Done",
+                body: m.internalActivity?.body,
+              },
+            }
+          : m
+      )));
+    } else if (evt.type === "planner_error") {
+      const id = ensureAssistantStreamMessage();
+      const message = (evt as any).message || "Planner error";
+      setMessages((prev) => prev.map((m) => (
+        m.id === id
+          ? {
+              ...m,
+              internalActivity: {
+                summary: m.internalActivity?.summary || "Actions",
+                bullets: [
+                  ...(m.internalActivity?.bullets || []),
+                  `Planner error: ${message}`,
                 ],
                 doneLabel: m.internalActivity?.doneLabel || "Done",
                 body: m.internalActivity?.body,
@@ -163,6 +207,10 @@ const Index = () => {
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
     } else if (evt.type === "complete") {
+      const id = streamingAssistantIdRef.current;
+      if (id) {
+        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
+      }
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
     }
