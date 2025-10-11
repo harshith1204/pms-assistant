@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_WS_URL } from "@/config";
+import { API_WS_URL, API_HTTP_URL } from "@/config";
 
 export type ChatEvent =
   | { type: "connected"; client_id: string; timestamp: string }
@@ -37,11 +37,16 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
   const [connected, setConnected] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
   const reconnectRef = useRef<number | null>(null);
+  const esRef = useRef<EventSource | null>(null);
 
   const cleanup = useCallback(()=> {
     if (reconnectRef.current) {
       window.clearTimeout(reconnectRef.current);
       reconnectRef.current = null;
+    }
+    if (esRef.current) {
+      try { esRef.current.close(); } catch {}
+      esRef.current = null;
     }
     if (wsRef.current) {
       try {
@@ -86,6 +91,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
         // Let onclose handle reconnection
       };
     } catch (e) {
+      // If WebSocket constructor throws (unlikely), schedule reconnect
       if (autoReconnect) {
         reconnectRef.current = window.setTimeout(connect, 1000);
       }
@@ -109,14 +115,42 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
   }, [connected]);
 
   const send = useCallback((payload: SendMessagePayload) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
-    const body: any = {
-      message: payload.message,
-      conversation_id: payload.conversation_id || undefined,
-      planner: !!payload.planner,
-    };
+    // Prefer WebSocket when available
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const body: any = {
+        message: payload.message,
+        conversation_id: payload.conversation_id || undefined,
+        planner: !!payload.planner,
+      };
+      try {
+        wsRef.current.send(JSON.stringify(body));
+        return true;
+      } catch {}
+    }
+    // Fallback to SSE by (re)opening with the message
     try {
-      wsRef.current.send(JSON.stringify(body));
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+      const params = new URLSearchParams({
+        message: payload.message,
+        conversation_id: payload.conversation_id || "",
+      });
+      const es = new EventSource(`${API_HTTP_URL}/sse/chat?${params.toString()}`, { withCredentials: false } as any);
+      esRef.current = es;
+      es.onopen = () => setConnected(true);
+      es.onmessage = (evt) => {
+        try {
+          const data: ChatEvent = JSON.parse(evt.data);
+          onEvent?.(data);
+        } catch {}
+      };
+      es.onerror = () => {
+        setConnected(false);
+        es.close();
+        esRef.current = null;
+      };
       return true;
     } catch {
       return false;

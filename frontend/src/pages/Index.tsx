@@ -4,6 +4,7 @@ import { ChatSidebar } from "@/components/ChatSidebar";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import React from "react";
 import { Sparkles } from "lucide-react";
 import PromptLibrary from "@/components/PromptLibrary";
 import Settings from "@/pages/Settings";
@@ -42,6 +43,24 @@ const Index = () => {
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
 
+  // Token buffer to coalesce events (reduces re-render churn)
+  const tokenBufferRef = useRef<string>("");
+  const tokenFlushRef = useRef<number | null>(null);
+  const flushBufferedTokens = useCallback(() => {
+    const id = streamingAssistantIdRef.current;
+    if (!id) return;
+    const buf = tokenBufferRef.current;
+    if (!buf) return;
+    React.startTransition(() => {
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + buf } : m)));
+    });
+    tokenBufferRef.current = "";
+    if (tokenFlushRef.current) {
+      window.clearTimeout(tokenFlushRef.current);
+      tokenFlushRef.current = null;
+    }
+  }, []);
+
   // Socket integration: handle backend events
   const handleSocketEvent = useCallback((evt: ChatEvent) => {
     if (evt.type === "llm_start") {
@@ -55,12 +74,20 @@ const Index = () => {
         ]);
       }
     } else if (evt.type === "token") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
-      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
+      // Coalesce tokens into a short buffer and flush at ~30Hz or punctuation
+      tokenBufferRef.current += evt.content || "";
+      const lastChar = tokenBufferRef.current[tokenBufferRef.current.length - 1];
+      const isPunct = lastChar && /[\.!?\n]/.test(lastChar);
+      if (isPunct) {
+        flushBufferedTokens();
+      } else if (!tokenFlushRef.current) {
+        tokenFlushRef.current = window.setTimeout(flushBufferedTokens, 33);
+      }
     } else if (evt.type === "llm_end") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
+      // Ensure any buffered tokens are flushed before ending
+      flushBufferedTokens();
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
       setIsLoading(false);
     } else if (evt.type === "tool_start") {
@@ -164,10 +191,22 @@ const Index = () => {
     } else if (evt.type === "complete") {
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
+      // Final safety flush
+      flushBufferedTokens();
     }
-  }, []);
+  }, [flushBufferedTokens]);
 
   const { connected, send } = useChatSocket({ onEvent: handleSocketEvent });
+
+  // Auto-scroll to bottom while streaming
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    // If the last message is streaming, keep pinned to bottom
+    const last = messages[messages.length - 1];
+    const shouldPin = !!last?.isStreaming;
+    if (!bottomRef.current) return;
+    if (shouldPin) bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
 
   // Load conversations on mount
   useEffect(() => {
@@ -330,6 +369,7 @@ const Index = () => {
               {messages.map((message) => (
                 <ChatMessage key={message.id} {...message} />
               ))}
+              <div ref={bottomRef} />
             </div>
           </ScrollArea>
         )}

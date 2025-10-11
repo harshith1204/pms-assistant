@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, User, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SafeMarkdown from "@/components/SafeMarkdown";
@@ -25,20 +25,57 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
   const [thumbsUp, setThumbsUp] = useState(false);
   const [thumbsDown, setThumbsDown] = useState(false);
   const [copied, setCopied] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  // Typing speed: characters per second (default 48cps)
+  const charactersPerSecond = 48;
+  const baseDelayMs = useMemo(() => Math.max(4, Math.round(1000 / charactersPerSecond)), [charactersPerSecond]);
+
+  const extraDelayForPunctuation = (ch: string, base: number) => {
+    if (!ch) return 0;
+    if (/^[.,!?;:]$/.test(ch)) return Math.round(base * 0.8);
+    if (ch === "\n") return Math.round(base * 1.4);
+    return 0;
+  };
 
   useEffect(() => {
-    if (role === "assistant" && isStreaming) {
-      if (currentIndex < content.length) {
-        const timeout = setTimeout(() => {
-          setDisplayedContent(content.slice(0, currentIndex + 1));
-          setCurrentIndex(currentIndex + 1);
-        }, 20);
-        return () => clearTimeout(timeout);
-      }
-    } else {
-      setDisplayedContent(content);
+    // Clear any pending timer on effect change/unmount
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
-  }, [content, currentIndex, role, isStreaming]);
+
+    if (role !== "assistant") {
+      setDisplayedContent(content);
+      setCurrentIndex(content.length);
+      return;
+    }
+
+    if (!isStreaming) {
+      // Immediately reveal the full content when streaming ends
+      setDisplayedContent(content);
+      setCurrentIndex(content.length);
+      return;
+    }
+
+    if (currentIndex >= content.length) return;
+
+    const nextChar = content[currentIndex] ?? "";
+    let delay = baseDelayMs + extraDelayForPunctuation(nextChar, baseDelayMs);
+
+    timerRef.current = window.setTimeout(() => {
+      setDisplayedContent((prev) => prev + nextChar);
+      setCurrentIndex((idx) => idx + 1);
+      timerRef.current = null;
+    }, delay);
+
+    return () => {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [baseDelayMs, content, currentIndex, isStreaming, role]);
 
   const isUser = role === "user";
 

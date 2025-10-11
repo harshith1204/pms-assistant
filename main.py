@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -162,6 +163,72 @@ async def websocket_chat(websocket: WebSocket):
 
     await handle_chat_websocket(websocket, mongodb_agent)
 
+
+@app.get("/sse/chat")
+async def sse_chat(request: Request, message: str, conversation_id: Optional[str] = None):
+    """Server-Sent Events endpoint that streams chat events as JSON lines.
+
+    This mirrors the WebSocket protocol by emitting the same event objects via SSE.
+    Frontend can consume with EventSource and reuse the same handlers.
+    """
+    global mongodb_agent
+
+    # Ensure agent is ready (dev convenience)
+    if not mongodb_agent:
+        mongodb_agent = MongoDBAgent()
+        await mongodb_agent.connect()
+
+    import json as _json
+    import asyncio as _asyncio
+
+    class _SSEAdapter:
+        def __init__(self, q: "_asyncio.Queue[str]"):
+            self.q = q
+
+        async def send_json(self, payload: dict):
+            try:
+                data = _json.dumps(payload, ensure_ascii=False)
+            except Exception:
+                data = _json.dumps({"type": "error", "message": "serialization error"})
+            await self.q.put(f"data: {data}\n\n")
+
+    async def event_stream():
+        q: _asyncio.Queue[str] = _asyncio.Queue()
+        adapter = _SSEAdapter(q)
+
+        # Initial connected event
+        await q.put(f"data: {_json.dumps({'type': 'connected', 'timestamp': __import__('datetime').datetime.now().isoformat()})}\n\n")
+
+        async def runner():
+            try:
+                # Drive the streaming generator to completion; tokens are sent via adapter
+                async for _ in mongodb_agent.run_streaming(
+                    query=message,
+                    websocket=adapter,
+                    conversation_id=conversation_id
+                ):
+                    pass
+            finally:
+                await q.put(f"data: {_json.dumps({'type': 'complete', 'conversation_id': conversation_id or ''})}\n\n")
+
+        task = _asyncio.create_task(runner())
+        try:
+            while True:
+                # Client disconnect handling
+                if await request.is_disconnected():
+                    task.cancel()
+                    break
+                chunk = await q.get()
+                yield chunk
+        finally:
+            if not task.done():
+                task.cancel()
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 if __name__ == "__main__":
     uvicorn.run(
