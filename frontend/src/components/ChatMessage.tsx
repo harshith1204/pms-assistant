@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bot, User, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import SafeMarkdown from "@/components/SafeMarkdown";
 import { Button } from "@/components/ui/button";
 import { AgentActivity } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
@@ -90,12 +91,13 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
             />
           )}
 
-          <div className="text-base text-foreground leading-relaxed whitespace-pre-wrap">
-            {displayedContent}
-            {isStreaming && currentIndex < content.length && (
-              <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />
-            )}
-          </div>
+          <SafeMarkdown
+            content={displayedContent}
+            className="prose prose-sm max-w-none dark:prose-invert"
+          />
+          {isStreaming && currentIndex < content.length && (
+            <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />
+          )}
 
           {/* Action buttons for assistant messages */}
           <div className="flex items-center gap-1 pt-2">
