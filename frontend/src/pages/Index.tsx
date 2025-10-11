@@ -62,7 +62,6 @@ const Index = () => {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
-      streamingAssistantIdRef.current = null;
       setIsLoading(false);
     } else if (evt.type === "tool_start") {
       const id = streamingAssistantIdRef.current;
