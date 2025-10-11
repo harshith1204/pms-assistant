@@ -155,6 +155,9 @@ async def save_action_event(
     step: Optional[int] = None,
     tool_name: Optional[str] = None,
 ) -> None:
+    # Do not persist raw tool result outputs to conversations history
+    if kind == "result":
+        return
     await append_message(
         conversation_id,
         {
