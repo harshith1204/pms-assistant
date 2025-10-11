@@ -423,22 +423,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
-        # Do not send raw tool outputs to the UI; emit only a concise RESULT line
-            # Emit concise result statement without internals
-        summary = "Ready with findings"
-        try:
-            import re as _re
-            # Try to extract a simple count from common patterns
-            m = _re.search(r"Found\s+(\d+)\s+result", str(output), flags=_re.IGNORECASE)
-            if m:
-                summary = f"Found {m.group(1)} relevant results"
-            elif "RESULTS SUMMARY" in str(output):
-                summary = "Summarized key results"
-            elif "RESULT:" in str(output) or "RESULTS:" in str(output):
-                summary = "Results ready"
-        except Exception:
-            pass
-        await self._emit_result(summary)
+        # Suppress generic result notifications to the UI
+        return
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
