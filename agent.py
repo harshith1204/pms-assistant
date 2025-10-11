@@ -351,12 +351,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
 
     async def _emit_action(self, text: str) -> None:
         if not self.websocket:
-            # Still log action to DB if possible
-            try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "action", text, step=self._step_counter + 1)
-            except Exception:
-                pass
+            # No websocket: do not persist action events
             return
         self._step_counter += 1
         payload = {
@@ -366,19 +361,10 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             "timestamp": datetime.now().isoformat(),
         }
         await self.websocket.send_json(payload)
-        try:
-            if self.conversation_id:
-                await save_action_event(self.conversation_id, "action", text, step=self._step_counter)
-        except Exception:
-            pass
 
     async def _emit_result(self, text: str) -> None:
         if not self.websocket:
-            try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
-            except Exception:
-                pass
+            # No websocket: do not persist result events
             return
         payload = {
             "type": "agent_result",
@@ -387,11 +373,6 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             "timestamp": datetime.now().isoformat(),
         }
         await self.websocket.send_json(payload)
-        try:
-            if self.conversation_id:
-                await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
-        except Exception:
-            pass
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -706,10 +687,6 @@ class MongoDBAgent:
                 # Emit a dynamic, user-facing action line before running any tools
                 try:
                     action_text = await generate_action_statement(query, response.tool_calls)
-                    try:
-                        await save_action_event(conversation_id, "action", action_text)
-                    except Exception:
-                        pass
                 except Exception:
                     pass
                 messages.append(response)
@@ -734,10 +711,6 @@ class MongoDBAgent:
                     for tool_message, success in tool_results:
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        try:
-                            await save_action_event(conversation_id, "result", tool_message.content)
-                        except Exception:
-                            pass
                         if success:
                             did_any_tool = True
                 else:
@@ -746,10 +719,6 @@ class MongoDBAgent:
                         tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        try:
-                            await save_action_event(conversation_id, "result", tool_message.content)
-                        except Exception:
-                            pass
                         if success:
                             did_any_tool = True
                 
@@ -971,10 +940,6 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            try:
-                                await save_action_event(conversation_id, "result", tool_message.content)
-                            except Exception:
-                                pass
                             if success:
                                 did_any_tool = True
                     else:
@@ -988,10 +953,6 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            try:
-                                await save_action_event(conversation_id, "result", tool_message.content)
-                            except Exception:
-                                pass
                             if success:
                                 did_any_tool = True
                     
