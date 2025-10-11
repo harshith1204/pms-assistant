@@ -7,9 +7,13 @@ import { AgentActivity } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
 
 interface ChatMessageProps {
+  id: string;
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  liked?: boolean;
+  onLike?: (messageId: string) => void;
+  onDislike?: (messageId: string) => void;
   internalActivity?: {
     summary: string;
     bullets?: string[];
@@ -18,12 +22,10 @@ interface ChatMessageProps {
   };
 }
 
-export const ChatMessage = ({ role, content, isStreaming = false, internalActivity }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [thumbsUp, setThumbsUp] = useState(false);
-  const [thumbsDown, setThumbsDown] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -53,16 +55,17 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
   };
 
   const handleThumbsUp = () => {
-    setThumbsUp(!thumbsUp);
-    if (thumbsDown) setThumbsDown(false);
-    // Here you could add logic to send feedback to your backend
+    if (isStreaming) return;
+    onLike?.(id);
   };
 
   const handleThumbsDown = () => {
-    setThumbsDown(!thumbsDown);
-    if (thumbsUp) setThumbsUp(false);
-    // Here you could add logic to send feedback to your backend
+    if (isStreaming) return;
+    onDislike?.(id);
   };
+
+  const isLiked = liked === true;
+  const isDisliked = liked === false;
 
   return (
     <div className="p-6 animate-fade-in">
@@ -109,6 +112,7 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
                 "h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-all duration-200 rounded-md",
                 copied && "text-green-600 bg-green-600/10"
               )}
+              disabled={isStreaming}
             >
               <Copy className="h-4 w-4" />
             </Button>
@@ -119,12 +123,13 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
               onClick={handleThumbsUp}
               className={cn(
                 "h-8 px-2 transition-all duration-200 rounded-md",
-                thumbsUp
+                isLiked
                   ? "text-green-600 hover:text-green-700 bg-green-600/10"
                   : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
               )}
+              disabled={isStreaming}
             >
-              <ThumbsUp className={cn("h-4 w-4", thumbsUp && "fill-current")} />
+              <ThumbsUp className={cn("h-4 w-4", isLiked && "fill-current")} />
             </Button>
 
             <Button
@@ -133,12 +138,13 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
               onClick={handleThumbsDown}
               className={cn(
                 "h-8 px-2 transition-all duration-200 rounded-md",
-                thumbsDown
+                isDisliked
                   ? "text-red-600 hover:text-red-700 bg-red-600/10"
                   : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
               )}
+              disabled={isStreaming}
             >
-              <ThumbsDown className={cn("h-4 w-4", thumbsDown && "fill-current")} />
+              <ThumbsDown className={cn("h-4 w-4", isDisliked && "fill-current")} />
             </Button>
           </div>
         </div>

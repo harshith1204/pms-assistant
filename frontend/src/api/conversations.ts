@@ -13,7 +13,7 @@ export async function getConversations(): Promise<Array<{ id: string; title: str
   }
 }
 
-export async function getConversationMessages(conversationId: string): Promise<Array<{ id: string; type: string; content: string }>> {
+export async function getConversationMessages(conversationId: string): Promise<Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string }>> {
   try {
     const res = await fetch(`${API_HTTP_URL}/conversations/${encodeURIComponent(conversationId)}`);
     if (!res.ok) throw new Error("failed");
@@ -22,6 +22,26 @@ export async function getConversationMessages(conversationId: string): Promise<A
     return [];
   } catch {
     return [];
+  }
+}
+
+export async function reactToMessage(args: { conversationId: string; messageId: string; liked: boolean; feedback?: string }): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_HTTP_URL}/conversations/reaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: args.conversationId,
+        message_id: args.messageId,
+        liked: args.liked,
+        feedback: args.feedback ?? undefined,
+      }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data?.ok;
+  } catch {
+    return false;
   }
 }
 
