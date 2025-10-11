@@ -350,17 +350,23 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         return {}
 
     async def _emit_action(self, text: str) -> None:
-        if not self.websocket:
-            # No websocket: do not persist action events
-            return
+        # Always advance the step counter
         self._step_counter += 1
-        payload = {
-            "type": "agent_action",
-            "text": text,
-            "step": self._step_counter,
-            "timestamp": datetime.now().isoformat(),
-        }
-        await self.websocket.send_json(payload)
+        # Stream to UI when websocket is present
+        if self.websocket:
+            payload = {
+                "type": "agent_action",
+                "text": text,
+                "step": self._step_counter,
+                "timestamp": datetime.now().isoformat(),
+            }
+            await self.websocket.send_json(payload)
+        # Persist action events to conversations DB
+        try:
+            if self.conversation_id:
+                await save_action_event(self.conversation_id, "action", text, step=self._step_counter)
+        except Exception:
+            pass
 
     async def _emit_result(self, text: str) -> None:
         if not self.websocket:
