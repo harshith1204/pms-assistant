@@ -81,7 +81,7 @@ export const ChatMessage = ({ role, content, isStreaming = false, internalActivi
         </div>
       ) : (
         <div className="space-y-3">
-          {settings.showAgentInternals && internalActivity && (
+          {settings.showAgentInternals && internalActivity && internalActivity.bullets && internalActivity.bullets.length > 0 && (
             <AgentActivity
               summary={internalActivity.summary}
               bullets={internalActivity.bullets}
