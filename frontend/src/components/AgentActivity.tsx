@@ -3,6 +3,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronRight, CheckCircle2, Dot } from "lucide-react";
 import { cn } from "@/lib/utils";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 export type AgentActivityProps = {
   summary: string;
@@ -52,7 +53,7 @@ export const AgentActivity = ({
               {bullets.map((b, idx) => (
                 <div key={idx} className="flex items-start gap-2 text-sm text-muted-foreground">
                   <Dot className="h-5 w-5 shrink-0" />
-                  <span className={cn(isStreaming && "glow-wave-text")}>{b}</span>
+                  <SafeMarkdown inline content={b} className={cn(isStreaming && "glow-wave-text")} />
                 </div>
               ))}
             </div>
@@ -66,7 +67,10 @@ export const AgentActivity = ({
           )}
 
           {body && (
-            <p className="text-sm leading-relaxed text-foreground/90 mt-1">{body}</p>
+            <SafeMarkdown
+              content={body}
+              className="prose prose-sm max-w-none dark:prose-invert text-foreground/90 mt-1"
+            />
           )}
         </CollapsibleContent>
       </Collapsible>
