@@ -17,6 +17,7 @@ from websocket_handler import handle_chat_websocket, ws_manager
 from qdrant.initializer import RAGTool
 from mongo.conversations import ensure_conversation_client_connected
 from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
+from mongo.conversations import update_message_reaction
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
     message: str
@@ -39,6 +40,13 @@ class Message(BaseModel):
     timestamp: str
     tool_name: Optional[str] = None
     tool_output: Optional[Any] = None
+
+
+class ReactionRequest(BaseModel):
+    conversation_id: str
+    message_id: str
+    liked: bool
+    feedback: Optional[str] = None
 
 # Global MongoDB agent instance
 mongodb_agent = None
@@ -144,8 +152,29 @@ async def get_conversation(conversation_id: str):
                 "type": m.get("type") or "assistant",
                 "content": m.get("content") or "",
                 "timestamp": m.get("timestamp") or "",
+                "liked": m.get("liked"),
+                "feedback": m.get("feedback"),
             })
         return {"id": conversation_id, "messages": norm}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/conversations/reaction")
+async def set_reaction(req: ReactionRequest):
+    """Set like/dislike and optional feedback on an assistant message."""
+    try:
+        ok = await update_message_reaction(
+            conversation_id=req.conversation_id,
+            message_id=req.message_id,
+            liked=req.liked,
+            feedback=req.feedback,
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Message not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

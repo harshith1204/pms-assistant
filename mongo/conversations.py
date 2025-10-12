@@ -165,3 +165,25 @@ async def save_action_event(
         },
     )
 
+
+async def update_message_reaction(
+    conversation_id: str,
+    message_id: str,
+    liked: bool,
+    feedback: Optional[str] = None,
+) -> bool:
+    """Update reaction fields for a specific message in a conversation.
+
+    Sets `messages.$.liked` to True/False and optionally updates `messages.$.feedback`.
+    Returns True if a document was modified, False otherwise.
+    """
+    coll = await _get_collection()
+    update_fields: Dict[str, Any] = {"messages.$.liked": liked}
+    if feedback is not None:
+        update_fields["messages.$.feedback"] = feedback
+    result = await coll.update_one(
+        {"conversationId": conversation_id, "messages.id": message_id},
+        {"$set": update_fields},
+    )
+    return getattr(result, "modified_count", 0) > 0
+

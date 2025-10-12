@@ -9,10 +9,8 @@ export type ChatEvent =
   | { type: "llm_end"; elapsed_time?: number; timestamp: string }
   | { type: "tool_start"; tool_name: string; input?: string; timestamp: string }
   | { type: "tool_end"; output?: string; output_preview?: string; hidden?: boolean; timestamp: string }
-  | { type: "planner_result"; [k: string]: any }
   | { type: "planner_error"; message: string; timestamp: string }
   | { type: "agent_action"; text: string; step: number; timestamp: string }
-  | { type: "agent_result"; text: string; step: number; timestamp: string }
   | { type: "content_generated"; content_type: "work_item" | "page"; data?: any; error?: string; success: boolean }
   | { type: "complete"; conversation_id: string; timestamp: string }
   | { type: "pong"; timestamp: string }
