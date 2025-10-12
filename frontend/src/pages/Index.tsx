@@ -248,19 +248,52 @@ const Index = () => {
 
   const handleLike = async (messageId: string) => {
     if (!activeConversationId) return;
-    const ok = await reactToMessage({ conversationId: activeConversationId, messageId, liked: true });
-    if (ok) {
-      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: true } : m)));
+    const currentReaction = messages.find((m) => m.id === messageId)?.liked;
+
+    if (currentReaction === true) {
+      // Toggle off like (clear reaction)
+      const ok = await reactToMessage({ conversationId: activeConversationId, messageId });
+      if (ok) {
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: undefined } : m)));
+      }
+      if (feedbackTargetId === messageId) {
+        setFeedbackTargetId(null);
+        setFeedbackText("");
+      }
+    } else {
+      // Set like (and clear any open feedback box for this message)
+      const ok = await reactToMessage({ conversationId: activeConversationId, messageId, liked: true });
+      if (ok) {
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: true } : m)));
+      }
+      if (feedbackTargetId === messageId) {
+        setFeedbackTargetId(null);
+        setFeedbackText("");
+      }
     }
   };
 
   const handleDislike = async (messageId: string) => {
     if (!activeConversationId) return;
-    // Mark locally and send immediate dislike without feedback; feedback can be added optionally
-    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: false } : m)));
-    await reactToMessage({ conversationId: activeConversationId, messageId, liked: false });
-    setFeedbackTargetId(messageId);
-    setFeedbackText("");
+    const currentReaction = messages.find((m) => m.id === messageId)?.liked;
+
+    if (currentReaction === false) {
+      // Toggle off dislike (clear reaction) and close any feedback UI for this message
+      const ok = await reactToMessage({ conversationId: activeConversationId, messageId });
+      if (ok) {
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: undefined } : m)));
+      }
+      if (feedbackTargetId === messageId) {
+        setFeedbackTargetId(null);
+        setFeedbackText("");
+      }
+    } else {
+      // Set dislike and show optional feedback input
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: false } : m)));
+      await reactToMessage({ conversationId: activeConversationId, messageId, liked: false });
+      setFeedbackTargetId(messageId);
+      setFeedbackText("");
+    }
   };
 
   const submitFeedback = async () => {
