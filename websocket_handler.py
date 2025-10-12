@@ -179,15 +179,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                     planner_span.set_attribute("planner.success", plan_result.get("success", False))
                                 except Exception:
                                     pass
-                        await websocket.send_json({
-                            "type": "planner_result",
-                            "success": plan_result.get("success", False),
-                            "intent": plan_result.get("intent"),
-                            "pipeline": plan_result.get("pipeline"),
-                            "pipeline_js": plan_result.get("pipeline_js"),
-                            "result": plan_result.get("result"),
-                            "timestamp": datetime.now().isoformat()
-                        })
+                        # Planner result is no longer sent via websocket
                     except Exception as e:
                         if user_span:
                             try:
