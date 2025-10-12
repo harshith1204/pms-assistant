@@ -157,7 +157,7 @@ class LLMIntentParser:
         # Keep the model reasonably deterministic for planning
         self.llm = ChatGroq(
             model=self.model_name,
-            temperature=0.1,
+            temperature=0,
             max_tokens=1024,
             top_p=0.8,
         )

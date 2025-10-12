@@ -50,6 +50,84 @@ const Index = () => {
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
 
+  // Helper: transform backend messages to UI messages with internal actions grouped
+  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string }>): Message[] => {
+    const result: Message[] = [];
+    let pendingActionBullets: string[] = [];
+
+    const flushPendingIntoLastAssistant = () => {
+      if (pendingActionBullets.length === 0) return;
+      // Attach to the most recent assistant message if available
+      for (let i = result.length - 1; i >= 0; i--) {
+        if (result[i].role === "assistant") {
+          const prev = result[i];
+          const mergedBullets = [
+            ...((prev.internalActivity && prev.internalActivity.bullets) || []),
+            ...pendingActionBullets,
+          ];
+          result[i] = {
+            ...prev,
+            internalActivity: {
+              summary: prev.internalActivity?.summary || "Actions",
+              bullets: mergedBullets,
+              doneLabel: prev.internalActivity?.doneLabel || "Done",
+              body: prev.internalActivity?.body,
+            },
+          };
+          pendingActionBullets = [];
+          return;
+        }
+      }
+      // If no assistant message exists yet, create a synthetic assistant-only actions block
+      result.push({
+        id: `actions-${Date.now()}`,
+        role: "assistant",
+        content: "",
+        internalActivity: { summary: "Actions", bullets: [...pendingActionBullets], doneLabel: "Done" },
+      });
+      pendingActionBullets = [];
+    };
+
+    for (const m of raw || []) {
+      const type = (m.type || "").toLowerCase();
+      if (type === "action") {
+        const text = (m.content || "").trim();
+        if (text) pendingActionBullets.push(text);
+        continue;
+      }
+
+      if (type === "assistant") {
+        // Create assistant message and attach any pending actions to it
+        const assistantMsg: Message = {
+          id: m.id,
+          role: "assistant",
+          content: m.content || "",
+          liked: (m as any).liked,
+          feedback: (m as any).feedback,
+        };
+        if (pendingActionBullets.length > 0) {
+          assistantMsg.internalActivity = { summary: "Actions", bullets: [...pendingActionBullets], doneLabel: "Done" };
+          pendingActionBullets = [];
+        }
+        result.push(assistantMsg);
+        continue;
+      }
+
+      if (type === "user") {
+        // Do not flush pending actions here; they belong to the next assistant
+        result.push({ id: m.id, role: "user", content: m.content || "" });
+        continue;
+      }
+
+      // Fallback: treat unknown types as assistant text
+      result.push({ id: m.id, role: "assistant", content: m.content || "" });
+    }
+
+    // If actions remain without a following assistant, attach to last assistant or create a block
+    flushPendingIntoLastAssistant();
+    return result;
+  }, []);
+
   // Socket integration: handle backend events
   const handleSocketEvent = useCallback((evt: ChatEvent) => {
     // Suppress tool events from affecting UI
@@ -121,15 +199,7 @@ const Index = () => {
         (async () => {
           try {
             const msgs = await getConversationMessages(convId);
-            setMessages(
-              msgs.map((m) => ({
-                id: m.id,
-                role: m.type === "user" ? "user" : "assistant",
-                content: m.content || "",
-                liked: (m as any).liked,
-                feedback: (m as any).feedback,
-              }))
-            );
+            setMessages(transformConversationMessages(msgs));
           } catch {
             // ignore
           }
@@ -166,15 +236,7 @@ const Index = () => {
     setShowGettingStarted(false);
     try {
       const msgs = await getConversationMessages(id);
-      setMessages(
-        msgs.map((m) => ({
-          id: m.id,
-          role: m.type === "user" ? "user" : "assistant",
-          content: m.content || "",
-          liked: (m as any).liked,
-          feedback: (m as any).feedback,
-        }))
-      );
+      setMessages(transformConversationMessages(msgs));
     } catch (e) {
       setMessages([]);
     }
