@@ -19,8 +19,6 @@ from mongo.conversations import ensure_conversation_client_connected
 from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
 from mongo.conversations import update_message_reaction
 from mongo.constants import mongodb_tools, DATABASE_NAME
-from mongo.constants import mongodb_tools, DATABASE_NAME
-from bson import ObjectId
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
     message: str
@@ -64,20 +62,6 @@ class WorkItemCreateResponse(BaseModel):
     description: str
     projectIdentifier: Optional[str] = None
     sequenceId: Optional[int] = None
-    link: Optional[str] = None
-
-
-class WorkItemCreateRequest(BaseModel):
-    title: str
-    description: str
-    projectId: Optional[str] = None
-
-class WorkItemCreateResponse(BaseModel):
-    id: str
-    title: str
-    description: str
-    projectIdentifier: Optional[str] = None
-    sequenceId: Optional[str | int] = None
     link: Optional[str] = None
 
 # Global MongoDB agent instance
@@ -273,40 +257,7 @@ async def set_reaction(req: ReactionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/work-items", response_model=WorkItemCreateResponse)
-async def create_work_item(req: WorkItemCreateRequest):
-    """Create a work item document in MongoDB."""
-    try:
-        # Ensure Mongo is connected
-        await mongodb_tools.connect()
-
-        client = getattr(mongodb_tools, "client", None)
-        if client is None:
-            raise HTTPException(status_code=500, detail="Database client not available")
-
-        db = client[DATABASE_NAME]
-        doc = {
-            "title": (req.title or "").strip(),
-            "description": (req.description or "").strip(),
-            "createdAt": ws_manager._now().isoformat() if hasattr(ws_manager, "_now") else "",
-            "updatedAt": ws_manager._now().isoformat() if hasattr(ws_manager, "_now") else "",
-        }
-        if req.projectId:
-            # Store minimal reference; full embedding can be done by later updaters
-            doc["project"] = {"_id": req.projectId}
-
-        result = await db["workItem"].insert_one(doc)
-        inserted_id = str(getattr(result, "inserted_id", ""))
-
-        return WorkItemCreateResponse(
-            id=inserted_id,
-            title=doc["title"],
-            description=doc["description"],
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # (Duplicate endpoint removed)
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
