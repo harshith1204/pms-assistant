@@ -25,7 +25,7 @@ export async function getConversationMessages(conversationId: string): Promise<A
   }
 }
 
-export async function reactToMessage(args: { conversationId: string; messageId: string; liked: boolean; feedback?: string }): Promise<boolean> {
+export async function reactToMessage(args: { conversationId: string; messageId: string; liked?: boolean; feedback?: string }): Promise<boolean> {
   try {
     const res = await fetch(`${API_HTTP_URL}/conversations/reaction`, {
       method: "POST",

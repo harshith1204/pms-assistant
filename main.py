@@ -45,7 +45,7 @@ class Message(BaseModel):
 class ReactionRequest(BaseModel):
     conversation_id: str
     message_id: str
-    liked: bool
+    liked: Optional[bool] = None
     feedback: Optional[str] = None
 
 # Global MongoDB agent instance
