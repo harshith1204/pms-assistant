@@ -85,13 +85,14 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
         </div>
       ) : (
         <div className="space-y-3">
-          {settings.showAgentInternals && internalActivity && internalActivity.bullets && internalActivity.bullets.length > 0 && (
+          {settings.showAgentInternals && internalActivity && (
             <AgentActivity
               summary={internalActivity.summary}
               bullets={internalActivity.bullets}
               doneLabel={internalActivity.doneLabel}
               body={internalActivity.body}
-              defaultOpen={false}
+              defaultOpen={isStreaming}
+              isStreaming={isStreaming}
             />
           )}
 
