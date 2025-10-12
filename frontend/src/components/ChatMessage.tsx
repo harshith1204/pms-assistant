@@ -27,6 +27,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const canShowActions = role === "assistant" && !isStreaming && (displayedContent?.trim()?.length ?? 0) > 0;
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -103,50 +104,49 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
           )}
 
           {/* Action buttons for assistant messages */}
-          <div className="flex items-center gap-1 pt-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCopy}
-              className={cn(
-                "h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-all duration-200 rounded-md",
-                copied && "text-green-600 bg-green-600/10"
-              )}
-              disabled={isStreaming}
-            >
-              <Copy className="h-4 w-4" />
-            </Button>
+          {canShowActions && (
+            <div className="flex items-center gap-1 pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopy}
+                className={cn(
+                  "h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-all duration-200 rounded-md",
+                  copied && "text-green-600 bg-green-600/10"
+                )}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleThumbsUp}
-              className={cn(
-                "h-8 px-2 transition-all duration-200 rounded-md",
-                isLiked
-                  ? "text-green-600 hover:text-green-700 bg-green-600/10"
-                  : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
-              )}
-              disabled={isStreaming}
-            >
-              <ThumbsUp className={cn("h-4 w-4", isLiked && "fill-current")} />
-            </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleThumbsUp}
+                className={cn(
+                  "h-8 px-2 transition-all duration-200 rounded-md",
+                  isLiked
+                    ? "text-green-600 hover:text-green-700 bg-green-600/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
+                )}
+              >
+                <ThumbsUp className={cn("h-4 w-4", isLiked && "fill-current")} />
+              </Button>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleThumbsDown}
-              className={cn(
-                "h-8 px-2 transition-all duration-200 rounded-md",
-                isDisliked
-                  ? "text-red-600 hover:text-red-700 bg-red-600/10"
-                  : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
-              )}
-              disabled={isStreaming}
-            >
-              <ThumbsDown className={cn("h-4 w-4", isDisliked && "fill-current")} />
-            </Button>
-          </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleThumbsDown}
+                className={cn(
+                  "h-8 px-2 transition-all duration-200 rounded-md",
+                  isDisliked
+                    ? "text-red-600 hover:text-red-700 bg-red-600/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
+                )}
+              >
+                <ThumbsDown className={cn("h-4 w-4", isDisliked && "fill-current")} />
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
