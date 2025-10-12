@@ -20,9 +20,18 @@ interface ChatMessageProps {
     doneLabel?: string;
     body?: string;
   };
+  workItem?: {
+    title: string;
+    description?: string;
+    projectIdentifier?: string;
+    sequenceId?: string | number;
+    link?: string;
+  };
 }
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity }: ChatMessageProps) => {
+import WorkItemCreateInline from "@/components/WorkItemCreateInline";
+
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -96,10 +105,20 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
             />
           )}
 
-          <SafeMarkdown
-            content={displayedContent}
-            className="prose prose-sm max-w-none dark:prose-invert"
-          />
+          {workItem ? (
+            <WorkItemCreateInline
+              title={workItem.title}
+              description={workItem.description}
+              onSave={() => {}}
+              onDiscard={() => {}}
+              className="mt-1"
+            />
+          ) : (
+            <SafeMarkdown
+              content={displayedContent}
+              className="prose prose-sm max-w-none dark:prose-invert"
+            />
+          )}
           {isStreaming && currentIndex < content.length && (
             <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />
           )}

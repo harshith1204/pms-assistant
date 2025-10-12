@@ -26,6 +26,13 @@ interface Message {
     doneLabel?: string;
     body?: string;
   };
+  workItem?: {
+    title: string;
+    description?: string;
+    projectIdentifier?: string;
+    sequenceId?: string | number;
+    link?: string;
+  };
 }
 
 interface Conversation {
@@ -170,18 +177,42 @@ const Index = () => {
           : m
       )));
     } else if (evt.type === "content_generated") {
-      // Show a brief confirmation message
-      const id = `assistant-${Date.now()}`;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id,
-          role: "assistant",
-          content: evt.success
-            ? `Generated ${evt.content_type.replace("_", " ")} content.`
-            : `Generation failed: ${evt.error || "Unknown error"}`,
-        },
-      ]);
+      // Render generated artifacts inline in conversation
+      if (evt.content_type === "work_item" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `workitem-${Date.now()}`;
+        // Try to derive identifier and link if backend sends them in future
+        const projectIdentifier = (data.projectIdentifier as string) || undefined;
+        const sequenceId = (data.sequenceId as string | number) || undefined;
+        const link = (data.link as string) || undefined;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id,
+            role: "assistant",
+            content: "",
+            workItem: {
+              title: (data.title as string) || "Work item",
+              description: (data.description as string) || "",
+              projectIdentifier,
+              sequenceId,
+              link,
+            },
+          },
+        ]);
+      } else {
+        const id = `assistant-${Date.now()}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id,
+            role: "assistant",
+            content: evt.success
+              ? `Generated ${String(evt.content_type || "content").replace("_", " ")} content.`
+              : `Generation failed: ${(evt as any).error || "Unknown error"}`,
+          },
+        ]);
+      }
     } else if (evt.type === "error") {
       const id = `assistant-${Date.now()}`;
       setMessages((prev) => [
@@ -199,7 +230,11 @@ const Index = () => {
         (async () => {
           try {
             const msgs = await getConversationMessages(convId);
-            setMessages(transformConversationMessages(msgs));
+            setMessages((prev) => {
+              const transformed = transformConversationMessages(msgs);
+              const ephemeralWorkItems = prev.filter((m) => !!m.workItem);
+              return [...transformed, ...ephemeralWorkItems];
+            });
           } catch {
             // ignore
           }
@@ -449,6 +484,7 @@ const Index = () => {
                   isStreaming={message.isStreaming}
                   liked={message.liked}
                   internalActivity={message.internalActivity}
+                  workItem={message.workItem}
                   onLike={handleLike}
                   onDislike={handleDislike}
                 />
