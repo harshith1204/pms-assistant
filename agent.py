@@ -373,25 +373,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             pass
 
     async def _emit_result(self, text: str) -> None:
-        if not self.websocket:
-            try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
-            except Exception:
-                pass
-            return
-        payload = {
-            "type": "agent_result",
-            "text": text,
-            "step": self._step_counter,
-            "timestamp": datetime.now().isoformat(),
-        }
-        await self.websocket.send_json(payload)
-        try:
-            if self.conversation_id:
-                await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
-        except Exception:
-            pass
+        # Result events are no longer saved to conversations or sent via websocket
+        pass
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -433,25 +416,6 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "input": input_str,
                 "timestamp": datetime.now().isoformat()
             })
-
-    async def on_tool_end(self, output: str, **kwargs):
-        """Called when a tool finishes executing"""
-        # Do not send raw tool outputs to the UI; emit only a concise RESULT line
-            # Emit concise result statement without internals
-        summary = "Ready with findings"
-        try:
-            import re as _re
-            # Try to extract a simple count from common patterns
-            m = _re.search(r"Found\s+(\d+)\s+result", str(output), flags=_re.IGNORECASE)
-            if m:
-                summary = f"Found {m.group(1)} relevant results"
-            elif "RESULTS SUMMARY" in str(output):
-                summary = "Summarized key results"
-            elif "RESULT:" in str(output) or "RESULTS:" in str(output):
-                summary = "Results ready"
-        except Exception:
-            pass
-        await self._emit_result(summary)
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
@@ -734,10 +698,6 @@ class MongoDBAgent:
                     for tool_message, success in tool_results:
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        try:
-                            await save_action_event(conversation_id, "result", tool_message.content)
-                        except Exception:
-                            pass
                         if success:
                             did_any_tool = True
                 else:
@@ -746,10 +706,6 @@ class MongoDBAgent:
                         tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        try:
-                            await save_action_event(conversation_id, "result", tool_message.content)
-                        except Exception:
-                            pass
                         if success:
                             did_any_tool = True
                 
@@ -971,10 +927,6 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            try:
-                                await save_action_event(conversation_id, "result", tool_message.content)
-                            except Exception:
-                                pass
                             if success:
                                 did_any_tool = True
                     else:
@@ -988,10 +940,6 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            try:
-                                await save_action_event(conversation_id, "result", tool_message.content)
-                            except Exception:
-                                pass
                             if success:
                                 did_any_tool = True
                     

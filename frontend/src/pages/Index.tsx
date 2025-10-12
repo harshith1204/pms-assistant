@@ -8,13 +8,18 @@ import { Sparkles } from "lucide-react";
 import PromptLibrary from "@/components/PromptLibrary";
 import Settings from "@/pages/Settings";
 import { useChatSocket, type ChatEvent } from "@/hooks/useChatSocket";
-import { getConversations, getConversationMessages } from "@/api/conversations";
+import { getConversations, getConversationMessages, reactToMessage } from "@/api/conversations";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  liked?: boolean;
+  feedback?: string;
   internalActivity?: {
     summary: string;
     bullets?: string[];
@@ -38,6 +43,8 @@ const Index = () => {
   const [showPersonalization, setShowPersonalization] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const isEmpty = messages.length === 0;
+  const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
+  const [feedbackText, setFeedbackText] = useState<string>("");
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -121,25 +128,6 @@ const Index = () => {
             }
           : m
       )));
-    } else if (evt.type === "agent_result") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `${evt.text}`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
-              },
-            }
-          : m
-      )));
     } else if (evt.type === "content_generated") {
       // Show a brief confirmation message
       const id = `assistant-${Date.now()}`;
@@ -200,6 +188,8 @@ const Index = () => {
           id: m.id,
           role: m.type === "user" ? "user" : "assistant",
           content: m.content || "",
+          liked: (m as any).liked,
+          feedback: (m as any).feedback,
         }))
       );
     } catch (e) {
@@ -254,6 +244,45 @@ const Index = () => {
       ]);
       setIsLoading(false);
     }
+  };
+
+  const handleLike = async (messageId: string) => {
+    if (!activeConversationId) return;
+    const ok = await reactToMessage({ conversationId: activeConversationId, messageId, liked: true });
+    if (ok) {
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: true } : m)));
+    }
+  };
+
+  const handleDislike = async (messageId: string) => {
+    if (!activeConversationId) return;
+    // Mark locally and send immediate dislike without feedback; feedback can be added optionally
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, liked: false } : m)));
+    await reactToMessage({ conversationId: activeConversationId, messageId, liked: false });
+    setFeedbackTargetId(messageId);
+    setFeedbackText("");
+  };
+
+  const submitFeedback = async () => {
+    if (!activeConversationId || !feedbackTargetId) return;
+    const text = feedbackText.trim();
+    if (text.length === 0) {
+      // Optional; simply close if empty
+      setFeedbackTargetId(null);
+      setFeedbackText("");
+      return;
+    }
+    const ok = await reactToMessage({
+      conversationId: activeConversationId,
+      messageId: feedbackTargetId,
+      liked: false,
+      feedback: text,
+    });
+    if (ok) {
+      setMessages((prev) => prev.map((m) => (m.id === feedbackTargetId ? { ...m, feedback: text } : m)));
+    }
+    setFeedbackTargetId(null);
+    setFeedbackText("");
   };
 
   return (
@@ -328,7 +357,17 @@ const Index = () => {
           <ScrollArea className="flex-1 scrollbar-thin">
             <div className="mx-auto max-w-4xl">
               {messages.map((message) => (
-                <ChatMessage key={message.id} {...message} />
+                <ChatMessage
+                  key={message.id}
+                  id={message.id}
+                  role={message.role}
+                  content={message.content}
+                  isStreaming={message.isStreaming}
+                  liked={message.liked}
+                  internalActivity={message.internalActivity}
+                  onLike={handleLike}
+                  onDislike={handleDislike}
+                />
               ))}
             </div>
           </ScrollArea>
@@ -342,6 +381,28 @@ const Index = () => {
               isEmpty ? "-translate-y-[35vh] md:-translate-y-[30vh]" : "translate-y-0"
             )}
           >
+            {feedbackTargetId && (
+              <div className="mx-auto max-w-4xl mb-3 px-4">
+                <Card className="border-destructive/30 bg-destructive/5">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1">
+                        <Textarea
+                          value={feedbackText}
+                          onChange={(e) => setFeedbackText(e.target.value)}
+                          placeholder="Optional: Tell us what was wrong with the answer"
+                          className="min-h-[44px]"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <Button size="sm" onClick={submitFeedback} className="whitespace-nowrap">Submit</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setFeedbackTargetId(null); setFeedbackText(""); }}>Dismiss</Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
             <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} showSuggestedPrompts={isEmpty} />
           </div>
         )}
