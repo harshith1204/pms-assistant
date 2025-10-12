@@ -30,6 +30,9 @@ interface ChatMessageProps {
 }
 
 import WorkItemCreateInline from "@/components/WorkItemCreateInline";
+import WorkItemCard from "@/components/WorkItemCard";
+import { createWorkItem } from "@/api/workitems";
+import { toast } from "@/components/ui/use-toast";
 
 export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem }: ChatMessageProps) => {
   const { settings } = usePersonalization();
@@ -37,6 +40,8 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [currentIndex, setCurrentIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const canShowActions = role === "assistant" && !isStreaming && (displayedContent?.trim()?.length ?? 0) > 0;
+  const [savedWorkItem, setSavedWorkItem] = useState<null | { id: string; title: string; description: string; projectIdentifier?: string; sequenceId?: string | number; link?: string }>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -106,13 +111,36 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
           )}
 
           {workItem ? (
-            <WorkItemCreateInline
-              title={workItem.title}
-              description={workItem.description}
-              onSave={() => {}}
-              onDiscard={() => {}}
-              className="mt-1"
-            />
+            savedWorkItem ? (
+              <WorkItemCard
+                title={savedWorkItem.title}
+                description={savedWorkItem.description}
+                projectIdentifier={savedWorkItem.projectIdentifier}
+                sequenceId={savedWorkItem.sequenceId}
+                link={savedWorkItem.link}
+                className="mt-1"
+              />
+            ) : (
+              <WorkItemCreateInline
+                title={workItem.title}
+                description={workItem.description}
+                onSave={async ({ title, description }) => {
+                  try {
+                    setSaving(true);
+                    const projectId = localStorage.getItem("projectId") || undefined;
+                    const created = await createWorkItem({ title, description, projectId: projectId || undefined, projectIdentifier: workItem.projectIdentifier });
+                    setSavedWorkItem(created);
+                    toast({ title: "Work item saved", description: "Your work item has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save work item", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+              />
+            )
           ) : (
             <SafeMarkdown
               content={displayedContent}
