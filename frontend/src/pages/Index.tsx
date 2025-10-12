@@ -33,6 +33,10 @@ interface Message {
     sequenceId?: string | number;
     link?: string;
   };
+  page?: {
+    title: string;
+    blocks: { blocks: any[] };
+  };
 }
 
 interface Conversation {
@@ -198,6 +202,20 @@ const Index = () => {
               sequenceId,
               link,
             },
+          },
+        ]);
+      } else if (evt.content_type === "page" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `page-${Date.now()}`;
+        const title = (data.title as string) || "Generated Page";
+        const blocks = typeof data === "object" && data && Array.isArray((data as any).blocks) ? { blocks: (data as any).blocks } : { blocks: [] };
+        setMessages((prev) => [
+          ...prev,
+          {
+            id,
+            role: "assistant",
+            content: "",
+            page: { title, blocks },
           },
         ]);
       } else {
@@ -485,6 +503,7 @@ const Index = () => {
                   liked={message.liked}
                   internalActivity={message.internalActivity}
                   workItem={message.workItem}
+                  page={message.page}
                   onLike={handleLike}
                   onDislike={handleDislike}
                 />
