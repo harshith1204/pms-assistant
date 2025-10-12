@@ -64,6 +64,18 @@ class WorkItemCreateResponse(BaseModel):
     sequenceId: Optional[int] = None
     link: Optional[str] = None
 
+class PageCreateRequest(BaseModel):
+    title: str
+    content: Dict[str, Any]
+    project_id: Optional[str] = None
+    created_by: Optional[str] = None
+
+class PageCreateResponse(BaseModel):
+    id: str
+    title: str
+    content: str  # stringified Editor.js JSON
+    link: Optional[str] = None
+
 # Global MongoDB agent instance
 mongodb_agent = None
 
@@ -230,6 +242,47 @@ async def create_work_item(req: WorkItemCreateRequest):
             description=doc["description"],
             projectIdentifier=req.project_identifier,
             sequenceId=seq,
+            link=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/pages", response_model=PageCreateResponse)
+async def create_page(req: PageCreateRequest):
+    """Create a minimal page in MongoDB 'page' collection with Editor.js content."""
+    try:
+        if not mongodb_tools.client:
+            await mongodb_tools.connect()
+
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["page"]
+
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat()
+
+        import json as _json
+        content_str = _json.dumps(req.content or {"blocks": []})
+
+        doc: Dict[str, Any] = {
+            "title": (req.title or "").strip() or "Untitled Page",
+            "content": content_str,
+            "createdAt": now_iso,
+            "updatedAt": now_iso,
+        }
+        if req.project_id:
+            doc["project"] = {"id": req.project_id}
+        if req.created_by:
+            doc["createdBy"] = {"name": req.created_by}
+
+        result = await coll.insert_one(doc)
+
+        return PageCreateResponse(
+            id=str(result.inserted_id),
+            title=doc["title"],
+            content=doc["content"],
             link=None,
         )
     except HTTPException:
