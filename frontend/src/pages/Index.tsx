@@ -169,6 +169,45 @@ const Index = () => {
             }
           : m
       )));
+    } else if (evt.type === "agent_activity") {
+      const id = streamingAssistantIdRef.current;
+      if (!id) return;
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== id) return m;
+        const prevInternal = m.internalActivity || { summary: "Actions", bullets: [], doneLabel: "Done" };
+        const update = (evt as any).update || {};
+        const nextBullets = update.reset
+          ? (update.bulletsSet || [])
+          : (update.bulletsSet ?? [...(prevInternal.bullets || []), ...((update.bulletsAppend || []))]);
+        return {
+          ...m,
+          internalActivity: {
+            summary: update.summary ?? prevInternal.summary,
+            bullets: nextBullets,
+            doneLabel: update.doneLabel ?? prevInternal.doneLabel,
+            body: update.body ?? prevInternal.body,
+          },
+        };
+      }));
+    } else if (evt.type === "assistant_message") {
+      const msg = evt as any;
+      setMessages((prev) => ([
+        ...prev,
+        {
+          id: msg.id || `assistant-${Date.now()}`,
+          role: "assistant",
+          content: msg.content || "",
+          liked: msg.liked,
+          internalActivity: msg.internal_activity
+            ? {
+                summary: msg.internal_activity.summary || "Actions",
+                bullets: msg.internal_activity.bullets || [],
+                doneLabel: msg.internal_activity.doneLabel || "Done",
+                body: msg.internal_activity.body,
+              }
+            : undefined,
+        },
+      ]));
     } else if (evt.type === "content_generated") {
       // Show a brief confirmation message
       const id = `assistant-${Date.now()}`;

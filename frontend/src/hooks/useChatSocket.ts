@@ -11,6 +11,22 @@ export type ChatEvent =
   | { type: "tool_end"; output?: string; output_preview?: string; hidden?: boolean; timestamp: string }
   | { type: "planner_error"; message: string; timestamp: string }
   | { type: "agent_action"; text: string; step: number; timestamp: string }
+  // Structured agent activity updates during streaming
+  | { type: "agent_activity"; update: {
+        summary?: string;
+        bulletsAppend?: string[];
+        bulletsSet?: string[];
+        body?: string;
+        doneLabel?: string;
+        reset?: boolean;
+      }; timestamp: string }
+  // Optional: backend may send a complete assistant message (compatible with history shape)
+  | { type: "assistant_message"; id?: string; content: string; internal_activity?: {
+        summary?: string;
+        bullets?: string[];
+        doneLabel?: string;
+        body?: string;
+      }; liked?: boolean; timestamp?: string }
   | { type: "content_generated"; content_type: "work_item" | "page"; data?: any; error?: string; success: boolean }
   | { type: "complete"; conversation_id: string; timestamp: string }
   | { type: "pong"; timestamp: string }

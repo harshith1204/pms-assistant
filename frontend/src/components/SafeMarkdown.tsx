@@ -7,6 +7,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 export type SafeMarkdownProps = {
   content: string;
   className?: string;
+  inline?: boolean;
 };
 
 // Very conservative schema: rely on defaultSchema and allow common markdown tags.
@@ -35,39 +36,60 @@ const schema = (() => {
   return s;
 })();
 
-export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ content, className }) => {
+export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ content, className, inline = false }) => {
+  const commonComponents = {
+    a: ({ node, ...props }: any) => (
+      <a
+        {...props}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        className="text-primary underline underline-offset-2"
+      />
+    ),
+    code: ({ children, ...props }: any) => (
+      <code className="rounded bg-muted px-1 py-0.5 text-sm font-mono" {...props}>
+        {children}
+      </code>
+    ),
+    img: ({ node, ...props }: any) => (
+      // Disallow onError/onLoad etc; only safe attributes are forwarded by sanitize
+      <img loading="lazy" decoding="async" className="max-w-full" {...props} />
+    ),
+    table: ({ node, ...props }: any) => (
+      <div className="my-3 w-full overflow-x-auto">
+        <table className="w-full text-sm" {...props} />
+      </div>
+    ),
+    blockquote: ({ node, ...props }: any) => (
+      <blockquote className="border-l-4 border-border pl-3 italic text-muted-foreground" {...props} />
+    )
+  } as const;
+
+  if (inline) {
+    return (
+      <span className={className}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
+          // Restrict to inline-safe elements and render paragraphs as spans
+          allowedElements={["p", "em", "strong", "code", "a", "br", "kbd", "samp"]}
+          components={{
+            ...commonComponents,
+            p: ({ children, ...props }: any) => <span {...props}>{children}</span>
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </span>
+    );
+  }
+
   return (
     <div className={className}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
-        components={{
-          a: ({node, ...props}) => (
-            <a
-              {...props}
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-              className="text-primary underline underline-offset-2"
-            />
-          ),
-          code: ({children, ...props}) => (
-            <code className="rounded bg-muted px-1 py-0.5 text-sm font-mono" {...props}>
-              {children}
-            </code>
-          ),
-          img: ({node, ...props}) => (
-            // Disallow onError/onLoad etc; only safe attributes are forwarded by sanitize
-            <img loading="lazy" decoding="async" className="max-w-full" {...props} />
-          ),
-          table: ({node, ...props}) => (
-            <div className="my-3 w-full overflow-x-auto">
-              <table className="w-full text-sm" {...props} />
-            </div>
-          ),
-          blockquote: ({node, ...props}) => (
-            <blockquote className="border-l-4 border-border pl-3 italic text-muted-foreground" {...props} />
-          )
-        }}
+        components={commonComponents as any}
       >
         {content}
       </ReactMarkdown>
