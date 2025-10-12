@@ -10,7 +10,19 @@ import LexicalErrorBoundary from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
-import { $createParagraphNode, $createTextNode, $getRoot, type EditorState } from "lexical";
+import { $getRoot, type EditorState } from "lexical";
+
+import { ListPlugin } from "@lexical/react/LexicalListPlugin";
+import { LinkPlugin } from "@lexical/react/LexicalLinkPlugin";
+import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
+import { $convertFromMarkdownString, $convertToMarkdownString } from "@lexical/markdown";
+
+import { ListItemNode, ListNode } from "@lexical/list";
+import { CodeNode } from "@lexical/code";
+import { LinkNode } from "@lexical/link";
+import { HeadingNode, QuoteNode } from "@lexical/rich-text";
+
+import { MARKDOWN_TRANSFORMERS } from "@/lexical/markdown";
 
 export type PageCreateInlineProps = {
   title?: string;
@@ -48,10 +60,125 @@ function editorJsToPlainText(editorJs?: { blocks: any[] }): string {
 }
 
 function plainTextToEditorJs(text: string): { blocks: any[] } {
+  // Backwards-compatible fallback: treat double-newline as paragraph break
   const paras = String(text || "").split(/\n{2,}/g).map((s) => s.trim()).filter(Boolean);
   return {
     blocks: paras.map((p) => ({ id: Math.random().toString(36).slice(2), type: "paragraph", data: { text: p } })),
   };
+}
+
+function markdownToEditorJs(text: string): { blocks: any[] } {
+  const blocks: any[] = [];
+  const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+
+  let i = 0;
+  const genId = () => Math.random().toString(36).slice(2);
+
+  const isTableRow = (s: string) => /^\s*\|.*\|\s*$/.test(s);
+  const isTableSep = (s: string) => /^\s*\|?\s*:?[-]+:?(\s*\|\s*:?[-]+:?)+\s*\|?\s*$/.test(s);
+  const olRegex = /^\s*(\d+)\.\s+(.+)$/;
+  const ulRegex = /^\s*[-*+]\s+(.+)$/;
+
+  while (i < lines.length) {
+    let line = lines[i];
+    if (!line || !line.trim()) { i++; continue; }
+
+    // fenced code block ```
+    if (/^\s*```/.test(line)) {
+      i++; // skip opening fence
+      const code: string[] = [];
+      while (i < lines.length && !/^\s*```/.test(lines[i])) {
+        code.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++; // skip closing fence
+      blocks.push({ id: genId(), type: "paragraph", data: { text: code.join("\n") } });
+      continue;
+    }
+
+    // heading
+    const hm = line.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) {
+      const level = Math.min(6, hm[1].length);
+      blocks.push({ id: genId(), type: "header", data: { level, text: hm[2].trim() } });
+      i++;
+      continue;
+    }
+
+    // table
+    if (isTableRow(line)) {
+      const rows: string[][] = [];
+      // header row
+      rows.push(line.split("|").slice(1, -1).map((c) => c.trim()));
+      i++;
+      // optional separator row
+      if (i < lines.length && isTableSep(lines[i])) i++;
+      // body rows
+      while (i < lines.length && isTableRow(lines[i])) {
+        rows.push(lines[i].split("|").slice(1, -1).map((c) => c.trim()));
+        i++;
+      }
+      blocks.push({ id: genId(), type: "table", data: { content: rows } });
+      continue;
+    }
+
+    // ordered list
+    if (olRegex.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && olRegex.test(lines[i])) {
+        const m = lines[i].match(olRegex)!;
+        items.push(String(m[2]).trim());
+        i++;
+      }
+      blocks.push({ id: genId(), type: "list", data: { style: "ordered", items } });
+      continue;
+    }
+
+    // unordered list
+    if (ulRegex.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && ulRegex.test(lines[i])) {
+        const m = lines[i].match(ulRegex)!;
+        items.push(String(m[1]).trim());
+        i++;
+      }
+      blocks.push({ id: genId(), type: "list", data: { style: "unordered", items } });
+      continue;
+    }
+
+    // blockquote -> paragraph content
+    if (/^\s*>\s?/.test(line)) {
+      const parts: string[] = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        parts.push(lines[i].replace(/^\s*>\s?/, "").trim());
+        i++;
+      }
+      const textContent = parts.join(" ").trim();
+      if (textContent) blocks.push({ id: genId(), type: "paragraph", data: { text: textContent } });
+      continue;
+    }
+
+    // paragraph (collect until blank or a new block starter)
+    const para: string[] = [line.trim()];
+    i++;
+    while (
+      i < lines.length &&
+      lines[i] && lines[i].trim() &&
+      !/^(#{1,6})\s+/.test(lines[i]) &&
+      !/^\s*```/.test(lines[i]) &&
+      !isTableRow(lines[i]) &&
+      !olRegex.test(lines[i]) &&
+      !ulRegex.test(lines[i]) &&
+      !/^\s*>\s?/.test(lines[i])
+    ) {
+      para.push(lines[i].trim());
+      i++;
+    }
+    const textContent = para.join(" ").trim();
+    if (textContent) blocks.push({ id: genId(), type: "paragraph", data: { text: textContent } });
+  }
+
+  return { blocks };
 }
 
 const Placeholder: React.FC = () => (
@@ -71,25 +198,24 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
       editor.update(() => {
         const root = $getRoot();
         root.clear();
-        const paragraph = $createParagraphNode();
-        paragraph.append($createTextNode(initialText));
-        root.append(paragraph);
+        $convertFromMarkdownString(initialText, MARKDOWN_TRANSFORMERS);
       });
     },
-    nodes: [],
+    nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, LinkNode],
   }), [initialEditorJs]);
 
   const handleChange = (state: EditorState) => {
     try {
       state.read(() => {
-        const text = $getRoot().getTextContent();
-        latestTextRef.current = text;
+        const md = $convertToMarkdownString(MARKDOWN_TRANSFORMERS);
+        latestTextRef.current = md;
       });
     } catch {}
   };
 
   const handleSave = () => {
-    const editorJs = plainTextToEditorJs(latestTextRef.current || "");
+    const md = latestTextRef.current || "";
+    const editorJs = markdownToEditorJs(md);
     onSave?.({ title: name.trim() || "Untitled Page", editorJs });
   };
 
@@ -116,6 +242,9 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
                 <RichTextPlugin contentEditable={<ContentEditable className="min-h-[220px] max-h-[420px] overflow-auto px-3 py-2 outline-none" />} placeholder={<Placeholder />} ErrorBoundary={LexicalErrorBoundary} />
                 <HistoryPlugin />
                 <OnChangePlugin onChange={handleChange} />
+                <ListPlugin />
+                <LinkPlugin />
+                <MarkdownShortcutPlugin transformers={MARKDOWN_TRANSFORMERS} />
               </div>
             </LexicalComposer>
           </div>
