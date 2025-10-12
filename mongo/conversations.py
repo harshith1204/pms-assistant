@@ -6,6 +6,17 @@ import uuid
 import asyncio
 import contextlib
 from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import re
+
+# Optional LLM imports for title generation
+try:
+    from langchain_groq import ChatGroq  # type: ignore
+    from langchain_core.messages import SystemMessage, HumanMessage  # type: ignore
+except Exception:  # pragma: no cover - fallback if langchain_groq not installed
+    ChatGroq = None  # type: ignore
+    SystemMessage = None  # type: ignore
+    HumanMessage = None  # type: ignore
 
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -135,6 +146,12 @@ async def save_user_message(conversation_id: str, content: str) -> None:
             "content": content or "",
         },
     )
+    # Trigger non-blocking title generation after first user message
+    try:
+        asyncio.create_task(_maybe_generate_title_after_user_message(conversation_id, content or ""))
+    except Exception:
+        # Best-effort; do not block on failures
+        pass
 
 
 async def save_assistant_message(conversation_id: str, content: str) -> None:
@@ -198,4 +215,175 @@ async def update_message_reaction(
         update_doc,
     )
     return getattr(result, "modified_count", 0) > 0
+
+
+# -----------------------------
+# Conversation Title Generation
+# -----------------------------
+
+TITLE_MIN_WORDS = 3
+TITLE_MAX_WORDS = 7
+TITLE_CHAR_LIMIT = 60
+TITLE_LLM_WORD_THRESHOLD = int(os.getenv("TITLE_LLM_WORD_THRESHOLD", "15"))
+
+_GENERIC_TITLE_BLACKLIST = {
+    "conversation",
+    "new conversation",
+    "general chat",
+    "chat",
+    "untitled",
+}
+
+
+def _strip_code_and_urls(text: str) -> str:
+    """Remove code fences, inline code, and URLs/emails to reduce noise."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"```[\s\S]*?```", " ", text)  # fenced code blocks
+    cleaned = re.sub(r"`[^`]*`", " ", cleaned)         # inline code
+    cleaned = re.sub(r"https?://\S+", " ", cleaned)   # URLs
+    cleaned = re.sub(r"\S+@\S+", " ", cleaned)       # emails
+    cleaned = re.sub(r"[\n\r\t]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _to_title_case(text: str) -> str:
+    words = [w for w in re.split(r"\s+", text.strip()) if w]
+    return " ".join(w.capitalize() for w in words)
+
+
+def _postprocess_title(raw: str) -> str:
+    """Normalize and bound title length and words."""
+    if not raw:
+        return ""
+    title = raw.strip().strip('"').strip("'.;:!?,")
+    title = re.sub(r"\s+", " ", title)
+    # Enforce char limit first
+    if len(title) > TITLE_CHAR_LIMIT:
+        title = title[:TITLE_CHAR_LIMIT].rstrip()
+    # Enforce word bounds by trimming
+    words = title.split()
+    if len(words) > TITLE_MAX_WORDS:
+        words = words[:TITLE_MAX_WORDS]
+        title = " ".join(words)
+    title = _to_title_case(title)
+    # Filter generic
+    if title.lower() in _GENERIC_TITLE_BLACKLIST or not title:
+        return ""
+    return title
+
+
+def _heuristic_title_from_text(text: str) -> str:
+    """Fast heuristic title from a single user message."""
+    cleaned = _strip_code_and_urls(text)
+    if not cleaned:
+        return "New Conversation"
+    # Keep informative tokens only (letters, numbers, hyphens)
+    tokens = [t for t in re.findall(r"[\w\-]+", cleaned) if t]
+    if not tokens:
+        return "New Conversation"
+    title = " ".join(tokens[: max(TITLE_MIN_WORDS, min(TITLE_MAX_WORDS, 8))])
+    title = _postprocess_title(title)
+    return title or "New Conversation"
+
+
+def _should_use_llm_for_title(text: str) -> bool:
+    words = len(re.findall(r"\S+", text or ""))
+    return words > TITLE_LLM_WORD_THRESHOLD and ChatGroq is not None and SystemMessage is not None and HumanMessage is not None
+
+
+async def update_conversation_title(
+    conversation_id: str,
+    title: str,
+    *,
+    source: str,
+    final: bool = False,
+    manual: bool = False,
+) -> None:
+    """Set conversation title with provenance fields."""
+    coll = await _get_collection()
+    await coll.update_one(
+        {"conversationId": conversation_id},
+        {
+            "$set": {
+                "title": title.strip(),
+                "titleSource": source,
+                "titleFinal": bool(final),
+                "manuallyEdited": bool(manual),
+                "titleUpdatedAt": _now_iso(),
+                "updatedAt": _now_iso(),
+            }
+        },
+        upsert=True,
+    )
+
+
+async def _llm_title_from_text(text: str) -> Optional[str]:
+    """Generate a concise title using a small LLM from a single prompt."""
+    if ChatGroq is None or SystemMessage is None:
+        return None
+    try:
+        model_name = os.getenv("GROQ_TITLE_MODEL", os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"))
+        llm = ChatGroq(
+            model=model_name,
+            temperature=0.0,
+            max_tokens=48,
+            streaming=False,
+            verbose=False,
+            top_p=0.8,
+        )
+        prompt = [
+            SystemMessage(content=(
+                "You are a title generator. Create a concise 3–7 word Title Case chat title. "
+                "No quotes, emojis, code, or URLs. Make it specific and helpful."
+            )),
+            HumanMessage(content=(
+                f"Request: \"{_strip_code_and_urls(text)}\"\n"
+                "Respond with ONLY the title."
+            )),
+        ]
+        resp = await llm.ainvoke(prompt)
+        content = str(getattr(resp, "content", "")).strip()
+        return _postprocess_title(content) or None
+    except Exception:
+        return None
+
+
+async def _maybe_generate_title_after_user_message(conversation_id: str, user_content: str) -> None:
+    """Best-effort title creation after a user message if missing/not finalized.
+
+    Uses heuristic for short inputs; uses LLM for longer inputs (first message only).
+    Does not overwrite user-edited titles.
+    """
+    try:
+        coll = await _get_collection()
+        # Fetch minimal fields to decide whether to generate
+        doc = await coll.find_one(
+            {"conversationId": conversation_id},
+            {"_id": 0, "title": 1, "titleFinal": 1, "manuallyEdited": 1}
+        )
+        if not doc:
+            # Shouldn't happen (upserted in append_message), but guard anyway
+            pass
+        # Respect manual edits
+        if doc and doc.get("manuallyEdited"):
+            return
+        # If already finalized, do nothing
+        if doc and doc.get("titleFinal"):
+            return
+
+        # Decide generation path based on first user message length
+        if _should_use_llm_for_title(user_content):
+            title = await _llm_title_from_text(user_content)
+            if title:
+                await update_conversation_title(conversation_id, title, source="llm", final=False, manual=False)
+                return
+
+        # Fallback to heuristic
+        heur_title = _heuristic_title_from_text(user_content)
+        await update_conversation_title(conversation_id, heur_title, source="heuristic", final=False, manual=False)
+    except Exception:
+        # Non-fatal path: ignore failures to keep main UX responsive
+        return
 
