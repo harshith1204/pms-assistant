@@ -373,25 +373,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             pass
 
     async def _emit_result(self, text: str) -> None:
-        if not self.websocket:
-            try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
-            except Exception:
-                pass
-            return
-        payload = {
-            "type": "agent_result",
-            "text": text,
-            "step": self._step_counter,
-            "timestamp": datetime.now().isoformat(),
-        }
-        await self.websocket.send_json(payload)
-        try:
-            if self.conversation_id:
-                await save_action_event(self.conversation_id, "result", text, step=self._step_counter)
-        except Exception:
-            pass
+        # No-op: disable sending and persisting 'result' events
+        return
 
     async def on_llm_start(self, *args, **kwargs):
         """Called when LLM starts generating"""
@@ -425,8 +408,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing"""
-        # Do not send raw tool outputs to the UI; emit only a concise RESULT line
-            # Emit concise result statement without internals
+        # Emit concise end-of-tool event without raw internals
         summary = "Ready with findings"
         try:
             import re as _re
@@ -440,7 +422,13 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 summary = "Results ready"
         except Exception:
             pass
-        await self._emit_result(summary)
+        if self.websocket:
+            await self.websocket.send_json({
+                "type": "tool_end",
+                "output_preview": summary,
+                "hidden": True,
+                "timestamp": datetime.now().isoformat()
+            })
 
     async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
         """Called when a tool starts executing"""
@@ -734,10 +722,7 @@ class MongoDBAgent:
                     for tool_message, success in tool_results:
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        try:
-                            await save_action_event(conversation_id, "result", tool_message.content)
-                        except Exception:
-                            pass
+                        # Skip saving 'result' events to DB
                         if success:
                             did_any_tool = True
                 else:
@@ -746,10 +731,7 @@ class MongoDBAgent:
                         tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
-                        try:
-                            await save_action_event(conversation_id, "result", tool_message.content)
-                        except Exception:
-                            pass
+                        # Skip saving 'result' events to DB
                         if success:
                             did_any_tool = True
                 
@@ -971,10 +953,7 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            try:
-                                await save_action_event(conversation_id, "result", tool_message.content)
-                            except Exception:
-                                pass
+                            # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True
                     else:
@@ -988,10 +967,7 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
-                            try:
-                                await save_action_event(conversation_id, "result", tool_message.content)
-                            except Exception:
-                                pass
+                            # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True
                     

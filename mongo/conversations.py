@@ -155,10 +155,12 @@ async def save_action_event(
     step: Optional[int] = None,
     tool_name: Optional[str] = None,
 ) -> None:
+    if kind != "action":
+        return
     await append_message(
         conversation_id,
         {
-            "type": "action" if kind == "action" else "result",
+            "type": "action",
             "content": text or "",
             "step": step,
             "toolName": tool_name,
