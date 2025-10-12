@@ -30,6 +30,7 @@ export const AgentActivity = ({
     if (isStreaming) {
       setOpen(true);
     } else {
+      // Only auto-collapse if there is at least some content; otherwise leave as-is
       setOpen(false);
     }
   }, [isStreaming]);
