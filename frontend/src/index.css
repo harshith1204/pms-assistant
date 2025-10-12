@@ -76,6 +76,39 @@ All colors MUST be HSL.
     animation: pulse-glow 2s ease-in-out infinite;
   }
 
+  /* Glow wave text effect for streaming action text */
+  .glow-wave-text {
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0.35) 0%,
+      hsl(var(--primary) / 0.9) 25%,
+      hsl(var(--accent) / 0.9) 50%,
+      hsl(var(--primary) / 0.9) 75%,
+      hsl(var(--primary) / 0.35) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: glow-wave 1.8s linear infinite;
+    text-shadow: 0 0 12px hsl(var(--primary) / 0.25);
+  }
+
+  @keyframes glow-wave {
+    0% {
+      background-position: 0% 50%;
+      filter: drop-shadow(0 0 0 hsl(var(--primary) / 0.0));
+    }
+    50% {
+      background-position: 100% 50%;
+      filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.35));
+    }
+    100% {
+      background-position: 200% 50%;
+      filter: drop-shadow(0 0 0 hsl(var(--primary) / 0.0));
+    }
+  }
+
   @keyframes typing {
     from {
       opacity: 0;
