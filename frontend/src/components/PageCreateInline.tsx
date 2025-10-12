@@ -19,6 +19,8 @@ import { HeadingNode, QuoteNode, $createHeadingNode, $isHeadingNode } from "@lex
 import { ListNode, ListItemNode, $createListNode, INSERT_ORDERED_LIST_COMMAND, INSERT_UNORDERED_LIST_COMMAND, REMOVE_LIST_COMMAND } from "@lexical/list";
 import { LinkNode, AutoLinkNode, TOGGLE_LINK_COMMAND } from "@lexical/link";
 import { CodeNode, $createCodeNode } from "@lexical/code";
+import { Wand2 } from "lucide-react";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 export type PageCreateInlineProps = {
   title?: string;
@@ -70,6 +72,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
   const [name, setName] = React.useState<string>(title);
   const latestEditorStateRef = React.useRef<EditorState | null>(null);
   const editorRef = React.useRef<any>(null);
+  const [isEditing, setIsEditing] = React.useState<boolean>(true);
 
   const EditorRefPlugin: React.FC<{ onReady: (editor: any) => void }> = ({ onReady }) => {
     const [editor] = useLexicalComposerContext();
@@ -214,6 +217,101 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
     onSave?.({ title: name.trim() || "Untitled Page", editorJs });
   };
 
+  const computeCurrentEditorJs = React.useCallback(() => {
+    const currentState = latestEditorStateRef.current || editorRef.current?.getEditorState();
+    if (!currentState) return { blocks: [] };
+    const blocks: any[] = [];
+    try {
+      currentState.read(() => {
+        const root = $getRoot();
+        const children = root.getChildren();
+        for (const node of children) {
+          if ($isHeadingNode(node)) {
+            const tag = (node as any).getTag?.() || "h2";
+            const level = Number(String(tag).replace("h", "")) || 2;
+            const text = node.getTextContent().trim();
+            if (text) blocks.push({ id: Math.random().toString(36).slice(2), type: "header", data: { text, level } });
+            continue;
+          }
+          if (node instanceof ListNode) {
+            const listType = node.getListType();
+            const style = listType === "number" ? "ordered" : "unordered";
+            const items: string[] = [];
+            for (const li of node.getChildren()) {
+              if (li instanceof ListItemNode) {
+                const t = li.getTextContent().trim();
+                if (t) items.push(t);
+              }
+            }
+            if (items.length > 0) blocks.push({ id: Math.random().toString(36).slice(2), type: "list", data: { style, items } });
+            continue;
+          }
+          if (node instanceof CodeNode) {
+            const codeText = node.getTextContent();
+            if (codeText.trim()) blocks.push({ id: Math.random().toString(36).slice(2), type: "code", data: { code: codeText } });
+            continue;
+          }
+          if (node instanceof QuoteNode) {
+            const text = node.getTextContent().trim();
+            if (text) blocks.push({ id: Math.random().toString(36).slice(2), type: "paragraph", data: { text } });
+            continue;
+          }
+          const type = (node as any).getType?.() || "paragraph";
+          if (type === "paragraph") {
+            const text = node.getTextContent().trim();
+            if (text) blocks.push({ id: Math.random().toString(36).slice(2), type: "paragraph", data: { text } });
+            continue;
+          }
+          const text = node.getTextContent().trim();
+          if (text) blocks.push({ id: Math.random().toString(36).slice(2), type: "paragraph", data: { text } });
+        }
+      });
+    } catch {}
+    return { blocks };
+  }, []);
+
+  function editorJsBlocksToMarkdown(blocks?: any[]): string {
+    try {
+      const b = Array.isArray(blocks) ? blocks : [];
+      const lines: string[] = [];
+      for (const blk of b) {
+        const type = blk?.type;
+        const data = blk?.data || {};
+        if (type === "header") {
+          const level = Math.min(6, Number(data.level) || 2);
+          lines.push(`${"#".repeat(level)} ${String(data.text || "").replace(/<[^>]+>/g, "")}`);
+          continue;
+        }
+        if (type === "list") {
+          const style = data.style === "ordered" ? "ol" : "ul";
+          const items: string[] = Array.isArray(data.items) ? data.items : [];
+          for (let i = 0; i < items.length; i++) {
+            const prefix = style === "ol" ? `${i + 1}. ` : "- ";
+            lines.push(prefix + String(items[i] || "").replace(/<[^>]+>/g, ""));
+          }
+          continue;
+        }
+        if (type === "code") {
+          const code: string = String(data.code || "");
+          lines.push("```\n" + code + "\n```");
+          continue;
+        }
+        if (type === "table") {
+          const content: string[][] = Array.isArray(data.content) ? data.content : [];
+          for (const row of content) {
+            lines.push(`| ${row.map((c) => String(c || "").replace(/<[^>]+>/g, "")).join(" | ")} |`);
+          }
+          continue;
+        }
+        const text = String(data.text || "").replace(/<[^>]+>/g, "");
+        if (text) lines.push(text);
+      }
+      return lines.join("\n\n").trim();
+    } catch {
+      return "";
+    }
+  }
+
   const Toolbar: React.FC = () => {
     const [editor] = useLexicalComposerContext();
     const applyHeading = (level: 1 | 2 | 3) => {
@@ -276,15 +374,34 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
         <div className="px-5 pt-4">
           <div className="relative">
             <LexicalComposer initialConfig={initialConfig}>
-              <div className="border rounded-md bg-background overflow-hidden">
-                <Toolbar />
-                <RichTextPlugin contentEditable={<ContentEditable className="min-h-[220px] max-h-[420px] overflow-auto px-3 py-2 outline-none" />} placeholder={<Placeholder />} ErrorBoundary={LexicalErrorBoundary} />
-                <HistoryPlugin />
-                <ListPlugin />
-                <LinkPlugin />
-                <MarkdownShortcutPlugin />
-                <OnChangePlugin onChange={handleChange} />
-                <EditorRefPlugin onReady={(ed) => { editorRef.current = ed; }} />
+              <div className="border rounded-md bg-background overflow-hidden relative">
+                {isEditing && <Toolbar />}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="absolute bottom-3 right-3 h-7 gap-1 z-10"
+                  onClick={() => setIsEditing((v) => !v)}
+                  title={isEditing ? "Preview" : "Edit"}
+                >
+                  <Wand2 className="h-4 w-4" />
+                  {isEditing ? "Preview" : "Edit"}
+                </Button>
+                {isEditing ? (
+                  <>
+                    <RichTextPlugin contentEditable={<ContentEditable className="min-h-[220px] max-h-[420px] overflow-auto px-3 py-2 outline-none" />} placeholder={<Placeholder />} ErrorBoundary={LexicalErrorBoundary} />
+                    <HistoryPlugin />
+                    <ListPlugin />
+                    <LinkPlugin />
+                    <MarkdownShortcutPlugin />
+                    <OnChangePlugin onChange={handleChange} />
+                    <EditorRefPlugin onReady={(ed) => { editorRef.current = ed; }} />
+                  </>
+                ) : (
+                  <div className="px-5 py-3">
+                    <SafeMarkdown content={editorJsBlocksToMarkdown(computeCurrentEditorJs().blocks)} className="prose prose-sm max-w-none dark:prose-invert" />
+                  </div>
+                )}
               </div>
             </LexicalComposer>
           </div>
