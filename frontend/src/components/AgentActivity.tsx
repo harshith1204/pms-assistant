@@ -58,10 +58,12 @@ export const AgentActivity = ({
             </div>
           )}
 
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            <span>{doneLabel}</span>
-          </div>
+          {!isStreaming && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <span>{doneLabel}</span>
+            </div>
+          )}
 
           {body && (
             <p className="text-sm leading-relaxed text-foreground/90 mt-1">{body}</p>
