@@ -27,14 +27,21 @@ interface ChatMessageProps {
     sequenceId?: string | number;
     link?: string;
   };
+  page?: {
+    title: string;
+    blocks: { blocks: any[] };
+  };
 }
 
 import WorkItemCreateInline from "@/components/WorkItemCreateInline";
 import WorkItemCard from "@/components/WorkItemCard";
+import PageCreateInline from "@/components/PageCreateInline";
+import PageCard from "@/components/PageCard";
 import { createWorkItem } from "@/api/workitems";
+import { createPage } from "@/api/pages";
 import { toast } from "@/components/ui/use-toast";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -42,6 +49,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const canShowActions = role === "assistant" && !isStreaming && (displayedContent?.trim()?.length ?? 0) > 0;
   const [savedWorkItem, setSavedWorkItem] = useState<null | { id: string; title: string; description: string; projectIdentifier?: string; sequenceId?: string | number; link?: string }>(null);
   const [saving, setSaving] = useState(false);
+  const [savedPage, setSavedPage] = useState<null | { id: string; title: string; content: string; link?: string }>(null);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -133,6 +141,35 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                     toast({ title: "Work item saved", description: "Your work item has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save work item", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+              />
+            )
+          ) : page ? (
+            savedPage ? (
+              <PageCard
+                title={savedPage.title}
+                content={savedPage.content}
+                link={savedPage.link}
+                className="mt-1"
+              />
+            ) : (
+              <PageCreateInline
+                title={page.title}
+                initialEditorJs={page.blocks}
+                onSave={async ({ title, editorJs }) => {
+                  try {
+                    setSaving(true);
+                    const projectId = localStorage.getItem("projectId") || undefined;
+                    const created = await createPage({ title, content: editorJs, projectId });
+                    setSavedPage(created);
+                    toast({ title: "Page saved", description: "Your page has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save page", description: String(e?.message || e), variant: "destructive" as any });
                   } finally {
                     setSaving(false);
                   }
