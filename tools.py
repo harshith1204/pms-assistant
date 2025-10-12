@@ -980,16 +980,26 @@ async def rag_search(
 
 
 # Global websocket registry for content generation
-_GENERATION_WEBSOCKET = None
+_GENERATION_CONTEXT = {
+    "websocket": None,
+    "conversation_id": None,
+}
+
+def set_generation_context(websocket, conversation_id=None):
+    """Set the context for generation streaming (websocket and conversation id)."""
+    global _GENERATION_CONTEXT
+    _GENERATION_CONTEXT = {
+        "websocket": websocket,
+        "conversation_id": conversation_id,
+    }
 
 def set_generation_websocket(websocket):
-    """Set the websocket connection for direct content streaming."""
-    global _GENERATION_WEBSOCKET
-    _GENERATION_WEBSOCKET = websocket
+    """Backward-compatible setter when only websocket is available."""
+    set_generation_context(websocket, None)
 
-def get_generation_websocket():
-    """Get the current websocket connection."""
-    return _GENERATION_WEBSOCKET
+def get_generation_context():
+    """Get current generation context with websocket and conversation id (if any)."""
+    return _GENERATION_CONTEXT
 
 
 @tool
@@ -1051,7 +1061,9 @@ async def generate_content(
                 result = response.json()
             
             # Send full content directly to frontend (bypass agent)
-            websocket = get_generation_websocket()
+            from mongo.conversations import append_message as conv_append_message  # local import to avoid cycles
+            ctx = get_generation_context()
+            websocket = ctx.get("websocket")
             if websocket:
                 try:
                     await websocket.send_json({
@@ -1062,6 +1074,19 @@ async def generate_content(
                     })
                 except Exception as e:
                     print(f"Warning: Could not send to websocket: {e}")
+            # Persist generated artifact into conversation history when conversation id is available
+            conv_id = ctx.get("conversation_id")
+            if conv_id:
+                try:
+                    title_val = (result.get("title") if isinstance(result, dict) else None) or "Work item"
+                    await conv_append_message(conv_id, {
+                        "type": "work_item",
+                        "content": title_val,
+                        "data": result,
+                    })
+                except Exception as e:
+                    # Non-fatal; continue
+                    print(f"Warning: failed to persist generated work item: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1101,7 +1126,9 @@ async def generate_content(
                 result = response.json()
             
             # Send full content directly to frontend (bypass agent)
-            websocket = get_generation_websocket()
+            from mongo.conversations import append_message as conv_append_message  # local import to avoid cycles
+            ctx = get_generation_context()
+            websocket = ctx.get("websocket")
             if websocket:
                 try:
                     await websocket.send_json({
@@ -1112,6 +1139,19 @@ async def generate_content(
                     })
                 except Exception as e:
                     print(f"Warning: Could not send to websocket: {e}")
+            # Persist generated artifact into conversation history when conversation id is available
+            conv_id = ctx.get("conversation_id")
+            if conv_id:
+                try:
+                    title_val = template_title or "Generated Page"
+                    await conv_append_message(conv_id, {
+                        "type": "page",
+                        "content": title_val,
+                        "data": result,
+                    })
+                except Exception as e:
+                    # Non-fatal; continue
+                    print(f"Warning: failed to persist generated page: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1119,7 +1159,8 @@ async def generate_content(
     except httpx.HTTPStatusError as e:
         error_msg = f"API error: {e.response.status_code}"
         # Send error to frontend
-        websocket = get_generation_websocket()
+        ctx = get_generation_context()
+        websocket = ctx.get("websocket")
         if websocket:
             try:
                 await websocket.send_json({
@@ -1133,7 +1174,8 @@ async def generate_content(
         return f"❌ {error_msg}"
     except httpx.RequestError as e:
         error_msg = "Connection error"
-        websocket = get_generation_websocket()
+        ctx = get_generation_context()
+        websocket = ctx.get("websocket")
         if websocket:
             try:
                 await websocket.send_json({
@@ -1147,7 +1189,8 @@ async def generate_content(
         return f"❌ {error_msg}"
     except Exception as e:
         error_msg = "Generation failed"
-        websocket = get_generation_websocket()
+        ctx = get_generation_context()
+        websocket = ctx.get("websocket")
         if websocket:
             try:
                 await websocket.send_json({

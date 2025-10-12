@@ -4,13 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-import { LexicalComposer } from "@lexical/react/LexicalComposer";
-import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
-import LexicalErrorBoundary from "@lexical/react/LexicalErrorBoundary";
-import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
-import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
-import { ContentEditable } from "@lexical/react/LexicalContentEditable";
-import { $createParagraphNode, $createTextNode, $getRoot, type EditorState } from "lexical";
+import { BlockNoteView, useBlockNote } from "@blocknote/react";
+import "@blocknote/core/style.css";
+import SafeMarkdown from "@/components/SafeMarkdown";
+import { Wand2 } from "lucide-react";
 
 export type PageCreateInlineProps = {
   title?: string;
@@ -20,38 +17,149 @@ export type PageCreateInlineProps = {
   className?: string;
 };
 
-function editorJsToPlainText(editorJs?: { blocks: any[] }): string {
+function editorJsBlocksToMarkdown(json?: { blocks: any[] } | null): string {
   try {
-    const blocks = editorJs?.blocks || [];
-    const lines = blocks.map((b: any) => {
+    const blocks: any[] = Array.isArray(json?.blocks) ? json!.blocks : [];
+    const lines: string[] = [];
+    for (const b of blocks) {
       const type = b?.type;
       const data = b?.data || {};
       if (type === "header") {
-        return `${"#".repeat(Math.min(6, Number(data.level) || 2))} ${String(data.text || "").replace(/<[^>]+>/g, "")}`;
+        const level = Math.min(6, Number(data.level) || 2);
+        lines.push(`${"#".repeat(level)} ${String(data.text || "").replace(/<[^>]+>/g, "")}`);
+        continue;
       }
       if (type === "list") {
         const style = data.style === "ordered" ? "ol" : "ul";
         const items: string[] = Array.isArray(data.items) ? data.items : [];
-        return items.map((it, idx) => (style === "ol" ? `${idx + 1}. ` : "- ") + String(it || "").replace(/<[^>]+>/g, "")).join("\n");
+        for (let i = 0; i < items.length; i++) {
+          const prefix = style === "ol" ? `${i + 1}. ` : "- ";
+          lines.push(prefix + String(items[i] || "").replace(/<[^>]+>/g, ""));
+        }
+        continue;
+      }
+      if (type === "code") {
+        const code: string = String(data.code || "");
+        lines.push("```\n" + code + "\n```");
+        continue;
       }
       if (type === "table") {
         const content: string[][] = Array.isArray(data.content) ? data.content : [];
-        return content.map((row) => `| ${row.map((c) => String(c || "").replace(/<[^>]+>/g, "")).join(" | ")} |`).join("\n");
+        for (const row of content) {
+          lines.push(`| ${row.map((c) => String(c || "").replace(/<[^>]+>/g, "")).join(" | ")} |`);
+        }
+        continue;
       }
-      // paragraph or unknown
-      return String(data.text || "").replace(/<[^>]+>/g, "");
-    });
+      // paragraph or fallback
+      const text = String(data.text || "").replace(/<[^>]+>/g, "");
+      if (text) lines.push(text);
+    }
     return lines.join("\n\n").trim();
   } catch {
     return "";
   }
 }
 
-function plainTextToEditorJs(text: string): { blocks: any[] } {
-  const paras = String(text || "").split(/\n{2,}/g).map((s) => s.trim()).filter(Boolean);
-  return {
-    blocks: paras.map((p) => ({ id: Math.random().toString(36).slice(2), type: "paragraph", data: { text: p } })),
+function editorJsToBlockNote(editorJs?: { blocks: any[] } | null): any[] {
+  try {
+    const blocks = Array.isArray(editorJs?.blocks) ? editorJs!.blocks : [];
+    const out: any[] = [];
+    for (const b of blocks) {
+      const type = String(b?.type || "paragraph");
+      const data = b?.data || {};
+      if (type === "header") {
+        const level = Math.min(6, Math.max(1, Number(data.level) || 2));
+        out.push({ type: "heading", level, content: String(data.text || "").replace(/<[^>]+>/g, "") });
+        continue;
+      }
+      if (type === "list") {
+        const items: string[] = Array.isArray(data.items) ? data.items : [];
+        const isOrdered = data.style === "ordered";
+        for (const it of items) {
+          out.push({ type: isOrdered ? "numberedListItem" : "bulletListItem", content: String(it || "").replace(/<[^>]+>/g, "") });
+        }
+        continue;
+      }
+      if (type === "code") {
+        out.push({ type: "codeBlock", content: String(data.code || "") });
+        continue;
+      }
+      if (type === "table") {
+        // Basic fallback: render table rows as paragraphs for editing
+        const content: string[][] = Array.isArray(data.content) ? data.content : [];
+        for (const row of content) {
+          out.push({ type: "paragraph", content: row.join(" | ") });
+        }
+        continue;
+      }
+      out.push({ type: "paragraph", content: String(data.text || "").replace(/<[^>]+>/g, "") });
+    }
+    return out.length > 0 ? out : [{ type: "paragraph", content: "" }];
+  } catch {
+    return [{ type: "paragraph", content: "" }];
+  }
+}
+
+function extractTextFromBNContent(content: any): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    // Rich text fragments: concatenate .text fields
+    return content.map((n: any) => (typeof n?.text === "string" ? n.text : "")).join("");
+  }
+  if (typeof content === "object" && typeof (content as any).text === "string") return (content as any).text;
+  return String(content || "");
+}
+
+function blockNoteDocToEditorJs(doc: any[]): { blocks: any[] } {
+  const blocks: any[] = [];
+  let listAccum: { style: "ordered" | "unordered"; items: string[] } | null = null;
+
+  const flushList = () => {
+    if (listAccum && listAccum.items.length > 0) {
+      blocks.push({ id: Math.random().toString(36).slice(2), type: "list", data: { style: listAccum.style === "ordered" ? "ordered" : "unordered", items: [...listAccum.items] } });
+    }
+    listAccum = null;
   };
+
+  for (const node of doc || []) {
+    const type = String(node?.type || "paragraph");
+    if (type === "heading") {
+      flushList();
+      const level = Math.min(6, Math.max(1, Number(node?.level) || 2));
+      const text = extractTextFromBNContent(node?.content).trim();
+      if (text) blocks.push({ id: Math.random().toString(36).slice(2), type: "header", data: { text, level } });
+      continue;
+    }
+    if (type === "bulletListItem" || type === "numberedListItem") {
+      const style = type === "numberedListItem" ? "ordered" : "unordered";
+      const text = extractTextFromBNContent(node?.content).trim();
+      if (!listAccum || listAccum.style !== style) {
+        flushList();
+        listAccum = { style, items: [] };
+      }
+      if (text) listAccum.items.push(text);
+      continue;
+    }
+    if (type === "codeBlock") {
+      flushList();
+      const codeText = extractTextFromBNContent(node?.content);
+      if (codeText.trim()) blocks.push({ id: Math.random().toString(36).slice(2), type: "code", data: { code: codeText } });
+      continue;
+    }
+    if (type === "blockquote") {
+      flushList();
+      const text = extractTextFromBNContent(node?.content).trim();
+      if (text) blocks.push({ id: Math.random().toString(36).slice(2), type: "paragraph", data: { text } });
+      continue;
+    }
+    // paragraph / fallback
+    flushList();
+    const text = extractTextFromBNContent(node?.content).trim();
+    if (text) blocks.push({ id: Math.random().toString(36).slice(2), type: "paragraph", data: { text } });
+  }
+  flushList();
+  return { blocks };
 }
 
 const Placeholder: React.FC = () => (
@@ -60,38 +168,27 @@ const Placeholder: React.FC = () => (
 
 export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", initialEditorJs, onSave, onDiscard, className }) => {
   const [name, setName] = React.useState<string>(title);
-  const latestTextRef = React.useRef<string>(editorJsToPlainText(initialEditorJs));
+  const [isEditing, setIsEditing] = React.useState<boolean>(true);
 
-  const initialConfig = React.useMemo(() => ({
-    namespace: "page-editor",
-    onError: (e: Error) => console.error(e),
-    theme: {},
-    editorState: (editor: any) => {
-      const initialText = editorJsToPlainText(initialEditorJs);
-      editor.update(() => {
-        const root = $getRoot();
-        root.clear();
-        const paragraph = $createParagraphNode();
-        paragraph.append($createTextNode(initialText));
-        root.append(paragraph);
-      });
-    },
-    nodes: [],
-  }), [initialEditorJs]);
+  const editor = useBlockNote({
+    initialContent: editorJsToBlockNote(initialEditorJs),
+  });
 
-  const handleChange = (state: EditorState) => {
+  const computeCurrentEditorJs = React.useCallback(() => {
     try {
-      state.read(() => {
-        const text = $getRoot().getTextContent();
-        latestTextRef.current = text;
-      });
-    } catch {}
-  };
+      const doc = editor.document || [];
+      return blockNoteDocToEditorJs(doc);
+    } catch {
+      return { blocks: [] };
+    }
+  }, [editor]);
 
   const handleSave = () => {
-    const editorJs = plainTextToEditorJs(latestTextRef.current || "");
+    const editorJs = computeCurrentEditorJs();
     onSave?.({ title: name.trim() || "Untitled Page", editorJs });
   };
+
+  const previewMarkdown = React.useMemo(() => editorJsBlocksToMarkdown(computeCurrentEditorJs()), [computeCurrentEditorJs]);
 
   return (
     <Card className={cn("border-muted/70", className)}>
@@ -110,14 +207,30 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
         </div>
 
         <div className="px-5 pt-4">
-          <div className="relative">
-            <LexicalComposer initialConfig={initialConfig}>
-              <div className="border rounded-md bg-background">
-                <RichTextPlugin contentEditable={<ContentEditable className="min-h-[220px] max-h-[420px] overflow-auto px-3 py-2 outline-none" />} placeholder={<Placeholder />} ErrorBoundary={LexicalErrorBoundary} />
-                <HistoryPlugin />
-                <OnChangePlugin onChange={handleChange} />
+          <div className="relative border rounded-md bg-background overflow-hidden">
+            {isEditing ? (
+              <>
+                <BlockNoteView editor={editor} className="min-h-[220px] max-h-[420px] overflow-auto" />
+                <div className="absolute pointer-events-none inset-x-3 top-2">
+                  <Placeholder />
+                </div>
+              </>
+            ) : (
+              <div className="px-5 py-3">
+                <SafeMarkdown content={previewMarkdown} className="prose prose-sm max-w-none dark:prose-invert" />
               </div>
-            </LexicalComposer>
+            )}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="absolute bottom-3 right-3 h-7 gap-1 z-10"
+              onClick={() => setIsEditing((v) => !v)}
+              title={isEditing ? "Preview" : "Edit"}
+            >
+              <Wand2 className="h-4 w-4" />
+              {isEditing ? "Preview" : "Edit"}
+            </Button>
           </div>
         </div>
 
@@ -131,4 +244,3 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
 };
 
 export default PageCreateInline;
-

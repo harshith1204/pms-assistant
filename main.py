@@ -183,6 +183,8 @@ async def get_conversation(conversation_id: str):
                 "timestamp": m.get("timestamp") or "",
                 "liked": m.get("liked"),
                 "feedback": m.get("feedback"),
+                # pass-through generated artifact payloads so frontend can reconstruct editors/cards
+                "data": m.get("data"),
             })
         return {"id": conversation_id, "messages": norm}
     except Exception as e:

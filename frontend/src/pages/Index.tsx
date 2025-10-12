@@ -62,7 +62,7 @@ const Index = () => {
   const streamingAssistantIdRef = useRef<string | null>(null);
 
   // Helper: transform backend messages to UI messages with internal actions grouped
-  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string }>): Message[] => {
+  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; data?: any }>): Message[] => {
     const result: Message[] = [];
     let pendingActionBullets: string[] = [];
 
@@ -127,6 +127,34 @@ const Index = () => {
       if (type === "user") {
         // Do not flush pending actions here; they belong to the next assistant
         result.push({ id: m.id, role: "user", content: m.content || "" });
+        continue;
+      }
+
+      if (type === "work_item") {
+        result.push({
+          id: m.id,
+          role: "assistant",
+          content: "",
+          workItem: {
+            title: (m.data?.title as string) || (m.content || "Work item"),
+            description: (m.data?.description as string) || "",
+            projectIdentifier: (m.data?.projectIdentifier as string) || undefined,
+            sequenceId: (m.data?.sequenceId as any) || undefined,
+            link: (m.data?.link as string) || undefined,
+          },
+        });
+        continue;
+      }
+
+      if (type === "page") {
+        const title = (m.data?.title as string) || (m.content || "Generated Page");
+        const blocks = (m.data && Array.isArray(m.data.blocks)) ? { blocks: m.data.blocks } : { blocks: [] };
+        result.push({
+          id: m.id,
+          role: "assistant",
+          content: "",
+          page: { title, blocks },
+        });
         continue;
       }
 
@@ -250,9 +278,8 @@ const Index = () => {
             const msgs = await getConversationMessages(convId);
             setMessages((prev) => {
               const transformed = transformConversationMessages(msgs);
-              const ephemeralWorkItems = prev.filter((m) => !!m.workItem);
-              const ephemeralPages = prev.filter((m) => !!m.page);
-              return [...transformed, ...ephemeralWorkItems, ...ephemeralPages];
+              // Items generated are now persisted in history; avoid duplicating ephemeral ones
+              return [...transformed];
             });
           } catch {
             // ignore
