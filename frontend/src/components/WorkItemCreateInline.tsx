@@ -1,7 +1,8 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import MDEditor from "@uiw/react-md-editor";
+import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
   const [createMore, setCreateMore] = React.useState<boolean>(false);
-  const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(!(description && description.trim().length > 0));
+  const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
     onSave?.({ title: name.trim(), description: desc });
@@ -56,28 +57,22 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
         </div>
 
         <div className="px-5 pt-4">
-          {isEditingDesc ? (
-            <div className="relative">
-              <Textarea
-                value={desc}
-                onChange={(e) => setDesc(e.target.value)}
-                placeholder="Click to add description"
-                className="min-h-[150px] resize-y"
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="absolute bottom-3 right-3 h-7 gap-1"
-                onClick={() => setDesc((d) => d)}
-                title="AI"
-              >
-                <Wand2 className="h-4 w-4" />
-                AI
-              </Button>
-            </div>
-          ) : (
-            <div className="min-h-[150px] px-2 py-1 border rounded-md">
+          <div className="relative" data-color-mode="light">
+            <MDEditor value={desc} onChange={(v) => setDesc(v || "")} height={260} preview={isEditingDesc ? "edit" : "preview"} />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="absolute bottom-3 right-3 h-7 gap-1"
+              onClick={() => setIsEditingDesc((s) => !s)}
+              title={isEditingDesc ? "Preview" : "Edit"}
+            >
+              <Wand2 className="h-4 w-4" />
+              {isEditingDesc ? "Preview" : "Edit"}
+            </Button>
+          </div>
+          {!isEditingDesc && (
+            <div className="sr-only">
               <SafeMarkdown content={desc} />
             </div>
           )}
