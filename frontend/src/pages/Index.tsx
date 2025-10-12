@@ -51,6 +51,10 @@ const Index = () => {
 
   // Socket integration: handle backend events
   const handleSocketEvent = useCallback((evt: ChatEvent) => {
+    // Suppress tool events from affecting UI
+    if (evt.type === "tool_start" || evt.type === "tool_end") {
+      return;
+    }
     if (evt.type === "llm_start") {
       // Start a new assistant streaming message if not present
       if (!streamingAssistantIdRef.current) {
@@ -70,45 +74,6 @@ const Index = () => {
       if (!id) return;
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
       setIsLoading(false);
-    } else if (evt.type === "tool_start") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `Starting ${evt.tool_name || "tool"}`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
-              },
-            }
-          : m
-      )));
-    } else if (evt.type === "tool_end") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
-      const preview = (evt as any).output_preview || (evt as any).output || "Done";
-      setMessages((prev) => prev.map((m) => (
-        m.id === id
-          ? {
-              ...m,
-              internalActivity: {
-                summary: m.internalActivity?.summary || "Actions",
-                bullets: [
-                  ...(m.internalActivity?.bullets || []),
-                  `Completed tool (${String(preview).slice(0, 80)}${String(preview).length > 80 ? "..." : ""})`,
-                ],
-                doneLabel: m.internalActivity?.doneLabel || "Done",
-                body: m.internalActivity?.body,
-              },
-            }
-          : m
-      )));
     } else if (evt.type === "agent_action") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;

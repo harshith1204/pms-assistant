@@ -321,7 +321,7 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self.websocket = websocket
         self.conversation_id = conversation_id
         self.start_time = None
-        # Tool outputs are now always streamed to the frontend for better visibility
+        # Tool events are suppressed from frontend to avoid noise in chat UI
         # Internal step counter for lightweight progress (not exposed directly)
         self._step_counter = 0
         # Whether a dynamic, high-level action statement was already emitted for this step
@@ -407,39 +407,18 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             })
 
     async def on_tool_end(self, output: str, **kwargs):
-        """Called when a tool finishes executing"""
-        # Emit concise end-of-tool event without raw internals
-        summary = "Ready with findings"
-        try:
-            import re as _re
-            # Try to extract a simple count from common patterns
-            m = _re.search(r"Found\s+(\d+)\s+result", str(output), flags=_re.IGNORECASE)
-            if m:
-                summary = f"Found {m.group(1)} relevant results"
-            elif "RESULTS SUMMARY" in str(output):
-                summary = "Summarized key results"
-            elif "RESULT:" in str(output) or "RESULTS:" in str(output):
-                summary = "Results ready"
-        except Exception:
-            pass
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "tool_end",
-                "output_preview": summary,
-                "hidden": True,
-                "timestamp": datetime.now().isoformat()
-            })
+        """Called when a tool finishes executing.
+
+        Suppressed: We no longer send tool_end events to the frontend socket.
+        """
+        return
 
     async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
-        """Called when a tool starts executing"""
-        tool_name = serialized.get("name", "Unknown Tool")
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "tool_start",
-                "tool_name": tool_name,
-                "input": input_str,
-                "timestamp": datetime.now().isoformat()
-            })
+        """Called when a tool starts executing.
+
+        Suppressed: We no longer send tool_start events to the frontend socket.
+        """
+        return
 
     def cleanup(self):
         """Clean up Phoenix span collector"""
