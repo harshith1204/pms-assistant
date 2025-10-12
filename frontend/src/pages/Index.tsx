@@ -45,6 +45,7 @@ const Index = () => {
   const isEmpty = messages.length === 0;
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
+  const endRef = useRef<HTMLDivElement | null>(null);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -70,10 +71,7 @@ const Index = () => {
       if (!id) return;
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
     } else if (evt.type === "llm_end") {
-      const id = streamingAssistantIdRef.current;
-      if (!id) return;
-      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
-      setIsLoading(false);
+      // Keep loader and streaming state until we receive the final 'complete' event
     } else if (evt.type === "agent_action") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
@@ -117,6 +115,26 @@ const Index = () => {
     } else if (evt.type === "complete") {
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
+      // Refresh messages from server to get canonical IDs so reactions persist
+      const convId = (evt as any).conversation_id || activeConversationId;
+      if (convId) {
+        (async () => {
+          try {
+            const msgs = await getConversationMessages(convId);
+            setMessages(
+              msgs.map((m) => ({
+                id: m.id,
+                role: m.type === "user" ? "user" : "assistant",
+                content: m.content || "",
+                liked: (m as any).liked,
+                feedback: (m as any).feedback,
+              }))
+            );
+          } catch {
+            // ignore
+          }
+        })();
+      }
     }
   }, []);
 
@@ -283,6 +301,12 @@ const Index = () => {
     setFeedbackText("");
   };
 
+  // Auto-scroll to bottom on message updates
+  useEffect(() => {
+    if (showGettingStarted || showPersonalization) return;
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading, showGettingStarted, showPersonalization]);
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
       <div
@@ -367,6 +391,7 @@ const Index = () => {
                   onDislike={handleDislike}
                 />
               ))}
+              <div ref={endRef} />
             </div>
           </ScrollArea>
         )}
