@@ -18,6 +18,7 @@ from qdrant.initializer import RAGTool
 from mongo.conversations import ensure_conversation_client_connected
 from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
 from mongo.conversations import update_message_reaction
+from mongo.constants import mongodb_tools, DATABASE_NAME
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
     message: str
@@ -47,6 +48,21 @@ class ReactionRequest(BaseModel):
     message_id: str
     liked: Optional[bool] = None
     feedback: Optional[str] = None
+
+class WorkItemCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    project_identifier: Optional[str] = None
+    project_id: Optional[str] = None
+    created_by: Optional[str] = None
+
+class WorkItemCreateResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    projectIdentifier: Optional[str] = None
+    sequenceId: Optional[int] = None
+    link: Optional[str] = None
 
 # Global MongoDB agent instance
 mongodb_agent = None
@@ -161,6 +177,67 @@ async def get_conversation(conversation_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/work-items", response_model=WorkItemCreateResponse)
+async def create_work_item(req: WorkItemCreateRequest):
+    """Create a minimal work item in MongoDB 'workItem' collection.
+
+    Fields stored: title, description, project (identifier), sequenceId, createdAt/updatedAt.
+    """
+    try:
+        if not mongodb_tools.client:
+            # Ensure Mongo connected via direct client
+            await mongodb_tools.connect()
+
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["workItem"]
+
+        # Derive next sequence per project identifier (best-effort)
+        seq: Optional[int] = None
+        filt = {"project.identifier": req.project_identifier} if req.project_identifier else {}
+        try:
+            cursor = coll.find(filt, {"sequenceId": 1}).sort("sequenceId", -1).limit(1)
+            top = await cursor.to_list(length=1)
+            if top and isinstance(top[0], dict):
+                seq_val = top[0].get("sequenceId")
+                if isinstance(seq_val, int):
+                    seq = seq_val + 1
+            if seq is None:
+                seq = 1
+        except Exception:
+            seq = None
+
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat()
+
+        doc = {
+            "title": (req.title or "").strip(),
+            "description": (req.description or "").strip(),
+            "createdAt": now_iso,
+            "updatedAt": now_iso,
+        }
+        if req.project_identifier:
+            doc["project"] = {"identifier": req.project_identifier}
+        if seq is not None:
+            doc["sequenceId"] = seq
+        if req.created_by:
+            doc["createdBy"] = {"name": req.created_by}
+
+        result = await coll.insert_one(doc)
+
+        return WorkItemCreateResponse(
+            id=str(result.inserted_id),
+            title=doc["title"],
+            description=doc["description"],
+            projectIdentifier=req.project_identifier,
+            sequenceId=seq,
+            link=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/conversations/reaction")
 async def set_reaction(req: ReactionRequest):
     """Set like/dislike and optional feedback on an assistant message."""
@@ -178,6 +255,9 @@ async def set_reaction(req: ReactionRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+    # (Duplicate endpoint removed)
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
