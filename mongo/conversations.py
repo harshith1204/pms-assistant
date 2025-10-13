@@ -168,6 +168,49 @@ async def save_action_event(
     )
 
 
+async def save_generated_work_item(conversation_id: str, work_item: Dict[str, Any]) -> None:
+    """Persist a generated work item as a conversation message.
+
+    Expects a minimal payload: {title, description?, projectIdentifier?, sequenceId?, link?}
+    """
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "work_item",
+            "content": "",  # keep content empty; UI renders from structured field
+            "workItem": {
+                "title": (work_item.get("title") or "Work item"),
+                "description": (work_item.get("description") or ""),
+                **({"projectIdentifier": work_item.get("projectIdentifier")} if work_item.get("projectIdentifier") is not None else {}),
+                **({"sequenceId": work_item.get("sequenceId")} if work_item.get("sequenceId") is not None else {}),
+                **({"link": work_item.get("link")} if work_item.get("link") is not None else {}),
+            },
+        })
+    )
+
+
+async def save_generated_page(conversation_id: str, page: Dict[str, Any]) -> None:
+    """Persist a generated page as a conversation message.
+
+    Expects payload: {title, blocks: {blocks: [...]}}
+    """
+    blocks = page.get("blocks") if isinstance(page, dict) else None
+    if not isinstance(blocks, dict) or not isinstance(blocks.get("blocks"), list):
+        blocks = {"blocks": []}
+
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "page",
+            "content": "",
+            "page": {
+                "title": (page.get("title") if isinstance(page, dict) else None) or "Generated Page",
+                "blocks": blocks,
+            },
+        })
+    )
+
+
 async def update_message_reaction(
     conversation_id: str,
     message_id: str,

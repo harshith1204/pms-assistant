@@ -13,7 +13,15 @@ export async function getConversations(): Promise<Array<{ id: string; title: str
   }
 }
 
-export async function getConversationMessages(conversationId: string): Promise<Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string }>> {
+export async function getConversationMessages(conversationId: string): Promise<Array<{
+  id: string;
+  type: string;
+  content: string;
+  liked?: boolean;
+  feedback?: string;
+  workItem?: { title: string; description?: string; projectIdentifier?: string; sequenceId?: string | number; link?: string };
+  page?: { title: string; blocks: { blocks: any[] } };
+}>> {
   try {
     const res = await fetch(`${API_HTTP_URL}/conversations/${encodeURIComponent(conversationId)}`);
     if (!res.ok) throw new Error("failed");

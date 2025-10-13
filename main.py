@@ -176,14 +176,20 @@ async def get_conversation(conversation_id: str):
         for m in messages:
             if not isinstance(m, dict):
                 continue
-            norm.append({
+            entry = {
                 "id": m.get("id") or "",
                 "type": m.get("type") or "assistant",
                 "content": m.get("content") or "",
                 "timestamp": m.get("timestamp") or "",
                 "liked": m.get("liked"),
                 "feedback": m.get("feedback"),
-            })
+            }
+            # Pass through structured generated artifacts when present
+            if m.get("type") == "work_item" and isinstance(m.get("workItem"), dict):
+                entry["workItem"] = m.get("workItem")
+            if m.get("type") == "page" and isinstance(m.get("page"), dict):
+                entry["page"] = m.get("page")
+            norm.append(entry)
         return {"id": conversation_id, "messages": norm}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
