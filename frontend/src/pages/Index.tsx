@@ -62,7 +62,7 @@ const Index = () => {
   const streamingAssistantIdRef = useRef<string | null>(null);
 
   // Helper: transform backend messages to UI messages with internal actions grouped
-  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string }>): Message[] => {
+  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any }>): Message[] => {
     const result: Message[] = [];
     let pendingActionBullets: string[] = [];
 
@@ -116,6 +116,23 @@ const Index = () => {
           liked: (m as any).liked,
           feedback: (m as any).feedback,
         };
+        // Attach generated artifacts if persisted in conversation
+        if (m.workItem && typeof m.workItem === "object") {
+          assistantMsg.workItem = {
+            title: String(m.workItem.title || "Work item"),
+            description: String(m.workItem.description || ""),
+            projectIdentifier: m.workItem.projectIdentifier,
+            sequenceId: m.workItem.sequenceId,
+            link: m.workItem.link,
+          };
+        }
+        if (m.page && typeof m.page === "object") {
+          const blocksObj = (m.page.blocks && typeof m.page.blocks === "object" && Array.isArray(m.page.blocks.blocks)) ? m.page.blocks : { blocks: [] };
+          assistantMsg.page = {
+            title: String(m.page.title || "Generated Page"),
+            blocks: blocksObj,
+          };
+        }
         if (pendingActionBullets.length > 0) {
           assistantMsg.internalActivity = { summary: "Actions", bullets: [...pendingActionBullets], doneLabel: "Done" };
           pendingActionBullets = [];
@@ -250,8 +267,11 @@ const Index = () => {
             const msgs = await getConversationMessages(convId);
             setMessages((prev) => {
               const transformed = transformConversationMessages(msgs);
-              const ephemeralWorkItems = prev.filter((m) => !!m.workItem);
-              const ephemeralPages = prev.filter((m) => !!m.page);
+              // De-duplicate persisted artifacts: keep ephemeral only if not present in transformed
+              const haveWorkArtifact = transformed.some((m) => !!m.workItem);
+              const havePageArtifact = transformed.some((m) => !!m.page);
+              const ephemeralWorkItems = haveWorkArtifact ? [] : prev.filter((m) => !!m.workItem);
+              const ephemeralPages = havePageArtifact ? [] : prev.filter((m) => !!m.page);
               return [...transformed, ...ephemeralWorkItems, ...ephemeralPages];
             });
           } catch {
