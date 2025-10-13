@@ -746,14 +746,33 @@ class LLMIntentParser:
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
             # Accept synonyms and normalize
-            key_map = {
-                "created": "createdTimeStamp",
-                "createdAt": "createdTimeStamp",
-                "created_time": "createdTimeStamp",
-                "time": "createdTimeStamp",
-                "date": "createdTimeStamp",
-                "timestamp": "createdTimeStamp",
-            }
+            if primary == "page":
+                key_map = {
+                    "created": "createdAt",
+                    "createdAt": "createdAt",
+                    "created_time": "createdAt",
+                    "time": "createdAt",
+                    "date": "createdAt",
+                    "timestamp": "updatedAt",
+                }
+            elif primary == "timeline":
+                key_map = {
+                    "created": "timestamp",
+                    "createdAt": "timestamp",
+                    "created_time": "timestamp",
+                    "time": "timestamp",
+                    "date": "timestamp",
+                    "timestamp": "timestamp",
+                }
+            else:
+                key_map = {
+                    "created": "createdTimeStamp",
+                    "createdAt": "createdTimeStamp",
+                    "created_time": "createdTimeStamp",
+                    "time": "createdTimeStamp",
+                    "date": "createdTimeStamp",
+                    "timestamp": "createdTimeStamp",
+                }
             norm_key = key_map.get(key, key)
 
             def _norm_dir(v: Any) -> Optional[int]:
@@ -768,7 +787,7 @@ class LLMIntentParser:
                 return None
 
             norm_dir = _norm_dir(val)
-            if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
+            if norm_key in {"createdTimeStamp", "createdAt", "updatedAt", "timestamp", "priority", "state", "status"} and norm_dir in (1, -1):
                 sort_order = {norm_key: norm_dir}
 
         # Limit - intelligent handling based on query type
@@ -825,7 +844,15 @@ class LLMIntentParser:
         if not sort_order and not group_by and not wants_count:
             inferred_sort = self._infer_sort_order_from_query(original_query or "")
             if inferred_sort:
-                sort_order = inferred_sort
+                # If timeline → map createdTimeStamp to timestamp
+                if primary == "timeline" and "createdTimeStamp" in inferred_sort:
+                    dirv = inferred_sort.get("createdTimeStamp", -1)
+                    sort_order = {"timestamp": dirv}
+                elif primary == "page" and "createdTimeStamp" in inferred_sort:
+                    dirv = inferred_sort.get("createdTimeStamp", -1)
+                    sort_order = {"createdAt": dirv}
+                else:
+                    sort_order = inferred_sort
 
         # Fetch one heuristic
         fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
