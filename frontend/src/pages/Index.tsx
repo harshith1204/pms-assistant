@@ -62,7 +62,7 @@ const Index = () => {
   const streamingAssistantIdRef = useRef<string | null>(null);
 
   // Helper: transform backend messages to UI messages with internal actions grouped
-  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string }>): Message[] => {
+  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any }>): Message[] => {
     const result: Message[] = [];
     let pendingActionBullets: string[] = [];
 
@@ -130,6 +130,14 @@ const Index = () => {
         continue;
       }
 
+      if (type === "work_item" && (m as any).workItem) {
+        result.push({ id: m.id, role: "assistant", content: "", workItem: (m as any).workItem });
+        continue;
+      }
+      if (type === "page" && (m as any).page) {
+        result.push({ id: m.id, role: "assistant", content: "", page: (m as any).page });
+        continue;
+      }
       // Fallback: treat unknown types as assistant text
       result.push({ id: m.id, role: "assistant", content: m.content || "" });
     }
