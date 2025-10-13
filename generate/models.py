@@ -34,3 +34,8 @@ class PageGenerateRequest(BaseModel):
     projectId: str
     tenantId: str
 
+
+class WorkItemSurpriseMeRequest(BaseModel):
+    title: str
+    description: str
+

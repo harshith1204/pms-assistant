@@ -6,6 +6,7 @@ from .models import (
     GenerateRequest,
     GenerateResponse,
     PageGenerateRequest,
+    WorkItemSurpriseMeRequest,
 )
 from .prompts import PAGE_TYPE_PROMPTS
 
@@ -87,6 +88,78 @@ Instructions:
         description = content.strip() or description
         first_line = description.splitlines()[0] if description else req.prompt
         title = first_line[:120]
+
+    return GenerateResponse(title=title.strip(), description=description.strip())
+
+
+@router.post("/generate-work-item-surprise-me", response_model=GenerateResponse)
+def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateResponse:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    system_prompt = (
+        "You are an assistant that enhances work item descriptions to be more detailed, actionable, and comprehensive.\n"
+        "Take the provided title and existing description, and generate a much more detailed and professional description.\n"
+        "Add specific details, steps, requirements, and context that would make this work item more actionable for team members.\n"
+        "Return markdown in the description with proper formatting, sections, and bullet points.\n"
+        "Keep the same title but significantly enhance the description.\n"
+        "Respond as JSON only, without code fences or surrounding text.\n"
+        "Example response: {\"title\": \"Implement User Authentication\", \"description\": \"## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema...\"}."
+    )
+
+    user_prompt = f"""
+Current Title:
+{req.title}
+
+Current Description:
+{req.description}
+
+Instructions:
+- Enhance the existing description to be much more detailed and actionable
+- Add specific requirements, implementation steps, acceptance criteria
+- Include relevant technical details, dependencies, and success metrics
+- Structure the description with proper markdown formatting including headers, bullet points, and sections
+- Maintain the same title but significantly expand the description
+- Produce a JSON object with fields: title, description
+- Do not wrap the response in code fences or add explanatory text
+"""
+
+    try:
+        completion = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = completion.choices[0].message.content or ""
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+
+    # Best-effort parse: if JSON-like present, extract; else use raw content
+    title = req.title
+    description = req.description
+    parsed = None
+    try:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            parsed = json.loads(content[start : end + 1])
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        title = parsed.get("title") or title
+        description = parsed.get("description") or description
+    else:
+        description = content.strip() or description
 
     return GenerateResponse(title=title.strip(), description=description.strip())
 
