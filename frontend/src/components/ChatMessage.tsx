@@ -1,0 +1,239 @@
+import { useEffect, useState } from "react";
+import { Bot, User, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import SafeMarkdown from "@/components/SafeMarkdown";
+import { Button } from "@/components/ui/button";
+import { AgentActivity } from "@/components/AgentActivity";
+import { usePersonalization } from "@/context/PersonalizationContext";
+
+interface ChatMessageProps {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  isStreaming?: boolean;
+  liked?: boolean;
+  onLike?: (messageId: string) => void;
+  onDislike?: (messageId: string) => void;
+  internalActivity?: {
+    summary: string;
+    bullets?: string[];
+    doneLabel?: string;
+    body?: string;
+  };
+  workItem?: {
+    title: string;
+    description?: string;
+    projectIdentifier?: string;
+    sequenceId?: string | number;
+    link?: string;
+  };
+  page?: {
+    title: string;
+    blocks: { blocks: any[] };
+  };
+}
+
+import WorkItemCreateInline from "@/components/WorkItemCreateInline";
+import WorkItemCard from "@/components/WorkItemCard";
+import PageCreateInline from "@/components/PageCreateInline";
+import PageCard from "@/components/PageCard";
+import { createWorkItem } from "@/api/workitems";
+import { createPage } from "@/api/pages";
+import { toast } from "@/components/ui/use-toast";
+
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page }: ChatMessageProps) => {
+  const { settings } = usePersonalization();
+  const [displayedContent, setDisplayedContent] = useState("");
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const canShowActions = role === "assistant" && !isStreaming && (displayedContent?.trim()?.length ?? 0) > 0;
+  const [savedWorkItem, setSavedWorkItem] = useState<null | { id: string; title: string; description: string; projectIdentifier?: string; sequenceId?: string | number; link?: string }>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedPage, setSavedPage] = useState<null | { id: string; title: string; content: string; link?: string }>(null);
+
+  useEffect(() => {
+    if (role === "assistant" && isStreaming) {
+      if (currentIndex < content.length) {
+        const timeout = setTimeout(() => {
+          setDisplayedContent(content.slice(0, currentIndex + 1));
+          setCurrentIndex(currentIndex + 1);
+        }, 20);
+        return () => clearTimeout(timeout);
+      }
+    } else {
+      setDisplayedContent(content);
+    }
+  }, [content, currentIndex, role, isStreaming]);
+
+  const isUser = role === "user";
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
+  const handleThumbsUp = () => {
+    if (isStreaming) return;
+    onLike?.(id);
+  };
+
+  const handleThumbsDown = () => {
+    if (isStreaming) return;
+    onDislike?.(id);
+  };
+
+  const isLiked = liked === true;
+  const isDisliked = liked === false;
+
+  return (
+    <div className="p-6 animate-fade-in">
+      {isUser ? (
+        <div className="flex gap-4 flex-row-reverse">
+          <div className="flex-1 text-right">
+            <div className="flex justify-end">
+              <div className="inline-block max-w-[80%] px-5 py-1 rounded-full text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-primary/10  text-right">
+                {displayedContent}
+                {isStreaming && currentIndex < content.length && (
+                  <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {settings.showAgentInternals && internalActivity && (
+            <AgentActivity
+              summary={internalActivity.summary}
+              bullets={internalActivity.bullets}
+              doneLabel={internalActivity.doneLabel}
+              body={internalActivity.body}
+              defaultOpen={isStreaming}
+              isStreaming={isStreaming}
+            />
+          )}
+
+          {workItem ? (
+            savedWorkItem ? (
+              <WorkItemCard
+                title={savedWorkItem.title}
+                description={savedWorkItem.description}
+                projectIdentifier={savedWorkItem.projectIdentifier}
+                sequenceId={savedWorkItem.sequenceId}
+                link={savedWorkItem.link}
+                className="mt-1"
+              />
+            ) : (
+              <WorkItemCreateInline
+                title={workItem.title}
+                description={workItem.description}
+                onSave={async ({ title, description }) => {
+                  try {
+                    setSaving(true);
+                    const projectId = localStorage.getItem("projectId") || undefined;
+                    const created = await createWorkItem({ title, description, projectId: projectId || undefined, projectIdentifier: workItem.projectIdentifier });
+                    setSavedWorkItem(created);
+                    toast({ title: "Work item saved", description: "Your work item has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save work item", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+              />
+            )
+          ) : page ? (
+            savedPage ? (
+              <PageCard
+                title={savedPage.title}
+                content={savedPage.content}
+                link={savedPage.link}
+                className="mt-1"
+              />
+            ) : (
+              <PageCreateInline
+                title={page.title}
+                initialEditorJs={page.blocks}
+                onSave={async ({ title, editorJs }) => {
+                  try {
+                    setSaving(true);
+                    const projectId = localStorage.getItem("projectId") || undefined;
+                    const created = await createPage({ title, content: editorJs, projectId });
+                    setSavedPage(created);
+                    toast({ title: "Page saved", description: "Your page has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save page", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+              />
+            )
+          ) : (
+            <SafeMarkdown
+              content={displayedContent}
+              className="prose prose-sm max-w-none dark:prose-invert"
+            />
+          )}
+          {isStreaming && currentIndex < content.length && (
+            <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />
+          )}
+
+          {/* Action buttons for assistant messages */}
+          {canShowActions && (
+            <div className="flex items-center gap-1 pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopy}
+                className={cn(
+                  "h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-all duration-200 rounded-md",
+                  copied && "text-green-600 bg-green-600/10"
+                )}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleThumbsUp}
+                className={cn(
+                  "h-8 px-2 transition-all duration-200 rounded-md",
+                  isLiked
+                    ? "text-green-600 hover:text-green-700 bg-green-600/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
+                )}
+              >
+                <ThumbsUp className={cn("h-4 w-4", isLiked && "fill-current")} />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleThumbsDown}
+                className={cn(
+                  "h-8 px-2 transition-all duration-200 rounded-md",
+                  isDisliked
+                    ? "text-red-600 hover:text-red-700 bg-red-600/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-primary/10"
+                )}
+              >
+                <ThumbsDown className={cn("h-4 w-4", isDisliked && "fill-current")} />
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
