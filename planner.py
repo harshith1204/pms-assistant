@@ -191,6 +191,20 @@ class LLMIntentParser:
             "issues": "workItem",
             "tickets": "workItem",
             "ticket": "workItem",
+            # timeline synonyms
+            "timeline": "timeline",
+            "timelines": "timeline",
+            "history": "timeline",
+            "activity": "timeline",
+            "activities": "timeline",
+            "change": "timeline",
+            "changes": "timeline",
+            "event": "timeline",
+            "events": "timeline",
+            "log": "timeline",
+            "logs": "timeline",
+            "audit": "timeline",
+            "audits": "timeline",
         }
 
     def _is_placeholder(self, v) -> bool:
@@ -1042,6 +1056,10 @@ class PipelineGenerator:
                 'project': 'project',
                 'business': 'project',
             },
+            'timeline': {
+                'project': 'project',
+                'workItem': 'workItem',
+            },
         }.get(collection, {})
 
         # Include explicit target entities requested by the intent (supports multi-hop like "project.cycles")
@@ -1641,6 +1659,33 @@ class PipelineGenerator:
             if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
                 primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
 
+        elif collection == "timeline":
+            # timeline supports type/status-like filtering via 'type'
+            if 'status' in filters and isinstance(filters['status'], str):
+                primary_filters['type'] = {'$regex': f"^{filters['status']}$", '$options': 'i'}
+            if 'type' in filters and isinstance(filters['type'], str):
+                primary_filters['type'] = {'$regex': filters['type'], '$options': 'i'}
+            if 'fieldChanged' in filters and isinstance(filters['fieldChanged'], str):
+                primary_filters['fieldChanged'] = {'$regex': filters['fieldChanged'], '$options': 'i'}
+            if 'message' in filters and isinstance(filters['message'], str):
+                primary_filters['message'] = {'$regex': filters['message'], '$options': 'i'}
+            if 'commentText' in filters and isinstance(filters['commentText'], str):
+                primary_filters['commentText'] = {'$regex': filters['commentText'], '$options': 'i'}
+            if 'oldValue' in filters and isinstance(filters['oldValue'], str):
+                primary_filters['oldValue'] = {'$regex': filters['oldValue'], '$options': 'i'}
+            if 'newValue' in filters and isinstance(filters['newValue'], str):
+                primary_filters['newValue'] = {'$regex': filters['newValue'], '$options': 'i'}
+            if 'actor_name' in filters and isinstance(filters['actor_name'], str):
+                primary_filters['user.name'] = {'$regex': filters['actor_name'], '$options': 'i'}
+            if 'work_item_title' in filters and isinstance(filters['work_item_title'], str):
+                primary_filters['workItemTitle'] = {'$regex': filters['work_item_title'], '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            # date range on 'timestamp'
+            _apply_date_range(primary_filters, 'timestamp', filters)
+
         return primary_filters
 
     def _extract_secondary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
@@ -1792,6 +1837,11 @@ class PipelineGenerator:
             "projectState": [
                 "name", "subStates.name", "subStates.order"
             ],
+            "timeline": [
+                "type", "fieldChanged", "message", "commentText",
+                "oldValue", "newValue", "timestamp",
+                "workItemTitle", "project.name", "business.name", "user.name"
+            ],
         }
 
         candidates = defaults_map.get(primary_entity, ["_id"])  # fallback _id
@@ -1901,6 +1951,13 @@ class PipelineGenerator:
             'projectState': {
                 'project': 'project.name',
                 'business': 'project.business.name',
+            },
+            'timeline': {
+                'project': 'project.name',
+                'status': 'type',
+                'assignee': 'user.name',
+                'created_day': 'timestamp',
+                'updated_day': 'timestamp',
             },
         }
         entity_map = mapping.get(primary_entity, {})
