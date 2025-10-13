@@ -354,7 +354,8 @@ class LLMIntentParser:
             "- Work items belong to projects, cycles, and modules\n"
             "- Work items are assigned to team members\n"
             "- Projects contain cycles and modules\n"
-            "- Cycles and modules belong to projects\n\n"
+            "- Cycles and modules belong to projects\n"
+            "- Timeline events reference a project (and optionally a work item) and include: type, fieldChanged, message, commentText, oldValue/newValue, user.name (actor), timestamp\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -374,7 +375,8 @@ class LLMIntentParser:
             "- visibility: PUBLIC|PRIVATE|ARCHIVED (for pages)\n"
             "- project_name, cycle_name, assignee_name, module_name\n"
             "- createdBy_name: (creator names)\n"
-            "- label: (work item labels)\n\n"
+            "- label: (work item labels)\n"
+            "- (timeline) type, fieldChanged, actor_name (user.name), work_item_title (workItemTitle), timestamp_from/timestamp_to/timestamp_within\n\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -484,7 +486,10 @@ class LLMIntentParser:
             "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
             "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
             "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
-            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n\n"
+            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
+            "- 'recent changes for Simpo Tech' → {\"primary_entity\": \"timeline\", \"filters\": {\"project_name\": \"Simpo Tech\", \"timestamp_within\": \"last_week\"}}\n"
+            "- 'who changed state to Done' → {\"primary_entity\": \"timeline\", \"filters\": {\"fieldChanged\": \"State\", \"newValue\": \"Done\"}}\n"
+            "- 'time logged today' → {\"primary_entity\": \"timeline\", \"filters\": {\"type\": \"TIME_LOGGED\", \"timestamp_within\": \"today\"}}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
