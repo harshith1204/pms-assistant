@@ -367,6 +367,7 @@ CHUNKING_CONFIG = {
         "overlap_words": 40,
         "min_words_to_chunk": 220,
     },
+    # timeline intentionally excluded from RAG indexing to avoid bulky data
 }
 
 # For more aggressive chunking (more multi-chunk documents), use:
@@ -1016,6 +1017,7 @@ def index_modules_to_qdrant():
     except Exception as e:
         print(f"❌ Error during module indexing: {e}")
         return {"status": "error", "message": str(e)}
+
 
 # ------------------ Usage ------------------
 if __name__ == "__main__":
