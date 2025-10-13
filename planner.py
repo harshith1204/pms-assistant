@@ -1898,6 +1898,9 @@ class PipelineGenerator:
             # which: 'created' | 'updated'
             if entity == 'page':
                 return 'createdAt' if which == 'created' else 'updatedAt'
+            if entity == 'timeline':
+                # timeline stores a single 'timestamp' field for event time
+                return 'timestamp'
             # Default to *TimeStamp for other entities
             return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
 
@@ -1983,8 +1986,12 @@ class PipelineGenerator:
                 'project': 'project.name',
                 'status': 'type',
                 'assignee': 'user.name',
-                'created_day': 'timestamp',
-                'updated_day': 'timestamp',
+                'created_day': bucket_expr('timeline', 'created', 'day'),
+                'created_week': bucket_expr('timeline', 'created', 'week'),
+                'created_month': bucket_expr('timeline', 'created', 'month'),
+                'updated_day': bucket_expr('timeline', 'updated', 'day'),
+                'updated_week': bucket_expr('timeline', 'updated', 'week'),
+                'updated_month': bucket_expr('timeline', 'updated', 'month'),
             },
         }
         entity_map = mapping.get(primary_entity, {})
