@@ -43,7 +43,9 @@ BUSINESS_UUID: str | None = os.getenv("BUSINESS_UUID")
 ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
 
 # Collections that carry a direct business reference at path 'business._id'
-COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page"}
+# Collections that directly embed business reference and can be filtered via 'business._id'
+# Include timeline since it carries 'business._id' on each event
+COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page", "timeline"}
 
 def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
     """Convert canonical UUID string to Mongo Binary subtype 3 (legacy UUID).

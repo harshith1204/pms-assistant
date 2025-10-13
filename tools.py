@@ -39,6 +39,7 @@ CONTENT_TYPE_DEFAULT_LIMITS: Dict[str, int] = {
     "project": 6,
     "cycle": 6,
     "module": 6,
+    "timeline": 15,
 }
 
 # Fallback when content_type is unknown or not provided
@@ -54,6 +55,7 @@ CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
     "project": 2,
     "cycle": 2,
     "module": 2,
+    "timeline": 3,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
@@ -62,6 +64,7 @@ CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
     "project": False,
     "cycle": False,
     "module": False,
+    "timeline": False,
 }
 
 CONTENT_TYPE_MIN_SCORE: Dict[str, float] = {
@@ -70,6 +73,7 @@ CONTENT_TYPE_MIN_SCORE: Dict[str, float] = {
     "project": 0.55,
     "cycle": 0.55,
     "module": 0.55,
+    "timeline": 0.45,
 }
 
 
@@ -396,6 +400,20 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
             if slim:
                 out["subStates"] = slim
 
+    elif collection == "timeline":
+        # Surface friendly names and key attributes
+        set_name("project", "projectName")
+        # user is actor
+        set_name("user", "actorName")
+        # include work item title if present
+        if isinstance(doc.get("workItemTitle"), str):
+            out["workItemTitle"] = doc["workItemTitle"]
+        # event type and field changed are useful summarizers
+        if isinstance(doc.get("type"), str):
+            out["timelineType"] = doc["type"]
+        if isinstance(doc.get("fieldChanged"), str):
+            out["fieldChanged"] = doc["fieldChanged"]
+
     # Drop empty/None values and metadata keys
     out = {k: v for k, v in out.items() if v not in (None, "", [], {}) and k != "_class"}
     return out
@@ -435,7 +453,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     Use this ONLY when the user asks for authoritative data that must come from
     MongoDB (counts, lists, filters, group-by, breakdowns, state/assignee/project details)
     across collections: `project`, `workItem`, `cycle`, `module`, `members`,
-    `page`, `projectState`.
+    `page`, `projectState`, `timeline`.
 
     Do NOT use this for:
     - Free-form content questions (use `rag_search`).

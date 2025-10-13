@@ -367,6 +367,11 @@ CHUNKING_CONFIG = {
         "overlap_words": 40,
         "min_words_to_chunk": 220,
     },
+    "timeline": {
+        "max_words": 120,
+        "overlap_words": 20,
+        "min_words_to_chunk": 160,
+    },
 }
 
 # For more aggressive chunking (more multi-chunk documents), use:
@@ -1017,6 +1022,161 @@ def index_modules_to_qdrant():
         print(f"❌ Error during module indexing: {e}")
         return {"status": "error", "message": str(e)}
 
+def _timeline_event_to_text(doc: dict) -> tuple[str, str]:
+    """Build a concise title and content text for a timeline event."""
+    work_item_title = (doc.get("workItemTitle") or "").strip()
+    event_type = (doc.get("type") or "").strip()
+    title = " ".join([t for t in [work_item_title, event_type.title()] if t]).strip() or "Timeline Event"
+
+    parts: list[str] = []
+    field_changed = (doc.get("fieldChanged") or "").strip()
+    msg = (doc.get("message") or "").strip()
+    comment = (doc.get("commentText") or "").strip()
+    old_val = (doc.get("oldValue") or "").strip()
+    new_val = (doc.get("newValue") or "").strip()
+    user_name = ((doc.get("user") or {}).get("name") or "").strip()
+    project_name = ((doc.get("project") or {}).get("name") or "").strip()
+    business_name = ((doc.get("business") or {}).get("name") or "").strip()
+    if user_name:
+        parts.append(user_name)
+    if field_changed:
+        parts.append(field_changed)
+    if msg:
+        parts.append(msg)
+    if comment:
+        parts.append(comment)
+    if old_val or new_val:
+        arrow = " → " if old_val and new_val else ""
+        parts.append(f"{old_val}{arrow}{new_val}".strip())
+    if project_name:
+        parts.append(f"Project: {project_name}")
+    if business_name:
+        parts.append(f"Business: {business_name}")
+    text = ". ".join([p for p in parts if p])
+    return title, text
+
+def index_timelines_to_qdrant():
+    try:
+        print("🔄 Indexing timeline events to Qdrant...")
+
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
+        # Ensure payload index exists
+        try:
+            qdrant_client.create_payload_index(
+                collection_name=QDRANT_COLLECTION,
+                field_name="content_type",
+                field_schema=PayloadSchemaType.KEYWORD
+            )
+            print("✅ Ensured payload index on 'content_type'")
+        except Exception as e:
+            if "already exists" in str(e):
+                print("ℹ️ Index on 'content_type' already exists, skipping.")
+            else:
+                print(f"⚠️ Failed to ensure index: {e}")
+
+        # Pull from MongoDB 'timeline' collection via raw client
+        from qdrant.dbconnection import db as _db
+        timeline_collection = _db["timeline"]
+        documents = timeline_collection.find({}, {
+            "_id": 1, "type": 1, "fieldChanged": 1, "message": 1, "commentText": 1,
+            "oldValue": 1, "newValue": 1, "timestamp": 1,
+            "user": 1, "business": 1, "project": 1,
+            "workItemId": 1, "workItemTitle": 1
+        })
+
+        points = []
+        splade = get_splade_encoder()
+
+        for doc in documents:
+            try:
+                mongo_id = normalize_mongo_id(doc.get("_id")) if doc.get("_id") is not None else None
+                title, event_text = _timeline_event_to_text(doc)
+                combined_text = " ".join([t for t in [title, event_text] if t]).strip()
+                if not combined_text:
+                    fallback = " ".join([str(doc.get("type", "")), str(doc.get("fieldChanged", ""))]).strip()
+                    combined_text = fallback or "Timeline event"
+
+                metadata = {}
+                if doc.get("workItemTitle"):
+                    metadata["work_item_title"] = doc["workItemTitle"]
+                if doc.get("workItemId") is not None:
+                    try:
+                        metadata["work_item_id"] = normalize_mongo_id(doc.get("workItemId"))
+                    except Exception:
+                        pass
+                if isinstance(doc.get("project"), dict):
+                    metadata["project_name"] = doc["project"].get("name")
+                    if doc["project"].get("_id") is not None:
+                        try:
+                            metadata["project_id"] = normalize_mongo_id(doc["project"].get("_id"))
+                        except Exception:
+                            pass
+                if isinstance(doc.get("business"), dict):
+                    metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
+                if isinstance(doc.get("user"), dict):
+                    metadata["actor_name"] = doc["user"].get("name")
+                if doc.get("type"):
+                    metadata["timeline_type"] = doc.get("type")
+                if doc.get("fieldChanged"):
+                    metadata["field_changed"] = doc.get("fieldChanged")
+                if doc.get("timestamp"):
+                    metadata["updatedAt"] = doc.get("timestamp")
+
+                chunks = get_chunks_for_content(combined_text, "timeline")
+                if not chunks:
+                    chunks = [combined_text]
+
+                word_count = len(combined_text.split()) if combined_text else 0
+                _stats.record("timeline", mongo_id or "unknown", title, len(chunks), word_count)
+
+                for idx, chunk in enumerate(chunks):
+                    vector = embedder.encode(chunk).tolist()
+                    full_text = f"{title} {chunk}".strip()
+                    splade_vec = splade.encode_text(full_text)
+                    payload = {
+                        "mongo_id": mongo_id or f"timeline:{title}:{idx}",
+                        "parent_id": mongo_id or f"timeline:{title}",
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": title,
+                        "content": chunk,
+                        "full_text": full_text,
+                        "content_type": "timeline"
+                    }
+                    payload.update({k: v for k, v in metadata.items() if v is not None})
+
+                    point_kwargs = {
+                        "id": point_id_from_seed(f"{payload['parent_id']}/timeline/{idx}"),
+                        "vector": {"dense": vector},
+                        "payload": payload,
+                    }
+                    if splade_vec.get("indices"):
+                        point_kwargs["vector"]["sparse"] = SparseVector(
+                            indices=splade_vec["indices"], values=splade_vec["values"]
+                        )
+                    point = PointStruct(**point_kwargs)
+                    points.append(point)
+            except Exception as e:
+                print(f"⚠️ Skipping timeline doc due to error: {e}")
+
+        if not points:
+            print("ℹ️ No timeline events to index.")
+            return {"status": "warning", "message": "No timeline events to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        print(f"✅ Indexed {total_indexed} timeline event chunks to Qdrant.")
+        return {"status": "success", "indexed_documents": total_indexed}
+
+    except Exception as e:
+        print(f"❌ Error during timeline indexing: {e}")
+        return {"status": "error", "message": str(e)}
+
 # ------------------ Usage ------------------
 if __name__ == "__main__":
     print("=" * 80)
@@ -1039,6 +1199,7 @@ if __name__ == "__main__":
     index_projects_to_qdrant()
     index_cycles_to_qdrant()
     index_modules_to_qdrant()
+    index_timelines_to_qdrant()
     
     # Print comprehensive statistics
     _stats.print_summary()
