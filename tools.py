@@ -39,7 +39,6 @@ CONTENT_TYPE_DEFAULT_LIMITS: Dict[str, int] = {
     "project": 6,
     "cycle": 6,
     "module": 6,
-    "timeline": 15,
 }
 
 # Fallback when content_type is unknown or not provided
@@ -55,7 +54,6 @@ CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
     "project": 2,
     "cycle": 2,
     "module": 2,
-    "timeline": 3,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
@@ -64,7 +62,6 @@ CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
     "project": False,
     "cycle": False,
     "module": False,
-    "timeline": False,
 }
 
 CONTENT_TYPE_MIN_SCORE: Dict[str, float] = {
@@ -73,7 +70,6 @@ CONTENT_TYPE_MIN_SCORE: Dict[str, float] = {
     "project": 0.55,
     "cycle": 0.55,
     "module": 0.55,
-    "timeline": 0.45,
 }
 
 
