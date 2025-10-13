@@ -981,6 +981,7 @@ async def rag_search(
 
 # Global websocket registry for content generation
 _GENERATION_WEBSOCKET = None
+_GENERATION_CONVERSATION_ID: Optional[str] = None
 
 def set_generation_websocket(websocket):
     """Set the websocket connection for direct content streaming."""
@@ -990,6 +991,15 @@ def set_generation_websocket(websocket):
 def get_generation_websocket():
     """Get the current websocket connection."""
     return _GENERATION_WEBSOCKET
+
+def set_generation_conversation_id(conversation_id: Optional[str]):
+    """Bind current conversation id for persisting generated content."""
+    global _GENERATION_CONVERSATION_ID
+    _GENERATION_CONVERSATION_ID = conversation_id
+
+def get_generation_conversation_id() -> Optional[str]:
+    """Get current conversation id associated with generation."""
+    return _GENERATION_CONVERSATION_ID
 
 
 @tool
@@ -1062,6 +1072,24 @@ async def generate_content(
                     })
                 except Exception as e:
                     print(f"Warning: Could not send to websocket: {e}")
+            # Also persist to conversations so it reloads later
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import append_message  # local import to avoid import cycles
+                    title = (result.get("title") or "Work Item").strip()
+                    description = (result.get("description") or "").strip()
+                    await append_message(conv_id, {
+                        "type": "assistant",
+                        "content": "",
+                        "workItem": {
+                            "title": title,
+                            "description": description,
+                        },
+                    })
+            except Exception as e:
+                # Non-fatal; continue
+                print(f"Warning: failed to persist generated work item to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1112,6 +1140,28 @@ async def generate_content(
                     })
                 except Exception as e:
                     print(f"Warning: Could not send to websocket: {e}")
+            # Also persist to conversations so it reloads later
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import append_message  # local import to avoid import cycles
+                    # Choose a title: prefer provided template title, fallback to 'Generated Page'
+                    title = (template_title or "Generated Page").strip()
+                    # Ensure blocks shape
+                    blocks_payload = result if isinstance(result, dict) else {"blocks": []}
+                    if "blocks" not in blocks_payload or not isinstance(blocks_payload["blocks"], list):
+                        blocks_payload = {"blocks": []}
+                    await append_message(conv_id, {
+                        "type": "assistant",
+                        "content": "",
+                        "page": {
+                            "title": title,
+                            "blocks": blocks_payload,
+                        },
+                    })
+            except Exception as e:
+                # Non-fatal; continue
+                print(f"Warning: failed to persist generated page to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
