@@ -158,6 +158,23 @@ REL: Dict[str, Dict[str, dict]] = {
             "as": "project",
             "many": False
         }
+    },
+    # Timeline events reference business, project, and workItem by embedded subdocs/ids
+    "timeline": {
+        "project": {
+            "target": "project",
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "projectDoc",
+            "many": False
+        },
+        "workItem": {
+            "target": "workItem",
+            "localField": "workItemId",
+            "foreignField": "_id",
+            "as": "workItemDoc",
+            "many": False
+        }
     }
 }
 
@@ -229,6 +246,14 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
     "projectState": {
         "_id", "projectId", "name", "icon",
         "subStates.name", "subStates.order"
+    },
+    "timeline": {
+        "_id", "type", "fieldChanged", "message", "commentText",
+        "oldValue", "newValue", "timestamp",
+        "workItemId", "workItemTitle",
+        "project._id", "project.name",
+        "business._id", "business.name",
+        "user._id", "user.name",
     }
 }
 
@@ -241,6 +266,7 @@ ALIASES: Dict[str, Dict[str, str]] = {
     "page": {},
     "cycle": {},
     "projectState": {},
+    "timeline": {"actor_name": "user.name", "work_item_title": "workItemTitle"},
 }
 
 def resolve_field_alias(collection: str, field: str) -> str:
