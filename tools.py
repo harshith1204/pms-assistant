@@ -396,6 +396,20 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
             if slim:
                 out["subStates"] = slim
 
+    elif collection == "timeline":
+        # Surface friendly names and key attributes
+        set_name("project", "projectName")
+        # user is actor
+        set_name("user", "actorName")
+        # include work item title if present
+        if isinstance(doc.get("workItemTitle"), str):
+            out["workItemTitle"] = doc["workItemTitle"]
+        # event type and field changed are useful summarizers
+        if isinstance(doc.get("type"), str):
+            out["timelineType"] = doc["type"]
+        if isinstance(doc.get("fieldChanged"), str):
+            out["fieldChanged"] = doc["fieldChanged"]
+
     # Drop empty/None values and metadata keys
     out = {k: v for k, v in out.items() if v not in (None, "", [], {}) and k != "_class"}
     return out
@@ -435,7 +449,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     Use this ONLY when the user asks for authoritative data that must come from
     MongoDB (counts, lists, filters, group-by, breakdowns, state/assignee/project details)
     across collections: `project`, `workItem`, `cycle`, `module`, `members`,
-    `page`, `projectState`.
+    `page`, `projectState`, `timeline`.
 
     Do NOT use this for:
     - Free-form content questions (use `rag_search`).
@@ -639,6 +653,49 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         subs = entity.get("subStates")
                         sub_count = len(subs) if isinstance(subs, list) else 0
                         return f"• {name or 'State'} — icon={icon or 'N/A'}, substates={sub_count}"
+                    if e == "timeline":
+                        work_item_title = entity.get("workItemTitle") or "Unknown Work Item"
+                        event_type = entity.get("type") or "Unknown"
+                        user_name = get_nested(entity, "user.name") or "Unknown User"
+                        message = entity.get("message") or ""
+                        field_changed = entity.get("fieldChanged")
+                        timestamp = entity.get("timestamp")
+
+                        # Format timestamp if available
+                        time_str = ""
+                        if timestamp:
+                            try:
+                                # Handle MongoDB date format
+                                if isinstance(timestamp, dict) and "$date" in timestamp:
+                                    dt = timestamp["$date"]
+                                    if isinstance(dt, str):
+                                        # Parse ISO string
+                                        from datetime import datetime
+                                        dt_obj = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+                                        time_str = f" at {dt_obj.strftime('%Y-%m-%d %H:%M')}"
+                            except:
+                                time_str = ""
+
+                        # Create a concise description
+                        if event_type == "TIME_LOGGED":
+                            new_value = entity.get("newValue", "")
+                            comment = entity.get("commentText", "")
+                            desc = f"time logged: {new_value}"
+                            if comment:
+                                desc += f" ({comment})"
+                        elif event_type == "STATE_CHANGED":
+                            old_val = entity.get("oldValue", "")
+                            new_val = entity.get("newValue", "")
+                            field = field_changed or "State"
+                            desc = f"{field} changed from {old_val} to {new_val}"
+                        elif event_type == "CREATED":
+                            desc = "work item created"
+                        elif event_type == "UPDATED":
+                            desc = "work item updated"
+                        else:
+                            desc = message or f"{event_type.lower()} event"
+
+                        return f"• {truncate_str(work_item_title, 50)} — {desc} by {user_name}{time_str}"
                     # Default fallback
                     title = entity.get("title") or entity.get("name") or "Item"
                     return f"• {truncate_str(title, 80)}"
@@ -648,36 +705,60 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         return f"📊 RESULTS:\nTotal: {data[0]['total']}"
 
                     # Handle grouped/aggregated results
-                    if len(data) > 0 and isinstance(data[0], dict) and "count" in data[0]:
+                    if len(data) > 0 and isinstance(data[0], dict) and ("count" in data[0] or "totalMinutes" in data[0]):
                         response = "📊 RESULTS SUMMARY:\n"
+                        # Prefer minutes total when available, else use count
+                        has_minutes = any('totalMinutes' in item for item in data)
                         total_items = sum(item.get('count', 0) for item in data)
+                        total_minutes = sum(item.get('totalMinutes', 0) for item in data) if has_minutes else None
 
                         # Determine what type of grouping this is
                         first_item = data[0]
-                        group_keys = [k for k in first_item.keys() if k not in ['count', 'items']]
+                        group_keys = [k for k in first_item.keys() if k not in ['count', 'items', 'totalMinutes']]
 
                         if group_keys:
-                            response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
+                            if has_minutes and total_minutes is not None:
+                                response += f"Found {len(data)} groups grouped by {', '.join(group_keys)} (total {int(total_minutes)} min):\n\n"
+                            else:
+                                response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
 
                             # Sort by count (highest first) and show more groups
-                            sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
+                            if has_minutes:
+                                sorted_data = sorted(data, key=lambda x: x.get('totalMinutes', 0), reverse=True)
+                            else:
+                                sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
 
                             # Show all groups if max_items is None, otherwise limit
                             display_limit = len(sorted_data) if max_items is None else 15
                             for item in sorted_data[:display_limit]:
                                 group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
                                 group_label = ', '.join(group_values)
-                                count = item.get('count', 0)
-                                response += f"• {group_label}: {count} items\n"
+                                if has_minutes:
+                                    mins = int(item.get('totalMinutes', 0) or 0)
+                                    response += f"• {group_label}: {mins} min\n"
+                                else:
+                                    count = item.get('count', 0)
+                                    response += f"• {group_label}: {count} items\n"
 
                             if max_items is not None and len(data) > 15:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[15:])
-                                response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
+                                if has_minutes:
+                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[15:])
+                                    response += f"• ... and {len(data) - 15} other categories: {remaining} min\n"
+                                else:
+                                    remaining = sum(item.get('count', 0) for item in sorted_data[15:])
+                                    response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
                             elif max_items is None and len(data) > display_limit:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
-                                response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
+                                if has_minutes:
+                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[display_limit:])
+                                    response += f"• ... and {len(data) - display_limit} other categories: {remaining} min\n"
+                                else:
+                                    remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
+                                    response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
                         else:
-                            response += f"Found {total_items} items\n"
+                            if has_minutes and total_minutes is not None:
+                                response += f"Found total {int(total_minutes)} min\n"
+                            else:
+                                response += f"Found {total_items} items\n"
                         print(response)
                         return response
 
