@@ -68,6 +68,26 @@ All colors MUST be HSL.
     @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
   }
 
+  /* Editor.js specific styles */
+  .editor-container .ce-block__content,
+  .editor-container .ce-toolbar__content {
+    max-width: none;
+  }
+
+  .editor-container .ce-paragraph[data-placeholder]:empty::before {
+    color: hsl(var(--muted-foreground));
+    opacity: 0.6;
+  }
+
+  .editor-container .ce-toolbar__toggler {
+    color: hsl(var(--foreground));
+  }
+
+  .editor-container .ce-toolbar__settings-btn {
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+  }
+
   .animate-typing {
     animation: typing 0.05s steps(1) forwards;
   }
