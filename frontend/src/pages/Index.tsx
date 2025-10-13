@@ -247,6 +247,40 @@ const Index = () => {
       ]);
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
+    } else if (evt.type === "structured_response") {
+      // Handle structured response from agent
+      const data = (evt as any).data;
+      if (data && streamingAssistantIdRef.current) {
+        const id = streamingAssistantIdRef.current;
+        setMessages((prev) => prev.map((m) => {
+          if (m.id === id) {
+            // Convert structured data to internalActivity format
+            const bullets: string[] = [];
+            
+            // Add key points as bullets
+            if (data.keyPoints && Array.isArray(data.keyPoints)) {
+              bullets.push(...data.keyPoints);
+            }
+            
+            // Add next steps as bullets (prefixed)
+            if (data.nextSteps && Array.isArray(data.nextSteps)) {
+              bullets.push(...data.nextSteps.map((step: string) => `Next: ${step}`));
+            }
+            
+            // Update the message with structured data
+            return {
+              ...m,
+              internalActivity: {
+                summary: data.summary || "Response Summary",
+                bullets: bullets.length > 0 ? bullets : m.internalActivity?.bullets || [],
+                doneLabel: "Complete",
+                body: data.details || data.additionalContent || m.internalActivity?.body,
+              },
+            };
+          }
+          return m;
+        }));
+      }
     } else if (evt.type === "complete") {
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
