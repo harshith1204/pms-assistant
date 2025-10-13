@@ -191,6 +191,20 @@ class LLMIntentParser:
             "issues": "workItem",
             "tickets": "workItem",
             "ticket": "workItem",
+            # timeline synonyms
+            "timeline": "timeline",
+            "timelines": "timeline",
+            "history": "timeline",
+            "activity": "timeline",
+            "activities": "timeline",
+            "change": "timeline",
+            "changes": "timeline",
+            "event": "timeline",
+            "events": "timeline",
+            "log": "timeline",
+            "logs": "timeline",
+            "audit": "timeline",
+            "audits": "timeline",
         }
 
     def _is_placeholder(self, v) -> bool:
@@ -340,7 +354,8 @@ class LLMIntentParser:
             "- Work items belong to projects, cycles, and modules\n"
             "- Work items are assigned to team members\n"
             "- Projects contain cycles and modules\n"
-            "- Cycles and modules belong to projects\n\n"
+            "- Cycles and modules belong to projects\n"
+            "- Timeline events reference a project (and optionally a work item) and include: type, fieldChanged, message, commentText, oldValue/newValue, user.name (actor), timestamp\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -360,7 +375,8 @@ class LLMIntentParser:
             "- visibility: PUBLIC|PRIVATE|ARCHIVED (for pages)\n"
             "- project_name, cycle_name, assignee_name, module_name\n"
             "- createdBy_name: (creator names)\n"
-            "- label: (work item labels)\n\n"
+            "- label: (work item labels)\n"
+            "- (timeline) type, fieldChanged, actor_name (user.name), work_item_title (workItemTitle), timestamp_from/timestamp_to/timestamp_within\n\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -470,7 +486,10 @@ class LLMIntentParser:
             "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
             "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
             "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
-            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n\n"
+            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
+            "- 'recent changes for Simpo Tech' → {\"primary_entity\": \"timeline\", \"filters\": {\"project_name\": \"Simpo Tech\", \"timestamp_within\": \"last_week\"}}\n"
+            "- 'who changed state to Done' → {\"primary_entity\": \"timeline\", \"filters\": {\"fieldChanged\": \"State\", \"newValue\": \"Done\"}}\n"
+            "- 'time logged today' → {\"primary_entity\": \"timeline\", \"filters\": {\"type\": \"TIME_LOGGED\", \"timestamp_within\": \"today\"}}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -732,14 +751,33 @@ class LLMIntentParser:
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
             # Accept synonyms and normalize
-            key_map = {
-                "created": "createdTimeStamp",
-                "createdAt": "createdTimeStamp",
-                "created_time": "createdTimeStamp",
-                "time": "createdTimeStamp",
-                "date": "createdTimeStamp",
-                "timestamp": "createdTimeStamp",
-            }
+            if primary == "page":
+                key_map = {
+                    "created": "createdAt",
+                    "createdAt": "createdAt",
+                    "created_time": "createdAt",
+                    "time": "createdAt",
+                    "date": "createdAt",
+                    "timestamp": "updatedAt",
+                }
+            elif primary == "timeline":
+                key_map = {
+                    "created": "timestamp",
+                    "createdAt": "timestamp",
+                    "created_time": "timestamp",
+                    "time": "timestamp",
+                    "date": "timestamp",
+                    "timestamp": "timestamp",
+                }
+            else:
+                key_map = {
+                    "created": "createdTimeStamp",
+                    "createdAt": "createdTimeStamp",
+                    "created_time": "createdTimeStamp",
+                    "time": "createdTimeStamp",
+                    "date": "createdTimeStamp",
+                    "timestamp": "createdTimeStamp",
+                }
             norm_key = key_map.get(key, key)
 
             def _norm_dir(v: Any) -> Optional[int]:
@@ -754,7 +792,7 @@ class LLMIntentParser:
                 return None
 
             norm_dir = _norm_dir(val)
-            if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
+            if norm_key in {"createdTimeStamp", "createdAt", "updatedAt", "timestamp", "priority", "state", "status"} and norm_dir in (1, -1):
                 sort_order = {norm_key: norm_dir}
 
         # Limit - intelligent handling based on query type
@@ -811,7 +849,15 @@ class LLMIntentParser:
         if not sort_order and not group_by and not wants_count:
             inferred_sort = self._infer_sort_order_from_query(original_query or "")
             if inferred_sort:
-                sort_order = inferred_sort
+                # If timeline → map createdTimeStamp to timestamp
+                if primary == "timeline" and "createdTimeStamp" in inferred_sort:
+                    dirv = inferred_sort.get("createdTimeStamp", -1)
+                    sort_order = {"timestamp": dirv}
+                elif primary == "page" and "createdTimeStamp" in inferred_sort:
+                    dirv = inferred_sort.get("createdTimeStamp", -1)
+                    sort_order = {"createdAt": dirv}
+                else:
+                    sort_order = inferred_sort
 
         # Fetch one heuristic
         fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
@@ -1041,6 +1087,10 @@ class PipelineGenerator:
             'projectState': {
                 'project': 'project',
                 'business': 'project',
+            },
+            'timeline': {
+                'project': 'project',
+                'workItem': 'workItem',
             },
         }.get(collection, {})
 
@@ -1641,6 +1691,33 @@ class PipelineGenerator:
             if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
                 primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
 
+        elif collection == "timeline":
+            # timeline supports type/status-like filtering via 'type'
+            if 'status' in filters and isinstance(filters['status'], str):
+                primary_filters['type'] = {'$regex': f"^{filters['status']}$", '$options': 'i'}
+            if 'type' in filters and isinstance(filters['type'], str):
+                primary_filters['type'] = {'$regex': filters['type'], '$options': 'i'}
+            if 'fieldChanged' in filters and isinstance(filters['fieldChanged'], str):
+                primary_filters['fieldChanged'] = {'$regex': filters['fieldChanged'], '$options': 'i'}
+            if 'message' in filters and isinstance(filters['message'], str):
+                primary_filters['message'] = {'$regex': filters['message'], '$options': 'i'}
+            if 'commentText' in filters and isinstance(filters['commentText'], str):
+                primary_filters['commentText'] = {'$regex': filters['commentText'], '$options': 'i'}
+            if 'oldValue' in filters and isinstance(filters['oldValue'], str):
+                primary_filters['oldValue'] = {'$regex': filters['oldValue'], '$options': 'i'}
+            if 'newValue' in filters and isinstance(filters['newValue'], str):
+                primary_filters['newValue'] = {'$regex': filters['newValue'], '$options': 'i'}
+            if 'actor_name' in filters and isinstance(filters['actor_name'], str):
+                primary_filters['user.name'] = {'$regex': filters['actor_name'], '$options': 'i'}
+            if 'work_item_title' in filters and isinstance(filters['work_item_title'], str):
+                primary_filters['workItemTitle'] = {'$regex': filters['work_item_title'], '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            # date range on 'timestamp'
+            _apply_date_range(primary_filters, 'timestamp', filters)
+
         return primary_filters
 
     def _extract_secondary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
@@ -1792,6 +1869,11 @@ class PipelineGenerator:
             "projectState": [
                 "name", "subStates.name", "subStates.order"
             ],
+            "timeline": [
+                "type", "fieldChanged", "message", "commentText",
+                "oldValue", "newValue", "timestamp",
+                "workItemTitle", "project.name", "business.name", "user.name"
+            ],
         }
 
         candidates = defaults_map.get(primary_entity, ["_id"])  # fallback _id
@@ -1821,6 +1903,9 @@ class PipelineGenerator:
             # which: 'created' | 'updated'
             if entity == 'page':
                 return 'createdAt' if which == 'created' else 'updatedAt'
+            if entity == 'timeline':
+                # timeline stores a single 'timestamp' field for event time
+                return 'timestamp'
             # Default to *TimeStamp for other entities
             return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
 
@@ -1901,6 +1986,17 @@ class PipelineGenerator:
             'projectState': {
                 'project': 'project.name',
                 'business': 'project.business.name',
+            },
+            'timeline': {
+                'project': 'project.name',
+                'status': 'type',
+                'assignee': 'user.name',
+                'created_day': bucket_expr('timeline', 'created', 'day'),
+                'created_week': bucket_expr('timeline', 'created', 'week'),
+                'created_month': bucket_expr('timeline', 'created', 'month'),
+                'updated_day': bucket_expr('timeline', 'updated', 'day'),
+                'updated_week': bucket_expr('timeline', 'updated', 'week'),
+                'updated_month': bucket_expr('timeline', 'updated', 'month'),
             },
         }
         entity_map = mapping.get(primary_entity, {})
