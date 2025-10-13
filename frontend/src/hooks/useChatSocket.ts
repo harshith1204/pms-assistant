@@ -3,16 +3,16 @@ import { API_WS_URL } from "@/config";
 
 export type ChatEvent =
   | { type: "connected"; client_id: string; timestamp: string }
-  | { type: "user_message"; content: string; conversation_id: string; timestamp: string }
-  | { type: "llm_start"; timestamp: string }
-  | { type: "token"; content: string; timestamp: string }
-  | { type: "llm_end"; elapsed_time?: number; timestamp: string }
+  | { type: "user_message"; content: string; conversation_id: string; message_id?: string; timestamp: string }
+  | { type: "llm_start"; message_id?: string; timestamp: string }
+  | { type: "token"; content: string; message_id?: string; timestamp: string }
+  | { type: "llm_end"; message_id?: string; elapsed_time?: number; timestamp: string }
   | { type: "tool_start"; tool_name: string; input?: string; timestamp: string }
   | { type: "tool_end"; output?: string; output_preview?: string; hidden?: boolean; timestamp: string }
   | { type: "planner_error"; message: string; timestamp: string }
-  | { type: "agent_action"; text: string; step: number; timestamp: string }
+  | { type: "agent_action"; text: string; step: number; message_id?: string; timestamp: string }
   | { type: "content_generated"; content_type: "work_item" | "page"; data?: any; error?: string; success: boolean }
-  | { type: "complete"; conversation_id: string; timestamp: string }
+  | { type: "complete"; conversation_id: string; message_id?: string; timestamp: string }
   | { type: "pong"; timestamp: string }
   | { type: "error"; message: string; timestamp?: string }
   | { type: string; [k: string]: any };
@@ -21,6 +21,7 @@ export type SendMessagePayload = {
   message: string;
   conversation_id?: string | null;
   planner?: boolean;
+  message_id?: string; // stable id for the user message
 };
 
 type UseChatSocketOptions = {
@@ -112,6 +113,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
       message: payload.message,
       conversation_id: payload.conversation_id || undefined,
       planner: !!payload.planner,
+      message_id: payload.message_id || undefined,
     };
     try {
       wsRef.current.send(JSON.stringify(body));

@@ -143,6 +143,9 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{client_id}"
+            # Stable ids for correlating UI and DB entries
+            user_message_id = data.get("message_id") or str(uuid.uuid4())
+            assistant_message_id = str(uuid.uuid4())
             force_planner = data.get("planner", False)
 
             # Send user message acknowledgment
@@ -150,12 +153,14 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "type": "user_message",
                 "content": message,
                 "conversation_id": conversation_id,
+                "message_id": user_message_id,
                 "timestamp": datetime.now().isoformat()
             })
 
             # Persist user message to SimpoAssist.conversations
             try:
-                await save_user_message(conversation_id, message)
+                # Persist user message with provided id so reactions map correctly
+                await save_user_message(conversation_id, message, message_id=user_message_id)
             except Exception as e:
                 # Non-fatal: log to console, continue processing
                 print(f"Warning: failed to save user message: {e}")
@@ -217,7 +222,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         async for _ in mongodb_agent.run_streaming(
                             query=message,
                             websocket=websocket,
-                            conversation_id=conversation_id
+                            conversation_id=conversation_id,
+                            message_id=assistant_message_id,
                         ):
                             # The streaming is handled internally by the callback handler
                             # Just iterate through the generator to complete the streaming
@@ -231,6 +237,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             await websocket.send_json({
                 "type": "complete",
                 "conversation_id": conversation_id,
+                "message_id": assistant_message_id,
                 "timestamp": datetime.now().isoformat()
             })
 

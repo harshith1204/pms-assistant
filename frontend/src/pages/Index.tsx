@@ -155,22 +155,27 @@ const Index = () => {
     }
     if (evt.type === "llm_start") {
       // Start a new assistant streaming message if not present
-      if (!streamingAssistantIdRef.current) {
-        const id = `assistant-${Date.now()}`;
-        streamingAssistantIdRef.current = id;
-        setMessages((prev) => [
+      const incomingId = (evt as any).message_id as string | undefined;
+      const id = incomingId || streamingAssistantIdRef.current || `assistant-${Date.now()}`;
+      streamingAssistantIdRef.current = id;
+      // If we already created this message, skip pushing a duplicate
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === id)) return prev;
+        return [
           ...prev,
           { id, role: "assistant", content: "", isStreaming: true, internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" } },
-        ]);
-      }
+        ];
+      });
     } else if (evt.type === "token") {
-      const id = streamingAssistantIdRef.current;
+      const tokenMsgId = (evt as any).message_id as string | undefined;
+      const id = tokenMsgId || streamingAssistantIdRef.current;
       if (!id) return;
       setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
     } else if (evt.type === "llm_end") {
       // Keep loader and streaming state until we receive the final 'complete' event
     } else if (evt.type === "agent_action") {
-      const id = streamingAssistantIdRef.current;
+      const actionMsgId = (evt as any).message_id as string | undefined;
+      const id = actionMsgId || streamingAssistantIdRef.current;
       if (!id) return;
       setMessages((prev) => prev.map((m) => (
         m.id === id
@@ -249,7 +254,15 @@ const Index = () => {
       streamingAssistantIdRef.current = null;
     } else if (evt.type === "complete") {
       setIsLoading(false);
-      streamingAssistantIdRef.current = null;
+      // Prefer server-provided message id to close out the correct message
+      const completedId = (evt as any).message_id as string | undefined;
+      if (completedId) {
+        streamingAssistantIdRef.current = null;
+        // Mark message as not streaming if present
+        setMessages((prev) => prev.map((m) => (m.id === completedId ? { ...m, isStreaming: false } : m)));
+      } else {
+        streamingAssistantIdRef.current = null;
+      }
       // Refresh messages from server to get canonical IDs so reactions persist
       const convId = (evt as any).conversation_id || activeConversationId;
       if (convId) {
@@ -341,8 +354,8 @@ const Index = () => {
       setConversations((prev) => [newConversation, ...prev]);
     }
 
-    // Send to backend via WebSocket
-    const ok = send({ message: content, conversation_id: convId });
+    // Send to backend via WebSocket with stable id for correlation
+    const ok = send({ message: content, conversation_id: convId, message_id: userMessage.id });
     if (!ok) {
       // Fallback: show error and stop loading
       setMessages((prev) => [
