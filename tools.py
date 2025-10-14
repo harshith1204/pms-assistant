@@ -130,6 +130,8 @@ def filter_meaningful_content(data: Any) -> Any:
         'members', 'pages', 'projectStates', 'subStates', 'linkedCycle', 'linkedModule',
         # Date fields (but not timestamps)
         'startDate', 'endDate', 'joiningDate', 'createdAt', 'updatedAt',
+        # Estimate and work tracking
+        'estimate', 'estimateSystem', 'workLogs',
         # Count/aggregation results
         'total', 'count', 'group', 'items'
     }
@@ -327,7 +329,8 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
               "visibility", "access", "imageUrl", "icon",
               "favourite", "isFavourite", "isActive", "isArchived",
               "content", "displayBugNo", "projectDisplayId",
-              "startDate", "endDate", "createdAt", "updatedAt"]:
+              "startDate", "endDate", "createdAt", "updatedAt",
+              "estimate", "estimateSystem", "workLogs"]:
         if k in doc:
             out[k] = doc[k]
 

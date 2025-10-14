@@ -1200,6 +1200,9 @@ class PipelineGenerator:
                             "displayBugNo": "$displayBugNo",
                             "title": "$title",
                             "priority": "$priority",
+                            "estimate": "$estimate",
+                            "estimateSystem": "$estimateSystem",
+                            "workLogs": "$workLogs",
                         }
                     }
                 pipeline.append(group_stage)
