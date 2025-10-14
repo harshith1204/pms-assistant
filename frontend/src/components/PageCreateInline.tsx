@@ -412,24 +412,24 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
               <TabsTrigger value="preview" onClick={handlePreview}>Preview</TabsTrigger>
             </TabsList>
             <TabsContent value="edit" className="mt-4">
-          <div className="relative">
-                {!editorReady ? (
-                  <div className="border rounded-md bg-background min-h-[220px] max-h-[420px] overflow-auto flex items-center justify-center">
+              <div className="relative">
+                <div
+                  ref={editorContainerRef}
+                  className="border rounded-md bg-background min-h-[220px] max-h-[420px] overflow-auto editor-container"
+                  style={{
+                    padding: '16px',
+                    fontSize: '14px',
+                    lineHeight: '1.6',
+                    border: '1px solid hsl(var(--border))',
+                    backgroundColor: 'hsl(var(--background))',
+                    color: 'hsl(var(--foreground))',
+                  }}
+                  aria-busy={!editorReady}
+                />
+                {!editorReady && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-md bg-background/60 backdrop-blur-[1px]">
                     <div className="text-muted-foreground">Loading editor...</div>
                   </div>
-                ) : (
-                  <div
-                    ref={editorContainerRef}
-                    className="border rounded-md bg-background min-h-[220px] max-h-[420px] overflow-auto editor-container"
-                    style={{
-                      padding: '16px',
-                      fontSize: '14px',
-                      lineHeight: '1.6',
-                      border: '1px solid hsl(var(--border))',
-                      backgroundColor: 'hsl(var(--background))',
-                      color: 'hsl(var(--foreground))',
-                    }}
-                  />
                 )}
               </div>
             </TabsContent>
