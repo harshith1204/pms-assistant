@@ -8,6 +8,7 @@ import uvicorn
 from dotenv import load_dotenv
 from generate.router import router as generate_router
 from generate.dashboard_router import router as dashboard_router
+from generate.enhanced_dashboard_router import router as enhanced_dashboard_router
 
 # Load environment variables from .env file
 load_dotenv()
@@ -127,6 +128,7 @@ app.add_middleware(
 # Include generation-related API routes
 app.include_router(generate_router)
 app.include_router(dashboard_router)
+app.include_router(enhanced_dashboard_router)
 
 @app.get("/")
 async def root():
