@@ -16,6 +16,14 @@ import time
 from collections import defaultdict, deque
 import os
 
+# Import vector memory system
+try:
+    from qdrant.vector_memory import get_vector_memory, VectorMemorySystem
+    VECTOR_MEMORY_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️ Vector memory not available: {e}")
+    VECTOR_MEMORY_AVAILABLE = False
+
 
 import math
 
@@ -100,12 +108,14 @@ DEFAULT_SYSTEM_PROMPT = (
 class ConversationMemory:
     """Manages conversation history for maintaining context"""
 
-    def __init__(self, max_messages_per_conversation: int = 50):
+    def __init__(self, max_messages_per_conversation: int = 50, vector_memory: Optional['VectorMemorySystem'] = None):
         self.conversations: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_conversation))
         self.max_messages_per_conversation = max_messages_per_conversation
         # Rolling summary per conversation (compact)
         self.summaries: Dict[str, str] = {}
         self.turn_counters: Dict[str, int] = defaultdict(int)
+        # Vector memory for long-term context
+        self.vector_memory = vector_memory
 
     def add_message(self, conversation_id: str, message: BaseMessage):
         """Add a message to the conversation history"""
@@ -120,7 +130,7 @@ class ConversationMemory:
         if conversation_id in self.conversations:
             self.conversations[conversation_id].clear()
 
-    def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
+    def get_recent_context(self, conversation_id: str, max_tokens: int = 6000) -> List[BaseMessage]:
         """Get recent conversation context with a token budget and rolling summary."""
         messages = self.get_conversation_history(conversation_id)
 
@@ -157,10 +167,10 @@ class ConversationMemory:
     def register_turn(self, conversation_id: str) -> None:
         self.turn_counters[conversation_id] += 1
 
-    def should_update_summary(self, conversation_id: str, every_n_turns: int = 3) -> bool:
+    def should_update_summary(self, conversation_id: str, every_n_turns: int = 2) -> bool:
         return self.turn_counters[conversation_id] % every_n_turns == 0
 
-    async def update_summary_async(self, conversation_id: str, llm_for_summary) -> None:
+    async def update_summary_async(self, conversation_id: str, llm_for_summary, user_id: Optional[str] = None) -> None:
         """Update the rolling summary asynchronously to avoid latency in main path."""
         try:
             history = self.get_conversation_history(conversation_id)
@@ -175,12 +185,38 @@ class ConversationMemory:
             ] + recent + [HumanMessage(content="Produce condensed summary now.")]
             resp = await llm_for_summary.ainvoke(prompt)
             if getattr(resp, "content", None):
-                self.summaries[conversation_id] = str(resp.content)
+                summary = str(resp.content)
+                self.summaries[conversation_id] = summary
+                
+                # Store in vector memory for long-term context
+                if self.vector_memory and VECTOR_MEMORY_AVAILABLE:
+                    try:
+                        # Extract key entities from conversation
+                        full_text = " ".join([str(getattr(m, "content", "")) for m in history])
+                        entities = await self.vector_memory.extract_key_entities(full_text)
+                        
+                        # Calculate importance score
+                        importance = await self.vector_memory.calculate_importance_score(
+                            message_count=len(history),
+                            conversation_length_chars=len(full_text)
+                        )
+                        
+                        # Store summary in vector database
+                        await self.vector_memory.store_conversation_summary(
+                            conversation_id=conversation_id,
+                            summary=summary,
+                            key_entities=entities,
+                            user_id=user_id,
+                            message_count=len(history),
+                            importance_score=importance
+                        )
+                    except Exception as e:
+                        print(f"⚠️ Failed to store summary in vector memory: {e}")
         except Exception:
             # Best-effort; ignore failures
             pass
 
-# Global conversation memory instance
+# Global conversation memory instance (vector memory will be set after agent initialization)
 conversation_memory = ConversationMemory()
 
 
@@ -311,6 +347,87 @@ def _select_tools_for_query(user_query: str):
     if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
     return selected_tools, allowed_names
+
+
+async def _build_personalized_system_prompt(
+    base_prompt: str, 
+    personalization: Dict[str, Any],
+    query: str = "",
+    conversation_id: str = "",
+    user_id: str = "default"
+) -> str:
+    """Build a personalized system prompt by injecting user preferences and long-term context.
+    
+    Args:
+        base_prompt: The default system prompt
+        personalization: Dict with keys: rememberLongTermContext, longTermContext, responseTone, domainFocus
+        query: Current query for semantic search
+        conversation_id: Current conversation ID (to exclude from search)
+        user_id: User ID for filtering past conversations
+    
+    Returns:
+        Enhanced system prompt with user personalization and relevant past context
+    """
+    if not personalization or not personalization.get("rememberLongTermContext"):
+        return base_prompt
+    
+    # Start with base prompt
+    enhanced_prompt = base_prompt
+    
+    # Add relevant past context from vector memory (Phase 2)
+    if VECTOR_MEMORY_AVAILABLE and conversation_memory.vector_memory and query:
+        try:
+            relevant_context = await conversation_memory.vector_memory.get_relevant_context(
+                query=query,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                max_results=3
+            )
+            if relevant_context:
+                enhanced_prompt = relevant_context + "\n\n" + enhanced_prompt
+        except Exception as e:
+            print(f"⚠️ Failed to retrieve relevant context: {e}")
+    
+    # Add long-term context if provided
+    long_term_context = personalization.get("longTermContext", "").strip()
+    if long_term_context:
+        context_section = (
+            f"\n\nUSER LONG-TERM CONTEXT (remember and apply this):\n"
+            f"{long_term_context}\n"
+        )
+        enhanced_prompt = context_section + enhanced_prompt
+    
+    # Add response tone guidance
+    tone = personalization.get("responseTone", "professional")
+    tone_guidance = {
+        "professional": "Maintain a professional, business-focused tone.",
+        "friendly": "Use a friendly, conversational tone while remaining helpful.",
+        "concise": "Keep responses brief and to the point. Prioritize clarity over detail.",
+        "detailed": "Provide thorough, comprehensive responses with full explanations."
+    }
+    tone_instruction = tone_guidance.get(tone, tone_guidance["professional"])
+    
+    # Add domain focus
+    domain = personalization.get("domainFocus", "general")
+    domain_guidance = {
+        "product": "Focus on product management perspectives, user stories, and roadmap planning.",
+        "engineering": "Emphasize technical implementation, architecture, and development practices.",
+        "design": "Highlight user experience, design patterns, and interface considerations.",
+        "marketing": "Focus on positioning, messaging, and go-to-market strategies.",
+        "general": "Provide balanced insights across all domains."
+    }
+    domain_instruction = domain_guidance.get(domain, domain_guidance["general"])
+    
+    # Prepend personalization instructions
+    personalization_header = (
+        f"PERSONALIZATION SETTINGS:\n"
+        f"- Response Tone: {tone_instruction}\n"
+        f"- Domain Focus: {domain_instruction}\n"
+    )
+    
+    enhanced_prompt = personalization_header + enhanced_prompt
+    
+    return enhanced_prompt
 
 
 class PhoenixCallbackHandler(AsyncCallbackHandler):
@@ -507,12 +624,32 @@ class MongoDBAgent:
             return tool_message, True
 
     async def connect(self):
-        """Connect to MongoDB MCP server"""
+        """Connect to MongoDB MCP server and initialize vector memory"""
         # Tracing initialization removed - method does not exist
         span = None
         try:
             await mongodb_tools.connect()
             self.connected = True
+            
+            # Initialize vector memory for long-term context
+            if VECTOR_MEMORY_AVAILABLE:
+                try:
+                    from qdrant.dbconnection import qdrant_client
+                    from qdrant.encoder import SentenceTransformerEncoder
+                    
+                    # Get embedding model
+                    embedding_model = SentenceTransformerEncoder()
+                    
+                    # Initialize vector memory
+                    vector_memory = get_vector_memory(qdrant_client, embedding_model)
+                    
+                    # Set vector memory in conversation memory
+                    conversation_memory.vector_memory = vector_memory
+                    
+                    print("✅ Vector memory initialized for long-term context")
+                except Exception as e:
+                    print(f"⚠️ Failed to initialize vector memory: {e}")
+            
             if span:
                 pass
             print("MongoDB Agent connected successfully!")
@@ -729,10 +866,11 @@ class MongoDBAgent:
             if last_response is not None:
                 # Register turn and update summary if needed
                 conversation_memory.register_turn(conversation_id)
-                if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                if conversation_memory.should_update_summary(conversation_id, every_n_turns=2):
                     try:
+                        user_id = personalization.get("user_id", "default") if personalization else "default"
                         asyncio.create_task(
-                            conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                            conversation_memory.update_summary_async(conversation_id, self.llm_base, user_id)
                         )
                     except Exception as e:
                         print(f"Warning: Failed to update summary: {e}")
@@ -742,8 +880,8 @@ class MongoDBAgent:
         except Exception as e:
             return f"Error running agent: {str(e)}"
 
-    async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """Run the agent with streaming support and conversation context"""
+    async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None, personalization: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+        """Run the agent with streaming support, conversation context, and personalization"""
         if not self.connected:
             await self.connect()
 
@@ -770,10 +908,21 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
-                # Build messages with optional system instruction
+                # Build personalized system prompt with relevant past context
+                system_prompt = self.system_prompt
+                if personalization:
+                    system_prompt = await _build_personalized_system_prompt(
+                        base_prompt=self.system_prompt,
+                        personalization=personalization,
+                        query=query,
+                        conversation_id=conversation_id,
+                        user_id=personalization.get("user_id", "default")
+                    )
+
+                # Build messages with personalized system instruction
                 messages: List[BaseMessage] = []
-                if self.system_prompt:
-                    messages.append(SystemMessage(content=self.system_prompt))
+                if system_prompt:
+                    messages.append(SystemMessage(content=system_prompt))
 
                 messages.extend(conversation_context)
 
@@ -960,10 +1109,11 @@ class MongoDBAgent:
                 if last_response is not None:
                     # Register turn and update summary if needed
                     conversation_memory.register_turn(conversation_id)
-                    if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                    if conversation_memory.should_update_summary(conversation_id, every_n_turns=2):
                         try:
+                            user_id = personalization.get("user_id", "default") if personalization else "default"
                             asyncio.create_task(
-                                conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                                conversation_memory.update_summary_async(conversation_id, self.llm_base, user_id)
                             )
                         except Exception as e:
                             print(f"Warning: Failed to update summary: {e}")

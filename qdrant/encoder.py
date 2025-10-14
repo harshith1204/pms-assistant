@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 """
-Minimal SPLADE encoder utility.
+Encoder utilities for Qdrant vector operations.
 
-Provides a lightweight, cached interface to compute sparse vectors
-usable with Qdrant's sparse vectors API.
-
-Dependencies: transformers, torch
-Model: naver/splade-cocondenser-ensembledistil (masked LM head)
+Provides:
+1. SPLADE encoder for sparse vectors
+2. SentenceTransformer encoder for dense vectors
 """
 
 from typing import Dict, List, Tuple
 import threading
+import numpy as np
 
 
 _encoder_singleton_lock = threading.Lock()
 _encoder_singleton: "SpladeEncoder | None" = None
+_sentence_encoder_lock = threading.Lock()
+_sentence_encoder: "SentenceTransformerEncoder | None" = None
 
 
 class SpladeEncoder:
@@ -80,4 +81,61 @@ def get_splade_encoder() -> SpladeEncoder:
         if _encoder_singleton is None:
             _encoder_singleton = SpladeEncoder()
         return _encoder_singleton
+
+
+class SentenceTransformerEncoder:
+    """Dense vector encoder using SentenceTransformers."""
+    
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
+        """
+        Initialize the sentence transformer encoder.
+        
+        Args:
+            model_name: HuggingFace model name for sentence transformers
+        """
+        from sentence_transformers import SentenceTransformer
+        
+        self.model_name = model_name
+        self.model = SentenceTransformer(model_name)
+        print(f"✅ Loaded SentenceTransformer model: {model_name}")
+    
+    def encode(self, text: str | List[str]) -> np.ndarray:
+        """
+        Encode text to dense vector(s).
+        
+        Args:
+            text: Single text string or list of strings
+        
+        Returns:
+            numpy array of embeddings
+        """
+        if not text:
+            # Return zero vector for empty text
+            return np.zeros(768)
+        
+        return self.model.encode(text, convert_to_numpy=True)
+    
+    def encode_batch(self, texts: List[str], batch_size: int = 32) -> np.ndarray:
+        """
+        Encode multiple texts efficiently in batches.
+        
+        Args:
+            texts: List of text strings
+            batch_size: Batch size for encoding
+        
+        Returns:
+            numpy array of embeddings
+        """
+        return self.model.encode(texts, batch_size=batch_size, convert_to_numpy=True)
+
+
+def get_sentence_encoder(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> SentenceTransformerEncoder:
+    """Get or create the global sentence encoder instance"""
+    global _sentence_encoder
+    if _sentence_encoder is not None:
+        return _sentence_encoder
+    with _sentence_encoder_lock:
+        if _sentence_encoder is None:
+            _sentence_encoder = SentenceTransformerEncoder(model_name)
+        return _sentence_encoder
 

@@ -12,6 +12,7 @@ import { getConversations, getConversationMessages, reactToMessage } from "@/api
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { usePersonalization } from "@/context/PersonalizationContext";
 
 interface Message {
   id: string;
@@ -46,6 +47,7 @@ interface Conversation {
 }
 
 const Index = () => {
+  const { settings } = usePersonalization();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -341,8 +343,17 @@ const Index = () => {
       setConversations((prev) => [newConversation, ...prev]);
     }
 
-    // Send to backend via WebSocket
-    const ok = send({ message: content, conversation_id: convId });
+    // Send to backend via WebSocket with personalization settings
+    const ok = send({ 
+      message: content, 
+      conversation_id: convId,
+      personalization: settings.rememberLongTermContext ? {
+        rememberLongTermContext: settings.rememberLongTermContext,
+        longTermContext: settings.longTermContext,
+        responseTone: settings.responseTone,
+        domainFocus: settings.domainFocus,
+      } : undefined
+    });
     if (!ok) {
       // Fallback: show error and stop loading
       setMessages((prev) => [

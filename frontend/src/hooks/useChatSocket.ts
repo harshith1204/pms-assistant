@@ -21,6 +21,12 @@ export type SendMessagePayload = {
   message: string;
   conversation_id?: string | null;
   planner?: boolean;
+  personalization?: {
+    rememberLongTermContext?: boolean;
+    longTermContext?: string;
+    responseTone?: string;
+    domainFocus?: string;
+  };
 };
 
 type UseChatSocketOptions = {
@@ -112,6 +118,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
       message: payload.message,
       conversation_id: payload.conversation_id || undefined,
       planner: !!payload.planner,
+      personalization: payload.personalization || undefined,
     };
     try {
       wsRef.current.send(JSON.stringify(body));

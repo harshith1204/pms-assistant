@@ -144,6 +144,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{client_id}"
             force_planner = data.get("planner", False)
+            personalization = data.get("personalization", {})
 
             # Send user message acknowledgment
             await websocket.send_json({
@@ -217,7 +218,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         async for _ in mongodb_agent.run_streaming(
                             query=message,
                             websocket=websocket,
-                            conversation_id=conversation_id
+                            conversation_id=conversation_id,
+                            personalization=personalization
                         ):
                             # The streaming is handled internally by the callback handler
                             # Just iterate through the generator to complete the streaming
