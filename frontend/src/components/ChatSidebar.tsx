@@ -66,6 +66,21 @@ export const ChatSidebar = ({
             </div>
           </button>
           <button
+            onClick={() => navigate('/analytics-enhanced')}
+            className={cn(
+              "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
+              "hover:bg-sidebar-accent group text-sidebar-foreground"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 flex-shrink-0 opacity-70" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">Analytics</p>
+                <p className="text-xs text-muted-foreground">Interactive dashboards</p>
+              </div>
+            </div>
+          </button>
+          <button
             onClick={onShowPersonalization}
             className={cn(
               "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
