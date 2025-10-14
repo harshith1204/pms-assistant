@@ -39,5 +39,4 @@ numpy
 # SPLADE (sparse) dependencies
 transformers
 torch
-
-# (Phoenix and OpenTelemetry removed; using internal no-op shims)
+mem0ai

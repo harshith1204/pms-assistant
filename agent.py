@@ -101,13 +101,20 @@ DEFAULT_SYSTEM_PROMPT = (
     "- When both are present, compute remaining time = estimate - logged and surface it succinctly.\n"
 )
 
+# Import Mem0 integration
+try:
+    from mem0_integration import Mem0Manager
+    USE_MEM0 = os.getenv("USE_MEM0", "true").lower() == "true"
+except ImportError:
+    USE_MEM0 = False
+    print("⚠️  Mem0 not available, falling back to basic ConversationMemory")
+
 class ConversationMemory:
-    """Manages conversation history for maintaining context"""
+    """Legacy conversation memory - kept for backward compatibility"""
 
     def __init__(self, max_messages_per_conversation: int = 50):
         self.conversations: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages_per_conversation))
         self.max_messages_per_conversation = max_messages_per_conversation
-        # Rolling summary per conversation (compact)
         self.summaries: Dict[str, str] = {}
         self.turn_counters: Dict[str, int] = defaultdict(int)
 
@@ -128,7 +135,6 @@ class ConversationMemory:
         """Get recent conversation context with a token budget and rolling summary."""
         messages = self.get_conversation_history(conversation_id)
 
-        # Approximate token counting (≈4 chars/token)
         def approx_tokens(text: str) -> int:
             try:
                 return max(1, math.ceil(len(text) / 4))
@@ -139,7 +145,6 @@ class ConversationMemory:
         used = 0
         selected: List[BaseMessage] = []
 
-        # Walk backwards to select most recent turns under budget
         for msg in reversed(messages):
             content = getattr(msg, "content", "")
             used += approx_tokens(str(content)) + 8
@@ -149,7 +154,6 @@ class ConversationMemory:
 
         selected.reverse()
 
-        # Prepend rolling summary if present and within budget
         summary = self.summaries.get(conversation_id)
         if summary:
             stoks = approx_tokens(summary)
@@ -165,7 +169,6 @@ class ConversationMemory:
         return self.turn_counters[conversation_id] % every_n_turns == 0
 
     async def update_summary_async(self, conversation_id: str, llm_for_summary) -> None:
-        """Update the rolling summary asynchronously to avoid latency in main path."""
         try:
             history = self.get_conversation_history(conversation_id)
             if not history:
@@ -181,11 +184,20 @@ class ConversationMemory:
             if getattr(resp, "content", None):
                 self.summaries[conversation_id] = str(resp.content)
         except Exception:
-            # Best-effort; ignore failures
             pass
 
-# Global conversation memory instance
-conversation_memory = ConversationMemory()
+# Initialize memory manager (Mem0 or fallback to basic ConversationMemory)
+if USE_MEM0:
+    try:
+        conversation_memory = Mem0Manager()
+        print("✅ Using Mem0 for intelligent memory management")
+    except Exception as e:
+        print(f"⚠️  Failed to initialize Mem0: {e}")
+        print("Falling back to basic ConversationMemory")
+        conversation_memory = ConversationMemory()
+else:
+    conversation_memory = ConversationMemory()
+    print("ℹ️  Using basic ConversationMemory (set USE_MEM0=true to enable Mem0)")
 
 
 # Initialize the LLM with optimized settings for tool calling
