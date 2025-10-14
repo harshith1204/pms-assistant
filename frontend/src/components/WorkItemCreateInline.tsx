@@ -49,7 +49,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
 
         <div className="px-5 pt-4">
           <div className="relative" data-color-mode="light">
-            <MDEditor value={desc} onChange={(v) => setDesc(v || "")} height={260} preview={isEditingDesc ? "edit" : "preview"} />
+          <MDEditor value={desc} onChange={(v) => setDesc(v || "")} height={260} preview={isEditingDesc ? "edit" : "preview"} hideToolbar={true} />
             <Button
               type="button"
               variant="secondary"
