@@ -130,6 +130,8 @@ def filter_meaningful_content(data: Any) -> Any:
         'members', 'pages', 'projectStates', 'subStates', 'linkedCycle', 'linkedModule',
         # Date fields (but not timestamps)
         'startDate', 'endDate', 'joiningDate', 'createdAt', 'updatedAt',
+        # Estimate and work tracking
+        'estimate', 'estimateSystem', 'workLogs',
         # Count/aggregation results
         'total', 'count', 'group', 'items'
     }
@@ -327,7 +329,8 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
               "visibility", "access", "imageUrl", "icon",
               "favourite", "isFavourite", "isActive", "isArchived",
               "content", "displayBugNo", "projectDisplayId",
-              "startDate", "endDate", "createdAt", "updatedAt"]:
+              "startDate", "endDate", "createdAt", "updatedAt",
+              "estimate", "estimateSystem", "workLogs"]:
         if k in doc:
             out[k] = doc[k]
 
@@ -598,7 +601,29 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        return f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        
+                        # Build base line
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        
+                        # Add estimate if present
+                        estimate = entity.get("estimate")
+                        if estimate and isinstance(estimate, dict):
+                            hr = estimate.get("hr", "0")
+                            min_val = estimate.get("min", "0")
+                            base += f", estimate={hr}h {min_val}m"
+                        elif estimate:
+                            base += f", estimate={estimate}"
+                        
+                        # Add work logs if present
+                        work_logs = entity.get("workLogs")
+                        if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
+                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                            total_hours += total_mins // 60
+                            total_mins = total_mins % 60
+                            base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
+                        
+                        return base
                     if e == "project":
                         pid = entity.get("projectDisplayId")
                         name = entity.get("name") or entity.get("title")
