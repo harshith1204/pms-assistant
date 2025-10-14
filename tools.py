@@ -595,13 +595,59 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 def render_line(entity: Dict[str, Any]) -> str:
                     e = (primary_entity or "").lower()
                     if e == "workitem":
-                        bug = entity.get("displayBugNo") or entity.get("title") or "Item"
+                        # Get identifier - prefer displayBugNo, fallback to title or _id
+                        bug = entity.get("displayBugNo")
+                        if not bug:
+                            bug = entity.get("title") or f"Item({str(entity.get('_id', 'unknown'))[:8]})"
                         title = entity.get("title") or entity.get("name") or ""
+                        
+                        # Build metadata dynamically based on available fields
+                        meta_parts = []
+                        
+                        # Standard fields
                         state = entity.get("stateName") or get_nested(entity, "state.name")
-                        project = entity.get("projectName") or get_nested(entity, "project.name")
-                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        if state:
+                            meta_parts.append(f"state={state}")
+                        
                         priority = entity.get("priority")
-                        return f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        if priority:
+                            meta_parts.append(f"priority={priority}")
+                        
+                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        if assignees:
+                            meta_parts.append(f"assignee={assignees[0]}")
+                        
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        if project:
+                            meta_parts.append(f"project={project}")
+                        
+                        # Estimate fields
+                        estimate = entity.get("estimate")
+                        estimate_system = entity.get("estimateSystem")
+                        if estimate:
+                            if isinstance(estimate, dict):
+                                hr = estimate.get("hr", "0")
+                                min_val = estimate.get("min", "0")
+                                meta_parts.append(f"estimate={hr}h {min_val}m")
+                            else:
+                                meta_parts.append(f"estimate={estimate}")
+                        if estimate_system and not estimate:
+                            meta_parts.append(f"estimateSystem={estimate_system}")
+                        
+                        # Work logs
+                        work_logs = entity.get("workLogs")
+                        if work_logs and isinstance(work_logs, list):
+                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                            total_hours += total_mins // 60
+                            total_mins = total_mins % 60
+                            meta_parts.append(f"logged={total_hours}h {total_mins}m ({len(work_logs)} logs)")
+                        
+                        # Construct the line
+                        if meta_parts:
+                            return f"• {bug}: {truncate_str(title, 80)} — {', '.join(meta_parts)}"
+                        else:
+                            return f"• {bug}: {truncate_str(title, 80)}"
                     if e == "project":
                         pid = entity.get("projectDisplayId")
                         name = entity.get("name") or entity.get("title")
