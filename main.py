@@ -80,6 +80,48 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
 
+@app.get("/conversations")
+async def get_conversations(limit: int = 50):
+    """Get all conversations"""
+    from agent import conversation_memory
+    conversations = await conversation_memory.get_all_conversations(limit=limit)
+    return {"conversations": conversations}
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get a specific conversation with its messages"""
+    from agent import conversation_memory
+    messages = await conversation_memory.load_conversation_from_db(conversation_id, limit=100)
+    
+    # Convert messages to dict format
+    message_dicts = []
+    for msg in messages:
+        msg_dict = {
+            "type": msg.__class__.__name__,
+            "content": str(msg.content)
+        }
+        if hasattr(msg, "tool_call_id"):
+            msg_dict["tool_call_id"] = msg.tool_call_id
+        message_dicts.append(msg_dict)
+    
+    return {"conversation_id": conversation_id, "messages": message_dicts}
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """Delete a conversation"""
+    from agent import conversation_memory
+    
+    # Delete from database
+    if conversation_memory.conversations_collection:
+        await conversation_memory.conversations_collection.delete_one({"conversation_id": conversation_id})
+    if conversation_memory.messages_collection:
+        await conversation_memory.messages_collection.delete_many({"conversation_id": conversation_id})
+    
+    # Clear from memory
+    conversation_memory.clear_conversation(conversation_id)
+    
+    return {"status": "deleted", "conversation_id": conversation_id}
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     """WebSocket endpoint for streaming chat"""
