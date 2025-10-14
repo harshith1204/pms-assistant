@@ -94,7 +94,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
     "- Request to CREATE/GENERATE new content → generate_content.\n"
     "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
-    "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
+    "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs.\n\n"
+    "WHEN SUMMARIZING WORK ITEMS:\n"
+    "- If estimateSystem/estimate is present, include an estimate summary (e.g., 'estimate=2 hr').\n"
+    "- If workLogs are present, compute and include total logged time (e.g., 'logged=1 hr 30 min').\n"
+    "- When both are present, compute remaining time = estimate - logged and surface it succinctly.\n"
 )
 
 class ConversationMemory:
