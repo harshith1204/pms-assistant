@@ -176,14 +176,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "modules._id", "modules.name",
         "createdBy._id", "createdBy.name",
         "createdTimeStamp", "updatedTimeStamp", "dueDate",
-        # Optional planning dates in sample documents
-        "startDate", "endDate",
-        "assignee", "assignee._id", "assignee.name", "label",
-        # Estimation fields
-        "estimateSystem", "estimate.hr", "estimate.min",
-        # Work log fields (denormalized for summaries)
-        "workLogs", "workLogs.hours", "workLogs.minutes", "workLogs.description",
-        "workLogs.loggedAt", "workLogs.user._id", "workLogs.user.name",
+        "assignee", "assignee._id", "assignee.name", "label"
     },
     "project": {
         "_id", "projectDisplayId", "name", "description",
@@ -242,19 +235,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
 # ---- Optional field aliases (normalize synonyms / UI names)
 ALIASES: Dict[str, Dict[str, str]] = {
     "project": {"id": "_id", "displayId": "projectDisplayId"},
-    "workItem": {
-        "bug": "displayBugNo",
-        "stateName": "state.name",
-        "last_date": "updatedTimeStamp",
-        # Convenience aliases for estimation and logging
-        "estimateHr": "estimate.hr",
-        "estimateMin": "estimate.min",
-        "estimateSystem": "estimateSystem",
-        "loggedHours": "workLogs.hours",
-        "loggedMinutes": "workLogs.minutes",
-        "workLogMessage": "workLogs.description",
-        "workLogTime": "workLogs.loggedAt",
-    },
+    "workItem": {"bug": "displayBugNo", "stateName": "state.name", "last_date": "updatedTimeStamp"},
     "members": {"memberId": "_id"},
     "module": {},
     "page": {},

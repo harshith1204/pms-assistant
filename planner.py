@@ -1771,10 +1771,7 @@ class PipelineGenerator:
                 "displayBugNo", "title", "priority",
                 "state.name", "assignee",
                 "project.name", "cycle.name", "modules.name",
-                "createdTimeStamp",
-                # Estimation and logging fields to enable time tracking summaries
-                "estimateSystem", "estimate.hr", "estimate.min",
-                "workLogs.hours", "workLogs.minutes", "workLogs.description", "workLogs.loggedAt",
+                "createdTimeStamp"
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
