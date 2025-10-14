@@ -1771,7 +1771,7 @@ class PipelineGenerator:
                 "displayBugNo", "title", "priority",
                 "state.name", "assignee",
                 "project.name", "cycle.name", "modules.name",
-                "createdTimeStamp"
+                "createdTimeStamp", "estimateSystem", "estimate", "workLogs"
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
