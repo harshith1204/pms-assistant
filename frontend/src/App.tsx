@@ -7,6 +7,8 @@ import { useEffect } from "react";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Settings from "./pages/Settings";
+import Dashboard from "./pages/Dashboard";
+import EnhancedDashboardPage from "./pages/EnhancedDashboardPage";
 import { PersonalizationProvider } from "@/context/PersonalizationContext";
 
 const queryClient = new QueryClient();
@@ -56,6 +58,11 @@ const App = () => {
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/settings" element={<Settings />} />
+              
+              {/* Dashboard Pages */}
+              <Route path="/analytics" element={<Dashboard />} />
+              <Route path="/analytics-enhanced" element={<EnhancedDashboardPage />} />
+              
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
