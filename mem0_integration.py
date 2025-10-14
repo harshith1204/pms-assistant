@@ -13,8 +13,8 @@ from datetime import datetime
 import os
 from mem0 import Memory
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
-import json
 from dotenv import load_dotenv
+from mongo import constants as mongo_constants
 
 # Load environment variables from .env file
 load_dotenv()
@@ -52,7 +52,50 @@ class Mem0Manager:
             config = self._get_default_config()
         
         self.config = config
-        self.memory = Memory.from_config(config)
+
+        # Initialize Mem0 with safe fallback strategy and debug summary
+        try:
+            self.memory = Memory.from_config(config)
+        except Exception as init_err:
+            # If GROQ is selected and fails, try falling back to OpenAI when available
+            llm_provider = (config.get("llm", {}) or {}).get("provider")
+            initialized = False
+
+            if llm_provider == "groq" and os.getenv("OPENAI_API_KEY"):
+                try:
+                    fallback = self._build_llm_config(provider="openai")
+                    config["llm"] = fallback
+                    self.memory = Memory.from_config(config)
+                    print("ℹ️  Mem0: GROQ failed; fell back to OpenAI provider")
+                    initialized = True
+                except Exception:
+                    pass
+
+            # If still not initialized, try a safer embedder fallback
+            if not initialized:
+                try:
+                    emb_cfg = (config.get("embedder", {}) or {}).get("config", {})
+                    original_model = emb_cfg.get("model")
+                    config["embedder"] = {
+                        "provider": "huggingface",
+                        "config": {"model": "sentence-transformers/all-MiniLM-L6-v2"},
+                    }
+                    vs_cfg = (config.get("vector_store", {}) or {}).get("config", {})
+                    vs_cfg["embedding_model_dims"] = 384
+                    config["vector_store"]["config"] = vs_cfg
+                    self.memory = Memory.from_config(config)
+                    print(
+                        f"ℹ️  Mem0: Embedder '{original_model}' failed; fell back to all-MiniLM-L6-v2 (384d)"
+                    )
+                    initialized = True
+                except Exception:
+                    pass
+
+            if not initialized:
+                # Let the caller handle the failure (agent.py falls back to legacy memory)
+                raise init_err
+
+        self._print_debug_config_summary(self.config)
         print("✅ Mem0 memory manager initialized with configuration")
         
         # Track recent messages for context (lightweight buffer before Mem0 processing)
@@ -60,58 +103,125 @@ class Mem0Manager:
         self.max_recent_messages = 10  # Keep last 10 messages for immediate context
     
     def _get_default_config(self) -> Dict[str, Any]:
-        """Build Mem0 configuration using existing Qdrant and embedding model infrastructure."""
+        """Build Mem0 configuration using existing infrastructure and environment overrides."""
 
-        # Use existing Qdrant cloud configuration from mongo.constants
-        # Hard-coded Qdrant configuration to match existing infrastructure
-        qdrant_url = "https://dc88ad91-1e1e-48b4-bf73-0e5c1db1cffd.europe-west3-0.gcp.cloud.qdrant.io"
-        qdrant_api_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfubjbSDBCTZaH321Eya7qis_tP6sHMAZ3Gki6Y"
+        # --- Qdrant configuration (prefer env, then constants) ---
+        qdrant_url = os.getenv("MEM0_QDRANT_URL", getattr(mongo_constants, "QDRANT_URL", ""))
+        qdrant_api_key = os.getenv("MEM0_QDRANT_API_KEY", getattr(mongo_constants, "QDRANT_API_KEY", ""))
+        collection_name = os.getenv("MEM0_QDRANT_COLLECTION", "mem0_memories")
 
-        # LLM configuration (using Groq by default to match existing setup)
-        llm_provider = "groq"
-        groq_api_key = os.getenv("GROQ_API_KEY")
-        groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        # --- Embedder configuration ---
+        embedding_model = os.getenv("MEM0_EMBEDDER_MODEL", getattr(mongo_constants, "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"))
+        # Infer common embedding dimensions with env override
+        inferred_dims: Dict[str, int] = {
+            "sentence-transformers/all-MiniLM-L6-v2": 384,
+            "google/embeddinggemma-300m": 768,
+        }
+        embedding_dims = int(os.getenv("MEM0_EMBEDDING_DIMS", str(inferred_dims.get(embedding_model, 768))))
 
-        # Use existing embedding model from mongo.constants
-        # Hard-coded embedding model to match existing infrastructure
-        embedding_model = "google/embeddinggemma-300m"
-        
-        # Determine embedding model dimensions based on the model being used
-        # google/embeddinggemma-300m uses 768 dimensions
-        embedding_dims = 768
+        # --- LLM provider selection ---
+        provider_hint = os.getenv("MEM0_LLM_PROVIDER", "").strip().lower()
+        if provider_hint:
+            llm_config = self._build_llm_config(provider_hint)
+        else:
+            # Auto-detect in order of availability
+            if os.getenv("GROQ_API_KEY"):
+                llm_config = self._build_llm_config("groq")
+            elif os.getenv("OPENAI_API_KEY"):
+                llm_config = self._build_llm_config("openai")
+            elif os.getenv("OLLAMA_HOST"):
+                llm_config = self._build_llm_config("ollama")
+            else:
+                raise RuntimeError(
+                    "Mem0 LLM provider not configured. Set MEM0_LLM_PROVIDER, or provide GROQ_API_KEY/OPENAI_API_KEY/OLLAMA_HOST."
+                )
 
         config = {
             "vector_store": {
                 "provider": "qdrant",
                 "config": {
-                    "collection_name": "mem0_memories",
+                    "collection_name": collection_name,
                     "embedding_model_dims": embedding_dims,
-                    "host": qdrant_url,
+                    # mem0 expects 'url' (not 'host') for Qdrant
+                    "url": qdrant_url,
                     "api_key": qdrant_api_key,
-                }
+                },
             },
-            "llm": {
-                "provider": llm_provider,
-                "config": {
-                    "model": groq_model,
-                    "temperature": 0.1,
-                    "max_tokens": 1000,
-                }
-            },
+            "llm": llm_config,
             "embedder": {
                 "provider": "huggingface",
                 "config": {
-                    "model": embedding_model
-                }
+                    "model": embedding_model,
+                },
             },
-            "version": "v1.1"
+            "version": "v1.1",
         }
-        
-        # Add Groq API key if using Groq
-        if llm_provider == "groq" and groq_api_key:
-            config["llm"]["config"]["api_key"] = groq_api_key
-        
+
         return config
+
+    def _build_llm_config(self, provider: str) -> Dict[str, Any]:
+        provider = (provider or "").strip().lower()
+        if provider == "groq":
+            return {
+                "provider": "groq",
+                "config": {
+                    "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                    "api_key": os.getenv("GROQ_API_KEY", ""),
+                },
+            }
+        if provider == "openai":
+            return {
+                "provider": "openai",
+                "config": {
+                    "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                    "api_key": os.getenv("OPENAI_API_KEY", ""),
+                    # Optional: support custom base URL (e.g., Azure/OpenRouter)
+                    **({"base_url": os.getenv("OPENAI_BASE_URL")} if os.getenv("OPENAI_BASE_URL") else {}),
+                },
+            }
+        if provider == "ollama":
+            return {
+                "provider": "ollama",
+                "config": {
+                    "model": os.getenv("OLLAMA_MODEL", "llama3.1"),
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                    "host": os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+                },
+            }
+        raise ValueError(f"Unsupported MEM0_LLM_PROVIDER: {provider}")
+
+    def _print_debug_config_summary(self, cfg: Dict[str, Any]) -> None:
+        try:
+            vs = (cfg.get("vector_store", {}) or {}).get("config", {})
+            llm = cfg.get("llm", {}) or {}
+            emb = (cfg.get("embedder", {}) or {}).get("config", {})
+            # Redact secrets
+            sanitized_vs = {
+                "collection_name": vs.get("collection_name"),
+                "embedding_model_dims": vs.get("embedding_model_dims"),
+                "url": (str(vs.get("url"))[:40] + "…") if vs.get("url") else None,
+                "api_key_present": bool(vs.get("api_key")),
+            }
+            sanitized_llm = {
+                "provider": llm.get("provider"),
+                "model": (llm.get("config", {}) or {}).get("model"),
+                "api_key_present": bool((llm.get("config", {}) or {}).get("api_key")),
+            }
+            print(
+                "ℹ️  Mem0 config summary:",
+                {
+                    "vector_store": sanitized_vs,
+                    "llm": sanitized_llm,
+                    "embedder": {"model": emb.get("model")},
+                },
+            )
+        except Exception:
+            pass
     
     def add_message(self, conversation_id: str, message: BaseMessage, user_id: Optional[str] = None) -> None:
         """
