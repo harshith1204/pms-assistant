@@ -191,3 +191,9 @@ All colors MUST be HSL.
     background: hsl(var(--muted-foreground));
   }
 }
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  /* keep the min-width behaviour if you still want it */
+  min-width: 100% !important;
+  box-sizing: border-box; /* optional */
+}
