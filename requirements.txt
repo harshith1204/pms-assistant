@@ -26,5 +26,6 @@ uvicorn[standard]
 # Development and testing
 pytest
 pymongo
+motor  # Async MongoDB driver
 pytest-asyncio
 websockets  # For WebSocket testing

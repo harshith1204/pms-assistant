@@ -1,62 +1,116 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Plus, Search, MessageCircle, Clock, Trash2 } from "lucide-react";
+import { Plus, Search, MessageCircle, Clock, Trash2, RefreshCw } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface ConversationSidebarProps {
   open: boolean;
+  activeConversationId?: string | null;
+  onSelectConversation?: (id: string) => void;
+  onNewConversation?: () => void;
 }
 
 interface Conversation {
   id: string;
   title: string;
-  lastMessage: string;
-  timestamp: string;
+  summary?: string;
+  created_at?: Date;
+  updated_at?: Date;
   isActive?: boolean;
 }
 
-const mockConversations: Conversation[] = [
-  {
-    id: "1",
-    title: "Database Integration Help",
-    lastMessage: "The error indicates the database name is invalid...",
-    timestamp: "2 minutes ago",
-    isActive: true,
-  },
-  {
-    id: "2", 
-    title: "Project Setup Questions",
-    lastMessage: "I can help you set up your project structure...",
-    timestamp: "1 hour ago",
-  },
-  {
-    id: "3",
-    title: "API Development",
-    lastMessage: "Let's create a REST API with proper authentication...",
-    timestamp: "Yesterday",
-  },
-  {
-    id: "4",
-    title: "UI Design Discussion",
-    lastMessage: "Here's a modern approach to your dashboard design...",
-    timestamp: "2 days ago",
-  },
-];
-
-export function ConversationSidebar({ open }: ConversationSidebarProps) {
+export function ConversationSidebar({ open, activeConversationId, onSelectConversation, onNewConversation }: ConversationSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [conversations, setConversations] = useState(mockConversations);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+
+  const fetchConversations = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`http://${window.location.hostname}:8000/conversations`);
+      const data = await response.json();
+      
+      const formattedConversations = data.conversations.map((conv: any) => ({
+        id: conv.id,
+        title: conv.title || "New Conversation",
+        summary: conv.summary || "",
+        created_at: conv.created_at ? new Date(conv.created_at) : new Date(),
+        updated_at: conv.updated_at ? new Date(conv.updated_at) : new Date(),
+        isActive: conv.id === activeConversationId,
+      }));
+      
+      setConversations(formattedConversations);
+    } catch (error) {
+      console.error("Error fetching conversations:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load conversations",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      fetchConversations();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    // Update active conversation when it changes
+    setConversations(prev => prev.map(conv => ({
+      ...conv,
+      isActive: conv.id === activeConversationId
+    })));
+  }, [activeConversationId]);
 
   const filteredConversations = conversations.filter(conv =>
     conv.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    conv.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
+    (conv.summary && conv.summary.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  const deleteConversation = (id: string) => {
-    setConversations(prev => prev.filter(conv => conv.id !== id));
+  const deleteConversation = async (id: string) => {
+    try {
+      await fetch(`http://${window.location.hostname}:8000/conversations/${id}`, {
+        method: "DELETE",
+      });
+      
+      setConversations(prev => prev.filter(conv => conv.id !== id));
+      
+      toast({
+        title: "Success",
+        description: "Conversation deleted",
+      });
+    } catch (error) {
+      console.error("Error deleting conversation:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete conversation",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const formatTimestamp = (date: Date) => {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
+    return date.toLocaleDateString();
   };
 
   if (!open) return null;
@@ -68,9 +122,24 @@ export function ConversationSidebar({ open }: ConversationSidebarProps) {
     )}>
       {/* Header */}
       <div className="p-4 border-b">
-        <Button className="w-full justify-start gap-2 mb-3" size="sm">
+        <Button 
+          className="w-full justify-start gap-2 mb-3" 
+          size="sm"
+          onClick={onNewConversation}
+        >
           <Plus className="h-4 w-4" />
           New Conversation
+        </Button>
+        
+        <Button 
+          variant="outline"
+          className="w-full justify-start gap-2 mb-3" 
+          size="sm"
+          onClick={fetchConversations}
+          disabled={loading}
+        >
+          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+          Refresh
         </Button>
         
         <div className="relative">
@@ -89,10 +158,13 @@ export function ConversationSidebar({ open }: ConversationSidebarProps) {
         <div className="p-2">
           {filteredConversations.map((conversation, index) => (
             <div key={conversation.id}>
-              <div className={cn(
-                "group relative p-3 rounded-lg cursor-pointer transition-colors hover:bg-muted/50",
-                conversation.isActive && "bg-muted"
-              )}>
+              <div 
+                className={cn(
+                  "group relative p-3 rounded-lg cursor-pointer transition-colors hover:bg-muted/50",
+                  conversation.isActive && "bg-muted"
+                )}
+                onClick={() => onSelectConversation?.(conversation.id)}
+              >
                 <div className="flex items-start gap-3">
                   <div className={cn(
                     "rounded-full p-1.5 mt-0.5",
@@ -108,13 +180,15 @@ export function ConversationSidebar({ open }: ConversationSidebarProps) {
                     <h3 className="font-medium text-sm truncate">
                       {conversation.title}
                     </h3>
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                      {conversation.lastMessage}
-                    </p>
+                    {conversation.summary && (
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                        {conversation.summary}
+                      </p>
+                    )}
                     <div className="flex items-center gap-1 mt-2">
                       <Clock className="h-3 w-3 text-muted-foreground" />
                       <span className="text-xs text-muted-foreground">
-                        {conversation.timestamp}
+                        {conversation.updated_at ? formatTimestamp(conversation.updated_at) : "Unknown"}
                       </span>
                     </div>
                   </div>
