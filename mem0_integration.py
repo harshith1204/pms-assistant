@@ -11,10 +11,15 @@ This module replaces the basic ConversationMemory with Mem0's advanced features:
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import os
+from copy import deepcopy
 from mem0 import Memory
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
-import json
 from dotenv import load_dotenv
+try:
+    # Prefer existing Qdrant config from the codebase
+    from mongo import constants as mongo_constants
+except Exception:
+    mongo_constants = None
 
 # Load environment variables from .env file
 load_dotenv()
@@ -50,45 +55,65 @@ class Mem0Manager:
         """
         if config is None:
             config = self._get_default_config()
-        
+
+        # Store and validate config before initializing Mem0
         self.config = config
-        self.memory = Memory.from_config(config)
-        print("✅ Mem0 memory manager initialized with configuration")
+        try:
+            self._validate_config(self.config)
+        except Exception as e:
+            print("❌ Mem0 configuration validation failed:", e)
+            print("ℹ️  Effective Mem0 config (sanitized):")
+            print(self._sanitize_config(self.config))
+            raise
+
+        try:
+            self.memory = Memory.from_config(self.config)
+            print("✅ Mem0 memory manager initialized with configuration")
+        except Exception as e:
+            print("❌ Mem0 initialization error:", repr(e))
+            print("ℹ️  Effective Mem0 config (sanitized):")
+            print(self._sanitize_config(self.config))
+            # Provide common hints
+            groq_key_missing = (
+                (self.config.get("llm", {}).get("provider") == "groq") and not os.getenv("GROQ_API_KEY")
+            )
+            if groq_key_missing:
+                print("➡️  Hint: Set GROQ_API_KEY or switch MEM0_LLM_PROVIDER to a provider with a configured API key.")
+            if "cloud.qdrant.io" in (self.config.get("vector_store", {}).get("config", {}).get("url", "") or "") and not os.getenv("QDRANT_API_KEY") and not (mongo_constants and getattr(mongo_constants, "QDRANT_API_KEY", None)):
+                print("➡️  Hint: Set QDRANT_API_KEY for Qdrant Cloud access.")
+            raise
         
         # Track recent messages for context (lightweight buffer before Mem0 processing)
         self.recent_messages: Dict[str, List[BaseMessage]] = {}
         self.max_recent_messages = 10  # Keep last 10 messages for immediate context
     
     def _get_default_config(self) -> Dict[str, Any]:
-        """Build Mem0 configuration using existing Qdrant and embedding model infrastructure."""
+        """Build Mem0 configuration using repo/environment settings safely (no hard-coded secrets)."""
 
-        # Use existing Qdrant cloud configuration from mongo.constants
-        # Hard-coded Qdrant configuration to match existing infrastructure
-        qdrant_url = "https://dc88ad91-1e1e-48b4-bf73-0e5c1db1cffd.europe-west3-0.gcp.cloud.qdrant.io"
-        qdrant_api_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfubjbSDBCTZaH321Eya7qis_tP6sHMAZ3Gki6Y"
+        # Resolve Qdrant settings (prefer env, then repo constants)
+        qdrant_url = os.getenv("QDRANT_URL") or (getattr(mongo_constants, "QDRANT_URL", None) if mongo_constants else None)
+        qdrant_api_key = os.getenv("QDRANT_API_KEY") or (getattr(mongo_constants, "QDRANT_API_KEY", None) if mongo_constants else None)
+        collection_name = os.getenv("MEM0_QDRANT_COLLECTION", "mem0_memories")
 
-        # LLM configuration (using Groq by default to match existing setup)
-        llm_provider = "groq"
+        # LLM settings
+        llm_provider = os.getenv("MEM0_LLM_PROVIDER", "groq").lower()
         groq_api_key = os.getenv("GROQ_API_KEY")
-        groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        groq_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
-        # Use existing embedding model from mongo.constants
-        # Hard-coded embedding model to match existing infrastructure
-        embedding_model = "google/embeddinggemma-300m"
-        
-        # Determine embedding model dimensions based on the model being used
-        # google/embeddinggemma-300m uses 768 dimensions
-        embedding_dims = 768
+        # Lightweight, readily available embedding model
+        embedding_model = os.getenv("MEM0_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
-        config = {
+        config: Dict[str, Any] = {
             "vector_store": {
                 "provider": "qdrant",
                 "config": {
-                    "collection_name": "mem0_memories",
-                    "embedding_model_dims": embedding_dims,
+                    "collection_name": collection_name,
+                    # Provide both keys for compatibility with qdrant-client
+                    "url": qdrant_url,
                     "host": qdrant_url,
                     "api_key": qdrant_api_key,
-                }
+                    "prefer_grpc": False,
+                },
             },
             "llm": {
                 "provider": llm_provider,
@@ -96,22 +121,73 @@ class Mem0Manager:
                     "model": groq_model,
                     "temperature": 0.1,
                     "max_tokens": 1000,
-                }
+                },
             },
             "embedder": {
                 "provider": "huggingface",
                 "config": {
-                    "model": embedding_model
-                }
+                    "model": embedding_model,
+                },
             },
-            "version": "v1.1"
+            "version": "v1.1",
         }
-        
-        # Add Groq API key if using Groq
-        if llm_provider == "groq" and groq_api_key:
+
+        # Attach API key for Groq if using that provider
+        if config["llm"]["provider"] == "groq" and groq_api_key:
             config["llm"]["config"]["api_key"] = groq_api_key
-        
+
         return config
+
+    def _validate_config(self, config: Dict[str, Any]) -> None:
+        """Validate config and environment; raise ValueError with actionable guidance on failure."""
+        # Qdrant checks
+        vs = config.get("vector_store", {})
+        if vs.get("provider") != "qdrant":
+            raise ValueError("Only 'qdrant' vector_store is supported by this integration.")
+        qconf = vs.get("config", {})
+        q_url = qconf.get("url") or qconf.get("host")
+        if not q_url:
+            raise ValueError("QDRANT_URL is not set. Provide via env QDRANT_URL or mongo.constants.QDRANT_URL.")
+        if "cloud.qdrant.io" in (q_url or ""):
+            q_api = qconf.get("api_key")
+            if not q_api:
+                raise ValueError("QDRANT_API_KEY is required for Qdrant Cloud. Set env QDRANT_API_KEY.")
+
+        # LLM checks
+        llm = config.get("llm", {})
+        provider = (llm.get("provider") or "").lower()
+        if provider == "groq" and not os.getenv("GROQ_API_KEY") and not llm.get("config", {}).get("api_key"):
+            raise ValueError("GROQ_API_KEY is missing. Set it in environment to use Groq LLM.")
+
+        # Embedder checks
+        emb = config.get("embedder", {})
+        if emb.get("provider") != "huggingface":
+            raise ValueError("Only 'huggingface' embedder is configured here. Set MEM0_EMBED_MODEL or adjust provider.")
+        model_name = (emb.get("config", {}) or {}).get("model")
+        if not model_name:
+            raise ValueError("MEM0_EMBED_MODEL must specify a model name (e.g., 'sentence-transformers/all-MiniLM-L6-v2').")
+        # Guard against heavy or invalid default from earlier revisions
+        if model_name.strip().lower() in {"google/embeddinggemma-300m", "google/embeddinggemma"}:
+            raise ValueError("'google/embeddinggemma-300m' is not a supported HuggingFace sentence embedding model. Use a sentence-transformers model instead (e.g., 'sentence-transformers/all-MiniLM-L6-v2').")
+
+    def _sanitize_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a copy of config with secrets redacted for safe logging."""
+        redacted = deepcopy(config)
+        try:
+            def _walk(node: Any):
+                if isinstance(node, dict):
+                    for k, v in list(node.items()):
+                        if k.lower() in {"api_key", "apikey", "token", "bearer", "password"}:
+                            node[k] = "***REDACTED***" if v else v
+                        else:
+                            _walk(v)
+                elif isinstance(node, list):
+                    for item in node:
+                        _walk(item)
+            _walk(redacted)
+        except Exception:
+            pass
+        return redacted
     
     def add_message(self, conversation_id: str, message: BaseMessage, user_id: Optional[str] = None) -> None:
         """
