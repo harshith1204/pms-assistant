@@ -37,7 +37,7 @@ export const ChatSidebar = ({
     return conversations.filter((c) => c.title.toLowerCase().includes(q));
   }, [conversations, query]);
   return (
-    <div className="flex h-full flex-col bg-sidebar/95 backdrop-blur-xl border border-sidebar-border rounded-2xl shadow-2xl my-1 mx-4">
+    <div className="flex h-full w-full max-w-full flex-col bg-sidebar/95 backdrop-blur-xl border border-sidebar-border rounded-2xl overflow-hidden shadow-2xl my-1">
       <div className="p-4 border-b border-sidebar-border">
         <Button
           onClick={onNewChat}
@@ -81,13 +81,13 @@ export const ChatSidebar = ({
             </div>
           </button>
           <div className="px-3 pb-2 pt-1">
-            <div className="relative">
+          <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search conversations..."
-                className="h-8 pl-8 bg-background/80"
+              className="h-8 pl-8 bg-background/80 max-w-full"
               />
             </div>
           </div>
