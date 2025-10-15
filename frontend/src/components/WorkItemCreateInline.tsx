@@ -38,15 +38,6 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
   return (
     <Card className={cn("border-muted/70", className)}>
       <CardContent className="p-0">
-        <div className="p-5 border-b">
-          <div className="text-xl font-medium text-foreground">Create new work item</div>
-          <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-            <FieldChip icon={<Hash className="h-3.5 w-3.5" />}>Task</FieldChip>
-            <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignee</FieldChip>
-            <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Project</FieldChip>
-          </div>
-        </div>
-
         <div className="px-5 pt-4">
           <Input
             value={name}
@@ -58,7 +49,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
 
         <div className="px-5 pt-4">
           <div className="relative" data-color-mode="light">
-            <MDEditor value={desc} onChange={(v) => setDesc(v || "")} height={260} preview={isEditingDesc ? "edit" : "preview"} />
+          <MDEditor value={desc} onChange={(v) => setDesc(v || "")} height={260} preview={isEditingDesc ? "edit" : "preview"} hideToolbar={true} />
             <Button
               type="button"
               variant="secondary"

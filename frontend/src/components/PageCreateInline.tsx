@@ -392,10 +392,6 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
   return (
     <Card className={cn("border-muted/70", className)}>
       <CardContent className="p-0">
-        <div className="p-5 border-b">
-          <div className="text-xl font-medium text-foreground">Create new page</div>
-        </div>
-
         <div className="px-5 pt-4">
           <Input
             value={name}

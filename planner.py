@@ -376,11 +376,9 @@ class LLMIntentParser:
             "- project_name, cycle_name, assignee_name, module_name\n"
             "- createdBy_name: (creator names)\n"
             "- label: (work item labels)\n"
-            "- (timeline) type, fieldChanged, actor_name (user.name), work_item_title (workItemTitle), timestamp_from/timestamp_to/timestamp_within\n\n"
-
-            "## TIMELINE DATE WINDOW (MANDATORY)\n"
-            "When primary_entity = 'timeline' and the query mentions a relative period (e.g., 'today', 'yesterday', 'this week', 'last week', 'this month', 'last month'), you MUST set filters.timestamp_within accordingly.\n"
-            "Examples: 'time logged today' → filters.timestamp_within = 'today'; 'recent changes last week' → 'last_week'.\n\n"
+            "- estimateSystem: TIME|POINTS|etc (for workItem)\n"
+            "- estimate: object with hr/min fields (for workItem)\n"
+            "- workLogs: array of work log entries with user, hours, minutes, description, loggedAt (for workItem)\n\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -491,9 +489,8 @@ class LLMIntentParser:
             "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
             "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
             "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
-            "- 'recent changes for Simpo Tech' → {\"primary_entity\": \"timeline\", \"filters\": {\"project_name\": \"Simpo Tech\", \"timestamp_within\": \"last_week\"}}\n"
-            "- 'who changed state to Done' → {\"primary_entity\": \"timeline\", \"filters\": {\"fieldChanged\": \"State\", \"newValue\": \"Done\"}}\n"
-            "- 'time logged today' → {\"primary_entity\": \"timeline\", \"filters\": {\"type\": \"TIME_LOGGED\", \"timestamp_within\": \"today\"}}\n\n"
+            "- 'show work items with estimates' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"estimate\", \"estimateSystem\"], \"aggregations\": []}\n"
+            "- 'show work logs for tasks' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"workLogs\"], \"aggregations\": []}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -1324,6 +1321,9 @@ class PipelineGenerator:
                             "displayBugNo": "$displayBugNo",
                             "title": "$title",
                             "priority": "$priority",
+                            "estimate": "$estimate",
+                            "estimateSystem": "$estimateSystem",
+                            "workLogs": "$workLogs",
                         }
                     }
                 pipeline.append(group_stage)
@@ -1937,10 +1937,7 @@ class PipelineGenerator:
                 "displayBugNo", "title", "priority",
                 "state.name", "assignee",
                 "project.name", "cycle.name", "modules.name",
-                "createdTimeStamp",
-                # Estimation and logging fields to enable time tracking summaries
-                "estimateSystem", "estimate.hr", "estimate.min",
-                "workLogs.hours", "workLogs.minutes", "workLogs.description", "workLogs.loggedAt",
+                "createdTimeStamp", "estimateSystem", "estimate", "workLogs"
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
