@@ -35,6 +35,8 @@ websockets  # For WebSocket testing
 qdrant-client
 sentence-transformers
 numpy
+redis
+llmlingua
 
 # SPLADE (sparse) dependencies
 transformers

@@ -9,6 +9,7 @@ from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
 from qdrant.initializer import RAGTool
+from utils.compression import compress_texts
 # Qdrant and RAG dependencies
 # try:
 #     from qdrant_client import QdrantClient
@@ -784,7 +785,9 @@ async def rag_search(
     group_by: Optional[str] = None,
     limit: int = 10,
     show_content: bool = True,
-    use_chunk_aware: bool = True
+    use_chunk_aware: bool = True,
+    compress: bool = True,
+    compression_budget_tokens: int = 1200,
 ) -> str:
     """Universal RAG search tool - returns FULL chunk content for LLM synthesis.
     
@@ -891,11 +894,22 @@ async def rag_search(
             
             # Always pass full content chunks to the agent by default for synthesis
             # Force show_full_content=True so downstream LLM has full context
-            return format_reconstructed_results(
+            text = format_reconstructed_results(
                 docs=reconstructed_docs,
                 show_full_content=True,
                 show_chunk_details=True
             )
+            if compress:
+                # Compress large tool output while preserving salience; keep structure markers
+                try:
+                    # Split by content separators to preserve doc headers
+                    sections = [s for s in text.split("\n    === CONTENT START ===")]
+                    # Re-add the marker to each except the first header section
+                    compressed_sections = compress_texts(sections, query, compression_budget_tokens)
+                    text = "\n    === CONTENT START ===".join(compressed_sections)
+                except Exception:
+                    pass
+            return text
         
         # Fallback to standard retrieval
         results = await rag_tool.search_content(query, content_type=content_type, limit=effective_limit)

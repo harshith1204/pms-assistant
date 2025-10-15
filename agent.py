@@ -28,6 +28,9 @@ except AttributeError:
 import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
+from cache.semantic_cache import SemanticCache
+from utils.compression import compress_texts
+from memory.manager import MemoryManager
 from mongo.conversations import save_assistant_message, save_action_event
 
 
@@ -183,6 +186,10 @@ class ConversationMemory:
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
 
+# Global semantic cache and entity memory
+_semantic_cache = SemanticCache()
+_memory_manager = MemoryManager()
+
 
 # Initialize the LLM with optimized settings for tool calling
 llm = ChatGroq(
@@ -222,6 +229,19 @@ class TTLCache:
     def set(self, key: str, value: Any) -> None:
         self.store[key] = (time.time(), value)
         self._evict_if_needed()
+
+
+# Heuristics: determine if a query is safe/meaningful to serve from semantic cache
+def _is_cache_eligible(query: str) -> bool:
+    if not isinstance(query, str):
+        return False
+    q = query.lower()
+    # Avoid caching for write/generate/temporal queries
+    disallow = (
+        "create", "generate", "make a page", "make a work item", "new ",
+        "today", "now", "latest", "this week", "add ", "update ", "delete ",
+    )
+    return not any(term in q for term in disallow)
 
 
 
@@ -559,6 +579,14 @@ class MongoDBAgent:
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
 
+                # Inject lightweight entity memory (if available)
+                try:
+                    entity_msgs = _memory_manager.build_context_messages(conversation_id, query, llm=self.llm_base)
+                    if entity_msgs:
+                        conversation_context = entity_msgs + conversation_context
+                except Exception:
+                    pass
+
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
@@ -578,6 +606,11 @@ class MongoDBAgent:
                 need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Semantic cache check before invoking model
+                    if _is_cache_eligible(query):
+                        cached = _semantic_cache.get(query, conversation_id)
+                        if isinstance(cached, str) and cached.strip():
+                            return cached
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
@@ -736,6 +769,16 @@ class MongoDBAgent:
                         )
                     except Exception as e:
                         print(f"Warning: Failed to update summary: {e}")
+                # Save entity memory and semantic cache best-effort
+                try:
+                    _memory_manager.save_turn(conversation_id, query, last_response.content or "", llm=self.llm_base)
+                except Exception:
+                    pass
+                try:
+                    if _is_cache_eligible(query):
+                        _semantic_cache.set(query, last_response.content or "", conversation_id)
+                except Exception:
+                    pass
                 return last_response.content
             return "Reached maximum reasoning steps without a final answer."
 
@@ -769,6 +812,19 @@ class MongoDBAgent:
 
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
+                # Inject lightweight entity memory (if available)
+                try:
+                    from memory.manager import MemoryManager  # local import safe in async context
+                except Exception:
+                    MemoryManager = None  # type: ignore
+                try:
+                    if MemoryManager is not None:
+                        # reuse singleton created above if available
+                        entity_msgs = _memory_manager.build_context_messages(conversation_id, query, llm=self.llm_base)
+                        if entity_msgs:
+                            conversation_context = entity_msgs + conversation_context
+                except Exception:
+                    pass
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
@@ -791,6 +847,12 @@ class MongoDBAgent:
                 need_finalization: bool = False
 
                 while steps < self.max_steps:
+                    # Semantic cache check before invoking model
+                    if _is_cache_eligible(query):
+                        cached = _semantic_cache.get(query, conversation_id)
+                        if isinstance(cached, str) and cached.strip():
+                            yield cached
+                            return
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
@@ -967,6 +1029,16 @@ class MongoDBAgent:
                             )
                         except Exception as e:
                             print(f"Warning: Failed to update summary: {e}")
+                    # Save entity memory and semantic cache best-effort
+                    try:
+                        _memory_manager.save_turn(conversation_id, query, last_response.content or "", llm=self.llm_base)
+                    except Exception:
+                        pass
+                    try:
+                        if _is_cache_eligible(query):
+                            _semantic_cache.set(query, last_response.content or "", conversation_id)
+                    except Exception:
+                        pass
                     yield last_response.content
                 else:
                     yield "Reached maximum reasoning steps without a final answer."
