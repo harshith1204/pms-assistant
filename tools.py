@@ -468,32 +468,14 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
         result = await plan_and_execute_query(query)
 
         if result["success"]:
-            response = f"🎯 INTELLIGENT QUERY RESULT:\n"
-            response += f"Query: '{query}'\n\n"
-
             # Show parsed intent
             intent = result["intent"]
-            response += f"📋 UNDERSTOOD INTENT:\n"
-            if result.get("planner"):
-                response += f"• Planner: {result['planner']}\n"
-            response += f"• Primary Entity: {intent['primary_entity']}\n"
-            if intent['target_entities']:
-                response += f"• Related Entities: {', '.join(intent['target_entities'])}\n"
-            if intent['filters']:
-                response += f"• Filters: {intent['filters']}\n"
-            if intent['aggregations']:
-                response += f"• Aggregations: {', '.join(intent['aggregations'])}\n"
-            response += "\n"
-
             # Show the generated pipeline (first few stages)
             pipeline = result.get("pipeline")
             pipeline_js = result.get("pipeline_js")
             if pipeline_js:
-                response += f"🔧 GENERATED PIPELINE:\n"
                 response += pipeline_js
-                response += "\n"
             elif pipeline:
-                response += f"🔧 GENERATED PIPELINE:\n"
                 # Import the formatting function from planner
                 try:
                     from planner import _format_pipeline_for_display
@@ -670,11 +652,11 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 if isinstance(data, list):
                     # Handle count-only results
                     if len(data) == 1 and isinstance(data[0], dict) and "total" in data[0]:
-                        return f"📊 RESULTS:\nTotal: {data[0]['total']}"
+                        return f"\nTotal: {data[0]['total']}"
 
                     # Handle grouped/aggregated results
                     if len(data) > 0 and isinstance(data[0], dict) and "count" in data[0]:
-                        response = "📊 RESULTS SUMMARY:\n"
+                        response = "\n"
                         total_items = sum(item.get('count', 0) for item in data)
 
                         # Determine what type of grouping this is
@@ -708,7 +690,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 
                     # Handle list of documents - show summary instead of raw JSON
                     if max_items is not None and len(data) > max_items:
-                        response = f"📊 RESULTS SUMMARY:\n"
+                        response = f"\n"
                         response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
                         # Show sample items in a collection-aware way
                         for i, item in enumerate(data[:max_items], 1):
@@ -719,7 +701,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         return response
                     else:
                         # Show all items or small list - show in formatted way
-                        response = "📊 RESULTS:\n"
+                        response = "\n"
                         for item in data:
                             if isinstance(item, dict):
                                 response += render_line(item) + "\n"
@@ -728,7 +710,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 # Single document or other data
                 if isinstance(data, dict):
                     # Format single document in a readable way
-                    response = "📊 RESULT:\n"
+                    response = "\n"
                     # Prefer a single-line summary first
                     if isinstance(data, dict):
                         response += render_line(data) + "\n\n"
@@ -903,16 +885,14 @@ async def rag_search(
         if not results:
             return f"❌ No results found for query: '{query}'"
         
-        # Build response header
-        response = f"🔍 RAG SEARCH: '{query}'\n"
-        response += f"Found {len(results)} result(s)"
+        # Build response
         if content_type:
             response += f" (type: {content_type})"
         response += "\n\n"
         
         # NO GROUPING - Show detailed list with metadata
         if not group_by:
-            response += "📋 RESULTS:\n\n"
+            response += "\n\n"
             for i, result in enumerate(results[:15], 1):
                 response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
                 response += f"    Score: {result['score']:.3f}\n"
@@ -973,7 +953,7 @@ async def rag_search(
         # Sort groups by count
         sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
         
-        response += f"📊 GROUPED BY '{group_by}':\n"
+        response += f"'{group_by}':\n"
         response += f"Total groups: {len(sorted_groups)}\n\n"
         
         for group_key, items in sorted_groups[:20]:
