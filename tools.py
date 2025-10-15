@@ -430,7 +430,6 @@ def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None
         return enrich(stripped)
     return stripped
 
-
 @tool
 async def mongo_query(query: str, show_all: bool = False) -> str:
     """Plan-first Mongo query executor for structured, factual questions.
@@ -440,353 +439,357 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     across collections: `project`, `workItem`, `cycle`, `module`, `members`,
     `page`, `projectState`.
 
-    Do NOT use this for:
-    - Free-form content questions (use `rag_search`).
-    - Pure summarization or opinion without data retrieval.
-    - When you already have the exact answer in prior tool results.
-
-    Behavior:
-    - Follows a planner to generate a safe aggregation pipeline; avoids
-      hallucinated fields.
-    - Automatically determines when complex joins are beneficial based on query requirements.
-    - Intelligently adds strategic relationships only when they improve query performance:
-        - Multi-hop queries: "work items by business" (workItem→project→business)
-        - Cross-collection analysis: "members working on projects by business"
-        - Complex grouping that spans multiple collections
-    - Only adds joins that provide clear benefits for the specific query, avoiding unnecessary complexity.
-
     Args:
         query: Natural language, structured data request about PM entities.
-        show_all: If True, output full details instead of a summary. Use sparingly.
+        show_all: If True, output ALL details. Use when user explicitly asks for "all" or "complete list".
 
-    Returns: A compact result suitable for direct user display.
+    Returns: Smart-sized results - detailed for small sets, summarized for large sets.
     """
     if not plan_and_execute_query:
-        return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
+        return "❌ Query planner not available."
 
     try:
         result = await plan_and_execute_query(query)
 
-        if result["success"]:
-            response = f"🎯 INTELLIGENT QUERY RESULT:\n"
-            response += f"Query: '{query}'\n\n"
+        if not result["success"]:
+            return f"❌ Query failed: {result['error']}"
 
-            # Show parsed intent
-            intent = result["intent"]
-            response += f"📋 UNDERSTOOD INTENT:\n"
-            if result.get("planner"):
-                response += f"• Planner: {result['planner']}\n"
-            response += f"• Primary Entity: {intent['primary_entity']}\n"
-            if intent['target_entities']:
-                response += f"• Related Entities: {', '.join(intent['target_entities'])}\n"
-            if intent['filters']:
-                response += f"• Filters: {intent['filters']}\n"
-            if intent['aggregations']:
-                response += f"• Aggregations: {', '.join(intent['aggregations'])}\n"
-            response += "\n"
+        # Parse results
+        rows = result.get("result")
+        try:
+            parsed = json.loads(rows) if isinstance(rows, str) else rows
+        except Exception:
+            parsed = rows
 
-            # Show the generated pipeline (first few stages)
-            pipeline = result.get("pipeline")
-            pipeline_js = result.get("pipeline_js")
-            if pipeline_js:
-                response += f"🔧 GENERATED PIPELINE:\n"
-                response += pipeline_js
-                response += "\n"
-            elif pipeline:
-                response += f"🔧 GENERATED PIPELINE:\n"
-                # Import the formatting function from planner
-                try:
-                    from planner import _format_pipeline_for_display
-                    formatted_pipeline = _format_pipeline_for_display(pipeline)
-                    response += formatted_pipeline
-                except ImportError:
-                    # Fallback to JSON format if import fails
-                    for i, stage in enumerate(pipeline):
-                        stage_name = list(stage.keys())[0]
-                        # Format the stage content nicely
-                        stage_content = json.dumps(stage[stage_name], indent=2)
-                        # Truncate very long content for readability but show complete structure
-                        if len(stage_content) > 200:
-                            stage_content = stage_content + "..."
-                        response += f"• {stage_name}: {stage_content}\n"
-                response += "\n"
-
-            # Show results (compact preview)
-            rows = result.get("result")
-            # Authorization awareness: if no rows and auth restricted, surface a hint
-            auth_meta = result.get("auth") or {}
-            auth_applied = bool(auth_meta.get("auth_applied"))
-            auth_restricted = bool(auth_meta.get("auth_restricted"))
-            try:
-                # Attempt to parse stringified JSON results
-                if isinstance(rows, str):
-                    parsed = json.loads(rows)
-                else:
-                    parsed = rows
-            except Exception:
-                parsed = rows
-
-            # Handle the specific MongoDB response format
-            if isinstance(parsed, list) and len(parsed) > 0:
-                # Check if first element is a string (like "Found X documents...")
-                if isinstance(parsed[0], str) and parsed[0].startswith("Found"):
-                    # This is the MongoDB response format: [message, doc1_json, doc2_json, ...]
-                    # Parse the JSON strings and filter them
-                    documents = []
-                    for item in parsed[1:]:  # Skip the first message
-                        if isinstance(item, str):
-                            try:
-                                doc = json.loads(item)
-                                filtered_doc = filter_meaningful_content(doc)
-                                if filtered_doc:  # Only add if there's meaningful content
-                                    documents.append(filtered_doc)
-                            except Exception:
-                                # Skip invalid JSON
-                                continue
-                        else:
-                            # Already parsed, filter directly
-                            filtered_doc = filter_meaningful_content(item)
-                            if filtered_doc:
-                                documents.append(filtered_doc)
-
-                    filtered = documents
-                else:
-                    # Regular list, filter as before
-                    filtered = parsed
+        # Handle MongoDB response format
+        if isinstance(parsed, list) and len(parsed) > 0:
+            if isinstance(parsed[0], str) and parsed[0].startswith("Found"):
+                documents = []
+                for item in parsed[1:]:
+                    try:
+                        doc = json.loads(item) if isinstance(item, str) else item
+                        filtered_doc = filter_meaningful_content(doc)
+                        if filtered_doc:
+                            documents.append(filtered_doc)
+                    except Exception:
+                        continue
+                filtered = documents
             else:
-                # Not a list, filter as before
                 filtered = parsed
+        else:
+            filtered = parsed
 
-            # If empty results and auth likely restricted, optionally add a permission hint
-            try:
-                from mongo.constants import SHOW_PERMISSION_HINTS
-            except Exception:
-                SHOW_PERMISSION_HINTS = False  # default harden if import fails
-            if SHOW_PERMISSION_HINTS and (not filtered or (isinstance(filtered, list) and len(filtered) == 0)) and auth_applied and auth_restricted:
-                response += "⚠️ No results due to permissions. User may not have access to the requested data.\n\n"
-
-
-            def format_llm_friendly(data, max_items=20, primary_entity: Optional[str] = None):
-                """Format data in a more LLM-friendly way to avoid hallucinations."""
-                def get_nested(d: Dict[str, Any], key: str) -> Any:
-                    if key in d:
-                        return d[key]
-                    if "." in key:
-                        cur: Any = d
-                        for part in key.split("."):
-                            if isinstance(cur, dict) and part in cur:
-                                cur = cur[part]
-                            else:
-                                return None
-                        return cur
-                    return None
-
-                def ensure_list_str(val: Any) -> List[str]:
-                    if isinstance(val, list):
-                        res: List[str] = []
-                        for x in val:
-                            if isinstance(x, str) and x.strip():
-                                res.append(x)
-                            elif isinstance(x, dict):
-                                n = x.get("name") or x.get("title")
-                                if isinstance(n, str) and n.strip():
-                                    res.append(n)
-                        return res
-                    if isinstance(val, dict):
-                        n = val.get("name") or val.get("title")
-                        return [n] if isinstance(n, str) and n.strip() else []
-                    if isinstance(val, str) and val.strip():
-                        return [val]
-                    return []
-
-                def truncate_str(s: Any, limit: int = 120) -> str:
-                    if not isinstance(s, str):
-                        return str(s)
-                    return s if len(s) <= limit else s[:limit] + "..."
-
-                def render_line(entity: Dict[str, Any]) -> str:
-                    e = (primary_entity or "").lower()
-                    if e == "workitem":
-                        bug = entity.get("displayBugNo") or entity.get("title") or "Item"
-                        title = entity.get("title") or entity.get("name") or ""
-                        state = entity.get("stateName") or get_nested(entity, "state.name")
-                        project = entity.get("projectName") or get_nested(entity, "project.name")
-                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
-                        priority = entity.get("priority")
-                        
-                        # Build base line
-                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
-                        
-                        # Add estimate if present
-                        estimate = entity.get("estimate")
-                        if estimate and isinstance(estimate, dict):
-                            hr = estimate.get("hr", "0")
-                            min_val = estimate.get("min", "0")
-                            base += f", estimate={hr}h {min_val}m"
-                        elif estimate:
-                            base += f", estimate={estimate}"
-                        
-                        # Add work logs if present
-                        work_logs = entity.get("workLogs")
-                        if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
-                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
-                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
-                            total_hours += total_mins // 60
-                            total_mins = total_mins % 60
-                            base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
-                        
-                        return base
-                    if e == "project":
-                        pid = entity.get("projectDisplayId")
-                        name = entity.get("name") or entity.get("title")
-                        status_v = entity.get("status")
-                        lead = entity.get("leadName") or get_nested(entity, "lead.name")
-                        business = entity.get("businessName") or get_nested(entity, "business.name")
-                        return f"• {pid or name}: {name or ''} — status={status_v or 'N/A'}, lead={lead or 'N/A'}, business={business or 'N/A'}"
-                    if e == "cycle":
-                        title = entity.get("title") or entity.get("name")
-                        status_v = entity.get("status")
-                        project = entity.get("projectName") or get_nested(entity, "project.name")
-                        sd = entity.get("startDate")
-                        ed = entity.get("endDate")
-                        dates = f"{sd} → {ed}" if sd or ed else "N/A"
-                        return f"• {truncate_str(title or 'Cycle', 80)} — status={status_v or 'N/A'}, project={project or 'N/A'}, dates={dates}"
-                    if e == "module":
-                        title = entity.get("title") or entity.get("name")
-                        project = entity.get("projectName") or get_nested(entity, "project.name")
-                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
-                        business = entity.get("businessName") or get_nested(entity, "business.name")
-                        return f"• {truncate_str(title or 'Module', 80)} — project={project or 'N/A'}, assignees={(len(assignees) if assignees else 0)}, business={business or 'N/A'}"
-                    if e == "members":
-                        name = entity.get("name")
-                        email = entity.get("email")
-                        role = entity.get("role")
-                        project = entity.get("projectName") or get_nested(entity, "project.name")
-                        type_v = entity.get("type")
-                        return f"• {name or 'Member'} — role={role or 'N/A'}, email={email or 'N/A'}, type={type_v or 'N/A'}, project={project or 'N/A'}"
-                    if e == "page":
-                        title = entity.get("title") or entity.get("name")
-                        project = entity.get("projectName") or get_nested(entity, "project.name")
-                        visibility = entity.get("visibility")
-                        fav = entity.get("isFavourite")
-                        return f"• {truncate_str(title or 'Page', 80)} — visibility={visibility or 'N/A'}, favourite={fav if fav is not None else 'N/A'}, project={project or 'N/A'}"
-                    if e == "projectstate":
-                        name = entity.get("name")
-                        icon = entity.get("icon")
-                        subs = entity.get("subStates")
-                        sub_count = len(subs) if isinstance(subs, list) else 0
-                        return f"• {name or 'State'} — icon={icon or 'N/A'}, substates={sub_count}"
-                    # Default fallback
-                    title = entity.get("title") or entity.get("name") or "Item"
-                    return f"• {truncate_str(title, 80)}"
-                if isinstance(data, list):
-                    # Handle count-only results
-                    if len(data) == 1 and isinstance(data[0], dict) and "total" in data[0]:
-                        return f"📊 RESULTS:\nTotal: {data[0]['total']}"
-
-                    # Handle grouped/aggregated results
-                    if len(data) > 0 and isinstance(data[0], dict) and "count" in data[0]:
-                        response = "📊 RESULTS SUMMARY:\n"
-                        total_items = sum(item.get('count', 0) for item in data)
-
-                        # Determine what type of grouping this is
-                        first_item = data[0]
-                        group_keys = [k for k in first_item.keys() if k not in ['count', 'items']]
-
-                        if group_keys:
-                            response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
-
-                            # Sort by count (highest first) and show more groups
-                            sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
-
-                            # Show all groups if max_items is None, otherwise limit
-                            display_limit = len(sorted_data) if max_items is None else 15
-                            for item in sorted_data[:display_limit]:
-                                group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
-                                group_label = ', '.join(group_values)
-                                count = item.get('count', 0)
-                                response += f"• {group_label}: {count} items\n"
-
-                            if max_items is not None and len(data) > 15:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[15:])
-                                response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
-                            elif max_items is None and len(data) > display_limit:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
-                                response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
-                        else:
-                            response += f"Found {total_items} items\n"
-                        print(response)
-                        return response
-
-                    # Handle list of documents - show summary instead of raw JSON
-                    if max_items is not None and len(data) > max_items:
-                        response = f"📊 RESULTS SUMMARY:\n"
-                        response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
-                        # Show sample items in a collection-aware way
-                        for i, item in enumerate(data[:max_items], 1):
-                            if isinstance(item, dict):
-                                response += render_line(item) + "\n"
-                        if len(data) > max_items:
-                            response += f"• ... and {len(data) - max_items} more items\n"
-                        return response
+        # Helper functions for clean formatting
+        def get_nested(d: Dict[str, Any], key: str) -> Any:
+            if key in d:
+                return d[key]
+            if "." in key:
+                cur: Any = d
+                for part in key.split("."):
+                    if isinstance(cur, dict) and part in cur:
+                        cur = cur[part]
                     else:
-                        # Show all items or small list - show in formatted way
-                        response = "📊 RESULTS:\n"
-                        for item in data:
-                            if isinstance(item, dict):
-                                response += render_line(item) + "\n"
-                        return response
+                        return None
+                return cur
+            return None
 
-                # Single document or other data
-                if isinstance(data, dict):
-                    # Format single document in a readable way
-                    response = "📊 RESULT:\n"
-                    # Prefer a single-line summary first
-                    if isinstance(data, dict):
-                        response += render_line(data) + "\n\n"
-                    # Then show key fields compactly (truncate long strings)
-                    for key, value in data.items():
-                        if isinstance(value, (str, int, float, bool)):
-                            response += f"• {key}: {truncate_str(value, 140)}\n"
-                        elif isinstance(value, dict):
-                            # Show only shallow summary for dict
-                            name_val = value.get('name') or value.get('title')
-                            if name_val:
-                                response += f"• {key}: {truncate_str(name_val, 120)}\n"
-                            else:
-                                child_keys = ", ".join(list(value.keys())[:5])
-                                response += f"• {key}: {{ {child_keys} }}\n"
-                        elif isinstance(value, list):
-                            if len(value) <= 5:
-                                response += f"• {key}: {truncate_str(str(value), 160)}\n"
-                            else:
-                                response += f"• {key}: [{len(value)} items]\n"
+        def ensure_list_str(val: Any) -> List[str]:
+            if isinstance(val, list):
+                res: List[str] = []
+                for x in val:
+                    if isinstance(x, str) and x.strip():
+                        res.append(x)
+                    elif isinstance(x, dict):
+                        n = x.get("name") or x.get("title")
+                        if isinstance(n, str) and n.strip():
+                            res.append(n)
+                return res
+            if isinstance(val, dict):
+                n = val.get("name") or val.get("title")
+                return [n] if isinstance(n, str) and n.strip() else []
+            if isinstance(val, str) and val.strip():
+                return [val]
+            return []
+
+        def truncate_str(s: Any, limit: int = 100) -> str:
+            if not isinstance(s, str):
+                return str(s)
+            return s if len(s) <= limit else s[:limit] + "..."
+
+        def render_entity(entity: Dict[str, Any], entity_type: str, detail_level: str = "normal") -> str:
+            """Render entity with adaptive detail level.
+            
+            Args:
+                entity: The entity dict
+                entity_type: Type of entity
+                detail_level: "minimal", "normal", or "full"
+            """
+            e = entity_type.lower()
+            
+            if e == "workitem":
+                bug = entity.get("displayBugNo") or entity.get("title") or "Item"
+                title = entity.get("title") or entity.get("name") or ""
+                state = entity.get("stateName") or get_nested(entity, "state.name") or "N/A"
+                project = entity.get("projectName") or get_nested(entity, "project.name") or "N/A"
+                assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                assignee = assignees[0] if assignees else "N/A"
+                priority = entity.get("priority") or "N/A"
+                
+                if detail_level == "minimal":
+                    # Ultra-compact for large lists
+                    return f"{bug}: {truncate_str(title, 50)} | {state} | P{priority}"
+                elif detail_level == "full":
+                    # Full details
+                    line = f"{bug}: {title}\n"
+                    line += f"  State: {state} | Priority: {priority}\n"
+                    line += f"  Assignee: {assignee} | Project: {project}\n"
+                    
+                    estimate = entity.get("estimate")
+                    if estimate and isinstance(estimate, dict):
+                        hr = estimate.get("hr", 0)
+                        min_val = estimate.get("min", 0)
+                        if hr or min_val:
+                            line += f"  Estimate: {hr}h {min_val}m\n"
+                    
+                    work_logs = entity.get("workLogs")
+                    if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
+                        total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                        total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                        total_hours += total_mins // 60
+                        total_mins = total_mins % 60
+                        line += f"  Logged: {total_hours}h {total_mins}m ({len(work_logs)} entries)\n"
+                    
+                    description = entity.get("description")
+                    if description:
+                        line += f"  Description: {truncate_str(description, 200)}\n"
+                    
+                    return line
+                else:
+                    # Normal balanced view
+                    title_trunc = truncate_str(title, 70)
+                    line = f"{bug}: {title_trunc} | {state} | P{priority} | {assignee} | {project}"
+                    
+                    estimate = entity.get("estimate")
+                    if estimate and isinstance(estimate, dict):
+                        hr = estimate.get("hr", 0)
+                        min_val = estimate.get("min", 0)
+                        if hr or min_val:
+                            line += f" | Est: {hr}h {min_val}m"
+                    
+                    work_logs = entity.get("workLogs")
+                    if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
+                        total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                        total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                        total_hours += total_mins // 60
+                        total_mins = total_mins % 60
+                        line += f" | Logged: {total_hours}h {total_mins}m"
+                    
+                    return line
+                
+            elif e == "project":
+                pid = entity.get("projectDisplayId")
+                name = entity.get("name") or entity.get("title") or "Project"
+                status = entity.get("status") or "N/A"
+                lead = entity.get("leadName") or get_nested(entity, "lead.name") or "N/A"
+                business = entity.get("businessName") or get_nested(entity, "business.name") or "N/A"
+                
+                if detail_level == "minimal":
+                    return f"{pid or name}: {truncate_str(name, 40)} | {status}"
+                elif detail_level == "full":
+                    line = f"{pid}: {name}\n"
+                    line += f"  Status: {status} | Lead: {lead}\n"
+                    line += f"  Business: {business}\n"
+                    return line
+                else:
+                    return f"{pid or name}: {name} | {status} | Lead: {lead} | {business}"
+                
+            elif e == "cycle":
+                title = entity.get("title") or entity.get("name") or "Cycle"
+                status = entity.get("status") or "N/A"
+                project = entity.get("projectName") or get_nested(entity, "project.name") or "N/A"
+                sd = entity.get("startDate", "")
+                ed = entity.get("endDate", "")
+                
+                if detail_level == "minimal":
+                    return f"{truncate_str(title, 40)} | {status}"
+                elif detail_level == "full":
+                    line = f"{title}\n"
+                    line += f"  Status: {status} | Project: {project}\n"
+                    if sd or ed:
+                        line += f"  Period: {sd} → {ed}\n"
+                    return line
+                else:
+                    dates = f"{sd} → {ed}" if sd or ed else "N/A"
+                    return f"{truncate_str(title, 70)} | {status} | {project} | {dates}"
+                
+            elif e == "module":
+                title = entity.get("title") or entity.get("name") or "Module"
+                project = entity.get("projectName") or get_nested(entity, "project.name") or "N/A"
+                assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                business = entity.get("businessName") or get_nested(entity, "business.name") or "N/A"
+                
+                if detail_level == "minimal":
+                    return f"{truncate_str(title, 40)} | {len(assignees)} assignee(s)"
+                elif detail_level == "full":
+                    line = f"{title}\n"
+                    line += f"  Project: {project} | Business: {business}\n"
+                    if assignees:
+                        line += f"  Assignees: {', '.join(assignees)}\n"
+                    return line
+                else:
+                    return f"{truncate_str(title, 70)} | {project} | {len(assignees)} assignee(s) | {business}"
+                
+            elif e == "members":
+                name = entity.get("name") or "Member"
+                email = entity.get("email") or "N/A"
+                role = entity.get("role") or "N/A"
+                project = entity.get("projectName") or get_nested(entity, "project.name") or "N/A"
+                type_v = entity.get("type") or "N/A"
+                
+                if detail_level == "minimal":
+                    return f"{name} | {role}"
+                elif detail_level == "full":
+                    line = f"{name}\n"
+                    line += f"  Role: {role} | Type: {type_v}\n"
+                    line += f"  Email: {email} | Project: {project}\n"
+                    return line
+                else:
+                    return f"{name} | {role} | {type_v} | {email} | {project}"
+                
+            elif e == "page":
+                title = entity.get("title") or entity.get("name") or "Page"
+                project = entity.get("projectName") or get_nested(entity, "project.name") or "N/A"
+                visibility = entity.get("visibility") or "N/A"
+                
+                if detail_level == "minimal":
+                    return f"{truncate_str(title, 50)} | {visibility}"
+                elif detail_level == "full":
+                    line = f"{title}\n"
+                    line += f"  Visibility: {visibility} | Project: {project}\n"
+                    return line
+                else:
+                    return f"{truncate_str(title, 70)} | {visibility} | {project}"
+                
+            elif e == "projectstate":
+                name = entity.get("name") or "State"
+                subs = entity.get("subStates")
+                sub_count = len(subs) if isinstance(subs, list) else 0
+                
+                if detail_level == "minimal":
+                    return f"{name} ({sub_count})"
+                elif detail_level == "full":
+                    line = f"{name}\n"
+                    line += f"  Substates: {sub_count}\n"
+                    if subs and isinstance(subs, list):
+                        for sub in subs[:5]:
+                            if isinstance(sub, dict):
+                                sub_name = sub.get("name")
+                                if sub_name:
+                                    line += f"    • {sub_name}\n"
+                    return line
+                else:
+                    return f"{name} | {sub_count} substate(s)"
+                
+            # Default fallback
+            title = truncate_str(entity.get("title") or entity.get("name") or "Item", 80)
+            return title
+
+        # Apply filtering and transformation
+        primary_entity = result.get("intent", {}).get("primary_entity") if isinstance(result.get("intent"), dict) else None
+        filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
+
+        # SMART SIZING: Adapt display based on result count
+        if isinstance(filtered, list):
+            result_count = len(filtered)
+            
+            # Count-only results
+            if result_count == 1 and isinstance(filtered[0], dict) and "total" in filtered[0]:
+                return f"Total: {filtered[0]['total']}"
+
+            # Grouped/aggregated results
+            if result_count > 0 and isinstance(filtered[0], dict) and "count" in filtered[0]:
+                total_items = sum(item.get('count', 0) for item in filtered)
+                first_item = filtered[0]
+                group_keys = [k for k in first_item.keys() if k not in ['count', 'items']]
+
+                if group_keys:
+                    response = f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
+                    sorted_data = sorted(filtered, key=lambda x: x.get('count', 0), reverse=True)
+                    
+                    # Show MORE groups for aggregations (they're compact)
+                    display_limit = len(sorted_data) if show_all else min(50, len(sorted_data))
+                    
+                    for item in sorted_data[:display_limit]:
+                        group_values = [f"{k}={item[k]}" for k in group_keys if k in item]
+                        group_label = ', '.join(group_values)
+                        count = item.get('count', 0)
+                        response += f"• {group_label}: {count}\n"
+
+                    if not show_all and len(sorted_data) > display_limit:
+                        remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
+                        response += f"\n... {len(sorted_data) - display_limit} more groups ({remaining} items)\n"
+                        response += "💡 Tip: Use show_all=True to see complete breakdown"
                     return response
                 else:
-                    # Fallback to JSON for other data types
-                    return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
+                    return f"Total: {total_items}"
 
-            # Apply strong filter/transform now that we know the primary entity
-            primary_entity = intent.get('primary_entity') if isinstance(intent, dict) else None
-            filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
+            # List of documents - ADAPTIVE DISPLAY
+            if result_count <= 10:
+                # Small set: Show FULL details for all
+                response = f"Found {result_count} item(s):\n\n"
+                for item in filtered:
+                    if isinstance(item, dict):
+                        response += f"• {render_entity(item, primary_entity or '', 'full')}\n"
+                return response
+                
+            elif result_count <= 30:
+                # Medium set: Show NORMAL details for all
+                response = f"Found {result_count} item(s):\n\n"
+                for item in filtered:
+                    if isinstance(item, dict):
+                        response += f"• {render_entity(item, primary_entity or '', 'normal')}\n"
+                return response
+                
+            elif result_count <= 100 and not show_all:
+                # Large set: Show first 30 NORMAL + summarize rest
+                response = f"Found {result_count} item(s). Showing first 30:\n\n"
+                for item in filtered[:30]:
+                    if isinstance(item, dict):
+                        response += f"• {render_entity(item, primary_entity or '', 'normal')}\n"
+                response += f"\n... {result_count - 30} more items\n"
+                response += "💡 Tip: Ask me to 'show all' or filter further to see remaining items"
+                return response
+                
+            elif show_all:
+                # User explicitly wants ALL - give them everything with minimal format
+                response = f"Found {result_count} item(s) - COMPLETE LIST:\n\n"
+                for item in filtered:
+                    if isinstance(item, dict):
+                        response += f"• {render_entity(item, primary_entity or '', 'minimal')}\n"
+                return response
+                
+            else:
+                # Very large set: Show first 50 MINIMAL + guide user
+                response = f"Found {result_count} item(s). Showing first 50:\n\n"
+                for item in filtered[:50]:
+                    if isinstance(item, dict):
+                        response += f"• {render_entity(item, primary_entity or '', 'minimal')}\n"
+                response += f"\n... {result_count - 50} more items\n"
+                response += "💡 Large dataset! Consider:\n"
+                response += "   • Filter by specific criteria (priority, assignee, state, etc.)\n"
+                response += "   • Group by a dimension to see distribution\n"
+                response += "   • Ask for 'all items' if you need the complete list"
+                return response
 
-            # Format in LLM-friendly way
-            max_items = None if show_all else 20
-            formatted_result = format_llm_friendly(filtered, max_items=max_items, primary_entity=primary_entity)
-            # If members primary entity and no rows, proactively hint about filters
-            try:
-                if isinstance(result.get("intent"), dict) and result["intent"].get("primary_entity") == "members" and not filtered:
-                    formatted_result += "\n(No members matched. Try filtering by name, role, type, or project.)"
-            except Exception:
-                pass
-            response += formatted_result
-            print(response)
-            return response
-        else:
-            return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
+        # Single document - always show full
+        if isinstance(filtered, dict):
+            return render_entity(filtered, primary_entity or '', 'full')
+        
+        # Fallback
+        return json.dumps(filtered, indent=2)
 
     except Exception as e:
-        return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
+        return f"❌ Query error: {str(e)}"
 
 
 @tool
@@ -798,79 +801,64 @@ async def rag_search(
     show_content: bool = True,
     use_chunk_aware: bool = True
 ) -> str:
-    """Universal RAG search tool - returns FULL chunk content for LLM synthesis.
+    """Universal RAG search - returns FULL content for synthesis.
     
-    **IMPORTANT**: This tool returns complete, untruncated content chunks so you can:
-    - Analyze and understand the actual content
-    - Generate properly formatted responses based on real data
-    - Answer questions accurately using the retrieved context
-    - Synthesize information from multiple sources
-    
-    Use this for ANY content-based search or analysis needs:
-    - Find relevant pages, work items, projects, cycles, modules
-    - Search by semantic meaning (not just keywords)
-    - Get full context for answering questions
-    - Analyze content patterns and distributions
-    - Group/breakdown results by any dimension
-    
-    **When to use:**
-    - "Find/search/show me pages about X"
-    - "What content discusses Y?"
-    - "Which work items mention authentication?"
-    - "Show me recent documentation about APIs"
-    - "Break down results by project/date/priority/etc."
-    
-    **Do NOT use for:**
-    - Structured database queries (counts, filters on structured fields) → use `mongo_query`
+    Use for content-based searches:
+    - Find pages/work items by meaning
+    - Search documentation and notes
+    - Analyze content patterns
+    - Group results by any dimension
     
     Args:
-        query: Search query (semantic meaning, not just keywords)
-        content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', or None (all)
-        group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
-                 'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
-        limit: Max results to retrieve (default 10, increase for broader searches)
-        show_content: If True, shows full content; if False, shows only metadata
-        use_chunk_aware: If True, uses chunk-aware retrieval for better context (default True)
+        query: Search query (semantic meaning)
+        content_type: Filter by type ('page', 'work_item', 'project', 'cycle', 'module', or None)
+        group_by: Group by field ('project_name', 'priority', 'state_name', etc.)
+        limit: Max results - use higher values (20-50) for comprehensive searches
+        show_content: Show full content (default True)
+        use_chunk_aware: Use chunk-aware retrieval (default True)
     
-    Returns: FULL chunk content with rich metadata - ready for LLM synthesis and formatting
+    Returns: Full content with essential metadata for synthesis.
     
-    Examples:
-        query="authentication" → finds all content about authentication with full text
-        query="API documentation", content_type="page" → finds API docs pages with complete content
-        query="bugs", content_type="work_item", group_by="priority" → work items grouped by priority
+    💡 Tips:
+    - Use limit=20-50 for comprehensive searches
+    - Use grouping to understand data distribution first
+    - Then search specific groups for detailed content
     """
     try:
-        # Fix: Add project root to sys.path to resolve module imports
-        # This makes 'qdrant' and 'mongo' modules importable from any script location.
-        # Adjust the number of os.path.dirname if your directory structure is different.
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if project_root not in sys.path:
             sys.path.append(project_root)
         from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
     except ImportError as e:
-        return f"❌ RAG dependency error: {e}. Please ensure all modules are in the correct path."
+        return f"❌ RAG unavailable: {e}"
     except Exception as e:
-        return f"❌ RAG SEARCH INITIALIZATION ERROR: {str(e)}"
+        return f"❌ RAG error: {str(e)}"
     
     try:
         from collections import defaultdict
 
-        # Ensure RAGTool is initialized
+        # Initialize RAGTool
         try:
             rag_tool = RAGTool.get_instance()
         except RuntimeError:
-            # Try to initialize if not already done
             await RAGTool.initialize()
             rag_tool = RAGTool.get_instance()
         
-        # Resolve effective limit based on content_type defaults (opt-in when caller uses default)
+        # SMART LIMIT: Increase defaults for better coverage
         effective_limit: int = limit
         if content_type:
-            default_for_type = CONTENT_TYPE_DEFAULT_LIMITS.get(content_type)
-            if default_for_type is not None and (limit is None or limit == DEFAULT_RAG_LIMIT):
+            # Higher defaults for better recall
+            default_for_type = {
+                "page": 20,        # Increased from 12
+                "work_item": 20,   # Increased from 12
+                "project": 10,     # Increased from 6
+                "cycle": 10,       # Increased from 6
+                "module": 10,      # Increased from 6
+            }.get(content_type)
+            if default_for_type is not None and limit == 10:  # User didn't specify custom limit
                 effective_limit = default_for_type
 
-        # Use chunk-aware retrieval if enabled and not grouping
+        # Chunk-aware retrieval
         if use_chunk_aware and not group_by:
             from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
             
@@ -880,14 +868,13 @@ async def rag_search(
                 sparse_embedder=rag_tool.sparse_embedder
             )
             
-            from mongo.constants import QDRANT_COLLECTION_NAME
+            from mongo.constants import QDRANT_COLLECTION_NAME, RAG_CONTEXT_TOKEN_BUDGET
             
-            # Per content_type chunk-level tuning
-            chunks_per_doc = CONTENT_TYPE_CHUNKS_PER_DOC.get(content_type or "", 3)
+            # Better chunk settings for quality
+            chunks_per_doc = CONTENT_TYPE_CHUNKS_PER_DOC.get(content_type or "", 4)  # Increased default
             include_adjacent = CONTENT_TYPE_INCLUDE_ADJACENT.get(content_type or "", True)
-            min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.5)
+            min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.45)  # Lower threshold for better recall
 
-            from mongo.constants import RAG_CONTEXT_TOKEN_BUDGET
             reconstructed_docs = await retriever.search_with_context(
                 query=query,
                 collection_name=QDRANT_COLLECTION_NAME,
@@ -900,73 +887,92 @@ async def rag_search(
             )
             
             if not reconstructed_docs:
-                return f"❌ No results found for query: '{query}'"
+                return f"No results found for: '{query}'\n💡 Tip: Try broader search terms or remove content_type filter"
             
-            # Always pass full content chunks to the agent by default for synthesis
-            # Force show_full_content=True so downstream LLM has full context
+            # Return clean formatted results with full content
             return format_reconstructed_results(
                 docs=reconstructed_docs,
                 show_full_content=True,
-                show_chunk_details=True
+                show_chunk_details=False
             )
         
-        # Fallback to standard retrieval
+        # Standard retrieval
         results = await rag_tool.search_content(query, content_type=content_type, limit=effective_limit)
         
         if not results:
-            return f"❌ No results found for query: '{query}'"
+            return f"No results found for: '{query}'\n💡 Tip: Try broader search terms or increase limit"
         
-        # Build response header
-        response = f"🔍 RAG SEARCH: '{query}'\n"
-        response += f"Found {len(results)} result(s)"
-        if content_type:
-            response += f" (type: {content_type})"
-        response += "\n\n"
-        
-        # NO GROUPING - Show detailed list with metadata
+        # NO GROUPING - Adaptive detail based on result count
         if not group_by:
-            response += "📋 RESULTS:\n\n"
-            for i, result in enumerate(results[:15], 1):
-                response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
-                response += f"    Score: {result['score']:.3f}\n"
+            result_count = len(results)
+            response = f"Found {result_count} result(s)"
+            if content_type:
+                response += f" ({content_type})"
+            response += ":\n\n"
+            
+            # Determine detail level
+            if result_count <= 5:
+                # Small set: Show ALL content fully
+                detail_level = "full"
+                display_count = result_count
+            elif result_count <= 15:
+                # Medium set: Show balanced view
+                detail_level = "normal"
+                display_count = result_count
+            else:
+                # Large set: Show more items but compact
+                detail_level = "compact"
+                display_count = min(25, result_count)
+            
+            for i, result in enumerate(results[:display_count], 1):
+                # Title
+                response += f"[{i}] {result['title']}\n"
                 
-                # Show metadata compactly
+                # Metadata - compact
                 meta = []
                 if result.get('project_name'):
                     meta.append(f"Project: {result['project_name']}")
-                if result.get('priority'):
-                    meta.append(f"Priority: {result['priority']}")
-                if result.get('state_name'):
-                    meta.append(f"State: {result['state_name']}")
-                if result.get('assignee_name'):
-                    meta.append(f"Assignee: {result['assignee_name']}")
                 if result.get('displayBugNo'):
-                    meta.append(f"Bug#: {result['displayBugNo']}")
-                if result.get('updatedAt'):
-                    date_str = str(result['updatedAt']).split('T')[0] if 'T' in str(result['updatedAt']) else str(result['updatedAt'])[:10]
-                    meta.append(f"Updated: {date_str}")
-                if result.get('visibility'):
-                    meta.append(f"Visibility: {result['visibility']}")
-                if result.get('business_name'):
-                    meta.append(f"Business: {result['business_name']}")
+                    meta.append(f"#{result['displayBugNo']}")
+                if result.get('priority'):
+                    meta.append(f"P{result['priority']}")
+                if result.get('state_name'):
+                    meta.append(result['state_name'])
+                if result.get('assignee_name'):
+                    meta.append(result['assignee_name'])
                 
                 if meta:
                     response += f"    {' | '.join(meta)}\n"
                 
-                # Always include FULL content for LLM synthesis (no truncation)
-                # This enables the LLM to generate properly formatted responses based on actual content
-                if result.get('content'):
+                # Content - adaptive
+                if show_content and result.get('content'):
                     content_text = result['content']
-                    response += f"\n    === CONTENT START ===\n{content_text}\n    === CONTENT END ===\n"
+                    
+                    if detail_level == "full":
+                        # Show complete content
+                        response += f"\n{content_text}\n"
+                    elif detail_level == "normal":
+                        # Show substantial preview
+                        if len(content_text) > 500:
+                            response += f"\n{content_text[:500]}...\n"
+                        else:
+                            response += f"\n{content_text}\n"
+                    else:
+                        # Compact: Show meaningful preview
+                        if len(content_text) > 200:
+                            response += f"    Preview: {content_text[:200]}...\n"
+                        else:
+                            response += f"    {content_text}\n"
                 
                 response += "\n"
             
-            if len(results) > 15:
-                response += f"... and {len(results) - 15} more results (increase limit to see more)\n"
+            if result_count > display_count:
+                response += f"... {result_count - display_count} more results\n"
+                response += f"💡 Tip: Increase limit (current: {limit}) or add filters to see more"
             
             return response
         
-        # GROUPING - Aggregate and show distribution with content snippets
+        # GROUPING - Show distribution with samples
         groups = defaultdict(list)
         
         for result in results:
@@ -977,46 +983,47 @@ async def rag_search(
                 if isinstance(group_val, str):
                     group_val = group_val.split('T')[0] if 'T' in group_val else group_val[:10]
             
-            # Handle None/empty
             if group_val is None or group_val == "":
                 group_val = "Unknown"
             
             groups[str(group_val)].append(result)
         
-        # Sort groups by count
+        # Sort and format
         sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
         
-        response += f"📊 GROUPED BY '{group_by}':\n"
-        response += f"Total groups: {len(sorted_groups)}\n\n"
+        total_items = sum(len(items) for _, items in sorted_groups)
+        response = f"Found {total_items} result(s) in {len(sorted_groups)} groups (by {group_by}):\n\n"
         
-        for group_key, items in sorted_groups[:20]:
+        # Show MORE groups when grouped (they're compact)
+        display_groups = min(30, len(sorted_groups))
+        
+        for group_key, items in sorted_groups[:display_groups]:
             response += f"▸ {group_key}: {len(items)} item(s)\n"
             
-            # Show sample items with content snippets for context
+            # Show top 3 items with mini-previews
             for item in items[:3]:
-                title = item['title'][:55] + "..." if len(item['title']) > 55 else item['title']
-                response += f"  • {title} (score: {item['score']:.2f})\n"
-                # Include content snippet for better LLM understanding
+                title = item['title'][:60] + "..." if len(item['title']) > 60 else item['title']
+                response += f"  • {title}\n"
+                
+                # Add tiny content preview for context
                 if show_content and item.get('content'):
-                    snippet = item['content'][:200] + "..." if len(item['content']) > 200 else item['content']
-                    response += f"    Content: {snippet}\n"
+                    preview = item['content'][:100].replace('\n', ' ') + "..."
+                    response += f"    {preview}\n"
             
             if len(items) > 3:
-                response += f"  ... and {len(items) - 3} more\n"
+                response += f"  ... {len(items) - 3} more\n"
             response += "\n"
         
-        if len(sorted_groups) > 20:
-            remaining_items = sum(len(items) for _, items in sorted_groups[20:])
-            response += f"... and {len(sorted_groups) - 20} more groups ({remaining_items} items)\n"
+        if len(sorted_groups) > display_groups:
+            remaining = sum(len(items) for _, items in sorted_groups[display_groups:])
+            response += f"... {len(sorted_groups) - display_groups} more groups ({remaining} items)\n"
         
         return response
         
     except ImportError:
-        return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
+        return "❌ RAG dependencies missing"
     except Exception as e:
-        return f"❌ RAG SEARCH ERROR: {str(e)}"
-
-
+        return f"❌ RAG error: {str(e)}"
 # Global websocket registry for content generation
 _GENERATION_WEBSOCKET = None
 _GENERATION_CONVERSATION_ID = None
