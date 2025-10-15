@@ -8,7 +8,7 @@ PAGE_TYPE_PROMPTS = {
 - Structure for executive decision-making and stakeholder communication
 - Adapt content based on specific project template: Status Reports, Risk Registers, or OKR Summaries
 
-**Key Elements to Include:**
+**Key Elements to Include (use ONLY provided facts):**
 - Executive Summary with project status and key achievements
 - KPI Dashboard with measurable metrics and progress indicators
 - Milestone Timeline with completion status and upcoming deadlines
@@ -20,9 +20,9 @@ PAGE_TYPE_PROMPTS = {
 
 **Business Standards:**
 - Use humanized, conversational language that feels natural and approachable while maintaining professionalism
-- Present data-driven insights with actionable recommendations in an engaging, readable format
+- Ground all content in the provided request/context; do not invent metrics, dates, owners, or financials. When data is missing, use "[TBD]" and capture clarifying questions in a "Questions for Stakeholders" section.
 - Maintain professional yet warm tone suitable for executive reporting that builds trust and clarity
-- Include success criteria and measurable outcomes for each section with clear, relatable explanations
+- Include success criteria and measurable outcomes only when supplied; otherwise use placeholders
 - Adapt tone and focus based on template type: more analytical for Risk Registers, more strategic for OKR Summaries
 """,
 
@@ -32,7 +32,7 @@ PAGE_TYPE_PROMPTS = {
 - Provide detailed breakdown of requirements and execution steps
 - Structure for clear task ownership and accountability
 
-**Key Elements to Include:**
+**Key Elements to Include (do NOT assume unknowns):**
 - Task Overview with clear objectives and success criteria
 - Detailed Requirements breakdown with acceptance criteria
 - Step-by-Step Execution Plan with dependencies and prerequisites
@@ -42,10 +42,10 @@ PAGE_TYPE_PROMPTS = {
 - Success Metrics and completion validation criteria
 
 **Business Standards:**
-- Use humanized, conversational language that's easy to understand and follow, like explaining to a colleague
-- Include measurable outcomes and quality checkpoints with practical, relatable examples
+- Use humanized, conversational language that's easy to understand and follow
+- Add details only if present in input; otherwise mark as "TBD" and list up to 5 clarifying questions
 - Structure for easy progress tracking and status updates that feel collaborative and supportive
-- Maintain professional yet approachable tone appropriate for technical teams that encourages clarity
+- Maintain professional yet approachable tone appropriate for technical teams
 """,
 
     'MEETING': """
@@ -54,7 +54,7 @@ PAGE_TYPE_PROMPTS = {
 - Capture agenda items, outcomes, and follow-up requirements
 - Structure for effective meeting facilitation and documentation
 
-**Key Elements to Include:**
+**Key Elements to Include (stay within provided scope):**
 - Meeting Overview with purpose, objectives, and expected outcomes
 - Participant List with roles and responsibilities
 - Structured Agenda with time allocations and discussion topics
@@ -64,10 +64,10 @@ PAGE_TYPE_PROMPTS = {
 - Follow-up Requirements and next steps
 
 **Business Standards:**
-- Use humanized, conversational language that captures the natural flow of discussion and decisions
-- Include specific decisions and assigned responsibilities with context that makes sense to participants
-- Structure for easy reference and follow-up tracking that feels like a natural meeting summary
-- Maintain professional yet conversational tone suitable for organizational records that people actually read
+- Use humanized, conversational language
+- Only document participants, decisions, and actions if provided or obvious from the request; otherwise mark as "TBD" and include clarifying questions
+- Structure for easy reference and follow-up tracking
+- Maintain professional yet conversational tone
 """,
 
     'DOCUMENTATION': """
@@ -77,7 +77,7 @@ PAGE_TYPE_PROMPTS = {
 - Structure for easy comprehension and future reference
 - Adapt content for different documentation types: General Documentation or Release Notes
 
-**Key Elements to Include:**
+**Key Elements to Include (use placeholders when unknown):**
 - Document Purpose and scope definition
 - Target Audience identification and knowledge prerequisites
 - Step-by-Step Instructions or procedures with clear workflows
@@ -88,11 +88,11 @@ PAGE_TYPE_PROMPTS = {
 - Reference Materials and additional resources
 
 **Business Standards:**
-- Use humanized, conversational language that explains concepts like you're teaching a friend or colleague
-- Include visual aids, diagrams, and screenshots where helpful with friendly, practical guidance
-- Structure for logical flow and easy navigation that feels intuitive and user-friendly
-- Maintain professional yet approachable tone appropriate for technical documentation that invites learning
-- For Release Notes: Use engaging, highlight-focused language that celebrates achievements and improvements
+- Use humanized, conversational language
+- Only state facts present in the request/context; otherwise use "[TBD]" and include a short questions list
+- Structure for logical flow and easy navigation
+- Maintain professional yet approachable tone appropriate for technical documentation
+- For Release Notes: Avoid inventing metrics or dates; use placeholders unless provided
 """,
 
     'KB': """
@@ -101,7 +101,7 @@ PAGE_TYPE_PROMPTS = {
 - Provide concise, searchable content for immediate reference
 - Structure for rapid information retrieval and self-service
 
-**Key Elements to Include:**
+**Key Elements to Include (grounded responses only):**
 - Question-Answer Format for common inquiries
 - Quick Reference Guides for standard procedures
 - Troubleshooting Steps for common technical issues
@@ -110,10 +110,10 @@ PAGE_TYPE_PROMPTS = {
 - Related Articles and cross-references
 
 **Business Standards:**
-- Use humanized, conversational language that's friendly and reassuring, like helping a colleague in need
-- Include search-friendly keywords and clear categorization that makes finding information effortless
-- Structure for easy browsing and information discovery that feels like natural conversation
-- Maintain helpful, supportive tone for user assistance that builds confidence and reduces frustration
+- Use humanized, conversational language that's friendly and reassuring
+- Ground answers in provided information only; if steps or data are missing, use placeholders and add 3–5 clarifying questions
+- Structure for easy browsing and information discovery
+- Maintain helpful, supportive tone for user assistance
 """
 }
 
