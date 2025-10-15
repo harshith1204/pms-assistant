@@ -1,5 +1,6 @@
 import sys
 from langchain_core.tools import tool
+from langchain_core.documents import Document
 from typing import Optional, Dict, List, Any, Union
 import mongo.constants
 import os
@@ -9,6 +10,13 @@ from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
 from qdrant.initializer import RAGTool
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.retrievers.document_compressors import (
+    EmbeddingsFilter,
+    LLMChainExtractor,
+    DocumentCompressorPipeline,
+)
+from langchain_groq import ChatGroq
 # Qdrant and RAG dependencies
 # try:
 #     from qdrant_client import QdrantClient
@@ -834,7 +842,7 @@ async def rag_search(
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if project_root not in sys.path:
             sys.path.append(project_root)
-        from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results
+        from qdrant.retrieval import ChunkAwareRetriever, format_reconstructed_results, ReconstructedDocument
     except ImportError as e:
         return f"❌ RAG dependency error: {e}. Please ensure all modules are in the correct path."
     except Exception as e:
@@ -889,8 +897,46 @@ async def rag_search(
             if not reconstructed_docs:
                 return f"❌ No results found for query: '{query}'"
             
-            # Always pass full content chunks to the agent by default for synthesis
-            # Force show_full_content=True so downstream LLM has full context
+            # Optional contextual compression
+            use_compression = os.getenv("ENABLE_RAG_COMPRESSION", "true").lower() == "true"
+            if use_compression and reconstructed_docs:
+                try:
+                    docs_for_compression = []
+                    for d in reconstructed_docs:
+                        meta = {**(d.metadata or {}), "source_id": d.mongo_id, "title": d.title, "content_type": d.content_type}
+                        docs_for_compression.append(Document(page_content=d.full_content, metadata=meta))
+
+                    emb_model_name = os.getenv("CACHE_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+                    embeddings = HuggingFaceEmbeddings(model_name=emb_model_name)
+                    emb_filter_k = int(os.getenv("COMPRESSION_EMB_K", "8"))
+                    emb_filter = EmbeddingsFilter(embeddings=embeddings, k=emb_filter_k)
+
+                    extract_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+                    extract_llm = ChatGroq(model=extract_model, temperature=0.1, max_tokens=512, streaming=False, verbose=False)
+                    llm_extractor = LLMChainExtractor.from_llm(extract_llm)
+                    compressor = DocumentCompressorPipeline(transformers=[emb_filter, llm_extractor])
+                    compressed_docs = compressor.compress_documents(docs_for_compression, query=query)
+
+                    by_source = {doc.metadata.get("source_id"): doc.page_content for doc in compressed_docs if doc and doc.page_content}
+                    # Rebuild with compressed text where available
+                    rebuilt: list[ReconstructedDocument] = []
+                    for d in reconstructed_docs:
+                        new_text = by_source.get(d.mongo_id, d.full_content)
+                        rebuilt.append(ReconstructedDocument(
+                            mongo_id=d.mongo_id,
+                            title=d.title,
+                            content_type=d.content_type,
+                            chunks=d.chunks,
+                            max_score=d.max_score,
+                            avg_score=d.avg_score,
+                            full_content=new_text,
+                            metadata=d.metadata,
+                            chunk_coverage=d.chunk_coverage,
+                        ))
+                    reconstructed_docs = rebuilt
+                except Exception:
+                    pass
+
             return format_reconstructed_results(
                 docs=reconstructed_docs,
                 show_full_content=True,
@@ -903,6 +949,9 @@ async def rag_search(
         if not results:
             return f"❌ No results found for query: '{query}'"
         
+        # Optional contextual compression for standard retrieval path
+        use_compression = os.getenv("ENABLE_RAG_COMPRESSION", "true").lower() == "true"
+
         # Build response header
         response = f"🔍 RAG SEARCH: '{query}'\n"
         response += f"Found {len(results)} result(s)"
@@ -913,6 +962,35 @@ async def rag_search(
         # NO GROUPING - Show detailed list with metadata
         if not group_by:
             response += "📋 RESULTS:\n\n"
+            # Pre-compress result contents if enabled
+            compressed_map: Dict[str, str] = {}
+            if use_compression:
+                try:
+                    docs = []
+                    for r in results[:15]:
+                        if r.get('content'):
+                            docs.append(Document(
+                                page_content=r['content'],
+                                metadata={
+                                    "source_id": r.get("mongo_id") or r.get("id") or str(id(r)),
+                                    "title": r.get("title"),
+                                    "content_type": r.get("content_type"),
+                                }
+                            ))
+                    if docs:
+                        emb_model_name = os.getenv("CACHE_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+                        embeddings = HuggingFaceEmbeddings(model_name=emb_model_name)
+                        emb_filter_k = int(os.getenv("COMPRESSION_EMB_K", "8"))
+                        emb_filter = EmbeddingsFilter(embeddings=embeddings, k=emb_filter_k)
+                        extract_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+                        extract_llm = ChatGroq(model=extract_model, temperature=0.1, max_tokens=512, streaming=False, verbose=False)
+                        llm_extractor = LLMChainExtractor.from_llm(extract_llm)
+                        compressor = DocumentCompressorPipeline(transformers=[emb_filter, llm_extractor])
+                        compressed_docs = compressor.compress_documents(docs, query=query)
+                        compressed_map = {d.metadata.get("source_id"): d.page_content for d in compressed_docs if d and d.page_content}
+                except Exception:
+                    compressed_map = {}
+
             for i, result in enumerate(results[:15], 1):
                 response += f"[{i}] {result['content_type'].upper()}: {result['title']}\n"
                 response += f"    Score: {result['score']:.3f}\n"
@@ -943,7 +1021,8 @@ async def rag_search(
                 # Always include FULL content for LLM synthesis (no truncation)
                 # This enables the LLM to generate properly formatted responses based on actual content
                 if result.get('content'):
-                    content_text = result['content']
+                    key = result.get("mongo_id") or result.get("id") or str(id(result))
+                    content_text = compressed_map.get(key, result['content']) if use_compression else result['content']
                     response += f"\n    === CONTENT START ===\n{content_text}\n    === CONTENT END ===\n"
                 
                 response += "\n"

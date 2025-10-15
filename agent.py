@@ -30,6 +30,17 @@ from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
 from mongo.conversations import save_assistant_message, save_action_event
 
+# Enhanced short-term memory components
+from langchain.memory import (
+    ConversationSummaryBufferMemory,
+    ConversationEntityMemory,
+    VectorStoreRetrieverMemory,
+    CombinedMemory,
+)
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.messages import SystemMessage
+
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a precise, non-speculative Project Management assistant.\n\n"
@@ -182,6 +193,122 @@ class ConversationMemory:
 
 # Global conversation memory instance
 conversation_memory = ConversationMemory()
+
+
+# --- Enhanced Memory Manager (CombinedMemory per conversation) ---
+class EnhancedMemoryManager:
+    """Manages CombinedMemory per conversation with summary, entities, and vector recall."""
+
+    def __init__(self):
+        # Persistent underlying memories per conversation
+        self._summary_mem: Dict[str, ConversationSummaryBufferMemory] = {}
+        self._entity_mem: Dict[str, ConversationEntityMemory] = {}
+        self._vectorstores: Dict[str, FAISS] = {}
+        self._vector_mem: Dict[str, VectorStoreRetrieverMemory] = {}
+        self._embeddings = HuggingFaceEmbeddings(
+            model_name=os.getenv("MEMORY_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+        )
+        self._enabled = os.getenv("ENABLE_ENHANCED_MEMORY", "true").lower() == "true"
+
+    def _ensure_base_memories(self, conversation_id: str) -> None:
+        if conversation_id not in self._summary_mem:
+            self._summary_mem[conversation_id] = ConversationSummaryBufferMemory(
+                llm=llm,
+                max_token_limit=int(os.getenv("MEMORY_SUMMARY_MAX_TOKENS", "1500")),
+                return_messages=False,
+                input_key="question",
+                output_key="answer",
+            )
+        if conversation_id not in self._entity_mem:
+            self._entity_mem[conversation_id] = ConversationEntityMemory(
+                llm=llm,
+                input_key="question",
+                output_key="answer",
+            )
+
+    def get_memory(self, conversation_id: str) -> CombinedMemory:
+        if not self._enabled:
+            return CombinedMemory(memories=[])
+        self._ensure_base_memories(conversation_id)
+        memories = [self._summary_mem[conversation_id], self._entity_mem[conversation_id]]
+        if conversation_id in self._vector_mem:
+            memories.append(self._vector_mem[conversation_id])
+        return CombinedMemory(memories=memories)
+
+    def ensure_vectorstore(self, conversation_id: str):
+        if conversation_id not in self._vectorstores:
+            # Initialize empty FAISS store lazily on first save
+            # Start with a tiny bootstrap to create the index structure
+            vs = FAISS.from_texts(["__bootstrap__"], embedding=self._embeddings)
+            # Immediately remove bootstrap entry by recreating from empty texts
+            # FAISS does not support empty index directly; we keep bootstrap and ignore it during retrieval
+            self._vectorstores[conversation_id] = vs
+        # Also ensure VectorStoreRetrieverMemory wrapper
+        if conversation_id not in self._vector_mem:
+            retriever = self._vectorstores[conversation_id].as_retriever(
+                search_kwargs={"k": int(os.getenv("MEMORY_VECTOR_K", "6"))}
+            )
+            self._vector_mem[conversation_id] = VectorStoreRetrieverMemory(
+                retriever=retriever,
+                input_key="question",
+                memory_key="relevant_history",
+            )
+
+    def add_to_vector_memory(self, conversation_id: str, question: str, answer: str):
+        if not self._enabled:
+            return
+        self.ensure_vectorstore(conversation_id)
+        vs = self._vectorstores[conversation_id]
+        # Store combined QA turn for better recall
+        texts = [f"User: {question}", f"Assistant: {answer}"]
+        try:
+            vs.add_texts(texts)
+        except Exception:
+            # Best-effort only
+            pass
+
+    def build_context_messages(self, conversation_id: str, question: str) -> List[BaseMessage]:
+        if not self._enabled:
+            return []
+        try:
+            mem = self.get_memory(conversation_id)
+            vars = mem.load_memory_variables({"question": question}) if mem else {}
+            summary = vars.get("history") or vars.get("summary") or ""
+            entities = vars.get("entities") or ""
+            relevant = vars.get("relevant_history") or ""
+            parts: List[str] = []
+            if summary:
+                parts.append(f"Summary:\n{summary}")
+            if entities:
+                parts.append(f"Entities:\n{entities}")
+            if relevant:
+                parts.append(f"Relevant history:\n{relevant}")
+            if not parts:
+                return []
+            content = (
+                "Conversation memory context (for grounding):\n" + "\n\n".join(parts)
+            )
+            return [SystemMessage(content=content)]
+        except Exception:
+            return []
+
+    def save_turn(self, conversation_id: str, question: str, answer: str):
+        if not self._enabled:
+            return
+        try:
+            mem = self.get_memory(conversation_id)
+            # Save into summary/entity memories
+            try:
+                mem.save_context({"question": question}, {"answer": answer})
+            except Exception:
+                pass
+            # Save into vector memory store
+            self.add_to_vector_memory(conversation_id, question, answer)
+        except Exception:
+            pass
+
+
+enhanced_memory = EnhancedMemoryManager()
 
 
 # Initialize the LLM with optimized settings for tool calling
@@ -558,6 +685,9 @@ class MongoDBAgent:
 
                 # Get conversation history
                 conversation_context = conversation_memory.get_recent_context(conversation_id)
+                memory_msgs = enhanced_memory.build_context_messages(conversation_id, query)
+                # Inject enhanced memory context
+                memory_msgs = enhanced_memory.build_context_messages(conversation_id, query)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
@@ -565,6 +695,10 @@ class MongoDBAgent:
                     messages.append(SystemMessage(content=self.system_prompt))
 
                 messages.extend(conversation_context)
+                if memory_msgs:
+                    messages.extend(memory_msgs)
+                if memory_msgs:
+                    messages.extend(memory_msgs)
 
                 # Add current user message
                 human_message = HumanMessage(content=query)
@@ -657,6 +791,11 @@ class MongoDBAgent:
 
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
+                # Save into enhanced memory
+                try:
+                    enhanced_memory.save_turn(conversation_id, query, getattr(response, "content", "") or "")
+                except Exception:
+                    pass
                 try:
                     await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
                 except Exception as e:
@@ -895,6 +1034,11 @@ class MongoDBAgent:
                         print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
+                        # Persist into enhanced memory after final turn
+                        try:
+                            enhanced_memory.save_turn(conversation_id, query, getattr(response, "content", "") or "")
+                        except Exception:
+                            pass
                         yield response.content
                         return
 

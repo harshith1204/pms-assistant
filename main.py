@@ -7,6 +7,9 @@ from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
 from generate.router import router as generate_router
+from langchain.globals import set_llm_cache
+from langchain_community.cache import RedisSemanticCache
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # Load environment variables from .env file
 load_dotenv()
@@ -86,6 +89,22 @@ async def lifespan(app: FastAPI):
 
     # Startup
     print("Starting MongoDB Agent...")
+    # Enable semantic caching for LLM responses if Redis is available
+    try:
+        enable_cache = os.getenv("ENABLE_LLM_CACHE", "true").lower() == "true"
+        if enable_cache:
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            cache_embeddings_model = os.getenv("CACHE_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+            set_llm_cache(
+                RedisSemanticCache(
+                    redis_url=redis_url,
+                    embedding=HuggingFaceEmbeddings(model_name=cache_embeddings_model),
+                )
+            )
+            print(f"LLM semantic cache enabled via Redis at {redis_url}")
+    except Exception as e:
+        print(f"LLM semantic cache not enabled: {e}")
+
     mongodb_agent = MongoDBAgent()
     await mongodb_agent.connect()
     print("MongoDB Agent connected successfully!")
