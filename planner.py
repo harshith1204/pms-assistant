@@ -157,7 +157,7 @@ class LLMIntentParser:
         # Keep the model reasonably deterministic for planning
         self.llm = ChatGroq(
             model=self.model_name,
-            temperature=0.1,
+            temperature=0,
             max_tokens=1024,
             top_p=0.8,
         )
@@ -360,7 +360,10 @@ class LLMIntentParser:
             "- visibility: PUBLIC|PRIVATE|ARCHIVED (for pages)\n"
             "- project_name, cycle_name, assignee_name, module_name\n"
             "- createdBy_name: (creator names)\n"
-            "- label: (work item labels)\n\n"
+            "- label: (work item labels)\n"
+            "- estimateSystem: TIME|POINTS|etc (for workItem)\n"
+            "- estimate: object with hr/min fields (for workItem)\n"
+            "- workLogs: array of work log entries with user, hours, minutes, description, loggedAt (for workItem)\n\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -470,7 +473,9 @@ class LLMIntentParser:
             "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
             "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
             "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
-            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n\n"
+            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
+            "- 'show work items with estimates' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"estimate\", \"estimateSystem\"], \"aggregations\": []}\n"
+            "- 'show work logs for tasks' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"workLogs\"], \"aggregations\": []}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -1195,6 +1200,9 @@ class PipelineGenerator:
                             "displayBugNo": "$displayBugNo",
                             "title": "$title",
                             "priority": "$priority",
+                            "estimate": "$estimate",
+                            "estimateSystem": "$estimateSystem",
+                            "workLogs": "$workLogs",
                         }
                     }
                 pipeline.append(group_stage)
@@ -1771,7 +1779,7 @@ class PipelineGenerator:
                 "displayBugNo", "title", "priority",
                 "state.name", "assignee",
                 "project.name", "cycle.name", "modules.name",
-                "createdTimeStamp"
+                "createdTimeStamp", "estimateSystem", "estimate", "workLogs"
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",

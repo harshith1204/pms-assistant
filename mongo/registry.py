@@ -176,7 +176,11 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "modules._id", "modules.name",
         "createdBy._id", "createdBy.name",
         "createdTimeStamp", "updatedTimeStamp", "dueDate",
-        "assignee", "assignee._id", "assignee.name", "label"
+        "assignee", "assignee._id", "assignee.name", "label",
+        # Estimate and work logs
+        "estimateSystem", "estimate", "estimate.hr", "estimate.min",
+        "workLogs", "workLogs.user", "workLogs.user.name", "workLogs.hours", 
+        "workLogs.minutes", "workLogs.description", "workLogs.loggedAt"
     },
     "project": {
         "_id", "projectDisplayId", "name", "description",

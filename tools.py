@@ -49,15 +49,15 @@ DEFAULT_RAG_LIMIT: int = 10
 # - include_adjacent controls whether to pull neighboring chunks for context
 # - min_score sets a score threshold for initial vector hits
 CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
-    "page": 2,          # Reduced from 4 to minimize context window usage
-    "work_item": 2,     # Reduced from 3 to minimize context window usage
+    "page": 3,          # Reduced from 4 to minimize context window usage
+    "work_item": 4,     # Reduced from 3 to minimize context window usage
     "project": 2,
     "cycle": 2,
     "module": 2,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
-    "page": False,      # Disabled to reduce context window usage (was True)
+    "page": True,      # Disabled to reduce context window usage (was True)
     "work_item": True,  # Keep adjacent for work items for better context
     "project": False,
     "cycle": False,
@@ -130,6 +130,8 @@ def filter_meaningful_content(data: Any) -> Any:
         'members', 'pages', 'projectStates', 'subStates', 'linkedCycle', 'linkedModule',
         # Date fields (but not timestamps)
         'startDate', 'endDate', 'joiningDate', 'createdAt', 'updatedAt',
+        # Estimate and work tracking
+        'estimate', 'estimateSystem', 'workLogs',
         # Count/aggregation results
         'total', 'count', 'group', 'items'
     }
@@ -327,7 +329,8 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
               "visibility", "access", "imageUrl", "icon",
               "favourite", "isFavourite", "isActive", "isArchived",
               "content", "displayBugNo", "projectDisplayId",
-              "startDate", "endDate", "createdAt", "updatedAt"]:
+              "startDate", "endDate", "createdAt", "updatedAt",
+              "estimate", "estimateSystem", "workLogs"]:
         if k in doc:
             out[k] = doc[k]
 
@@ -610,7 +613,29 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        return f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        
+                        # Build base line
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        
+                        # Add estimate if present
+                        estimate = entity.get("estimate")
+                        if estimate and isinstance(estimate, dict):
+                            hr = estimate.get("hr", "0")
+                            min_val = estimate.get("min", "0")
+                            base += f", estimate={hr}h {min_val}m"
+                        elif estimate:
+                            base += f", estimate={estimate}"
+                        
+                        # Add work logs if present
+                        work_logs = entity.get("workLogs")
+                        if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
+                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                            total_hours += total_mins // 60
+                            total_mins = total_mins % 60
+                            base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
+                        
+                        return base
                     if e == "project":
                         pid = entity.get("projectDisplayId")
                         name = entity.get("name") or entity.get("title")
@@ -992,10 +1017,240 @@ async def rag_search(
         return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
+# Global websocket registry for content generation
+_GENERATION_WEBSOCKET = None
+_GENERATION_CONVERSATION_ID = None
+
+def set_generation_websocket(websocket):
+    """Set the websocket connection for direct content streaming."""
+    global _GENERATION_WEBSOCKET
+    _GENERATION_WEBSOCKET = websocket
+
+def get_generation_websocket():
+    """Get the current websocket connection."""
+    return _GENERATION_WEBSOCKET
+
+def set_generation_context(websocket, conversation_id):
+    """Set websocket and conversation context for generated content persistence."""
+    global _GENERATION_WEBSOCKET, _GENERATION_CONVERSATION_ID
+    _GENERATION_WEBSOCKET = websocket
+    _GENERATION_CONVERSATION_ID = conversation_id
+
+def get_generation_conversation_id():
+    """Get the current conversation id for generated content context."""
+    return _GENERATION_CONVERSATION_ID
+
+
+@tool
+async def generate_content(
+    content_type: str,
+    prompt: str,
+    template_title: str = "",
+    template_content: str = "",
+    context: Optional[Dict[str, Any]] = None
+) -> str:
+    """Generate work items or pages - sends content DIRECTLY to frontend, returns minimal confirmation.
+    
+    **CRITICAL TOKEN OPTIMIZATION**: 
+    - Full generated content is sent directly to the frontend via WebSocket
+    - Agent receives only a minimal success/failure signal (no content details)
+    - Prevents generated content from being sent back through the LLM
+    
+    Use this to create new content:
+    - Work items: bugs, tasks, features  
+    - Pages: documentation, meeting notes, project plans
+    
+    Args:
+        content_type: Type of content - 'work_item' or 'page'
+        prompt: User's instruction for what to generate
+        template_title: Optional template title to base generation on
+        template_content: Optional template content to use as structure
+        context: Optional context dict with additional parameters (pageId, projectId, etc.)
+    
+    Returns:
+        Minimal success/failure signal (NOT content details) - saves maximum tokens
+    
+    Examples:
+        generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
+        generate_content(content_type="page", prompt="Create API documentation", context={...})
+    """
+    import httpx
+    
+    try:
+        if content_type not in ["work_item", "page"]:
+            return "❌ Invalid content type"
+        
+        # Get API base URL from environment or use default
+        api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+        
+        if content_type == "work_item":
+            # Call work item generation endpoint
+            url = f"{api_base}/generate-work-item"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Work Item",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "work_item",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated artifact as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_work_item
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    description = (result or {}).get("description") if isinstance(result, dict) else None
+                    await save_generated_work_item(conv_id, {
+                        "title": (title or "Work item").strip(),
+                        "description": (description or "").strip(),
+                        # Optional fields; may be filled later by explicit save to domain DB
+                        "projectIdentifier": (result or {}).get("projectIdentifier") if isinstance(result, dict) else None,
+                        "sequenceId": (result or {}).get("sequenceId") if isinstance(result, dict) else None,
+                        "link": (result or {}).get("link") if isinstance(result, dict) else None,
+                    })
+            except Exception as e:
+                # Non-fatal
+                print(f"Warning: failed to persist generated work item to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+        else:  # content_type == "page"
+            # Call page generation endpoint
+            url = f"{api_base}/stream-page-content"
+            
+            # Build request context
+            page_context = context or {}
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Page",
+                    "content": template_content or ""
+                },
+                "context": page_context.get("context", {
+                    "tenantId": "",
+                    "page": {"type": "DOCUMENTATION"},
+                    "subject": {},
+                    "timeScope": {},
+                    "retrieval": {},
+                    "privacy": {}
+                }),
+                "pageId": page_context.get("pageId", ""),
+                "projectId": page_context.get("projectId", ""),
+                "tenantId": page_context.get("tenantId", "")
+            }
+            
+            # Send as query param (matching the endpoint's expectation)
+            import json as json_lib
+            params = {"data": json_lib.dumps(payload)}
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "page",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated page as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_page
+                    # Ensure blocks shape
+                    blocks = result if isinstance(result, dict) else {}
+                    if not isinstance(blocks.get("blocks"), list):
+                        blocks = {"blocks": []}
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    await save_generated_page(conv_id, {
+                        "title": (title or "Generated Page").strip(),
+                        "blocks": blocks
+                    })
+            except Exception as e:
+                print(f"Warning: failed to persist generated page to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+    except httpx.HTTPStatusError as e:
+        error_msg = f"API error: {e.response.status_code}"
+        # Send error to frontend
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+    except httpx.RequestError as e:
+        error_msg = "Connection error"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+    except Exception as e:
+        error_msg = "Generation failed"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": str(e)[:200],
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+
+
 # Define the tools list - streamlined and powerful
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
+    generate_content,         # Generate work items/pages (returns summary only, not full content)
 ]
 
 # import asyncio
