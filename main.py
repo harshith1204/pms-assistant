@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from generate.router import router as generate_router
 from langchain.globals import set_llm_cache
 from langchain_community.cache import RedisSemanticCache
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # Load environment variables from .env file
 load_dotenv()

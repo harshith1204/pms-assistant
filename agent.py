@@ -38,7 +38,7 @@ from langchain.memory import (
     CombinedMemory,
 )
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings  # kept for fallback only
 from langchain_core.messages import SystemMessage
 
 
@@ -205,9 +205,25 @@ class EnhancedMemoryManager:
         self._entity_mem: Dict[str, ConversationEntityMemory] = {}
         self._vectorstores: Dict[str, FAISS] = {}
         self._vector_mem: Dict[str, VectorStoreRetrieverMemory] = {}
-        self._embeddings = HuggingFaceEmbeddings(
-            model_name=os.getenv("MEMORY_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
-        )
+        # Reuse the already-loaded SentenceTransformer from RAGTool when possible
+        try:
+            from qdrant.initializer import RAGTool
+            # Initialize lazily if needed
+            try:
+                rag_tool = RAGTool.get_instance()
+            except RuntimeError:
+                rag_tool = None
+            if rag_tool and getattr(rag_tool, "get_langchain_embeddings", None):
+                self._embeddings = rag_tool.get_langchain_embeddings()
+            else:
+                # Fallback to a lightweight HF model only if necessary
+                self._embeddings = HuggingFaceEmbeddings(
+                    model_name=os.getenv("MEMORY_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+                )
+        except Exception:
+            self._embeddings = HuggingFaceEmbeddings(
+                model_name=os.getenv("MEMORY_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+            )
         self._enabled = os.getenv("ENABLE_ENHANCED_MEMORY", "true").lower() == "true"
 
     def _ensure_base_memories(self, conversation_id: str) -> None:

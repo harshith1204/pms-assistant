@@ -10,7 +10,7 @@ from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
 from qdrant.initializer import RAGTool
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings  # fallback only
 from langchain.retrievers.document_compressors import (
     EmbeddingsFilter,
     LLMChainExtractor,
@@ -906,8 +906,12 @@ async def rag_search(
                         meta = {**(d.metadata or {}), "source_id": d.mongo_id, "title": d.title, "content_type": d.content_type}
                         docs_for_compression.append(Document(page_content=d.full_content, metadata=meta))
 
-                    emb_model_name = os.getenv("CACHE_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
-                    embeddings = HuggingFaceEmbeddings(model_name=emb_model_name)
+                    # Reuse RAGTool embeddings to avoid loading another model
+                    try:
+                        embeddings = rag_tool.get_langchain_embeddings()
+                    except Exception:
+                        emb_model_name = os.getenv("CACHE_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+                        embeddings = HuggingFaceEmbeddings(model_name=emb_model_name)
                     emb_filter_k = int(os.getenv("COMPRESSION_EMB_K", "8"))
                     emb_filter = EmbeddingsFilter(embeddings=embeddings, k=emb_filter_k)
 
@@ -978,8 +982,12 @@ async def rag_search(
                                 }
                             ))
                     if docs:
-                        emb_model_name = os.getenv("CACHE_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
-                        embeddings = HuggingFaceEmbeddings(model_name=emb_model_name)
+                        # Reuse RAGTool embeddings to avoid loading another model
+                        try:
+                            embeddings = rag_tool.get_langchain_embeddings()
+                        except Exception:
+                            emb_model_name = os.getenv("CACHE_EMBEDDINGS", "sentence-transformers/all-MiniLM-L6-v2")
+                            embeddings = HuggingFaceEmbeddings(model_name=emb_model_name)
                         emb_filter_k = int(os.getenv("COMPRESSION_EMB_K", "8"))
                         emb_filter = EmbeddingsFilter(embeddings=embeddings, k=emb_filter_k)
                         extract_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")

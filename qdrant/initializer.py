@@ -12,6 +12,34 @@ from qdrant_client.models import (
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
+# LangChain embeddings adapter that reuses the same SentenceTransformer instance
+from typing import List
+try:
+    from langchain_core.embeddings import Embeddings
+except Exception:  # Fallback for older versions
+    from langchain.embeddings.base import Embeddings  # type: ignore
+
+class STEmbeddingsAdapter(Embeddings):
+    """Adapter to use a SentenceTransformer with LangChain interfaces without loading another model."""
+
+    def __init__(self, model: SentenceTransformer):  # type: ignore[name-defined]
+        self._model = model
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        # Batch encode for efficiency
+        return self._model.encode(texts, convert_to_list=True)
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._model.encode(text, convert_to_list=True)
+
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self.embed_documents(texts)
+
+    async def aembed_query(self, text: str) -> List[float]:
+        return self.embed_query(text)
+
 class RAGTool:
     """
     RAG tool as a Singleton, designed for eager initialization at server startup.
@@ -64,6 +92,11 @@ class RAGTool:
                 self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             self.connected = True
             print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
+            # Prepare a reusable LangChain embeddings adapter that shares the same model instance
+            try:
+                self._lc_embeddings = STEmbeddingsAdapter(self.embedding_model)
+            except Exception:
+                self._lc_embeddings = None
             # Lightweight verification that sparse vectors are configured and present
             try:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
@@ -221,3 +254,20 @@ class RAGTool:
             )
 
         return "\n".join(context_parts) if context_parts else "No relevant content found." 
+
+    # --- Utilities ---
+    def get_langchain_embeddings(self):
+        """Return a LangChain Embeddings adapter that reuses the already-loaded SentenceTransformer.
+
+        Avoids loading a second embedding model.
+        """
+        if not self.connected:
+            raise RuntimeError("RAGTool not connected; initialize first")
+        if getattr(self, "_lc_embeddings", None) is None:
+            try:
+                self._lc_embeddings = STEmbeddingsAdapter(self.embedding_model)
+            except Exception:
+                self._lc_embeddings = None
+        if self._lc_embeddings is None:
+            raise RuntimeError("Embeddings adapter unavailable")
+        return self._lc_embeddings
