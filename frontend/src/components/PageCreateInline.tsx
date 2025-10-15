@@ -253,7 +253,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
                   },
                 },
                 placeholder: "Write page content…",
-                minHeight: 220,
+                minHeight: 400,
                 autofocus: true,
               });
 
@@ -390,48 +390,48 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
   };
 
   return (
-    <Card className={cn("border-muted/70", className)}>
+    <Card className={cn("border-muted/70 shadow-lg", className)}>
       <CardContent className="p-0">
-        <div className="px-5 pt-4">
+        <div className="px-8 pt-8 pb-6">
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Title"
-            className="h-11 text-base"
+            placeholder="Enter page title..."
+            className="h-14 text-lg font-semibold px-4 border-2 focus:border-primary"
           />
         </div>
 
-        <div className="px-5 pt-4">
+        <div className="px-8 pb-6">
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="edit">Edit</TabsTrigger>
-              <TabsTrigger value="preview" onClick={handlePreview}>Preview</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-2 h-11 p-1">
+              <TabsTrigger value="edit" className="text-sm font-medium">Edit</TabsTrigger>
+              <TabsTrigger value="preview" onClick={handlePreview} className="text-sm font-medium">Preview</TabsTrigger>
             </TabsList>
-            <TabsContent value="edit" className="mt-4">
+            <TabsContent value="edit" className="mt-6">
               <div className="relative">
                 <div
                   ref={editorContainerRef}
-                  className="border rounded-md bg-background min-h-[220px] max-h-[420px] overflow-auto editor-container"
+                  className="border-2 rounded-lg bg-background min-h-[400px] max-h-[600px] overflow-auto editor-container"
                   style={{
-                    padding: '16px',
-                    fontSize: '14px',
-                    lineHeight: '1.6',
-                    border: '1px solid hsl(var(--border))',
+                    padding: '24px',
+                    fontSize: '15px',
+                    lineHeight: '1.7',
+                    border: '2px solid hsl(var(--border))',
                     backgroundColor: 'hsl(var(--background))',
                     color: 'hsl(var(--foreground))',
                   }}
                   aria-busy={!editorReady}
                 />
                 {!editorReady && (
-                  <div className="absolute inset-0 flex items-center justify-center rounded-md bg-background/60 backdrop-blur-[1px]">
-                    <div className="text-muted-foreground">Loading editor...</div>
+                  <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-background/60 backdrop-blur-[1px]">
+                    <div className="text-muted-foreground text-base">Loading editor...</div>
                   </div>
                 )}
               </div>
             </TabsContent>
-            <TabsContent value="preview" className="mt-4">
-              <div className="border rounded-md bg-background min-h-[220px] max-h-[420px] overflow-auto p-4">
-                <pre className="whitespace-pre-wrap text-sm">
+            <TabsContent value="preview" className="mt-6">
+              <div className="border-2 rounded-lg bg-background min-h-[400px] max-h-[600px] overflow-auto p-6">
+                <pre className="whitespace-pre-wrap text-base leading-relaxed">
                   <code>{convertToMarkdown(editorData)}</code>
                 </pre>
           </div>
@@ -439,9 +439,9 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ title = "", 
           </Tabs>
         </div>
 
-        <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onDiscard}>Discard</Button>
-          <Button onClick={handleSave}>Save</Button>
+        <div className="px-8 py-6 border-t-2 flex items-center justify-end gap-3 bg-muted/20">
+          <Button type="button" variant="outline" size="lg" onClick={onDiscard} className="px-6">Discard</Button>
+          <Button onClick={handleSave} size="lg" className="px-8">Save Page</Button>
         </div>
       </CardContent>
     </Card>
