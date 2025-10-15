@@ -12,6 +12,8 @@ export type ChatEvent =
   | { type: "planner_error"; message: string; timestamp: string }
   | { type: "agent_action"; text: string; step: number; timestamp: string }
   | { type: "content_generated"; content_type: "work_item" | "page"; data?: any; error?: string; success: boolean }
+  // In future, backend may send structured tool results directly
+  | { type: "tool_json"; source: "mongo" | "rag" | string; payload: any; timestamp?: string }
   | { type: "complete"; conversation_id: string; timestamp: string }
   | { type: "pong"; timestamp: string }
   | { type: "error"; message: string; timestamp?: string }

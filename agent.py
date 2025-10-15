@@ -94,7 +94,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
     "- Request to CREATE/GENERATE new content → generate_content.\n"
     "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
-    "Respond with tool calls first, then synthesize a concise answer grounded ONLY in tool outputs."
+    "OUTPUT POLICY:\n"
+    "- When a tool returns CLEAN STRUCTURED JSON (contains an 'ok' field and 'source'), respond by outputting ONLY that JSON as the entire assistant message, with no extra commentary or formatting.\n"
+    "- Prefer the 'filtered' sub-object for readability while preserving 'clean'/'raw' alongside it.\n"
+    "- If multiple tools were used and their JSON needs combining, return a top-level JSON object with keys per source (e.g., 'mongo', 'rag').\n"
+    "- Otherwise, synthesize a concise answer grounded ONLY in tool outputs."
 )
 
 class ConversationMemory:
@@ -500,8 +504,17 @@ class MongoDBAgent:
                 result = f"Tool execution error: {tool_exc}"
                 pass
 
+            # Prefer returning only structured JSON when tool already returns JSON
+            try:
+                # Validate JSON
+                import json as _json
+                _ = _json.loads(str(result))
+                tool_content = str(result)
+            except Exception:
+                tool_content = str(result)
+
             tool_message = ToolMessage(
-                content=str(result),
+                content=tool_content,
                 tool_call_id=tool_call["id"],
             )
             return tool_message, True
@@ -857,10 +870,10 @@ class MongoDBAgent:
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
                             finalization_instructions = SystemMessage(content=(
-                                "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
-                                "Do not paste tool outputs verbatim or include banners/emojis. "
-                                "If the user asked to browse or see examples, summarize briefly and offer to expand. "
-                                "For work items, present canonical fields succinctly."
+                                "FINALIZATION:\n"
+                                "- If the latest tool outputs include CLEAN STRUCTURED JSON (objects with an 'ok' field), output ONLY that JSON as the message, without any extra text.\n"
+                                "- If multiple JSON results are present (e.g., Mongo + RAG), merge into a single JSON object with keys by source and output that.\n"
+                                "- Otherwise, write a concise answer grounded strictly in tool outputs (no emojis/banners)."
                             ))
                             # Emit a dynamic action statement to indicate synthesis/finalization
                             try:

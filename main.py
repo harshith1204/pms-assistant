@@ -12,6 +12,7 @@ from generate.router import router as generate_router
 load_dotenv()
 
 from agent import MongoDBAgent
+from tools import mongo_query as mongo_query_tool, rag_search as rag_search_tool
 import os
 from websocket_handler import handle_chat_websocket, ws_manager
 from qdrant.initializer import RAGTool
@@ -130,6 +131,60 @@ app.include_router(generate_router)
 async def root():
     """Root endpoint"""
     return {"message": "PMS Assistant API", "status": "running"}
+
+
+@app.post("/query/mongo")
+async def api_mongo_query(body: Dict[str, Any]):
+    """HTTP wrapper for mongo_query tool that returns CLEAN STRUCTURED JSON.
+
+    Body: { query: str, show_all?: bool, include_raw?: bool }
+    """
+    try:
+        q = str(body.get("query") or "").strip()
+        if not q:
+            raise HTTPException(status_code=400, detail="Missing 'query'")
+        show_all = bool(body.get("show_all", False))
+        include_raw = bool(body.get("include_raw", True))
+        result_str = await mongo_query_tool.ainvoke({
+            "query": q,
+            "show_all": show_all,
+            "structured": True,
+            "include_raw": include_raw,
+        })
+        import json as _json
+        return _json.loads(result_str)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/query/rag")
+async def api_rag_query(body: Dict[str, Any]):
+    """HTTP wrapper for rag_search tool that returns CLEAN STRUCTURED JSON.
+
+    Body: { query: str, content_type?: str, group_by?: str, limit?: int, show_content?: bool, use_chunk_aware?: bool }
+    """
+    try:
+        q = str(body.get("query") or "").strip()
+        if not q:
+            raise HTTPException(status_code=400, detail="Missing 'query'")
+        args = {
+            "query": q,
+            "content_type": body.get("content_type"),
+            "group_by": body.get("group_by"),
+            "limit": int(body.get("limit", 10)),
+            "show_content": bool(body.get("show_content", True)),
+            "use_chunk_aware": bool(body.get("use_chunk_aware", True)),
+            "structured": True,
+        }
+        result_str = await rag_search_tool.ainvoke(args)
+        import json as _json
+        return _json.loads(result_str)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health_check():
