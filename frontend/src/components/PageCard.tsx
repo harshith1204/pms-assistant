@@ -1,7 +1,8 @@
 import React from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Copy } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Copy, FileText, NotebookPen, FlaskConical, BookOpen } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +11,8 @@ export type PageCardProps = {
   content: string; // stringified Editor.js JSON
   link?: string;
   className?: string;
+  // Optional explicit page type; if not provided we'll infer from content
+  type?: string; // e.g., "doc" | "note" | "spec" | "guide"
 };
 
 function editorJsToMarkdownString(jsonStr?: string): string {
@@ -55,6 +58,39 @@ export const PageCard: React.FC<PageCardProps> = ({ title, content, link, classN
   const [copied, setCopied] = React.useState(false);
   const md = React.useMemo(() => editorJsToMarkdownString(content), [content]);
 
+  // Lightweight heuristic to infer page type based on title/content
+  const inferredType = React.useMemo(() => {
+    const source = `${title}\n${md}`.toLowerCase();
+    if (/\b(rfc|spec|specification|design doc|adr)\b/.test(source)) return "spec";
+    if (/\b(meeting|notes?|minutes)\b/.test(source)) return "note";
+    if (/\b(guide|how[-\s]?to|tutorial|walkthrough)\b/.test(source)) return "guide";
+    if (/\b(doc|documentation|overview|readme)\b/.test(source)) return "doc";
+    return "doc"; // sensible default
+  }, [title, md]);
+
+  const pageType = inferredType as "doc" | "note" | "spec" | "guide";
+
+  const typeIcon = {
+    doc: FileText,
+    note: NotebookPen,
+    spec: FlaskConical,
+    guide: BookOpen,
+  }[pageType];
+
+  const typeBadgeVariant = {
+    doc: "accent",
+    note: "secondary",
+    spec: "default",
+    guide: "outline",
+  } as const;
+
+  const containerAccent = {
+    doc: "ring-1 ring-accent/20",
+    note: "ring-1 ring-secondary/20",
+    spec: "ring-1 ring-primary/20",
+    guide: "ring-1 ring-muted/30",
+  }[pageType];
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(md || title || "");
@@ -64,38 +100,50 @@ export const PageCard: React.FC<PageCardProps> = ({ title, content, link, classN
   };
 
   return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="mt-0.5 text-base font-semibold leading-snug break-words">{title}</div>
+    <Card className={cn("relative overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm", containerAccent, className)}>
+      {/* subtle left accent bar for quick visual cue */}
+      <div className="absolute left-0 top-0 h-full w-1 bg-primary/20" aria-hidden />
+      <CardHeader className="px-6 py-5 border-b">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              {typeIcon ? (
+                <span className="shrink-0 text-muted-foreground">
+                  {React.createElement(typeIcon, { className: "h-4.5 w-4.5" as any })}
+                </span>
+              ) : null}
+              <Badge variant={typeBadgeVariant[pageType]} className="shrink-0">
+                {pageType}
+              </Badge>
+            </div>
+            <div className="mt-2 text-lg md:text-xl font-semibold leading-tight break-words">
+              {title}
+            </div>
           </div>
-          <div className="flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-2">
             {link && (
-              <a
-                href={link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn("px-2 py-1 rounded hover:bg-muted transition-colors text-primary")}
-              >
-                View page
-              </a>
+              <Button asChild variant="outline" size="sm" className="h-8">
+                <a href={link} target="_blank" rel="noopener noreferrer">View</a>
+              </Button>
             )}
             <Button
               variant="ghost"
               size="sm"
-              className={cn("h-7 px-2", copied && "text-green-600 bg-green-600/10")}
+              className={cn("h-8 px-2", copied && "text-green-600 bg-green-600/10")}
               onClick={handleCopy}
               title="Copy content"
             >
-              <Copy className="h-3.5 w-3.5" />
+              <Copy className="h-4 w-4" />
             </Button>
           </div>
         </div>
       </CardHeader>
       {md && (
-        <CardContent className="pt-0">
-          <SafeMarkdown content={md} className="prose prose-sm max-w-none dark:prose-invert" />
+        <CardContent className="px-6 py-5">
+          <SafeMarkdown
+            content={md}
+            className="prose prose-base md:prose-lg max-w-none dark:prose-invert leading-relaxed"
+          />
         </CardContent>
       )}
     </Card>
