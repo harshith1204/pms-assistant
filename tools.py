@@ -904,7 +904,6 @@ async def rag_search(
                 try:
                     # Split by content separators to preserve doc headers
                     sections = [s for s in text.split("\n    === CONTENT START ===")]
-                    # Re-add the marker to each except the first header section
                     compressed_sections = compress_texts(sections, query, compression_budget_tokens)
                     text = "\n    === CONTENT START ===".join(compressed_sections)
                 except Exception:

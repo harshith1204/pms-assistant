@@ -231,17 +231,7 @@ class TTLCache:
         self._evict_if_needed()
 
 
-# Heuristics: determine if a query is safe/meaningful to serve from semantic cache
-def _is_cache_eligible(query: str) -> bool:
-    if not isinstance(query, str):
-        return False
-    q = query.lower()
-    # Avoid caching for write/generate/temporal queries
-    disallow = (
-        "create", "generate", "make a page", "make a work item", "new ",
-        "today", "now", "latest", "this week", "add ", "update ", "delete ",
-    )
-    return not any(term in q for term in disallow)
+# Exact-match caching (query+conversation); no heuristics
 
 
 
@@ -606,11 +596,10 @@ class MongoDBAgent:
                 need_finalization: bool = False
 
                 while steps < self.max_steps:
-                    # Semantic cache check before invoking model
-                    if _is_cache_eligible(query):
-                        cached = _semantic_cache.get(query, conversation_id)
-                        if isinstance(cached, str) and cached.strip():
-                            return cached
+                    # Semantic cache (exact match) before invoking model
+                    cached = _semantic_cache.get(query, conversation_id)
+                    if isinstance(cached, str) and cached.strip():
+                        return cached
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
@@ -775,8 +764,7 @@ class MongoDBAgent:
                 except Exception:
                     pass
                 try:
-                    if _is_cache_eligible(query):
-                        _semantic_cache.set(query, last_response.content or "", conversation_id)
+                    _semantic_cache.set(query, last_response.content or "", conversation_id)
                 except Exception:
                     pass
                 return last_response.content
@@ -847,12 +835,11 @@ class MongoDBAgent:
                 need_finalization: bool = False
 
                 while steps < self.max_steps:
-                    # Semantic cache check before invoking model
-                    if _is_cache_eligible(query):
-                        cached = _semantic_cache.get(query, conversation_id)
-                        if isinstance(cached, str) and cached.strip():
-                            yield cached
-                            return
+                    # Semantic cache (exact match) before invoking model
+                    cached = _semantic_cache.get(query, conversation_id)
+                    if isinstance(cached, str) and cached.strip():
+                        yield cached
+                        return
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
@@ -1035,8 +1022,7 @@ class MongoDBAgent:
                     except Exception:
                         pass
                     try:
-                        if _is_cache_eligible(query):
-                            _semantic_cache.set(query, last_response.content or "", conversation_id)
+                        _semantic_cache.set(query, last_response.content or "", conversation_id)
                     except Exception:
                         pass
                     yield last_response.content
