@@ -29,7 +29,7 @@ from mongo.constants import (
     AUTH_MEMBER_UUID,
     AUTH_ALLOWED_PROJECT_UUIDS,
 )
-from auth import apply_authorization_filter
+# from auth import apply_authorization_filter
 MOCK_USER_DATABASE = {
     "harshith": {
         "role": "developer", "member_id": "M789", "business_id": "B123"
