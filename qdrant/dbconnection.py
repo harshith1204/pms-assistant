@@ -41,7 +41,7 @@ try:
         timeout=60 
     )
 
-    QDRANT_COLLECTION= "pms_collection_bm25"
+    QDRANT_COLLECTION= "pms_collection"
 
     # Check if collection exists, if not, create with named vectors + sparse for hybrid search
     if QDRANT_COLLECTION not in [col.name for col in qdrant_client.get_collections().collections]:
