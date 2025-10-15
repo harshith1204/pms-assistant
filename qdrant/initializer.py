@@ -30,7 +30,6 @@ class RAGTool:
             instance = cls.__new__(cls)
             instance.qdrant_client = None
             instance.embedding_model = None
-            instance.sparse_embedder = None
             instance.connected = False
             
             await instance.connect()
@@ -62,7 +61,10 @@ class RAGTool:
                 self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
             except Exception as e:
                 print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
-            
+                self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            self.connected = True
+            print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
+            # Lightweight verification that sparse vectors are configured and present
             try:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
                 # If call succeeds, we assume sparse config exists as we create it during indexing
