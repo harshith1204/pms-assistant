@@ -17,8 +17,6 @@ import asyncio
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
-from fastembed import SparseTextEmbedding
-from qdrant_client.http import models
 
 @dataclass
 class ChunkResult:
@@ -52,7 +50,7 @@ class ReconstructedDocument:
 class ChunkAwareRetriever:
     """Enhanced RAG retrieval with chunk awareness and context reconstruction"""
     
-    def __init__(self, qdrant_client, embedding_model, sparse_embedder):
+    def __init__(self, qdrant_client, embedding_model):
         self.qdrant_client = qdrant_client
         self.embedding_model = embedding_model
         # Minimal English stopword list for lightweight keyword-overlap filtering
@@ -139,6 +137,7 @@ class ChunkAwareRetriever:
             query=NearestQuery(nearest=query_embedding),
             using="dense",
             limit=initial_limit,
+            score_threshold=min_score,
             filter=search_filter
         )
 
