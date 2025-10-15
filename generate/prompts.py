@@ -20,9 +20,9 @@ PAGE_TYPE_PROMPTS = {
 
 **Business Standards:**
 - Use humanized, conversational language that feels natural and approachable while maintaining professionalism
-- Ground all content in the provided request/context; do not invent metrics, dates, owners, or financials. When data is missing, use "[TBD]" and capture clarifying questions in a "Questions for Stakeholders" section.
+- Ground all content in the provided request/context; do not invent metrics, dates, owners, or financials. Avoid placeholder tokens like "TBD". When information is missing, write neutral, grounded prose (e.g., describe approach or options) and include a brief "Questions for Stakeholders" section only if essential.
 - Maintain professional yet warm tone suitable for executive reporting that builds trust and clarity
-- Include success criteria and measurable outcomes only when supplied; otherwise use placeholders
+- Include success criteria and measurable outcomes only when supplied; otherwise omit them or phrase as general approaches; do not insert placeholders
 - Adapt tone and focus based on template type: more analytical for Risk Registers, more strategic for OKR Summaries
 """,
 
@@ -43,7 +43,7 @@ PAGE_TYPE_PROMPTS = {
 
 **Business Standards:**
 - Use humanized, conversational language that's easy to understand and follow
-- Add details only if present in input; otherwise mark as "TBD" and list up to 5 clarifying questions
+- Add details only if present in input; otherwise keep language neutral without placeholders. Optionally add up to 3 clarifying questions when essential.
 - Structure for easy progress tracking and status updates that feel collaborative and supportive
 - Maintain professional yet approachable tone appropriate for technical teams
 """,
@@ -65,7 +65,7 @@ PAGE_TYPE_PROMPTS = {
 
 **Business Standards:**
 - Use humanized, conversational language
-- Only document participants, decisions, and actions if provided or obvious from the request; otherwise mark as "TBD" and include clarifying questions
+- Only document participants, decisions, and actions if provided or obvious from the request; otherwise keep neutral, grounded language without placeholders. Optionally include clarifying questions if essential.
 - Structure for easy reference and follow-up tracking
 - Maintain professional yet conversational tone
 """,
@@ -77,7 +77,7 @@ PAGE_TYPE_PROMPTS = {
 - Structure for easy comprehension and future reference
 - Adapt content for different documentation types: General Documentation or Release Notes
 
-**Key Elements to Include (use placeholders when unknown):**
+**Key Elements to Include (use grounded generalizations when unknown):**
 - Document Purpose and scope definition
 - Target Audience identification and knowledge prerequisites
 - Step-by-Step Instructions or procedures with clear workflows
@@ -89,10 +89,10 @@ PAGE_TYPE_PROMPTS = {
 
 **Business Standards:**
 - Use humanized, conversational language
-- Only state facts present in the request/context; otherwise use "[TBD]" and include a short questions list
+- Only state facts present in the request/context; avoid placeholder tokens. Prefer concise, grounded guidance; optionally include a short questions list when needed.
 - Structure for logical flow and easy navigation
 - Maintain professional yet approachable tone appropriate for technical documentation
-- For Release Notes: Avoid inventing metrics or dates; use placeholders unless provided
+- For Release Notes: Avoid inventing metrics or dates; if not provided, summarize changes qualitatively or omit numeric metrics
 """,
 
     'KB': """
@@ -111,7 +111,7 @@ PAGE_TYPE_PROMPTS = {
 
 **Business Standards:**
 - Use humanized, conversational language that's friendly and reassuring
-- Ground answers in provided information only; if steps or data are missing, use placeholders and add 3–5 clarifying questions
+- Ground answers in provided information only; if steps or data are missing, avoid placeholders and provide generally applicable guidance. Optionally add 1–3 clarifying questions only if needed.
 - Structure for easy browsing and information discovery
 - Maintain helpful, supportive tone for user assistance
 """
