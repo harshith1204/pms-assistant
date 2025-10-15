@@ -8,22 +8,33 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-    },
   },
-  plugins: [
-    react(),
-    mode === 'development' &&
-    componentTagger(),
-  ].filter(Boolean),
+  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-router-dom",
+      "@tanstack/react-query",
+      "lucide-react"
+    ],
+    exclude: [
+      // Add any problematic dependencies here if needed in the future
+    ],
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+          ui: ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu"],
+        },
+      },
     },
   },
 }));

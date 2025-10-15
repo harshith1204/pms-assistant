@@ -12,6 +12,7 @@ import re
 
 from mongo.constants import DATABASE_NAME
 from planner import plan_and_execute_query
+from mongo.conversations import save_user_message
 import os
 import contextlib
 
@@ -152,6 +153,13 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
+            # Persist user message to SimpoAssist.conversations
+            try:
+                await save_user_message(conversation_id, message)
+            except Exception as e:
+                # Non-fatal: log to console, continue processing
+                print(f"Warning: failed to save user message: {e}")
+
             # Create a root span per user message and keep all work nested (disabled if DISABLE_TRACING)
             tracer = None
             user_span_cm = contextlib.nullcontext()
@@ -193,6 +201,11 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             "timestamp": datetime.now().isoformat()
                         })
                 else:
+                    # Set websocket for content generation tool (direct streaming to frontend)
+                    from tools import set_generation_context
+                    # Provide websocket + conversation context for persisting generated artifacts
+                    set_generation_context(websocket, conversation_id)
+                    
                     # Use regular LLM with tool calling
                     agent_span_cm = contextlib.nullcontext()
                     with agent_span_cm as agent_span:
@@ -209,6 +222,10 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             # The streaming is handled internally by the callback handler
                             # Just iterate through the generator to complete the streaming
                             pass
+                    
+                    # Clean up websocket reference after completion
+                    from tools import set_generation_websocket
+                    set_generation_websocket(None)
 
             # Send completion message
             await websocket.send_json({
