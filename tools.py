@@ -128,10 +128,10 @@ def filter_meaningful_content(data: Any) -> Any:
         'label', 'type', 'access', 'visibility', 'icon', 'imageUrl',
         'business', 'staff', 'createdBy', 'assignee', 'project', 'cycle', 'module',
         'members', 'pages', 'projectStates', 'subStates', 'linkedCycle', 'linkedModule',
-        # Estimation and work logging (new)
-        'estimate', 'estimateSystem', 'workLogs',
         # Date fields (but not timestamps)
         'startDate', 'endDate', 'joiningDate', 'createdAt', 'updatedAt',
+        # Estimate and work tracking
+        'estimate', 'estimateSystem', 'workLogs',
         # Count/aggregation results
         'total', 'count', 'group', 'items'
     }
@@ -329,7 +329,8 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
               "visibility", "access", "imageUrl", "icon",
               "favourite", "isFavourite", "isActive", "isArchived",
               "content", "displayBugNo", "projectDisplayId",
-              "startDate", "endDate", "createdAt", "updatedAt"]:
+              "startDate", "endDate", "createdAt", "updatedAt",
+              "estimate", "estimateSystem", "workLogs"]:
         if k in doc:
             out[k] = doc[k]
 
@@ -345,79 +346,6 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
         set_name("createdBy", "createdByName")
         set_names_list("assignee", "assignees")
         set_names_list("updatedBy", "updatedByNames")
-
-        # Surface estimate in a normalized numeric form and a human label
-        est = doc.get("estimate") if isinstance(doc.get("estimate"), dict) else None
-        est_hr = None
-        est_min = None
-        try:
-            if est and isinstance(est.get("hr"), (str, int, float)):
-                est_hr = int(float(est.get("hr") or 0))
-            if est and isinstance(est.get("min"), (str, int, float)):
-                est_min = int(float(est.get("min") or 0))
-        except Exception:
-            est_hr, est_min = None, None
-        if isinstance(est_hr, int) or isinstance(est_min, int):
-            total_est_minutes = (est_hr or 0) * 60 + (est_min or 0)
-            if total_est_minutes > 0:
-                out["estimateMinutes"] = total_est_minutes
-                # Friendly string like "1 hr 30 min" or "45 min"
-                eh = total_est_minutes // 60
-                em = total_est_minutes % 60
-                if eh and em:
-                    out["estimateLabel"] = f"{eh} hr {em} min"
-                elif eh:
-                    out["estimateLabel"] = f"{eh} hr"
-                else:
-                    out["estimateLabel"] = f"{em} min"
-        if isinstance(doc.get("estimateSystem"), str):
-            out["estimateSystem"] = doc["estimateSystem"]
-
-        # Compute total logged time from workLogs array
-        total_logged_minutes = 0
-        if isinstance(doc.get("workLogs"), list):
-            for wl in doc.get("workLogs"):
-                if not isinstance(wl, dict):
-                    continue
-                h = wl.get("hours")
-                m = wl.get("minutes")
-                try:
-                    if isinstance(h, (int, float)):
-                        total_logged_minutes += int(h) * 60
-                    elif isinstance(h, str) and h.strip().isdigit():
-                        total_logged_minutes += int(h.strip()) * 60
-                except Exception:
-                    pass
-                try:
-                    if isinstance(m, (int, float)):
-                        total_logged_minutes += int(m)
-                    elif isinstance(m, str) and m.strip().isdigit():
-                        total_logged_minutes += int(m.strip())
-                except Exception:
-                    pass
-        if total_logged_minutes > 0:
-            out["loggedMinutes"] = total_logged_minutes
-            lh = total_logged_minutes // 60
-            lm = total_logged_minutes % 60
-            if lh and lm:
-                out["loggedLabel"] = f"{lh} hr {lm} min"
-            elif lh:
-                out["loggedLabel"] = f"{lh} hr"
-            else:
-                out["loggedLabel"] = f"{lm} min"
-
-        # Compute remaining time if estimate present
-        if out.get("estimateMinutes") is not None and out.get("loggedMinutes") is not None:
-            rem = max(0, int(out["estimateMinutes"]) - int(out["loggedMinutes"]))
-            out["remainingMinutes"] = rem
-            rh = rem // 60
-            rm = rem % 60
-            if rh and rm:
-                out["remainingLabel"] = f"{rh} hr {rm} min"
-            elif rh:
-                out["remainingLabel"] = f"{rh} hr"
-            else:
-                out["remainingLabel"] = f"{rm} min"
 
     elif collection == "project":
         set_name("business", "businessName")
@@ -687,22 +615,29 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        est = entity.get("estimateLabel") or None
-                        logd = entity.get("loggedLabel") or None
-                        rem = entity.get("remainingLabel") or None
-                        parts = [
-                            f"state={state or 'N/A'}",
-                            f"priority={priority or 'N/A'}",
-                            f"assignee={(assignees[0] if assignees else 'N/A')}",
-                            f"project={project or 'N/A'}"
-                        ]
-                        if est:
-                            parts.append(f"estimate={est}")
-                        if logd:
-                            parts.append(f"logged={logd}")
-                        if rem:
-                            parts.append(f"remaining={rem}")
-                        return f"• {bug}: {truncate_str(title, 80)} — " + ", ".join(parts)
+                        
+                        # Build base line
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        
+                        # Add estimate if present
+                        estimate = entity.get("estimate")
+                        if estimate and isinstance(estimate, dict):
+                            hr = estimate.get("hr", "0")
+                            min_val = estimate.get("min", "0")
+                            base += f", estimate={hr}h {min_val}m"
+                        elif estimate:
+                            base += f", estimate={estimate}"
+                        
+                        # Add work logs if present
+                        work_logs = entity.get("workLogs")
+                        if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
+                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                            total_hours += total_mins // 60
+                            total_mins = total_mins % 60
+                            base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
+                        
+                        return base
                     if e == "project":
                         pid = entity.get("projectDisplayId")
                         name = entity.get("name") or entity.get("title")
