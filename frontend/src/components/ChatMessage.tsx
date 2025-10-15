@@ -159,7 +159,6 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
               />
             ) : (
               <PageCreateInline
-                title={page.title}
                 initialEditorJs={page.blocks}
                 onSave={async ({ title, editorJs }) => {
                   try {

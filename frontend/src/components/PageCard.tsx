@@ -64,38 +64,55 @@ export const PageCard: React.FC<PageCardProps> = ({ title, content, link, classN
   };
 
   return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="mt-0.5 text-base font-semibold leading-snug break-words">{title}</div>
+    <Card className={cn("overflow-hidden", className)}>
+      <CardHeader className="pb-4 pt-6 px-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-xl font-bold leading-tight break-words text-foreground">
+              {title}
+            </h3>
           </div>
-          <div className="flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {link && (
-              <a
-                href={link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn("px-2 py-1 rounded hover:bg-muted transition-colors text-primary")}
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="h-9 px-4 text-sm font-medium"
               >
-                View page
-              </a>
+                <a
+                  href={link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View page
+                </a>
+              </Button>
             )}
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              className={cn("h-7 px-2", copied && "text-green-600 bg-green-600/10")}
+              className={cn(
+                "h-9 px-3",
+                copied && "text-green-600 border-green-600 bg-green-50 dark:bg-green-950/30"
+              )}
               onClick={handleCopy}
               title="Copy content"
             >
-              <Copy className="h-3.5 w-3.5" />
+              <Copy className="h-4 w-4" />
+              {copied && <span className="ml-2 text-xs">Copied!</span>}
             </Button>
           </div>
         </div>
       </CardHeader>
       {md && (
-        <CardContent className="pt-0">
-          <SafeMarkdown content={md} className="prose prose-sm max-w-none dark:prose-invert" />
+        <CardContent className="px-6 pb-6 pt-0">
+          <div className="border-t pt-4">
+            <SafeMarkdown 
+              content={md} 
+              className="prose prose-base max-w-none dark:prose-invert leading-relaxed" 
+            />
+          </div>
         </CardContent>
       )}
     </Card>
