@@ -15,6 +15,8 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 import os
+import json
+import hashlib
 
 
 import math
@@ -106,6 +108,16 @@ class ConversationMemory:
         # Rolling summary per conversation (compact)
         self.summaries: Dict[str, str] = {}
         self.turn_counters: Dict[str, int] = defaultdict(int)
+        # Semantic history configuration (optional)
+        self.enable_semantic_history: bool = str(os.getenv("ENABLE_SEMANTIC_HISTORY", "0")).lower() in {"1", "true", "yes"}
+        self._embedding_model_name: str = os.getenv(
+            "SEMANTIC_HISTORY_MODEL",
+            "sentence-transformers/all-MiniLM-L6-v2",
+        )
+        self._embedding_model = None  # Lazy-loaded
+        self._semantic_top_k: int = int(os.getenv("SEMANTIC_HISTORY_TOP_K", "5"))
+        self._semantic_snippet_max_chars: int = int(os.getenv("SEMANTIC_HISTORY_SNIPPET_MAX_CHARS", "800"))
+        self._semantic_append_token_budget: int = int(os.getenv("SEMANTIC_HISTORY_APPEND_TOKEN_BUDGET", "600"))
 
     def add_message(self, conversation_id: str, message: BaseMessage):
         """Add a message to the conversation history"""
@@ -120,8 +132,14 @@ class ConversationMemory:
         if conversation_id in self.conversations:
             self.conversations[conversation_id].clear()
 
-    def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
-        """Get recent conversation context with a token budget and rolling summary."""
+    def get_recent_context(self, conversation_id: str, max_tokens: int = 3000, current_query: Optional[str] = None) -> List[BaseMessage]:
+        """Get recent conversation context with a token budget and optional semantic recall.
+
+        If ENABLE_SEMANTIC_HISTORY=1 and a query is provided, we will prepend a compact
+        semantic summary of earlier (older) messages that are most relevant to the query,
+        staying within a small token budget. This keeps recent turns intact while
+        enriching short-term context with high-signal older facts.
+        """
         messages = self.get_conversation_history(conversation_id)
 
         # Approximate token counting (≈4 chars/token)
@@ -152,7 +170,101 @@ class ConversationMemory:
             if used + stoks <= budget:
                 selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
 
+        # Optionally prepend a compact semantic summary of older, relevant context
+        try:
+            if self.enable_semantic_history and current_query:
+                # Identify older messages not already selected (by index)
+                recent_count = len(selected)
+                older_messages = messages[: max(0, len(messages) - recent_count)]
+                semantic_summary = self._build_semantic_recall_summary(older_messages, current_query)
+                if semantic_summary:
+                    stoks = approx_tokens(semantic_summary)
+                    if used + stoks <= budget + self._semantic_append_token_budget:
+                        selected = [SystemMessage(content=f"Relevant earlier context (semantic):\n{semantic_summary}")] + selected
+        except Exception:
+            # Best-effort; ignore semantic recall failures
+            pass
+
         return selected
+
+    def _ensure_embedding_model(self):
+        if self._embedding_model is not None:
+            return
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            self._embedding_model = SentenceTransformer(self._embedding_model_name)
+        except Exception:
+            self._embedding_model = None
+
+    def _encode(self, texts: List[str]) -> Optional[List[List[float]]]:
+        self._ensure_embedding_model()
+        model = self._embedding_model
+        if model is None:
+            return None
+        try:
+            embeddings = model.encode(texts, normalize_embeddings=True)  # type: ignore
+            # Ensure list of lists
+            return [list(map(float, vec)) for vec in embeddings]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _cosine_sim(a: List[float], b: List[float]) -> float:
+        # Assumes normalized vectors
+        try:
+            return float(sum(x * y for x, y in zip(a, b)))
+        except Exception:
+            return 0.0
+
+    def _build_semantic_recall_summary(self, older_messages: List[BaseMessage], query: str) -> str:
+        if not older_messages:
+            return ""
+        # Collect plain-text contents for embedding
+        contents: List[str] = []
+        for m in older_messages:
+            c = str(getattr(m, "content", "")).strip()
+            if not c:
+                continue
+            contents.append(c)
+        if not contents:
+            return ""
+
+        embeddings = self._encode([query] + contents)
+        # If embeddings unavailable, fall back to simple keyword scoring
+        scores: List[tuple[int, float]] = []
+        if embeddings is not None and len(embeddings) == len(contents) + 1:
+            qvec = embeddings[0]
+            for idx, vec in enumerate(embeddings[1:]):
+                sim = self._cosine_sim(qvec, vec)
+                scores.append((idx, sim))
+        else:
+            q_terms = {t for t in query.lower().split() if len(t) > 2}
+            for idx, text in enumerate(contents):
+                t_terms = {t for t in text.lower().split() if len(t) > 2}
+                overlap = len(q_terms & t_terms)
+                denom = max(1, len(q_terms))
+                scores.append((idx, overlap / denom))
+
+        # Pick top-k snippets by score
+        scores.sort(key=lambda x: x[1], reverse=True)
+        top_idxs = [i for i, _ in scores[: self._semantic_top_k]]
+
+        snippets: List[str] = []
+        taken = 0
+        budget_chars = self._semantic_snippet_max_chars
+        for i in top_idxs:
+            text = contents[i]
+            remaining = budget_chars - taken
+            if remaining <= 0:
+                break
+            snippet = text[: min(len(text), remaining)]
+            snippets.append(snippet)
+            taken += len(snippet)
+        if not snippets:
+            return ""
+        # Join snippets with minimal separators
+        joined = "\n---\n".join(snippets)
+        return joined
 
     def register_turn(self, conversation_id: str) -> None:
         self.turn_counters[conversation_id] += 1
@@ -465,13 +577,59 @@ class MongoDBAgent:
         self.system_prompt = system_prompt
         self.tracing_enabled = False
         self.enable_parallel_tools = enable_parallel_tools
+        # Tool result cache
+        self.enable_tool_cache: bool = str(os.getenv("ENABLE_TOOL_CACHE", "1")).lower() in {"1", "true", "yes"}
+        self.tool_cache = TTLCache(ttl_seconds=int(os.getenv("TOOL_CACHE_TTL", "900")))
+        self._cacheable_tools = {"mongo_query", "rag_search"}  # Do not cache generate_content
+        # Compression config
+        self.enable_tool_output_compression: bool = str(os.getenv("ENABLE_TOOL_OUTPUT_COMPRESSION", "1")).lower() in {"1", "true", "yes"}
+        self.tool_output_compression_threshold_chars: int = int(os.getenv("TOOL_OUTPUT_COMPRESSION_THRESHOLD_CHARS", "4000"))
+
+    @staticmethod
+    def _make_tool_cache_key(tool_call: Dict[str, Any]) -> str:
+        try:
+            name = str(tool_call.get("name", ""))
+            args = tool_call.get("args", {}) or {}
+            args_json = json.dumps(args, sort_keys=True, ensure_ascii=False)
+            raw = f"{name}|{args_json}"
+            return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        except Exception:
+            return hashlib.sha256(str(tool_call).encode("utf-8")).hexdigest()
+
+    async def _compress_tool_result(self, result_text: str, user_query: Optional[str], tool_name: str) -> str:
+        # Only compress when clearly large
+        if not self.enable_tool_output_compression:
+            return result_text
+        if len(result_text) < self.tool_output_compression_threshold_chars:
+            return result_text
+        try:
+            prompt = [
+                SystemMessage(content=(
+                    "You compress verbose tool outputs into concise, factual summaries. "
+                    "Preserve numbers, IDs, names, and conclusions. Remove noise, stack traces, and formatting. "
+                    "Keep the summary under 300 words."
+                )),
+                HumanMessage(content=(
+                    f"User query: {user_query or ''}\n"
+                    f"Tool: {tool_name}\n"
+                    "Output to compress (retain only what helps answer the query):\n" + result_text[:12000]
+                )),
+            ]
+            resp = await self.llm_base.ainvoke(prompt)
+            compressed = str(getattr(resp, "content", "")).strip()
+            if not compressed:
+                return result_text[: self.tool_output_compression_threshold_chars] + "\n[truncated]"
+            return compressed
+        except Exception:
+            return result_text[: self.tool_output_compression_threshold_chars] + "\n[truncated]"
 
     async def _execute_single_tool(
         self, 
         tool, 
         tool_call: Dict[str, Any], 
         selected_tools: List[Any],
-        tracer=None
+        tracer=None,
+        user_query: Optional[str] = None,
     ) -> tuple[ToolMessage, bool]:
         """Execute a single tool with tracing support.
         
@@ -490,18 +648,37 @@ class MongoDBAgent:
                 return error_msg, False
 
             try:
-                pass
+                # Cache lookup where appropriate
+                result: Any
+                tool_name = str(tool_call.get("name", ""))
+                args_obj = tool_call.get("args", {}) or {}
+                use_cache = self.enable_tool_cache and tool_name in self._cacheable_tools
+                cache_key = None
+                if use_cache:
+                    cache_key = self._make_tool_cache_key(tool_call)
+                    cached = self.tool_cache.get(cache_key)
+                    if cached is not None:
+                        result = cached
+                    else:
+                        result = await actual_tool.ainvoke(args_obj)
+                        # Store in cache on success
+                        try:
+                            self.tool_cache.set(cache_key, result)
+                        except Exception:
+                            pass
+                else:
+                    result = await actual_tool.ainvoke(args_obj)
+
+                # Compress large textual outputs before returning as ToolMessage
+                result_str = str(result)
+                result_str = await self._compress_tool_result(result_str, user_query, tool_name)
                 
-                result = await actual_tool.ainvoke(tool_call["args"])
-                
-                pass
-                        
             except Exception as tool_exc:
-                result = f"Tool execution error: {tool_exc}"
+                result_str = f"Tool execution error: {tool_exc}"
                 pass
 
             tool_message = ToolMessage(
-                content=str(result),
+                content=result_str,
                 tool_call_id=tool_call["id"],
             )
             return tool_message, True
@@ -556,8 +733,8 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Get conversation history
-                conversation_context = conversation_memory.get_recent_context(conversation_id)
+                # Get conversation history (with optional semantic recall)
+                conversation_context = conversation_memory.get_recent_context(conversation_id, current_query=query)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
@@ -692,7 +869,7 @@ class MongoDBAgent:
                     pass
                     
                     tool_tasks = [
-                        self._execute_single_tool(None, tool_call, selected_tools, None)
+                        self._execute_single_tool(None, tool_call, selected_tools, None, user_query=query)
                         for tool_call in response.tool_calls
                     ]
                     tool_results = await asyncio.gather(*tool_tasks)
@@ -707,7 +884,7 @@ class MongoDBAgent:
                 else:
                     # Single tool or parallel disabled
                     for tool_call in response.tool_calls:
-                        tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
+                        tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None, user_query=query)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
                         # Skip saving 'result' events to DB
@@ -767,8 +944,8 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Get conversation history
-                conversation_context = conversation_memory.get_recent_context(conversation_id)
+                # Get conversation history (with optional semantic recall)
+                conversation_context = conversation_memory.get_recent_context(conversation_id, current_query=query)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
@@ -924,7 +1101,7 @@ class MongoDBAgent:
                                 await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                         
                         # Execute all tools in parallel
-                        tool_tasks = [self._execute_single_tool(None, tool_call, selected_tools, None) for tool_call in response.tool_calls]
+                        tool_tasks = [self._execute_single_tool(None, tool_call, selected_tools, None, user_query=query) for tool_call in response.tool_calls]
                         tool_results = await asyncio.gather(*tool_tasks)
                         
                         # Process results and send tool_end events
@@ -942,7 +1119,7 @@ class MongoDBAgent:
                             if tool:
                                 await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                             
-                            tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
+                            tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None, user_query=query)
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
