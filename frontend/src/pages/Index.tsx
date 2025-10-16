@@ -256,12 +256,8 @@ const Index = () => {
         (async () => {
           try {
             const msgs = await getConversationMessages(convId);
-            setMessages((prev) => {
-              const transformed = transformConversationMessages(msgs);
-              const ephemeralWorkItems = prev.filter((m) => !!m.workItem);
-              const ephemeralPages = prev.filter((m) => !!m.page);
-              return [...transformed, ...ephemeralWorkItems, ...ephemeralPages];
-            });
+            // Use canonical messages from server to avoid duplicates of generated items
+            setMessages(transformConversationMessages(msgs));
           } catch {
             // ignore
           }
