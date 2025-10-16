@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,10 +27,11 @@ const initialMessages: Message[] = [
 ];
 
 export function ChatInterface() {
+  const { conversationId: urlConversationId } = useParams();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(urlConversationId || null);
   const [showThinking, setShowThinking] = useState(true);
   const [currentStreamingMessage, setCurrentStreamingMessage] = useState<string>("");
   const [currentStreamingId, setCurrentStreamingId] = useState<string | null>(null);
@@ -291,6 +293,17 @@ export function ChatInterface() {
   useEffect(() => {
     isInThinkingModeRef.current = isInThinkingMode;
   }, [isInThinkingMode]);
+
+  // Update conversation ID when URL changes
+  useEffect(() => {
+    if (urlConversationId !== conversationId) {
+      setConversationId(urlConversationId || null);
+      // Reset messages when conversation changes
+      if (urlConversationId !== conversationId) {
+        setMessages(initialMessages);
+      }
+    }
+  }, [urlConversationId]);
 
   useEffect(() => {
     // Auto-scroll to bottom when new messages arrive
