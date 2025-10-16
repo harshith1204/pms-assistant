@@ -1,10 +1,11 @@
 import { useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Plus, Search, MessageCircle, Clock, Trash2 } from "lucide-react";
+import { Plus, Search, MessageCircle, Clock, Trash2, Settings } from "lucide-react";
 
 interface ConversationSidebarProps {
   open: boolean;
@@ -47,6 +48,8 @@ const mockConversations: Conversation[] = [
 ];
 
 export function ConversationSidebar({ open }: ConversationSidebarProps) {
+  const navigate = useNavigate();
+  const { conversationId } = useParams();
   const [searchQuery, setSearchQuery] = useState("");
   const [conversations, setConversations] = useState(mockConversations);
 
@@ -57,6 +60,18 @@ export function ConversationSidebar({ open }: ConversationSidebarProps) {
 
   const deleteConversation = (id: string) => {
     setConversations(prev => prev.filter(conv => conv.id !== id));
+    // If deleting the active conversation, navigate to home
+    if (id === conversationId) {
+      navigate('/chat');
+    }
+  };
+
+  const handleNewConversation = () => {
+    navigate('/chat');
+  };
+
+  const handleConversationClick = (id: string) => {
+    navigate(`/chat/${id}`);
   };
 
   if (!open) return null;
@@ -68,7 +83,11 @@ export function ConversationSidebar({ open }: ConversationSidebarProps) {
     )}>
       {/* Header */}
       <div className="p-4 border-b">
-        <Button className="w-full justify-start gap-2 mb-3" size="sm">
+        <Button 
+          className="w-full justify-start gap-2 mb-3" 
+          size="sm"
+          onClick={handleNewConversation}
+        >
           <Plus className="h-4 w-4" />
           New Conversation
         </Button>
@@ -87,59 +106,78 @@ export function ConversationSidebar({ open }: ConversationSidebarProps) {
       {/* Conversations List */}
       <ScrollArea className="flex-1">
         <div className="p-2">
-          {filteredConversations.map((conversation, index) => (
-            <div key={conversation.id}>
-              <div className={cn(
-                "group relative p-3 rounded-lg cursor-pointer transition-colors hover:bg-muted/50",
-                conversation.isActive && "bg-muted"
-              )}>
-                <div className="flex items-start gap-3">
-                  <div className={cn(
-                    "rounded-full p-1.5 mt-0.5",
-                    conversation.isActive ? "bg-primary" : "bg-muted-foreground/20"
-                  )}>
-                    <MessageCircle className={cn(
-                      "h-3 w-3",
-                      conversation.isActive ? "text-primary-foreground" : "text-muted-foreground"
-                    )} />
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-sm truncate">
-                      {conversation.title}
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                      {conversation.lastMessage}
-                    </p>
-                    <div className="flex items-center gap-1 mt-2">
-                      <Clock className="h-3 w-3 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">
-                        {conversation.timestamp}
-                      </span>
+          {filteredConversations.map((conversation, index) => {
+            const isActive = conversationId === conversation.id;
+            return (
+              <div key={conversation.id}>
+                <div 
+                  className={cn(
+                    "group relative p-3 rounded-lg cursor-pointer transition-colors hover:bg-muted/50",
+                    isActive && "bg-muted"
+                  )}
+                  onClick={() => handleConversationClick(conversation.id)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={cn(
+                      "rounded-full p-1.5 mt-0.5",
+                      isActive ? "bg-primary" : "bg-muted-foreground/20"
+                    )}>
+                      <MessageCircle className={cn(
+                        "h-3 w-3",
+                        isActive ? "text-primary-foreground" : "text-muted-foreground"
+                      )} />
                     </div>
+                    
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium text-sm truncate">
+                        {conversation.title}
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                        {conversation.lastMessage}
+                      </p>
+                      <div className="flex items-center gap-1 mt-2">
+                        <Clock className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">
+                          {conversation.timestamp}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteConversation(conversation.id);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
                   </div>
-                  
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteConversation(conversation.id);
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
                 </div>
+                
+                {index < filteredConversations.length - 1 && (
+                  <Separator className="my-1" />
+                )}
               </div>
-              
-              {index < filteredConversations.length - 1 && (
-                <Separator className="my-1" />
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </ScrollArea>
+
+      {/* Footer with Settings button */}
+      <div className="p-4 border-t">
+        <Button 
+          variant="outline" 
+          className="w-full justify-start gap-2" 
+          size="sm"
+          onClick={() => navigate('/settings')}
+        >
+          <Settings className="h-4 w-4" />
+          Settings
+        </Button>
+      </div>
     </aside>
   );
 }
