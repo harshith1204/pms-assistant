@@ -18,7 +18,6 @@ interface ChatSidebarProps {
   onNewChat: () => void;
   onSelectConversation: (id: string) => void;
   onShowGettingStarted?: () => void;
-  onShowPersonalization?: () => void;
 }
 
 export const ChatSidebar = ({
@@ -27,7 +26,6 @@ export const ChatSidebar = ({
   onNewChat,
   onSelectConversation,
   onShowGettingStarted,
-  onShowPersonalization,
 }: ChatSidebarProps) => {
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
@@ -39,19 +37,25 @@ export const ChatSidebar = ({
   return (
     <div className="flex h-full flex-col bg-sidebar/95 backdrop-blur-xl border border-sidebar-border rounded-2xl shadow-2xl my-1 mx-4">
       <div className="p-4 border-b border-sidebar-border">
-        <Button
-          onClick={onNewChat}
-          className="w-full justify-start gap-2 bg-primary text-primary-foreground shadow-lg"
-        >
-          <Plus className="h-4 w-4" />
-          New Conversation
-        </Button>
+          <Button
+            onClick={() => {
+              navigate('/');
+              onNewChat();
+            }}
+            className="w-full justify-start gap-2 bg-primary text-primary-foreground shadow-lg"
+          >
+            <Plus className="h-4 w-4" />
+            New Conversation
+          </Button>
       </div>
 
       <ScrollArea className="flex-1 scrollbar-thin">
         <div className="p-2 space-y-1">
           <button
-            onClick={onShowGettingStarted}
+            onClick={() => {
+              navigate('/');
+              onShowGettingStarted?.();
+            }}
             className={cn(
               "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
               "hover:bg-sidebar-accent group text-sidebar-foreground"
@@ -66,7 +70,7 @@ export const ChatSidebar = ({
             </div>
           </button>
           <button
-            onClick={onShowPersonalization}
+            onClick={() => navigate('/settings')}
             className={cn(
               "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
               "hover:bg-sidebar-accent group text-sidebar-foreground"
@@ -98,7 +102,10 @@ export const ChatSidebar = ({
           {filteredConversations.map((conversation) => (
             <button
               key={conversation.id}
-              onClick={() => onSelectConversation(conversation.id)}
+              onClick={() => {
+                navigate('/');
+                onSelectConversation(conversation.id);
+              }}
               className={cn(
                 "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
                 "hover:bg-sidebar-accent group",
