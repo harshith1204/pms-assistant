@@ -45,8 +45,11 @@ interface Conversation {
   timestamp: Date;
 }
 
-// Use URL query param to persist conversation across reloads/navigation
+// Use URL query params to persist UI state across reloads/navigation
 const CONV_QUERY_PARAM = "conversationId";
+const VIEW_QUERY_PARAM = "view";
+const VIEW_SETTINGS = "settings";
+const VIEW_GETTING_STARTED = "getting-started";
 
 const Index = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -84,6 +87,39 @@ const Index = () => {
         url.searchParams.set(CONV_QUERY_PARAM, id);
       } else {
         url.searchParams.delete(CONV_QUERY_PARAM);
+      }
+      const href = url.toString();
+      if (options?.replace) {
+        window.history.replaceState(null, "", href);
+      } else {
+        window.history.pushState(null, "", href);
+      }
+    } catch {
+      // ignore URL update errors
+    }
+  };
+
+  const getViewFromUrl = () => {
+    try {
+      const url = new URL(window.location.href);
+      const view = url.searchParams.get(VIEW_QUERY_PARAM);
+      if (view === VIEW_SETTINGS || view === VIEW_GETTING_STARTED) return view;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const setViewInUrl = (
+    view: typeof VIEW_SETTINGS | typeof VIEW_GETTING_STARTED | null,
+    options?: { replace?: boolean }
+  ) => {
+    try {
+      const url = new URL(window.location.href);
+      if (view) {
+        url.searchParams.set(VIEW_QUERY_PARAM, view);
+      } else {
+        url.searchParams.delete(VIEW_QUERY_PARAM);
       }
       const href = url.toString();
       if (options?.replace) {
@@ -351,8 +387,24 @@ const Index = () => {
     activeConversationIdRef.current = activeConversationId;
   }, [activeConversationId]);
 
-  // Load conversation from query param on mount
+  // Load view or conversation from URL on mount
   useEffect(() => {
+    const view = getViewFromUrl();
+    if (view === VIEW_SETTINGS) {
+      setShowPersonalization(true);
+      setShowGettingStarted(false);
+      setActiveConversationId(null);
+      setMessages([]);
+      return;
+    }
+    if (view === VIEW_GETTING_STARTED) {
+      setShowGettingStarted(true);
+      setShowPersonalization(false);
+      setActiveConversationId(null);
+      setMessages([]);
+      return;
+    }
+
     const id = getConversationIdFromUrl();
     if (id) {
       setActiveConversationId(id);
@@ -372,8 +424,26 @@ const Index = () => {
   // Respond to back/forward navigation by syncing from URL
   useEffect(() => {
     const onPopState = () => {
+      const view = getViewFromUrl();
       const id = getConversationIdFromUrl();
       const current = activeConversationIdRef.current;
+
+      if (view === VIEW_SETTINGS) {
+        setShowPersonalization(true);
+        setShowGettingStarted(false);
+        if (current) setActiveConversationId(null);
+        setMessages([]);
+        return;
+      }
+      if (view === VIEW_GETTING_STARTED) {
+        setShowGettingStarted(true);
+        setShowPersonalization(false);
+        if (current) setActiveConversationId(null);
+        setMessages([]);
+        return;
+      }
+
+      // No view param: show conversation if present, otherwise clear
       if (id && id !== current) {
         setActiveConversationId(id);
         setShowGettingStarted(false);
@@ -386,9 +456,10 @@ const Index = () => {
             setMessages([]);
           }
         })();
-      } else if (!id && current) {
-        // No conversation id in URL anymore; clear state
-        setActiveConversationId(null);
+      } else if (!id) {
+        if (current) setActiveConversationId(null);
+        setShowGettingStarted(false);
+        setShowPersonalization(false);
         setMessages([]);
       }
     };
@@ -403,11 +474,15 @@ const Index = () => {
     setShowPersonalization(false);
     // Remove conversation id from URL
     setConversationIdInUrl(null);
+    // Clear view as well
+    setViewInUrl(null);
   };
 
   const handleSelectConversation = async (id: string) => {
     // Reflect selection in URL
     setConversationIdInUrl(id);
+    // Clear any view param so conversation is shown
+    setViewInUrl(null);
     setActiveConversationId(id);
     setShowGettingStarted(false);
     // Ensure we exit the settings view when a conversation is selected
@@ -425,6 +500,9 @@ const Index = () => {
     setShowPersonalization(false);
     setActiveConversationId(null);
     setMessages([]);
+    // Update URL to reflect getting started view and clear any conversation
+    setConversationIdInUrl(null);
+    setViewInUrl(VIEW_GETTING_STARTED);
   };
 
   const handleShowPersonalization = () => {
@@ -432,6 +510,9 @@ const Index = () => {
     setShowGettingStarted(false);
     setActiveConversationId(null);
     setMessages([]);
+    // Update URL to reflect settings view and clear any conversation
+    setConversationIdInUrl(null);
+    setViewInUrl(VIEW_SETTINGS);
   };
 
   const handleSendMessage = async (content: string) => {
