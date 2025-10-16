@@ -396,7 +396,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
               <TabsTrigger value="edit" className="text-sm font-medium">Edit</TabsTrigger>
               <TabsTrigger value="preview" onClick={handlePreview} className="text-sm font-medium">Preview</TabsTrigger>
             </TabsList>
-            <TabsContent value="edit" className="mt-6">
+            <TabsContent value="edit" forceMount className="mt-6">
               <div className="relative">
                 <div
                   ref={editorContainerRef}
