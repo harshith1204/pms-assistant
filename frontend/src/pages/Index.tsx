@@ -53,7 +53,8 @@ const Index = () => {
   const [showGettingStarted, setShowGettingStarted] = useState<boolean>(false);
   const [showPersonalization, setShowPersonalization] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
-  const isEmpty = messages.length === 0;
+  // Consider empty only when no active conversation is selected
+  const isEmpty = messages.length === 0 && !activeConversationId;
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
   const endRef = useRef<HTMLDivElement | null>(null);
