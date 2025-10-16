@@ -168,20 +168,77 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
 
   // Toggle read-only mode based on isPreview (EditorJS built-in preview)
   useEffect(() => {
-    if (!editorRef.current) return;
-    try {
-      if (isPreview) {
-        // Enter preview mode
-        (editorRef.current as any).readOnly?.enable?.();
-      } else {
-        // Return to edit mode
-        (editorRef.current as any).readOnly?.disable?.();
-        // Refocus the editor when exiting preview
-        editorRef.current.focus?.();
+    // Persist current content, then rebuild the editor with correct readOnly state.
+    let cancelled = false;
+    (async () => {
+      const holder = editorContainerRef.current;
+      if (!holder) return;
+
+      // Save current data if possible
+      let nextData = editorData;
+      if (editorRef.current?.save) {
+        try {
+          const output = await editorRef.current.save();
+          if (!cancelled) {
+            nextData = output as any;
+            setEditorData(output as any);
+          }
+        } catch (e) {
+          // fall back to existing state
+        }
       }
-    } catch (e) {
-      console.warn('Failed to toggle readOnly mode:', e);
-    }
+
+      // Destroy existing instance
+      try {
+        editorRef.current?.destroy?.();
+      } catch {}
+      editorRef.current = null;
+      setEditorReady(false);
+
+      // Recreate with updated readOnly
+      try {
+        const instance = new EditorJS({
+          holder,
+          data: nextData,
+          readOnly: isPreview,
+          tools: {
+            header: {
+              class: Header,
+              inlineToolbar: true,
+              config: { levels: [1, 2, 3, 4, 5, 6], defaultLevel: 2 },
+            },
+            paragraph: { class: Paragraph, inlineToolbar: true },
+            list: { class: List, inlineToolbar: true },
+            quote: { class: Quote, inlineToolbar: true },
+            code: { class: Code, inlineToolbar: true },
+            inlineCode: { class: InlineCode, shortcut: 'CMD+SHIFT+M' },
+            linkTool: { class: LinkTool, config: { endpoint: '/api/fetchUrl' } },
+            marker: { class: Marker },
+            delimiter: { class: Delimiter },
+            embed: { class: Embed, config: { services: { youtube: true, coub: true, codepen: true, imgur: true } } },
+            table: Table,
+            image: { class: ImageTool, config: { endpoints: { byFile: '/api/uploadFile', byUrl: '/api/fetchUrl' } } },
+          },
+          placeholder: 'Write page content…',
+          minHeight: 400,
+          autofocus: !isPreview,
+        });
+        editorRef.current = instance;
+        instance.isReady
+          .then(() => {
+            if (cancelled) return;
+            setEditorReady(true);
+            if (!isPreview) {
+              try { editorRef.current?.focus?.(); } catch {}
+            }
+          })
+          .catch((err) => console.error('Editor.js (re)initialization failed:', err));
+      } catch (err) {
+        console.error('Failed to rebuild Editor.js instance:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [isPreview]);
 
   // Effect to handle initialEditorJs changes - recreate editor if data changes significantly
@@ -205,6 +262,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
               editorRef.current = new EditorJS({
                 holder: editorContainerRef.current!,
                 data: editorData,
+                readOnly: isPreview,
                 tools: {
                   header: {
                     class: Header,
