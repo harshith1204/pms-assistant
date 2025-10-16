@@ -45,6 +45,9 @@ interface Conversation {
   timestamp: Date;
 }
 
+// Persist the last active conversation across reloads
+const LAST_CONV_KEY = "lastActiveConversationId";
+
 const Index = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   
@@ -61,6 +64,8 @@ const Index = () => {
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
+  // Track the current active conversation id to avoid stale closures
+  const activeConversationIdRef = useRef<string | null>(null);
 
   // Helper: transform backend messages to UI messages with internal actions grouped
   const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any }>): Message[] => {
@@ -251,8 +256,31 @@ const Index = () => {
     } else if (evt.type === "complete") {
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
+      // Reconcile to canonical conversation ID when provided by backend
+      const canonicalId = (evt as any).conversation_id as string | undefined;
+      const currentActive = activeConversationIdRef.current;
+      if (canonicalId && currentActive && canonicalId !== currentActive) {
+        setActiveConversationId(canonicalId);
+        // Update/merge conversations list to replace ephemeral with canonical id
+        setConversations((prev) => {
+          const ephemeralIdx = prev.findIndex((c) => c.id === currentActive);
+          const canonicalIdx = prev.findIndex((c) => c.id === canonicalId);
+          if (ephemeralIdx !== -1 && canonicalIdx !== -1) {
+            // Both exist; drop the ephemeral one
+            const copy = [...prev];
+            copy.splice(ephemeralIdx, 1);
+            return copy;
+          }
+          if (ephemeralIdx !== -1) {
+            const copy = [...prev];
+            copy[ephemeralIdx] = { ...copy[ephemeralIdx], id: canonicalId };
+            return copy;
+          }
+          return prev;
+        });
+      }
       // Refresh messages from server to get canonical IDs so reactions persist
-      const convId = (evt as any).conversation_id || activeConversationId;
+      const convId = canonicalId || currentActive;
       if (convId) {
         (async () => {
           try {
@@ -285,6 +313,46 @@ const Index = () => {
         // ignore errors in dev
       }
     })();
+  }, []);
+
+  // Keep the ref in sync with the active conversation id
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  // Persist active conversation id to localStorage
+  useEffect(() => {
+    try {
+      if (activeConversationId) {
+        localStorage.setItem(LAST_CONV_KEY, activeConversationId);
+      } else {
+        localStorage.removeItem(LAST_CONV_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [activeConversationId]);
+
+  // Restore last active conversation on mount
+  useEffect(() => {
+    try {
+      const storedId = localStorage.getItem(LAST_CONV_KEY);
+      if (storedId) {
+        setActiveConversationId(storedId);
+        setShowGettingStarted(false);
+        setShowPersonalization(false);
+        (async () => {
+          try {
+            const msgs = await getConversationMessages(storedId);
+            setMessages(transformConversationMessages(msgs));
+          } catch {
+            setMessages([]);
+          }
+        })();
+      }
+    } catch {
+      // ignore storage errors
+    }
   }, []);
 
   const handleNewChat = () => {
