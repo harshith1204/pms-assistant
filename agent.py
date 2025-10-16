@@ -316,10 +316,11 @@ def _select_tools_for_query(user_query: str):
 class PhoenixCallbackHandler(AsyncCallbackHandler):
     """WebSocket streaming callback handler for Phoenix events + DB logging"""
 
-    def __init__(self, websocket=None, conversation_id: Optional[str] = None):
+    def __init__(self, websocket=None, conversation_id: Optional[str] = None, message_id: Optional[str] = None):
         super().__init__()
         self.websocket = websocket
         self.conversation_id = conversation_id
+        self.message_id = message_id
         self.start_time = None
         # Tool events are suppressed from frontend to avoid noise in chat UI
         # Internal step counter for lightweight progress (not exposed directly)
@@ -365,6 +366,8 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             "step": self._step_counter,
             "timestamp": datetime.now().isoformat(),
         }
+        if self.message_id:
+            payload["message_id"] = self.message_id
         await self.websocket.send_json(payload)
         try:
             if self.conversation_id:
@@ -382,29 +385,38 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         # Reset dynamic action emission flag at the beginning of a reasoning step
         self._dynamic_action_emitted = False
         if self.websocket:
-            await self.websocket.send_json({
+            payload = {
                 "type": "llm_start",
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            if self.message_id:
+                payload["message_id"] = self.message_id
+            await self.websocket.send_json(payload)
 
     async def on_llm_new_token(self, token: str, **kwargs):
         """Stream each token as it's generated"""
         if self.websocket:
-            await self.websocket.send_json({
+            payload = {
                 "type": "token",
                 "content": token,
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            if self.message_id:
+                payload["message_id"] = self.message_id
+            await self.websocket.send_json(payload)
 
     async def on_llm_end(self, *args, **kwargs):
         """Called when LLM finishes generating"""
         elapsed_time = time.time() - self.start_time if self.start_time else 0
         if self.websocket:
-            await self.websocket.send_json({
+            payload = {
                 "type": "llm_end",
                 "elapsed_time": elapsed_time,
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            if self.message_id:
+                payload["message_id"] = self.message_id
+            await self.websocket.send_json(payload)
 
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing.
@@ -742,7 +754,7 @@ class MongoDBAgent:
         except Exception as e:
             return f"Error running agent: {str(e)}"
 
-    async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+    async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None, message_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Run the agent with streaming support and conversation context"""
         if not self.connected:
             await self.connect()
@@ -781,7 +793,7 @@ class MongoDBAgent:
                 human_message = HumanMessage(content=query)
                 messages.append(human_message)
 
-                callback_handler = PhoenixCallbackHandler(websocket, conversation_id)
+                callback_handler = PhoenixCallbackHandler(websocket, conversation_id, message_id)
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
@@ -889,14 +901,23 @@ class MongoDBAgent:
 
                     # Persist assistant message
                     conversation_memory.add_message(conversation_id, response)
-                    try:
-                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                    except Exception as e:
-                        print(f"Warning: failed to save assistant message: {e}")
 
-                    if not getattr(response, "tool_calls", None):
+                    assistant_text = getattr(response, "content", "") or ""
+                    has_tools = bool(getattr(response, "tool_calls", None))
+                    if not has_tools:
+                        # Final assistant message for this turn → persist with stable message_id for UI correlation
+                        try:
+                            await save_assistant_message(conversation_id, assistant_text, message_id=message_id)
+                        except Exception as e:
+                            print(f"Warning: failed to save assistant message: {e}")
                         yield response.content
                         return
+                    else:
+                        # Intermediate assistant thought before tool execution (no stable id)
+                        try:
+                            await save_assistant_message(conversation_id, assistant_text)
+                        except Exception as e:
+                            print(f"Warning: failed to save assistant message: {e}")
 
                     # Execute requested tools with streaming callbacks
                     # The LLM decides execution order by how it calls tools

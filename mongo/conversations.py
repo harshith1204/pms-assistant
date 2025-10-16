@@ -127,23 +127,30 @@ async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
     )
 
 
-async def save_user_message(conversation_id: str, content: str) -> None:
+async def save_user_message(conversation_id: str, content: str, message_id: Optional[str] = None) -> None:
+    msg: Dict[str, Any] = {
+        "type": "user",
+        "content": content or "",
+    }
+    # Allow caller to set a stable message id for correlation with UI events
+    if message_id:
+        msg["id"] = message_id
     await append_message(
         conversation_id,
-        {
-            "type": "user",
-            "content": content or "",
-        },
+        msg,
     )
 
 
-async def save_assistant_message(conversation_id: str, content: str) -> None:
+async def save_assistant_message(conversation_id: str, content: str, message_id: Optional[str] = None) -> None:
+    msg: Dict[str, Any] = {
+        "type": "assistant",
+        "content": content or "",
+    }
+    if message_id:
+        msg["id"] = message_id
     await append_message(
         conversation_id,
-        {
-            "type": "assistant",
-            "content": content or "",
-        },
+        msg,
     )
 
 
