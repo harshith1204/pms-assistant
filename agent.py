@@ -18,6 +18,7 @@ import os
 
 
 import math
+import re as regex_module
 
 # Import tools list
 try:
@@ -31,6 +32,84 @@ from mongo.constants import DATABASE_NAME, mongodb_tools
 from mongo.conversations import save_assistant_message, save_action_event
 
 
+def parse_structured_response(content: str) -> Dict[str, Any]:
+    """Parse structured markdown response into components for frontend display.
+    
+    Extracts:
+    - Summary section (## Summary)
+    - Key points bullets (### Key Points)
+    - Details section (### Details)
+    - Next steps section (### Next Steps)
+    
+    Returns a dict with parsed sections that can be sent to frontend.
+    """
+    if not content:
+        return {"text": content}
+    
+    # Extract sections using regex
+    summary_match = regex_module.search(r'## Summary\s*\n(.*?)(?=\n#|$)', content, regex_module.DOTALL)
+    key_points_match = regex_module.search(r'### Key Points\s*\n(.*?)(?=\n#|$)', content, regex_module.DOTALL)
+    details_match = regex_module.search(r'### Details\s*\n(.*?)(?=\n#|$)', content, regex_module.DOTALL)
+    next_steps_match = regex_module.search(r'### Next Steps\s*\n(.*?)(?=\n#|$)', content, regex_module.DOTALL)
+    
+    # Build structured response
+    structured = {}
+    
+    # Extract summary
+    if summary_match:
+        summary_text = summary_match.group(1).strip()
+        structured["summary"] = summary_text
+    
+    # Extract bullet points from key points
+    if key_points_match:
+        key_points_text = key_points_match.group(1).strip()
+        # Extract bullet points (lines starting with -, *, or •)
+        bullets = []
+        for line in key_points_text.split('\n'):
+            line = line.strip()
+            if line and (line.startswith('- ') or line.startswith('* ') or line.startswith('• ')):
+                bullets.append(line[2:].strip())
+            elif line and bullets:  # Continuation of previous bullet
+                bullets[-1] += ' ' + line
+        if bullets:
+            structured["keyPoints"] = bullets
+    
+    # Extract details
+    if details_match:
+        details_text = details_match.group(1).strip()
+        structured["details"] = details_text
+    
+    # Extract next steps
+    if next_steps_match:
+        next_steps_text = next_steps_match.group(1).strip()
+        # Extract bullet points from next steps
+        next_bullets = []
+        for line in next_steps_text.split('\n'):
+            line = line.strip()
+            if line and (line.startswith('- ') or line.startswith('* ') or line.startswith('• ')):
+                next_bullets.append(line[2:].strip())
+            elif line and next_bullets:  # Continuation of previous bullet
+                next_bullets[-1] += ' ' + line
+        if next_bullets:
+            structured["nextSteps"] = next_bullets
+    
+    # If no structured sections found, return original content
+    if not structured:
+        return {"text": content}
+    
+    # Add any remaining text that wasn't in sections
+    remaining_text = content
+    for match in [summary_match, key_points_match, details_match, next_steps_match]:
+        if match:
+            remaining_text = remaining_text.replace(match.group(0), '')
+    
+    remaining_text = remaining_text.strip()
+    if remaining_text and not regex_module.match(r'^#+\s*$', remaining_text):
+        structured["additionalContent"] = remaining_text
+    
+    return structured
+
+
 DEFAULT_SYSTEM_PROMPT = (
     "You are a precise, non-speculative Project Management assistant.\n\n"
     "GENERAL RULES:\n"
@@ -38,6 +117,13 @@ DEFAULT_SYSTEM_PROMPT = (
     "- If a tool is appropriate, always call it before answering.\n"
     "- Keep answers concise and structured. If lists are long, summarize and offer to expand.\n"
     "- If tooling is unavailable for the task, state the limitation plainly.\n\n"
+    "OUTPUT STRUCTURE:\n"
+    "Structure your responses using markdown sections for better frontend display:\n"
+    "- Use '## Summary' for the main answer summary\n"
+    "- Use '### Key Points' followed by bullet points for important details\n"
+    "- Use '### Details' for additional context when needed\n"
+    "- Use '### Next Steps' for suggested actions or follow-ups\n"
+    "This structure helps the frontend display your response in an organized way.\n\n"
     "TOOL EXECUTION STRATEGY:\n"
     "- When tools are INDEPENDENT (can run without each other's results): Call them together in one batch.\n"
     "- When tools are DEPENDENT (one needs another's output): Call them separately in sequence.\n"
@@ -326,6 +412,9 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self._step_counter = 0
         # Whether a dynamic, high-level action statement was already emitted for this step
         self._dynamic_action_emitted = False
+        # Accumulate streamed content for structured parsing
+        self._accumulated_content = ""
+        self._is_streaming_response = False
 
     def _safe_extract(self, input_str: str) -> dict:
         """Best-effort parse of tool arg string to a dict without raising.
@@ -381,6 +470,9 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         self.start_time = time.time()
         # Reset dynamic action emission flag at the beginning of a reasoning step
         self._dynamic_action_emitted = False
+        # Reset accumulated content for new response
+        self._accumulated_content = ""
+        self._is_streaming_response = True
         if self.websocket:
             await self.websocket.send_json({
                 "type": "llm_start",
@@ -389,6 +481,9 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
 
     async def on_llm_new_token(self, token: str, **kwargs):
         """Stream each token as it's generated"""
+        # Accumulate content for structured parsing
+        self._accumulated_content += token
+        
         if self.websocket:
             await self.websocket.send_json({
                 "type": "token",
@@ -399,6 +494,26 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
     async def on_llm_end(self, *args, **kwargs):
         """Called when LLM finishes generating"""
         elapsed_time = time.time() - self.start_time if self.start_time else 0
+        
+        # Parse accumulated content for structured data
+        if self._is_streaming_response and self._accumulated_content and self.websocket:
+            try:
+                structured_data = parse_structured_response(self._accumulated_content)
+                
+                # Send structured response event if we found structured sections
+                if any(key in structured_data for key in ["summary", "keyPoints", "details", "nextSteps"]):
+                    await self.websocket.send_json({
+                        "type": "structured_response",
+                        "data": structured_data,
+                        "timestamp": datetime.now().isoformat()
+                    })
+            except Exception as e:
+                print(f"Error parsing structured response: {e}")
+        
+        # Reset flags
+        self._is_streaming_response = False
+        self._accumulated_content = ""
+        
         if self.websocket:
             await self.websocket.send_json({
                 "type": "llm_end",
@@ -857,10 +972,20 @@ class MongoDBAgent:
                         invoke_messages = messages + [routing_instructions]
                         if need_finalization:
                             finalization_instructions = SystemMessage(content=(
-                                "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
-                                "Do not paste tool outputs verbatim or include banners/emojis. "
-                                "If the user asked to browse or see examples, summarize briefly and offer to expand. "
-                                "For work items, present canonical fields succinctly."
+                                "FINALIZATION: Write a structured answer based on the tool outputs above.\n\n"
+                                "USE THIS EXACT MARKDOWN STRUCTURE:\n"
+                                "## Summary\n"
+                                "Write a brief 1-2 sentence summary of the main answer.\n\n"
+                                "### Key Points\n"
+                                "- First key finding or result\n"
+                                "- Second key finding or result\n"
+                                "- Third key finding (add more as needed)\n\n"
+                                "### Details\n"
+                                "Provide additional context or detailed explanation if needed.\n\n"
+                                "### Next Steps\n"
+                                "- Suggested action or follow-up\n"
+                                "- Another recommendation if applicable\n\n"
+                                "IMPORTANT: Do not paste tool outputs verbatim. Synthesize and summarize the information."
                             ))
                             # Emit a dynamic action statement to indicate synthesis/finalization
                             try:
