@@ -6,7 +6,6 @@ import { ChatInput } from "@/components/ChatInput";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sparkles } from "lucide-react";
 import PromptLibrary from "@/components/PromptLibrary";
-import Settings from "@/pages/Settings";
 import { useChatSocket, type ChatEvent } from "@/hooks/useChatSocket";
 import { getConversations, getConversationMessages, reactToMessage } from "@/api/conversations";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,7 +50,6 @@ const Index = () => {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [showGettingStarted, setShowGettingStarted] = useState<boolean>(false);
-  const [showPersonalization, setShowPersonalization] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const isEmpty = messages.length === 0;
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
@@ -306,14 +304,6 @@ const Index = () => {
 
   const handleShowGettingStarted = () => {
     setShowGettingStarted(true);
-    setShowPersonalization(false);
-    setActiveConversationId(null);
-    setMessages([]);
-  };
-
-  const handleShowPersonalization = () => {
-    setShowPersonalization(true);
-    setShowGettingStarted(false);
     setActiveConversationId(null);
     setMessages([]);
   };
@@ -427,9 +417,9 @@ const Index = () => {
 
   // Auto-scroll to bottom on message updates
   useEffect(() => {
-    if (showGettingStarted || showPersonalization) return;
+    if (showGettingStarted) return;
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading, showGettingStarted, showPersonalization]);
+  }, [messages, isLoading, showGettingStarted]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
@@ -470,19 +460,12 @@ const Index = () => {
           onNewChat={handleNewChat}
           onSelectConversation={handleSelectConversation}
           onShowGettingStarted={handleShowGettingStarted}
-          onShowPersonalization={handleShowPersonalization}
         />
       </div>
 
       <div className="flex flex-1 flex-col relative z-10">
         {showGettingStarted ? (
           <PromptLibrary onSelectPrompt={() => setShowGettingStarted(false)} />
-        ) : showPersonalization ? (
-          <div className="flex items-start justify-center p-6 h-full">
-            <div className="w-full max-w-3xl">
-              <Settings />
-            </div>
-          </div>
         ) : isEmpty ? (
           <div className="flex flex-1 items-center justify-center p-8">
             <div className="text-center space-y-6 max-w-2xl animate-fade-in">
@@ -522,7 +505,7 @@ const Index = () => {
           </ScrollArea>
         )}
 
-        {!showGettingStarted && !showPersonalization && (
+        {!showGettingStarted && (
           <div
             className={cn(
               "relative z-20 transition-transform duration-500 ease-out",

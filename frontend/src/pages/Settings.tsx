@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { usePersonalization } from "@/context/PersonalizationContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -6,14 +6,64 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Lock, AlertCircle } from "lucide-react";
+import { ChatSidebar } from "@/components/ChatSidebar";
+import { getConversations, getConversationMessages } from "@/api/conversations";
+import { useNavigate } from "react-router-dom";
+
+interface Conversation {
+  id: string;
+  title: string;
+  timestamp: Date;
+}
 
 const Settings = () => {
   const { settings, updateSettings, resetSettings } = usePersonalization();
+  const navigate = useNavigate();
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
+  // Load conversations on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await getConversations();
+        setConversations(
+          list.map((c) => ({ id: c.id, title: c.title, timestamp: new Date(c.updatedAt || Date.now()) }))
+        );
+      } catch (e) {
+        // ignore errors in dev
+      }
+    })();
+  }, []);
+
+  const handleNewChat = useCallback(() => {
+    navigate('/');
+  }, [navigate]);
+
+  const handleSelectConversation = useCallback((id: string) => {
+    // Navigation will be handled by ChatSidebar
+    setActiveConversationId(id);
+  }, []);
+
+  const handleShowGettingStarted = useCallback(() => {
+    navigate('/');
+  }, [navigate]);
 
   return (
-    <div className="min-h-screen w-full flex items-start justify-center pt-0 pb-5">
-      <div className="w-full max-w-3xl space-y-3">
+    <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
+      <div className="w-80 flex-shrink-0 relative z-10">
+        <ChatSidebar
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          onNewChat={handleNewChat}
+          onSelectConversation={handleSelectConversation}
+          onShowGettingStarted={handleShowGettingStarted}
+        />
+      </div>
+
+      <div className="flex flex-1 flex-col relative z-10 overflow-auto">
+        <div className="w-full flex items-start justify-center pt-8 pb-5">
+          <div className="w-full max-w-3xl space-y-3 px-6">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">AI Agent Personalization</h1>
           <p className="text-sm text-muted-foreground">Control how the agent remembers and responds, and provide long-term context it can learn from.</p>
@@ -107,6 +157,8 @@ const Settings = () => {
             </div>
           </CardContent>
         </Card>
+          </div>
+        </div>
       </div>
     </div>
   );
