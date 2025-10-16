@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { useNavigate } from "react-router-dom";
 
 interface Conversation {
   id: string;
@@ -30,7 +29,6 @@ export const ChatSidebar = ({
   onShowPersonalization,
 }: ChatSidebarProps) => {
   const [query, setQuery] = useState("");
-  const navigate = useNavigate();
   const filteredConversations = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return conversations;

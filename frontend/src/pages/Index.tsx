@@ -296,6 +296,8 @@ const Index = () => {
   const handleSelectConversation = async (id: string) => {
     setActiveConversationId(id);
     setShowGettingStarted(false);
+    // Ensure we exit the settings view when a conversation is selected
+    setShowPersonalization(false);
     try {
       const msgs = await getConversationMessages(id);
       setMessages(transformConversationMessages(msgs));
