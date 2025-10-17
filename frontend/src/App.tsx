@@ -4,6 +4,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useEffect } from "react";
+import { setToken } from "@/auth/token";
+import { createSession } from "@/api/auth";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Settings from "./pages/Settings";
@@ -21,6 +23,13 @@ const App = () => {
       } else if (event.data.type === 'localStorage') {
         // Set localStorage data from wrapper
         localStorage.setItem('bDetails', event.data.data);
+      } else if (event.data.type === 'jwt') {
+        const token = typeof event.data.data === 'string' ? event.data.data : '';
+        if (token) {
+          setToken(token);
+          // Bootstrap backend session to avoid WS authorize latency
+          createSession(token).catch(() => {});
+        }
       } else if (event.data.type === 'staffType') {
         localStorage.setItem('staffType', event.data.data);
       } else if (event.data.type === 'staffId') {

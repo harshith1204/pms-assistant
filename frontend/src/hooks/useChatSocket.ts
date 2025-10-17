@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_WS_URL } from "@/config";
+import { getToken, subscribe } from "@/auth/token";
 
 export type ChatEvent =
   | { type: "connected"; client_id: string; timestamp: string }
@@ -35,6 +36,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
   const [connected, setConnected] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
   const reconnectRef = useRef<number | null>(null);
+  const tokenRef = useRef<string | null>(getToken());
 
   const cleanup = useCallback(()=> {
     if (reconnectRef.current) {
@@ -94,6 +96,14 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
     connect();
     return () => cleanup();
   }, [connect, cleanup]);
+
+  // React to token changes (no-op for cookie-first auth)
+  useEffect(() => {
+    const unsubscribe = subscribe((next) => {
+      tokenRef.current = next;
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Keep-alive ping every 25s
   useEffect(() => {

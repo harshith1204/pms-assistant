@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -6,10 +6,13 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
+import jwt
+import secrets
 from generate.router import router as generate_router
 
 # Load environment variables from .env file
 load_dotenv()
+JWT_SECRET = os.getenv("JWT_SECRET")
 
 from agent import MongoDBAgent
 import os
@@ -76,6 +79,75 @@ class PageCreateResponse(BaseModel):
     content: str  # stringified Editor.js JSON
     link: Optional[str] = None
 
+# === Auth/session models and helpers ===
+class SessionCreateRequest(BaseModel):
+    token: str
+
+def _require_session_and_csrf(request: Request) -> Dict[str, Any]:
+    """Validate HttpOnly session cookie and double-submit CSRF for unsafe methods."""
+    try:
+        session_token = request.cookies.get("session")
+        if not session_token:
+            raise HTTPException(status_code=401, detail="Missing session")
+        payload = jwt.decode(session_token, JWT_SECRET, algorithms=["HS256"])  # type: ignore
+        # CSRF for non-GET/HEAD
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            csrf_cookie = request.cookies.get("csrf")
+            csrf_header = request.headers.get("x-csrf-token") or request.headers.get("X-CSRF-Token")
+            if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+                raise HTTPException(status_code=403, detail="CSRF validation failed")
+        return payload
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+@app.post("/auth/session")
+async def create_session(req: SessionCreateRequest, response: Response):
+    """Accept a parent-provided JWT, validate, and set HttpOnly session + CSRF cookies."""
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Server missing JWT secret")
+    try:
+        payload = jwt.decode(req.token, JWT_SECRET, algorithms=["HS256"])  # type: ignore
+        user_id = payload.get("userId")
+        business_id = payload.get("businessId")
+        if not user_id or not business_id:
+            raise HTTPException(status_code=400, detail="Token missing required claims")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    secure_cookies = os.getenv("SECURE_COOKIES", "false").lower() == "true"
+    # Store the provided token as the session for simplicity
+    response.set_cookie(
+        key="session",
+        value=req.token,
+        httponly=True,
+        secure=secure_cookies,
+        samesite="lax",
+        max_age=60 * 30,
+        path="/",
+    )
+    csrf = secrets.token_hex(16)
+    response.set_cookie(
+        key="csrf",
+        value=csrf,
+        httponly=False,
+        secure=secure_cookies,
+        samesite="lax",
+        max_age=60 * 30,
+        path="/",
+    )
+    return {"ok": True}
+
+@app.post("/auth/logout")
+async def logout(response: Response):
+    secure_cookies = os.getenv("SECURE_COOKIES", "false").lower() == "true"
+    response.set_cookie(key="session", value="", max_age=0, path="/", httponly=True, secure=secure_cookies, samesite="lax")
+    response.set_cookie(key="csrf", value="", max_age=0, path="/", httponly=False, secure=secure_cookies, samesite="lax")
+    return {"ok": True}
+
 # Global MongoDB agent instance
 mongodb_agent = None
 
@@ -114,11 +186,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS
+# Configure CORS (credentials-aware)
+FRONTEND_ORIGINS = [o.strip() for o in (os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")) if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Vite dev server
-    allow_credentials=False,
+    allow_origins=FRONTEND_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

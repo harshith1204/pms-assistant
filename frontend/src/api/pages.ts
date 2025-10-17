@@ -1,4 +1,4 @@
-import { API_HTTP_URL } from "@/config";
+import { http } from "@/api/http";
 
 export type CreatePageRequest = {
   title: string;
@@ -15,15 +15,15 @@ export type CreatePageResponse = {
 };
 
 export async function createPage(payload: CreatePageRequest): Promise<CreatePageResponse> {
-  const res = await fetch(`${API_HTTP_URL}/pages`, {
+  const res = await http(`/pages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       title: payload.title,
       content: payload.content,
       project_id: payload.projectId,
       created_by: payload.createdBy,
-    }),
+    },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
