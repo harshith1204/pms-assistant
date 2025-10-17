@@ -103,22 +103,25 @@ def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateRe
 
     client = Groq(api_key=api_key)
 
-    system_prompt = (
-        "You are an assistant that enhances work item descriptions to be more detailed, actionable, and comprehensive.\n"
-        "Take the provided title and existing description, and generate a much more detailed and professional description.\n"
-        "Add specific details, steps, requirements, and context that would make this work item more actionable for team members.\n"
-        "Return markdown in the description with proper formatting, sections, and bullet points.\n"
-        "Keep the same title but significantly enhance the description.\n"
-        "Respond as JSON only, without code fences or surrounding text.\n"
-        "Example response: {\"title\": \"Implement User Authentication\", \"description\": \"## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema...\"}."
-    )
+    # Decide behavior based on whether a description was provided
+    provided_description = (req.description or "").strip()
+    if provided_description:
+        system_prompt = (
+            "You are an assistant that enhances work item descriptions to be more detailed, actionable, and comprehensive.\n"
+            "Take the provided title and existing description, and generate a much more detailed and professional description.\n"
+            "Add specific details, steps, requirements, and context that would make this work item more actionable for team members.\n"
+            "Return markdown in the description with proper formatting, sections, and bullet points.\n"
+            "Keep the same title but significantly enhance the description.\n"
+            "Respond as JSON only, without code fences or surrounding text.\n"
+            "Example response: {\"title\": \"Implement User Authentication\", \"description\": \"## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema...\"}."
+        )
 
-    user_prompt = f"""
+        user_prompt = f"""
 Current Title:
 {req.title}
 
 Current Description:
-{req.description}
+{provided_description}
 
 Instructions:
 - Enhance the existing description to be much more detailed and actionable
@@ -126,6 +129,29 @@ Instructions:
 - Include relevant technical details, dependencies, and success metrics
 - Structure the description with proper markdown formatting including headers, bullet points, and sections
 - Maintain the same title but significantly expand the description
+- Produce a JSON object with fields: title, description
+- Do not wrap the response in code fences or add explanatory text
+"""
+    else:
+        system_prompt = (
+            "You are an assistant that generates a comprehensive, professional, and actionable work item description from only a title.\n"
+            "Create a detailed description suitable for enterprise project management.\n"
+            "Include sections such as Overview, Scope, Requirements, Implementation Plan, Acceptance Criteria, Dependencies, Risks, and Success Metrics.\n"
+            "Return markdown in the description with proper headers and bullet points.\n"
+            "Keep the same title; only generate the description.\n"
+            "Respond as JSON only, without code fences or surrounding text.\n"
+            "Example response: {\"title\": \"Implement User Authentication\", \"description\": \"## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema...\"}."
+        )
+
+        user_prompt = f"""
+Title:
+{req.title}
+
+Instructions:
+- Generate a comprehensive, detailed, and actionable description for this work item
+- Include specific requirements, implementation steps, acceptance criteria, dependencies, risks, and success metrics
+- Use clear markdown structure with headers and bullet points
+- Maintain the same title; output only the description content
 - Produce a JSON object with fields: title, description
 - Do not wrap the response in code fences or add explanatory text
 """
@@ -145,7 +171,7 @@ Instructions:
 
     # Best-effort parse: if JSON-like present, extract; else use raw content
     title = req.title
-    description = req.description
+    description = provided_description
     parsed = None
     try:
         start = content.find("{")
