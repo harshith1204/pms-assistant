@@ -126,9 +126,17 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         await websocket.accept()
 
         # Set default user context for development
+        # Commented out hardcoded business ID to use OS environment variable
+        # user_context = {
+        #     "user_id": "default_user",
+        #     "businessId": "default_business",
+        # }
+
+        # Load business ID from OS environment variable
+        business_id_from_env = os.getenv("BUSINESS_ID", "default_business")
         user_context = {
             "user_id": "default_user",
-            "businessId": "default_business",
+            "businessId": business_id_from_env,
         }
 
         # Set globals for access in other files
