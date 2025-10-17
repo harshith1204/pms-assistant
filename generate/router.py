@@ -19,6 +19,84 @@ except Exception:  # pragma: no cover - optional dependency
 router = APIRouter()
 
 
+def _dedupe_title_in_description(title: str, description: str) -> str:
+    """Remove duplicate title from the beginning of the description.
+
+    Handles common cases where models echo the title as a heading or as
+    a labeled field (e.g., "Title: <title>"). Also strips underline-style
+    markdown headers immediately following the title line (=== or ---).
+    """
+    try:
+        if not title or not description:
+            return description or ""
+
+        lines = description.splitlines()
+
+        # Drop leading empty lines
+        while lines and not lines[0].strip():
+            lines.pop(0)
+
+        if not lines:
+            return ""
+
+        # Normalize a candidate line by removing heading markers/bullets
+        def normalize(line: str) -> str:
+            import re as _re
+            line2 = _re.sub(r"^[#>\-\*\s\d\.\)]+", "", line or "").strip()
+            # Remove wrapping quotes and trailing punctuation commonly added
+            line2 = line2.strip().strip('"\'')
+            return line2
+
+        normalized_title = (title or "").strip()
+        # Case-insensitive comparison but keep originals
+        head = lines[0]
+
+        # Case A: Labeled "Title: ..."
+        import re as _re
+        m = _re.match(r"(?i)^\s*title\s*:\s*(.+)$", head.strip())
+        if m:
+            candidate = m.group(1).strip()
+            # If a "Description:" line follows, replace the head with its content
+            if len(lines) >= 2:
+                m2 = _re.match(r"(?i)^\s*description\s*:\s*(.*)$", lines[1].strip())
+                if m2:
+                    rest = m2.group(1)
+                    new_first = rest if rest else ""
+                    # Replace first two lines with the remainder
+                    new_lines = []
+                    if new_first:
+                        new_lines.append(new_first)
+                    new_lines.extend(lines[2:])
+                    lines = new_lines
+                else:
+                    # Just drop the Title: line
+                    lines = lines[1:]
+            else:
+                # Only title present; drop it
+                lines = lines[1:]
+
+            # If model changed the title in labeled form, prefer keeping existing title
+            # but remove the echoed title from description regardless
+
+            # Clean any leading underline after removal
+            if lines and _re.match(r"^[\-=]{3,}\s*$", lines[0].strip()):
+                lines = lines[1:]
+
+            return "\n".join(lines).strip()
+
+        # Case B: Heading line equals the title (with markdown prefixes)
+        if normalize(head).lower() == normalized_title.lower():
+            lines = lines[1:]
+            # Drop underline (=== or ---) immediately following, if present
+            if lines and _re.match(r"^[\-=]{3,}\s*$", lines[0].strip()):
+                lines = lines[1:]
+            return "\n".join(lines).strip()
+
+        return description
+    except Exception:
+        # On any failure, return original description unmodified
+        return description
+
 @router.post("/generate-work-item", response_model=GenerateResponse)
 def generate_work_item(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
@@ -89,7 +167,9 @@ Instructions:
         first_line = description.splitlines()[0] if description else req.prompt
         title = first_line[:120]
 
-    return GenerateResponse(title=title.strip(), description=description.strip())
+    # Remove duplicate title echoes inside description
+    cleaned_description = _dedupe_title_in_description(title.strip(), description.strip())
+    return GenerateResponse(title=title.strip(), description=cleaned_description)
 
 
 @router.post("/generate-work-item-surprise-me", response_model=GenerateResponse)
@@ -161,7 +241,9 @@ Instructions:
     else:
         description = content.strip() or description
 
-    return GenerateResponse(title=title.strip(), description=description.strip())
+    # Remove duplicate title echoes inside description
+    cleaned_description = _dedupe_title_in_description(title.strip(), description.strip())
+    return GenerateResponse(title=title.strip(), description=cleaned_description)
 
 
 @router.options("/stream-page-content")
