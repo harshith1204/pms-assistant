@@ -160,6 +160,7 @@ Instructions:
         completion = client.chat.completions.create(
             model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
             temperature=0.2,
+            max_tokens=512,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
