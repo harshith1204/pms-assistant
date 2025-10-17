@@ -60,13 +60,6 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
 
       ws.onopen = () => {
         setConnected(true);
-        // Immediately authorize with JWT
-        const token = tokenRef.current;
-        if (token) {
-          try {
-            ws.send(JSON.stringify({ event: "authorize", payload: { token } }));
-          } catch {}
-        }
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -104,17 +97,10 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
     return () => cleanup();
   }, [connect, cleanup]);
 
-  // React to token changes by re-authorizing or reconnecting
+  // React to token changes (no-op for cookie-first auth)
   useEffect(() => {
     const unsubscribe = subscribe((next) => {
       tokenRef.current = next;
-      const ws = wsRef.current;
-      if (!ws) return;
-      try {
-        if (ws.readyState === WebSocket.OPEN && next) {
-          ws.send(JSON.stringify({ event: "authorize", payload: { token: next } }));
-        }
-      } catch {}
     });
     return () => unsubscribe();
   }, []);

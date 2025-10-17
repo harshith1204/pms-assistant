@@ -126,56 +126,73 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     user_id = None
     try:
         await websocket.accept()
-        print("[DEBUG] ==> Connection accepted. Waiting for authorization message.")
+        print("[DEBUG] ==> Connection accepted. Authenticating...")
         authenticated = False
         user_context = {}
 
+        # First try: cookie-based session (set by /auth/session)
         try:
-            print("[DEBUG] Awaiting first message(s) from client...")
+            # Starlette exposes headers; cookie parsing is manual here
+            cookie = websocket.headers.get("cookie") or websocket.headers.get("Cookie") or ""
+            session_token = None
+            for part in cookie.split(';'):
+                kv = part.strip().split('=', 1)
+                if len(kv) == 2 and kv[0] == 'session':
+                    session_token = kv[1]
+                    break
+            if session_token:
+                payload = jwt.decode(session_token, JWT_SECRET, algorithms=["HS256"])  # type: ignore
+                user_context = {
+                    "user_id": payload.get("userId"),
+                    "businessId": payload.get("businessId"),
+                }
+                if user_context.get("user_id") and user_context.get("businessId"):
+                    user_id_global = user_context["user_id"]
+                    business_id_global = user_context["businessId"]
+                    authenticated = True
+                    await ws_manager.connect(websocket, user_context["user_id"])
+        except Exception:
+            authenticated = False
 
-            # === 🔐 AUTHORIZATION LOOP (patched) ===
-            while True:
-                auth_data_str = await websocket.receive_text()
-                auth_data = json.loads(auth_data_str)
-
-                # Allow harmless pings before authorization
-                if auth_data.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
-                    continue
-
-                # Process authorize event
-                if auth_data.get("event") == "authorize":
-                    token = auth_data.get("payload", {}).get("token")
-                    try:
-                        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-
-                        user_context = {
-                            "user_id": payload.get("userId"),
-                            "businessId": payload.get("businessId"),
-                        }
-
-                        if not all(user_context.values()):
-                            raise jwt.InvalidTokenError("Token is missing required claims")
-
-                        # Set globals for access in other files
-                        user_id_global = user_context["user_id"]
-                        business_id_global = user_context["businessId"]
-
-                        authenticated = True
-                        await ws_manager.connect(websocket, user_context["user_id"])
-                        await websocket.send_text(json.dumps({"status": "authorized", "user": user_context}))
-
-
-                        break  # ✅ Exit auth loop
-                    except (jwt.PyJWTError, KeyError) as e:
-                        await websocket.send_text(json.dumps({"error": "Authentication failed", "details": str(e)}))
-                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                        return
-
-                # If it's not ping or authorize, close connection
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        # Fallback: explicit authorize message
+        if not authenticated:
+            try:
+                print("[DEBUG] Awaiting authorize message...")
+                while True:
+                    auth_data_str = await websocket.receive_text()
+                    auth_data = json.loads(auth_data_str)
+                    if auth_data.get("type") == "ping":
+                        await websocket.send_json({"type": "pong"})
+                        continue
+                    if auth_data.get("event") == "authorize":
+                        token = auth_data.get("payload", {}).get("token")
+                        try:
+                            payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])  # type: ignore
+                            user_context = {
+                                "user_id": payload.get("userId"),
+                                "businessId": payload.get("businessId"),
+                            }
+                            if not all(user_context.values()):
+                                raise jwt.InvalidTokenError("Token is missing required claims")
+                            user_id_global = user_context["user_id"]
+                            business_id_global = user_context["businessId"]
+                            authenticated = True
+                            await ws_manager.connect(websocket, user_context["user_id"])
+                            await websocket.send_text(json.dumps({"status": "authorized", "user": user_context}))
+                            break
+                        except (jwt.PyJWTError, KeyError) as e:
+                            await websocket.send_text(json.dumps({"error": "Authentication failed", "details": str(e)}))
+                            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                            return
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
+            except WebSocketException as e:
+                print(f"WebSocket Error: {e}")
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"[DEBUG] ERROR: Received malformed JSON or missing keys. Reason: {e}")
+                await websocket.close(code=status.WS_1002_PROTOCOL_ERROR)
+                print("[DEBUG] Connection closed due to protocol error (bad JSON).")
                 return
-            # === END AUTHORIZATION LOOP ===
 
         except WebSocketException as e:
             print(f"WebSocket Error: {e}")
