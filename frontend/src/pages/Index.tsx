@@ -45,6 +45,12 @@ interface Conversation {
   timestamp: Date;
 }
 
+// Use URL query params to persist UI state across reloads/navigation
+const CONV_QUERY_PARAM = "conversationId";
+const VIEW_QUERY_PARAM = "view";
+const VIEW_SETTINGS = "settings";
+const VIEW_GETTING_STARTED = "getting-started";
+
 const Index = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   
@@ -53,13 +59,78 @@ const Index = () => {
   const [showGettingStarted, setShowGettingStarted] = useState<boolean>(false);
   const [showPersonalization, setShowPersonalization] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
-  const isEmpty = messages.length === 0;
+  // Consider empty only when no active conversation is selected
+  const isEmpty = messages.length === 0 && !activeConversationId;
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
   const endRef = useRef<HTMLDivElement | null>(null);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
+  // Track the current active conversation id to avoid stale closures
+  const activeConversationIdRef = useRef<string | null>(null);
+
+  // URL helpers for syncing conversation id
+  const getConversationIdFromUrl = () => {
+    try {
+      const url = new URL(window.location.href);
+      return url.searchParams.get(CONV_QUERY_PARAM);
+    } catch {
+      return null;
+    }
+  };
+
+  const setConversationIdInUrl = (id: string | null, options?: { replace?: boolean }) => {
+    try {
+      const url = new URL(window.location.href);
+      if (id) {
+        url.searchParams.set(CONV_QUERY_PARAM, id);
+      } else {
+        url.searchParams.delete(CONV_QUERY_PARAM);
+      }
+      const href = url.toString();
+      if (options?.replace) {
+        window.history.replaceState(null, "", href);
+      } else {
+        window.history.pushState(null, "", href);
+      }
+    } catch {
+      // ignore URL update errors
+    }
+  };
+
+  const getViewFromUrl = () => {
+    try {
+      const url = new URL(window.location.href);
+      const view = url.searchParams.get(VIEW_QUERY_PARAM);
+      if (view === VIEW_SETTINGS || view === VIEW_GETTING_STARTED) return view;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const setViewInUrl = (
+    view: typeof VIEW_SETTINGS | typeof VIEW_GETTING_STARTED | null,
+    options?: { replace?: boolean }
+  ) => {
+    try {
+      const url = new URL(window.location.href);
+      if (view) {
+        url.searchParams.set(VIEW_QUERY_PARAM, view);
+      } else {
+        url.searchParams.delete(VIEW_QUERY_PARAM);
+      }
+      const href = url.toString();
+      if (options?.replace) {
+        window.history.replaceState(null, "", href);
+      } else {
+        window.history.pushState(null, "", href);
+      }
+    } catch {
+      // ignore URL update errors
+    }
+  };
 
   // Helper: transform backend messages to UI messages with internal actions grouped
   const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any }>): Message[] => {
@@ -250,8 +321,33 @@ const Index = () => {
     } else if (evt.type === "complete") {
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
+      // Reconcile to canonical conversation ID when provided by backend
+      const canonicalId = (evt as any).conversation_id as string | undefined;
+      const currentActive = activeConversationIdRef.current;
+      if (canonicalId && currentActive && canonicalId !== currentActive) {
+        setActiveConversationId(canonicalId);
+        // Update/merge conversations list to replace ephemeral with canonical id
+        setConversations((prev) => {
+          const ephemeralIdx = prev.findIndex((c) => c.id === currentActive);
+          const canonicalIdx = prev.findIndex((c) => c.id === canonicalId);
+          if (ephemeralIdx !== -1 && canonicalIdx !== -1) {
+            // Both exist; drop the ephemeral one
+            const copy = [...prev];
+            copy.splice(ephemeralIdx, 1);
+            return copy;
+          }
+          if (ephemeralIdx !== -1) {
+            const copy = [...prev];
+            copy[ephemeralIdx] = { ...copy[ephemeralIdx], id: canonicalId };
+            return copy;
+          }
+          return prev;
+        });
+        // Normalize URL to canonical id without adding a new history entry
+        setConversationIdInUrl(canonicalId, { replace: true });
+      }
       // Refresh messages from server to get canonical IDs so reactions persist
-      const convId = (evt as any).conversation_id || activeConversationId;
+      const convId = canonicalId || currentActive;
       if (convId) {
         (async () => {
           try {
@@ -286,16 +382,111 @@ const Index = () => {
     })();
   }, []);
 
+  // Keep the ref in sync with the active conversation id
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  // Load view or conversation from URL on mount
+  useEffect(() => {
+    const view = getViewFromUrl();
+    if (view === VIEW_SETTINGS) {
+      setShowPersonalization(true);
+      setShowGettingStarted(false);
+      setActiveConversationId(null);
+      setMessages([]);
+      return;
+    }
+    if (view === VIEW_GETTING_STARTED) {
+      setShowGettingStarted(true);
+      setShowPersonalization(false);
+      setActiveConversationId(null);
+      setMessages([]);
+      return;
+    }
+
+    const id = getConversationIdFromUrl();
+    if (id) {
+      setActiveConversationId(id);
+      setShowGettingStarted(false);
+      setShowPersonalization(false);
+      (async () => {
+        try {
+          const msgs = await getConversationMessages(id);
+          setMessages(transformConversationMessages(msgs));
+        } catch {
+          setMessages([]);
+        }
+      })();
+    }
+  }, []);
+
+  // Respond to back/forward navigation by syncing from URL
+  useEffect(() => {
+    const onPopState = () => {
+      const view = getViewFromUrl();
+      const id = getConversationIdFromUrl();
+      const current = activeConversationIdRef.current;
+
+      if (view === VIEW_SETTINGS) {
+        setShowPersonalization(true);
+        setShowGettingStarted(false);
+        if (current) setActiveConversationId(null);
+        setMessages([]);
+        return;
+      }
+      if (view === VIEW_GETTING_STARTED) {
+        setShowGettingStarted(true);
+        setShowPersonalization(false);
+        if (current) setActiveConversationId(null);
+        setMessages([]);
+        return;
+      }
+
+      // No view param: show conversation if present, otherwise clear
+      if (id && id !== current) {
+        setActiveConversationId(id);
+        setShowGettingStarted(false);
+        setShowPersonalization(false);
+        (async () => {
+          try {
+            const msgs = await getConversationMessages(id);
+            setMessages(transformConversationMessages(msgs));
+          } catch {
+            setMessages([]);
+          }
+        })();
+      } else if (!id) {
+        if (current) setActiveConversationId(null);
+        setShowGettingStarted(false);
+        setShowPersonalization(false);
+        setMessages([]);
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   const handleNewChat = () => {
     setActiveConversationId(null);
     setMessages([]);
     setShowGettingStarted(false);
     setShowPersonalization(false);
+    // Remove conversation id from URL
+    setConversationIdInUrl(null);
+    // Clear view as well
+    setViewInUrl(null);
   };
 
   const handleSelectConversation = async (id: string) => {
+    // Reflect selection in URL
+    setConversationIdInUrl(id);
+    // Clear any view param so conversation is shown
+    setViewInUrl(null);
     setActiveConversationId(id);
     setShowGettingStarted(false);
+    // Ensure we exit the settings view when a conversation is selected
+    setShowPersonalization(false);
     try {
       const msgs = await getConversationMessages(id);
       setMessages(transformConversationMessages(msgs));
@@ -309,6 +500,9 @@ const Index = () => {
     setShowPersonalization(false);
     setActiveConversationId(null);
     setMessages([]);
+    // Update URL to reflect getting started view and clear any conversation
+    setConversationIdInUrl(null);
+    setViewInUrl(VIEW_GETTING_STARTED);
   };
 
   const handleShowPersonalization = () => {
@@ -316,6 +510,9 @@ const Index = () => {
     setShowGettingStarted(false);
     setActiveConversationId(null);
     setMessages([]);
+    // Update URL to reflect settings view and clear any conversation
+    setConversationIdInUrl(null);
+    setViewInUrl(VIEW_SETTINGS);
   };
 
   const handleSendMessage = async (content: string) => {
@@ -333,12 +530,23 @@ const Index = () => {
     if (!convId) {
       convId = `conv_${Date.now()}`;
       setActiveConversationId(convId);
+      // Push new conversation id into URL
+      const currentInUrl = getConversationIdFromUrl();
+      if (currentInUrl !== convId) {
+        setConversationIdInUrl(convId);
+      }
       const newConversation: Conversation = {
         id: convId,
         title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
         timestamp: new Date(),
       };
       setConversations((prev) => [newConversation, ...prev]);
+    } else {
+      // Ensure URL reflects existing active conversation id
+      const currentInUrl = getConversationIdFromUrl();
+      if (currentInUrl !== convId) {
+        setConversationIdInUrl(convId);
+      }
     }
 
     // Send to backend via WebSocket
