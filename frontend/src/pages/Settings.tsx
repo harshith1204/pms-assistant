@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePersonalization } from "@/context/PersonalizationContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -6,9 +6,19 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Lock, AlertCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { clearToken, getToken, setToken, subscribe } from "@/auth/token";
 
 const Settings = () => {
   const { settings, updateSettings, resetSettings } = usePersonalization();
+  const [tokenInput, setTokenInput] = useState<string>("");
+  const [hasToken, setHasToken] = useState<boolean>(!!getToken());
+
+  useEffect(() => {
+    setTokenInput("");
+    const unsub = subscribe((t) => setHasToken(!!t));
+    return () => unsub();
+  }, []);
 
 
   return (
@@ -18,6 +28,41 @@ const Settings = () => {
           <h1 className="text-2xl font-semibold">AI Agent Personalization</h1>
           <p className="text-sm text-muted-foreground">Control how the agent remembers and responds, and provide long-term context it can learn from.</p>
         </div>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle>Authentication</CardTitle>
+            <CardDescription>Provide a JWT so the app can authorize with the backend.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-0">
+            <div className="space-y-2">
+              <Label htmlFor="jwt">JWT</Label>
+              <Input
+                id="jwt"
+                type="password"
+                placeholder={hasToken ? "Token is set" : "Paste your JWT here"}
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => {
+                  const trimmed = tokenInput.trim();
+                  if (trimmed) {
+                    setToken(trimmed);
+                    setTokenInput("");
+                  }
+                }}
+              >
+                Save token
+              </Button>
+              <Button variant="outline" onClick={() => clearToken()} disabled={!hasToken}>
+                Logout
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="pb-3">

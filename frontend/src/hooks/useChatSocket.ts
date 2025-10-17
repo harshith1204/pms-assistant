@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_WS_URL } from "@/config";
+import { getToken, subscribe } from "@/auth/token";
 
 export type ChatEvent =
   | { type: "connected"; client_id: string; timestamp: string }
@@ -35,6 +36,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
   const [connected, setConnected] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
   const reconnectRef = useRef<number | null>(null);
+  const tokenRef = useRef<string | null>(getToken());
 
   const cleanup = useCallback(()=> {
     if (reconnectRef.current) {
@@ -58,6 +60,13 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
 
       ws.onopen = () => {
         setConnected(true);
+        // Immediately authorize with JWT
+        const token = tokenRef.current;
+        if (token) {
+          try {
+            ws.send(JSON.stringify({ event: "authorize", payload: { token } }));
+          } catch {}
+        }
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -94,6 +103,21 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
     connect();
     return () => cleanup();
   }, [connect, cleanup]);
+
+  // React to token changes by re-authorizing or reconnecting
+  useEffect(() => {
+    const unsubscribe = subscribe((next) => {
+      tokenRef.current = next;
+      const ws = wsRef.current;
+      if (!ws) return;
+      try {
+        if (ws.readyState === WebSocket.OPEN && next) {
+          ws.send(JSON.stringify({ event: "authorize", payload: { token: next } }));
+        }
+      } catch {}
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Keep-alive ping every 25s
   useEffect(() => {

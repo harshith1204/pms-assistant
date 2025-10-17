@@ -1,4 +1,4 @@
-import { API_HTTP_URL } from "@/config";
+import { http } from "@/api/http";
 
 export type CreateWorkItemRequest = {
   title: string;
@@ -18,16 +18,16 @@ export type CreateWorkItemResponse = {
 };
 
 export async function createWorkItem(payload: CreateWorkItemRequest): Promise<CreateWorkItemResponse> {
-  const res = await fetch(`${API_HTTP_URL}/work-items`, {
+  const res = await http(`/work-items`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       title: payload.title,
       description: payload.description || "",
       project_identifier: payload.projectIdentifier,
       project_id: payload.projectId,
       created_by: payload.createdBy,
-    }),
+    },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
