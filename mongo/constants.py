@@ -35,14 +35,7 @@ class _LazyMongoDBTools:
 mongodb_tools = _LazyMongoDBTools()
 
 # --- Global business scoping ---
-# Business UUID to scope all queries/searches. Set via env BUSINESS_UUID.
-# Example: BUSINESS_UUID=3f2504e0-4f89-11d3-9a0c-0305e82c3301
-BUSINESS_UUID: str | None = os.getenv("BUSINESS_UUID")
-
-# Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
-ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
-
-# Collections that carry a direct business reference at path 'business._id'
+# Business UUID to scope all queries/searches. Set via env 
 COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page"}
 
 def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
