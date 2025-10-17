@@ -1118,7 +1118,15 @@ async def generate_content(
                 # Non-fatal
                 print(f"Warning: failed to persist generated work item to conversation: {e}")
             
-            # Return MINIMAL confirmation to agent (no content details)
+            # If no websocket is available, return the full generated content so backend-only flows still work
+            if not websocket:
+                try:
+                    import json as _json
+                    return _json.dumps(result)
+                except Exception:
+                    return str(result)
+            
+            # Otherwise, return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
             
         else:  # content_type == "page"
@@ -1185,7 +1193,15 @@ async def generate_content(
             except Exception as e:
                 print(f"Warning: failed to persist generated page to conversation: {e}")
             
-            # Return MINIMAL confirmation to agent (no content details)
+            # If no websocket is available, return the full generated blocks so backend-only flows still work
+            if not websocket:
+                try:
+                    import json as _json
+                    return _json.dumps(result)
+                except Exception:
+                    return str(result)
+            
+            # Otherwise, return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
             
     except httpx.HTTPStatusError as e:
