@@ -1,5 +1,5 @@
 export type UserClaims = {
-  sub: string;
+  memberId: string;
   name?: string;
   admin?: boolean;
   iat: number;

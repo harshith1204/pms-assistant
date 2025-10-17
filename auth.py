@@ -30,7 +30,7 @@ def _is_cookie_secure() -> bool:
 
 
 def create_access_token(
-    subject: str,
+    member_id: str,
     name: Optional[str] = None,
     is_admin: Optional[bool] = None,
     expires_minutes: int = 60,
@@ -41,7 +41,10 @@ def create_access_token(
 
     payload: Dict[str, Any] = {
         "iss": JWT_ISSUER,
-        "sub": subject,
+        # Keep standard 'sub' aligned to memberId for compatibility
+        "sub": member_id,
+        # First-class application claim
+        "memberId": member_id,
         "iat": int(now.timestamp()),
         "nbf": int(now.timestamp()),
         "exp": int(expires.timestamp()),
@@ -60,7 +63,12 @@ def create_access_token(
 
 def decode_access_token(token: str, verify: bool = True) -> Dict[str, Any]:
     if verify:
-        return jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM], options={"require": ["sub", "iat", "exp"]})
+        return jwt.decode(
+            token,
+            _get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["sub", "memberId", "iat", "exp"]},
+        )
     # For non-verified/inspect-only decoding
     return jwt.decode(token, options={"verify_signature": False})
 
@@ -86,7 +94,7 @@ class AdoptTokenRequest(BaseModel):
 
 
 class MeResponse(BaseModel):
-    sub: str
+    memberId: str
     name: Optional[str] = None
     admin: Optional[bool] = None
     iat: int
@@ -121,20 +129,28 @@ async def adopt_token(req: AdoptTokenRequest, response: Response) -> Dict[str, A
     except Exception:
         raise HTTPException(status_code=400, detail="Malformed token")
 
-    subject = str(provided_claims.get("sub") or "").strip()
-    if not subject:
-        raise HTTPException(status_code=400, detail="Token missing 'sub' claim")
+    # Accept a variety of possible keys, prefer explicit memberId
+    member_id = (
+        provided_claims.get("memberId")
+        or provided_claims.get("member_id")
+        or provided_claims.get("memberid")
+        or provided_claims.get("sub")
+        or ""
+    )
+    member_id = str(member_id).strip()
+    if not member_id:
+        raise HTTPException(status_code=400, detail="Token missing member id")
 
     name = provided_claims.get("name")
     is_admin = provided_claims.get("admin")
 
-    minted = create_access_token(subject=subject, name=name, is_admin=is_admin)
+    minted = create_access_token(member_id=member_id, name=name, is_admin=is_admin)
     set_access_cookie(response, minted)
 
     # Return minimal user profile; token is kept HttpOnly
     decoded = decode_access_token(minted, verify=True)
     user = {
-        "sub": decoded.get("sub"),
+        "memberId": decoded.get("memberId") or decoded.get("sub"),
         "name": decoded.get("name"),
         "admin": decoded.get("admin"),
         "iat": decoded.get("iat"),
@@ -145,8 +161,9 @@ async def adopt_token(req: AdoptTokenRequest, response: Response) -> Dict[str, A
 
 @router.get("/me", response_model=MeResponse)
 async def me(payload: Dict[str, Any] = Depends(get_current_user)) -> MeResponse:
+    member_id_val = payload.get("memberId") or payload.get("sub")
     return MeResponse(
-        sub=str(payload.get("sub")),
+        memberId=str(member_id_val),
         name=payload.get("name"),
         admin=payload.get("admin"),
         iat=int(payload.get("iat")),
