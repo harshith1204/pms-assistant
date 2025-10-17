@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 
@@ -37,5 +37,5 @@ class PageGenerateRequest(BaseModel):
 
 class WorkItemSurpriseMeRequest(BaseModel):
     title: str
-    description: str
+    description: Optional[str] = None
 
