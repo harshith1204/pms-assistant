@@ -1,5 +1,6 @@
+
 """WebSocket handler for streaming chat responses"""
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect , status , WebSocketException
 from typing import Dict, Any, AsyncGenerator
 import json
 import asyncio
@@ -9,14 +10,16 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 import time
 import re
-
+from dotenv import load_dotenv
+import jwt
 from mongo.constants import DATABASE_NAME
 from planner import plan_and_execute_query
 from mongo.conversations import save_user_message
 import os
 import contextlib
 
-
+load_dotenv()
+JWT_SECRET = os.getenv("JWT_SECRET")
 
 class StreamingCallbackHandler(AsyncCallbackHandler):
     """Callback handler for streaming LLM responses"""
@@ -87,65 +90,129 @@ class WebSocketManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
 
-    async def connect(self, websocket: WebSocket, client_id: str):
+    async def connect(self, websocket: WebSocket, user_id: str):
         """Accept and store a new WebSocket connection"""
-        await websocket.accept()
-        self.active_connections[client_id] = websocket
-        print(f"Client {client_id} connected. Total connections: {len(self.active_connections)}")
+        self.active_connections[user_id] = websocket
+        print(f"Client {user_id} connected. Total connections: {len(self.active_connections)}")
 
-    def disconnect(self, client_id: str):
+    def disconnect(self, user_id: str):
         """Remove a WebSocket connection"""
-        if client_id in self.active_connections:
-            del self.active_connections[client_id]
-            print(f"Client {client_id} disconnected. Total connections: {len(self.active_connections)}")
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+            print(f"Client {user_id} disconnected. Total connections: {len(self.active_connections)}")
 
-    async def send_message(self, client_id: str, message: dict):
+    async def send_message(self, user_id: str, message: dict):
         """Send a message to a specific client"""
-        if client_id in self.active_connections:
-            await self.active_connections[client_id].send_json(message)
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(message)
 
     async def broadcast(self, message: dict):
         """Broadcast a message to all connected clients"""
-        for client_id, connection in self.active_connections.items():
+        for user_id, connection in self.active_connections.items():
             try:
                 await connection.send_json(message)
             except Exception as e:
-                print(f"Error broadcasting to {client_id}: {e}")
+                print(f"Error broadcasting to {user_id}: {e}")
 
 # Global WebSocket manager instance
 ws_manager = WebSocketManager()
 
+user_id_global = None
+business_id_global = None
+
 async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     """Handle WebSocket chat connections with streaming"""
-    client_id = str(uuid.uuid4())
-
+    global user_id_global, business_id_global
+    user_id = None
     try:
-        await ws_manager.connect(websocket, client_id)
+        await websocket.accept()
+        print("[DEBUG] ==> Connection accepted. Waiting for authorization message.")
+        authenticated = False
+        user_context = {}
 
-        # Send welcome message
-        await websocket.send_json({
-            "type": "connected",
-            "client_id": client_id,
-            "timestamp": datetime.now().isoformat()
-        })
+        try:
+            print("[DEBUG] Awaiting first message(s) from client...")
 
-        while True:
-            # Receive message from client
-            data = await websocket.receive_json()
+            # === 🔐 AUTHORIZATION LOOP (patched) ===
+            while True:
+                auth_data_str = await websocket.receive_text()
+                auth_data = json.loads(auth_data_str)
 
+                # Allow harmless pings before authorization
+                if auth_data.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
+                    continue
+
+                # Process authorize event
+                if auth_data.get("event") == "authorize":
+                    token = auth_data.get("payload", {}).get("token")
+                    try:
+                        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+
+                        user_context = {
+                            "user_id": payload.get("userId"),
+                            "businessId": payload.get("businessId"),
+                        }
+
+                        if not all(user_context.values()):
+                            raise jwt.InvalidTokenError("Token is missing required claims")
+
+                        # Set globals for access in other files
+                        user_id_global = user_context["user_id"]
+                        business_id_global = user_context["businessId"]
+
+                        authenticated = True
+                        await ws_manager.connect(websocket, user_context["user_id"])
+                        await websocket.send_text(json.dumps({"status": "authorized", "user": user_context}))
+
+
+                        break  # ✅ Exit auth loop
+                    except (jwt.PyJWTError, KeyError) as e:
+                        await websocket.send_text(json.dumps({"error": "Authentication failed", "details": str(e)}))
+                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                        return
+
+                # If it's not ping or authorize, close connection
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+            # === END AUTHORIZATION LOOP ===
+
+        except WebSocketException as e:
+            print(f"WebSocket Error: {e}")
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"[DEBUG] ERROR: Received malformed JSON or missing keys. Reason: {e}")
+            await websocket.close(code=status.WS_1002_PROTOCOL_ERROR)
+            print("[DEBUG] Connection closed due to protocol error (bad JSON).")
+            return
+
+        # === MAIN MESSAGE LOOP ===
+        while authenticated:
+            await websocket.send_json({
+                "type": "connected",
+                "user_id": user_context["user_id"],
+                "timestamp": datetime.now().isoformat()
+            })
+
+            data_str = await websocket.receive_text()
+            data = json.loads(data_str)
+            
             if data.get("type") == "ping":
-                # Handle ping/pong for connection keepalive
                 await websocket.send_json({
                     "type": "pong",
                     "timestamp": datetime.now().isoformat()
                 })
                 continue
 
+            # Use the trusted context for all operations
+            user_id = user_context["user_id"]
+            business_id = user_context["businessId"]
+
             message = data.get("message", "")
-            conversation_id = data.get("conversation_id") or f"conv_{client_id}"
+            conversation_id = data.get("conversation_id") or f"conv_{user_id}"
+            print(f"conversation_id: {conversation_id}")
             force_planner = data.get("planner", False)
 
-            # Send user message acknowledgment
+
             await websocket.send_json({
                 "type": "user_message",
                 "content": message,
@@ -227,7 +294,6 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     from tools import set_generation_websocket
                     set_generation_websocket(None)
 
-            # Send completion message
             await websocket.send_json({
                 "type": "complete",
                 "conversation_id": conversation_id,
@@ -235,13 +301,15 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             })
 
     except WebSocketDisconnect:
-        ws_manager.disconnect(client_id)
-        print(f"Client {client_id} disconnected")
+        if user_id:
+            ws_manager.disconnect(user_id)
+        print(f"Client {user_id} disconnected")
     except Exception as e:
-        print(f"WebSocket error for client {client_id}: {e}")
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e),
-            "timestamp": datetime.now().isoformat()
-        })
-        ws_manager.disconnect(client_id)
+        if not websocket.client_state.name == 'DISCONNECTED':
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat()
+            })
+        if user_id:
+            ws_manager.disconnect(user_id)
