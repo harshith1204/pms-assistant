@@ -8,6 +8,7 @@ import uvicorn
 
 from agent import MongoDBAgent
 from websocket_handler import handle_chat_websocket, ws_manager
+from auth import router as auth_router
 
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
@@ -69,6 +70,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include auth routes (cookie-based JWT)
+app.include_router(auth_router)
 
 @app.get("/")
 async def root():
