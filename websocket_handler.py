@@ -136,23 +136,18 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             # === 🔐 AUTHORIZATION LOOP (patched) ===
             while True:
                 auth_data_str = await websocket.receive_text()
-                print(f"[DEBUG] <== Received raw auth data: {auth_data_str}")
                 auth_data = json.loads(auth_data_str)
 
                 # Allow harmless pings before authorization
                 if auth_data.get("type") == "ping":
                     await websocket.send_json({"type": "pong"})
-                    print("[DEBUG] Ignored pre-auth ping; waiting for authorize event...")
                     continue
 
                 # Process authorize event
                 if auth_data.get("event") == "authorize":
-                    print("[DEBUG] 'authorize' event found. Proceeding with token validation.")
                     token = auth_data.get("payload", {}).get("token")
                     try:
-                        print("[DEBUG] Decoding JWT...")
                         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-                        print(f"[DEBUG] JWT decoded successfully. Payload: {payload}")
 
                         user_context = {
                             "user_id": payload.get("userId"),
@@ -160,37 +155,25 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         }
 
                         if not all(user_context.values()):
-                            print("[DEBUG] ERROR: Token is missing required claims.")
                             raise jwt.InvalidTokenError("Token is missing required claims")
 
                         # Set globals for access in other files
                         user_id_global = user_context["user_id"]
                         business_id_global = user_context["businessId"]
-                        print(f"[DEBUG] Set global user_id: {user_id_global}, business_id: {business_id_global}")
 
                         authenticated = True
-                        print("[DEBUG] Authentication successful. Connecting to WebSocketManager.")
                         await ws_manager.connect(websocket, user_context["user_id"])
-                        print("[DEBUG] ==> Sending 'authorized' status to client.")
                         await websocket.send_text(json.dumps({"status": "authorized", "user": user_context}))
 
-                        # Debug: check connection state after authorize
-                        print(
-                            f"[DEBUG] WebSocket connection for user {user_id_global} is "
-                            f"{'open' if not websocket.client_state.name == 'DISCONNECTED' else 'closed'} after authorize event."
-                        )
+
                         break  # ✅ Exit auth loop
                     except (jwt.PyJWTError, KeyError) as e:
-                        print(f"[DEBUG] ERROR: JWT validation failed. Reason: {e}")
                         await websocket.send_text(json.dumps({"error": "Authentication failed", "details": str(e)}))
                         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                        print("[DEBUG] Connection closed due to policy violation (JWT error).")
                         return
 
                 # If it's not ping or authorize, close connection
-                print("[DEBUG] ERROR: Unexpected message before authorization.")
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                print("[DEBUG] Connection closed due to policy violation (unexpected event).")
                 return
             # === END AUTHORIZATION LOOP ===
 
@@ -204,20 +187,16 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
         # === MAIN MESSAGE LOOP ===
         while authenticated:
-            print(f"[DEBUG] Entering main message loop for user: {user_id_global}")
             await websocket.send_json({
                 "type": "connected",
                 "user_id": user_context["user_id"],
                 "timestamp": datetime.now().isoformat()
             })
 
-            print("[DEBUG] Awaiting next message...")
             data_str = await websocket.receive_text()
-            print(f"[DEBUG] <== Received raw data from '{user_id_global}': {data_str}")
             data = json.loads(data_str)
             
             if data.get("type") == "ping":
-                print("[DEBUG] Received ping, sending pong.")
                 await websocket.send_json({
                     "type": "pong",
                     "timestamp": datetime.now().isoformat()
@@ -322,12 +301,10 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             })
 
     except WebSocketDisconnect:
-        print(f"[DEBUG] WebSocketDisconnect exception caught for user: {user_id}")
         if user_id:
             ws_manager.disconnect(user_id)
         print(f"Client {user_id} disconnected")
     except Exception as e:
-        print(f"[DEBUG] An unexpected top-level exception occurred for user '{user_id}': {e}")
         if not websocket.client_state.name == 'DISCONNECTED':
             await websocket.send_json({
                 "type": "error",
