@@ -40,4 +40,7 @@ numpy
 transformers
 torch
 
+# Graph database (Memgraph/Neo4j) driver
+neo4j
+
 # (Phoenix and OpenTelemetry removed; using internal no-op shims)

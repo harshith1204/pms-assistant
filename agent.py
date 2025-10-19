@@ -28,7 +28,17 @@ except AttributeError:
 import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
-from mongo.conversations import save_assistant_message, save_action_event
+from mongo.conversations import (
+    save_assistant_message,
+    save_action_event,
+    save_conversation_summary,
+    get_conversation_summary,
+    insert_triples,
+)
+from memory.indexer import get_memory_indexer
+from memory.retriever import ConversationMemoryRetriever, compress_for_prompt
+from memory.graph import extract_triples_from_text
+from memory.memgraph_store import get_memgraph_store
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -193,6 +203,15 @@ llm = ChatGroq(
     verbose=False,
     top_p=0.8,
 )
+
+# Semantic memory singletons
+memory_indexer = get_memory_indexer()
+memory_retriever = ConversationMemoryRetriever()
+memgraph_store = None
+try:
+    memgraph_store = get_memgraph_store()
+except Exception:
+    memgraph_store = None
 
 
 class TTLCache:
@@ -556,15 +575,43 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Get conversation history
-                conversation_context = conversation_memory.get_recent_context(conversation_id)
+                # Get minimal prior context: only last 2 non-tool messages (reduces tokens)
+                full_history = conversation_memory.get_conversation_history(conversation_id)
+                minimal_context: List[BaseMessage] = []
+                for msg in reversed(full_history):
+                    # Skip tool messages; rely on semantic memory retrieval for those
+                    if isinstance(msg, ToolMessage):
+                        continue
+                    minimal_context.append(msg)
+                    if len(minimal_context) >= 2:
+                        break
+                minimal_context.reverse()
+
+                # Retrieve semantic memory snippets for this query (no reranker/budget)
+                try:
+                    prior = await memory_retriever.retrieve(
+                        conversation_id=conversation_id, query=query, top_k=6,
+                        roles=["user", "assistant", "tool", "action"],
+                    )
+                except Exception:
+                    prior = []
+                prior_text = compress_for_prompt(prior)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
-
-                messages.extend(conversation_context)
+                # Inject only compact relevant memory (no full history); summary optional
+                if prior_text:
+                    messages.append(SystemMessage(content=f"Relevant prior context (compact):\n{prior_text}"))
+                else:
+                    try:
+                        persisted_summary = await get_conversation_summary(conversation_id)
+                        if persisted_summary:
+                            messages.append(SystemMessage(content=f"Conversation durable summary:\n{persisted_summary}"))
+                    except Exception:
+                        pass
+                messages.extend(minimal_context)
 
                 # Add current user message
                 human_message = HumanMessage(content=query)
@@ -572,6 +619,13 @@ class MongoDBAgent:
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
+                # Index user message into semantic memory
+                try:
+                    await memory_indexer.upsert_message(
+                        conversation_id=conversation_id, role="user", text=query, metadata={},
+                    )
+                except Exception:
+                    pass
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
@@ -658,7 +712,12 @@ class MongoDBAgent:
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
                 try:
-                    await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                    content_text = getattr(response, "content", "") or ""
+                    await save_assistant_message(conversation_id, content_text)
+                    # Index assistant message
+                    await memory_indexer.upsert_message(
+                        conversation_id=conversation_id, role="assistant", text=content_text, metadata={},
+                    )
                 except Exception as e:
                     print(f"Warning: failed to save assistant message: {e}")
 
@@ -701,6 +760,21 @@ class MongoDBAgent:
                     for tool_message, success in tool_results:
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
+                        # Index tool output; also try text triples extraction
+                        try:
+                            await memory_indexer.upsert_message(
+                                conversation_id=conversation_id, role="tool", text=tool_message.content,
+                                metadata={"tool_call_id": tool_message.tool_call_id},
+                            )
+                            triples = extract_triples_from_text(tool_message.content)
+                            if triples:
+                                await insert_triples(conversation_id, triples)
+                                if memgraph_store:
+                                    # Write to Memgraph synchronously in a thread to avoid blocking loop
+                                    from asyncio import to_thread
+                                    await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
+                        except Exception:
+                            pass
                         # Skip saving 'result' events to DB
                         if success:
                             did_any_tool = True
@@ -710,6 +784,19 @@ class MongoDBAgent:
                         tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
                         conversation_memory.add_message(conversation_id, tool_message)
+                        try:
+                            await memory_indexer.upsert_message(
+                                conversation_id=conversation_id, role="tool", text=tool_message.content,
+                                metadata={"tool_call_id": tool_message.tool_call_id},
+                            )
+                            triples = extract_triples_from_text(tool_message.content)
+                            if triples:
+                                await insert_triples(conversation_id, triples)
+                                if memgraph_store:
+                                    from asyncio import to_thread
+                                    await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
+                        except Exception:
+                            pass
                         # Skip saving 'result' events to DB
                         if success:
                             did_any_tool = True
@@ -731,9 +818,17 @@ class MongoDBAgent:
                 conversation_memory.register_turn(conversation_id)
                 if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
                     try:
-                        asyncio.create_task(
-                            conversation_memory.update_summary_async(conversation_id, self.llm_base)
-                        )
+                        async def _update_and_persist():
+                            await conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                            summary_text = conversation_memory.summaries.get(conversation_id)
+                            if summary_text:
+                                await save_conversation_summary(conversation_id, summary_text)
+                                # Also index summary as an assistant memory item
+                                await memory_indexer.upsert_message(
+                                    conversation_id=conversation_id, role="assistant", text=summary_text,
+                                    metadata={"kind": "summary"},
+                                )
+                        asyncio.create_task(_update_and_persist())
                     except Exception as e:
                         print(f"Warning: Failed to update summary: {e}")
                 return last_response.content
@@ -962,9 +1057,18 @@ class MongoDBAgent:
                     conversation_memory.register_turn(conversation_id)
                     if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
                         try:
-                            asyncio.create_task(
-                                conversation_memory.update_summary_async(conversation_id, self.llm_base)
-                            )
+                            async def _update_and_persist():
+                                await conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                                summary_text = conversation_memory.summaries.get(conversation_id)
+                                if summary_text:
+                                    await save_conversation_summary(conversation_id, summary_text)
+                                    await memory_indexer.upsert_message(
+                                        conversation_id=conversation_id,
+                                        role="assistant",
+                                        text=summary_text,
+                                        metadata={"kind": "summary"},
+                                    )
+                            asyncio.create_task(_update_and_persist())
                         except Exception as e:
                             print(f"Warning: Failed to update summary: {e}")
                     yield last_response.content

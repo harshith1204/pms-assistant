@@ -7,7 +7,8 @@ import re
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector,
+    Distance, VectorParams,
 )
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
@@ -75,6 +76,39 @@ class RAGTool:
             print(f"Failed to connect RAGTool components: {e}")
             raise
     
+    async def ensure_memory_collection(self, collection_name: str) -> None:
+        """Ensure a Qdrant collection exists for conversation memory.
+
+        Uses the same embedding model to determine vector size and creates
+        a simple cosine dense vector space.
+        """
+        if not self.connected:
+            await self.connect()
+        client = self.qdrant_client
+        model = self.embedding_model
+        try:
+            client.get_collection(collection_name)
+            return
+        except Exception:
+            pass
+        try:
+            # Determine embedding size
+            dim = None
+            try:
+                dim = int(getattr(model, "get_sentence_embedding_dimension", lambda: None)())
+            except Exception:
+                dim = None
+            if not dim:
+                v = model.encode("dimension_probe")
+                dim = len(v.tolist() if hasattr(v, "tolist") else v)
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config={"dense": VectorParams(size=int(dim), distance=Distance.COSINE)},
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to ensure memory collection '{collection_name}': {e}")
+            raise
+
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
     async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
         """Search for relevant content in Qdrant with dense+SPLADE hybrid fusion."""
