@@ -26,7 +26,7 @@ class ConversationMemoryRetriever:
             await self._rag_tool_cls.initialize()
             self._rag = self._rag_tool_cls.get_instance()
 
-    async def retrieve(self, *, conversation_id: str, query: str, top_k: int = 10, roles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    async def retrieve(self, *, conversation_id: str, query: str, top_k: int = 6, roles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         await self._ensure_ready()
         client = self._rag.qdrant_client
         model = self._rag.embedding_model
@@ -39,7 +39,7 @@ class ConversationMemoryRetriever:
         q_filter = Filter(must=must)
 
         prefetch = [
-            Prefetch(query=NearestQuery(nearest=query_vec), using="dense", limit=max(50, top_k * 5), filter=q_filter)
+            Prefetch(query=NearestQuery(nearest=query_vec), using="dense", limit=max(24, top_k * 4), filter=q_filter)
         ]
         fusion = FusionQuery(fusion=Fusion.RRF)
 

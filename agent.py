@@ -575,8 +575,17 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Get conversation history
-                conversation_context = conversation_memory.get_recent_context(conversation_id)
+                # Get minimal prior context: only last 2 non-tool messages (reduces tokens)
+                full_history = conversation_memory.get_conversation_history(conversation_id)
+                minimal_context: List[BaseMessage] = []
+                for msg in reversed(full_history):
+                    # Skip tool messages; rely on semantic memory retrieval for those
+                    if isinstance(msg, ToolMessage):
+                        continue
+                    minimal_context.append(msg)
+                    if len(minimal_context) >= 2:
+                        break
+                minimal_context.reverse()
 
                 # Retrieve semantic memory snippets for this query (no reranker/budget)
                 try:
@@ -602,16 +611,16 @@ class MongoDBAgent:
                 messages: List[BaseMessage] = []
                 if self.system_prompt:
                     messages.append(SystemMessage(content=self.system_prompt))
-                # Include persisted rolling summary if available
-                try:
-                    persisted_summary = await get_conversation_summary(conversation_id)
-                    if persisted_summary:
-                        messages.append(SystemMessage(content=f"Conversation durable summary:\n{persisted_summary}"))
-                except Exception:
-                    pass
-                # Include compact semantic memory bullets
+                # Inject only compact relevant memory (no full history); summary optional
                 if prior_text:
                     messages.append(SystemMessage(content=f"Relevant prior context (compact):\n{prior_text}"))
+                else:
+                    try:
+                        persisted_summary = await get_conversation_summary(conversation_id)
+                        if persisted_summary:
+                            messages.append(SystemMessage(content=f"Conversation durable summary:\n{persisted_summary}"))
+                    except Exception:
+                        pass
                 # Include persisted rolling summary if available
                 try:
                     persisted_summary = await get_conversation_summary(conversation_id)
@@ -623,7 +632,7 @@ class MongoDBAgent:
                 if prior_text:
                     messages.append(SystemMessage(content=f"Relevant prior context (compact):\n{prior_text}"))
 
-                messages.extend(conversation_context)
+                messages.extend(minimal_context)
 
                 # Add current user message
                 human_message = HumanMessage(content=query)
