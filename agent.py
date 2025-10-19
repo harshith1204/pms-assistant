@@ -819,22 +819,22 @@ class MongoDBAgent:
                         return last_response.content
 
             # If we exit the loop due to step cap, return the best available answer
-                if last_response is not None:
+            if last_response is not None:
                 # Register turn and update summary if needed
                 conversation_memory.register_turn(conversation_id)
                 if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
                     try:
-                            async def _update_and_persist():
-                                await conversation_memory.update_summary_async(conversation_id, self.llm_base)
-                                summary_text = conversation_memory.summaries.get(conversation_id)
-                                if summary_text:
-                                    await save_conversation_summary(conversation_id, summary_text)
-                                    # Also index summary as an assistant memory item
-                                    await memory_indexer.upsert_message(
-                                        conversation_id=conversation_id, role="assistant", text=summary_text,
-                                        metadata={"kind": "summary"},
-                                    )
-                            asyncio.create_task(_update_and_persist())
+                        async def _update_and_persist():
+                            await conversation_memory.update_summary_async(conversation_id, self.llm_base)
+                            summary_text = conversation_memory.summaries.get(conversation_id)
+                            if summary_text:
+                                await save_conversation_summary(conversation_id, summary_text)
+                                # Also index summary as an assistant memory item
+                                await memory_indexer.upsert_message(
+                                    conversation_id=conversation_id, role="assistant", text=summary_text,
+                                    metadata={"kind": "summary"},
+                                )
+                        asyncio.create_task(_update_and_persist())
                     except Exception as e:
                         print(f"Warning: Failed to update summary: {e}")
                 return last_response.content
