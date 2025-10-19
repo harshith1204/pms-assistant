@@ -11,6 +11,7 @@ from qdrant_client.models import (
     Distance, VectorParams,
 )
 from sentence_transformers import SentenceTransformer
+from qdrant.token_utils import choose_counter
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
 class RAGTool:
@@ -65,6 +66,11 @@ class RAGTool:
                 self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             self.connected = True
             print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
+            # Initialize a token counter early for downstream budget packing if needed
+            try:
+                _ = choose_counter(getattr(self.embedding_model, "name_or_path", None))
+            except Exception:
+                pass
             # Lightweight verification that sparse vectors are configured and present
             try:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)

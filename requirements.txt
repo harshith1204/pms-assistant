@@ -40,6 +40,9 @@ numpy
 transformers
 torch
 
+# Token counting
+tiktoken
+
 # Graph database (Memgraph/Neo4j) driver
 neo4j
 

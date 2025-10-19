@@ -17,6 +17,7 @@ import asyncio
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
+from qdrant.token_utils import choose_counter, trim_to_token_limit
 
 @dataclass
 class ChunkResult:
@@ -53,6 +54,12 @@ class ChunkAwareRetriever:
     def __init__(self, qdrant_client, embedding_model):
         self.qdrant_client = qdrant_client
         self.embedding_model = embedding_model
+        # Token counter used for budget packing; prefer embedding model's tokenizer
+        prefer_model_name = getattr(embedding_model, "name_or_path", None)
+        try:
+            self._token_counter = choose_counter(prefer_model_name)
+        except Exception:
+            self._token_counter = choose_counter(None)
         # Minimal English stopword list for lightweight keyword-overlap filtering
         self._STOPWORDS: Set[str] = {
             "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
@@ -244,7 +251,7 @@ class ChunkAwareRetriever:
             chunks_per_doc=chunks_per_doc
         )
 
-        # Optionally pack to a token budget by pruning extra context chunks
+        # Optionally pack to a token budget by pruning extra context chunks (true token-based)
         if context_token_budget is not None and context_token_budget > 0:
             reconstructed_docs = self._pack_docs_to_budget(reconstructed_docs, context_token_budget)
 
@@ -504,12 +511,10 @@ class ChunkAwareRetriever:
         return f"chunks {','.join(ranges)} of {total}"
 
     # --- Budget packing utilities ---
-    def _rough_token_count(self, text: str) -> int:
-        # Very rough token estimator: ~0.75 tokens/word, but use 1.0 for safety with punctuation
-        # Using words count as upper-bound to be conservative
+    def _true_token_count(self, text: str) -> int:
         if not text:
             return 0
-        return max(1, len(text.split()))
+        return max(1, self._token_counter.count(text))
 
     def _pack_docs_to_budget(self, docs: List[ReconstructedDocument], budget_tokens: int) -> List[ReconstructedDocument]:
         """
@@ -525,7 +530,7 @@ class ChunkAwareRetriever:
 
         for doc in docs:
             # Quick accept if content already small
-            content_tokens = self._rough_token_count(doc.full_content)
+            content_tokens = self._true_token_count(doc.full_content)
             if content_tokens <= remaining:
                 packed.append(doc)
                 remaining -= content_tokens
@@ -556,7 +561,7 @@ class ChunkAwareRetriever:
                                 kept_indices.add(neighbor_idx)
                     # Merge and check size; stop early if we exceed remaining
                     merged = self._merge_chunks(sorted(kept, key=lambda c: c.chunk_index))
-                    if self._rough_token_count(merged) > remaining:
+                    if self._true_token_count(merged) > remaining:
                         # Remove last added neighbor(s) if they pushed over budget
                         # Keep at least the top scored chunk
                         kept = [s]
@@ -565,19 +570,16 @@ class ChunkAwareRetriever:
             # Rebuild document with kept chunks
             kept_sorted = sorted(kept, key=lambda c: c.chunk_index)
             merged_content = self._merge_chunks(kept_sorted)
-            merged_tokens = self._rough_token_count(merged_content)
+            merged_tokens = self._true_token_count(merged_content)
 
             if merged_tokens <= remaining:
                 remaining -= merged_tokens
             else:
-                # If still too big, truncate content text conservatively by words
-                words = merged_content.split()
-                if remaining > 10:  # avoid micro snippets
-                    merged_content = " ".join(words[:remaining])
-                    remaining = 0
-                else:
-                    merged_content = " ".join(words[:10])
-                    remaining = 0
+                # If still too big, truncate content text exactly to remaining tokens
+                merged_content = trim_to_token_limit(
+                    merged_content, counter=self._token_counter, max_tokens=max(1, remaining)
+                )
+                remaining = 0
 
             packed.append(ReconstructedDocument(
                 mongo_id=doc.mongo_id,
