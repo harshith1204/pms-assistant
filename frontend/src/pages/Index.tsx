@@ -237,7 +237,7 @@ const Index = () => {
     } else if (evt.type === "token") {
       const id = streamingAssistantIdRef.current;
       if (!id) return;
-      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
+            setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: (m.content || "") + (evt.content || "") } : m)));
     } else if (evt.type === "llm_end") {
       // Keep loader and streaming state until we receive the final 'complete' event
     } else if (evt.type === "agent_action") {
@@ -268,35 +268,49 @@ const Index = () => {
         const projectIdentifier = (data.projectIdentifier as string) || undefined;
         const sequenceId = (data.sequenceId as string | number) || undefined;
         const link = (data.link as string) || undefined;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id,
-            role: "assistant",
-            content: "",
-            workItem: {
-              title: (data.title as string) || "Work item",
-              description: (data.description as string) || "",
-              projectIdentifier,
-              sequenceId,
-              link,
+        const title = (data.title as string) || "Work item";
+        const description = (data.description as string) || "";
+        // Avoid pushing duplicate ephemeral work item
+        setMessages((prev) => {
+          const key = `${(projectIdentifier || "").trim().toLowerCase()}|${sequenceId != null ? String(sequenceId) : ""}|${title.trim().toLowerCase()}`;
+          const exists = prev.some((m) => !!(m as any).workItem && `${((m as any).workItem.projectIdentifier || "").trim().toLowerCase()}|${(m as any).workItem.sequenceId != null ? String((m as any).workItem.sequenceId) : ""}|${((m as any).workItem.title || "").trim().toLowerCase()}` === key);
+          if (exists) return prev;
+          return [
+            ...prev,
+            {
+              id,
+              role: "assistant",
+              content: "",
+              workItem: {
+                title,
+                description,
+                projectIdentifier,
+                sequenceId,
+                link,
+              },
             },
-          },
-        ]);
+          ];
+        });
       } else if (evt.content_type === "page" && evt.success && (evt as any).data) {
         const data: any = (evt as any).data;
         const id = `page-${Date.now()}`;
         const title = (data.title as string) || "Generated Page";
         const blocks = typeof data === "object" && data && Array.isArray((data as any).blocks) ? { blocks: (data as any).blocks } : { blocks: [] };
-        setMessages((prev) => [
-          ...prev,
-          {
-            id,
-            role: "assistant",
-            content: "",
-            page: { title, blocks },
-          },
-        ]);
+        // Avoid pushing a duplicate ephemeral page if an identical one already exists in the tail
+        setMessages((prev) => {
+          const key = `${title.trim().toLowerCase()}|${Array.isArray(blocks.blocks) ? blocks.blocks.length : 0}`;
+          const exists = prev.some((m) => !!(m as any).page && `${(m as any).page.title?.trim()?.toLowerCase() || ""}|${Array.isArray((m as any).page.blocks?.blocks) ? (m as any).page.blocks.blocks.length : 0}` === key);
+          if (exists) return prev;
+          return [
+            ...prev,
+            {
+              id,
+              role: "assistant",
+              content: "",
+              page: { title, blocks },
+            },
+          ];
+        });
       } else {
         const id = `assistant-${Date.now()}`;
         setMessages((prev) => [
@@ -354,9 +368,37 @@ const Index = () => {
             const msgs = await getConversationMessages(convId);
             setMessages((prev) => {
               const transformed = transformConversationMessages(msgs);
-              const ephemeralWorkItems = prev.filter((m) => !!m.workItem);
-              const ephemeralPages = prev.filter((m) => !!m.page);
-              return [...transformed, ...ephemeralWorkItems, ...ephemeralPages];
+
+              // Build simple signatures to detect duplicates between canonical and ephemeral items
+              const workItemKey = (m: any) => {
+                const wi = m?.workItem || {};
+                const title = (wi.title || "").trim().toLowerCase();
+                const seq = wi.sequenceId != null ? String(wi.sequenceId) : "";
+                const proj = (wi.projectIdentifier || "").trim().toLowerCase();
+                return `${proj}|${seq}|${title}`;
+              };
+              const pageKey = (m: any) => {
+                const pg = m?.page || {};
+                const title = (pg.title || "").trim().toLowerCase();
+                const blocksCount = Array.isArray(pg.blocks?.blocks) ? pg.blocks.blocks.length : 0;
+                return `${title}|${blocksCount}`;
+              };
+
+              const canonicalWorkItemKeys = new Set(
+                transformed.filter((m) => !!(m as any).workItem).map((m) => workItemKey(m))
+              );
+              const canonicalPageKeys = new Set(
+                transformed.filter((m) => !!(m as any).page).map((m) => pageKey(m))
+              );
+
+              const remainingEphemeralWorkItems = prev.filter(
+                (m) => !!(m as any).workItem && !canonicalWorkItemKeys.has(workItemKey(m))
+              );
+              const remainingEphemeralPages = prev.filter(
+                (m) => !!(m as any).page && !canonicalPageKeys.has(pageKey(m))
+              );
+
+              return [...transformed, ...remainingEphemeralWorkItems, ...remainingEphemeralPages];
             });
           } catch {
             // ignore
