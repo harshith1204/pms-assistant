@@ -80,6 +80,8 @@ conversation_mongo_client = ConversationMongoClient(CONVERSATIONS_CONNECTION_STR
 
 CONVERSATIONS_DB_NAME = "SimpoAssist"
 CONVERSATIONS_COLLECTION_NAME = "conversations"
+CONVERSATIONS_KG_COLLECTION_NAME = "conversations_graph"
+CONVERSATIONS_SUMMARY_COLLECTION_NAME = "conversation_summaries"
 
 
 async def ensure_conversation_client_connected():
@@ -243,4 +245,69 @@ async def update_message_reaction(
         update_doc,
     )
     return getattr(result, "modified_count", 0) > 0
+
+
+# --- Summaries persistence ---
+async def save_conversation_summary(conversation_id: str, summary_text: str) -> None:
+    if not summary_text:
+        return
+    await ensure_conversation_client_connected()
+    db = conversation_mongo_client.client[CONVERSATIONS_DB_NAME]
+    coll = db[CONVERSATIONS_SUMMARY_COLLECTION_NAME]
+    await coll.update_one(
+        {"conversationId": conversation_id},
+        {
+            "$set": {
+                "conversationId": conversation_id,
+                "summary": summary_text,
+                "updatedAt": _now_iso(),
+            },
+            "$setOnInsert": {"createdAt": _now_iso()},
+        },
+        upsert=True,
+    )
+
+
+async def get_conversation_summary(conversation_id: str) -> Optional[str]:
+    await ensure_conversation_client_connected()
+    db = conversation_mongo_client.client[CONVERSATIONS_DB_NAME]
+    coll = db[CONVERSATIONS_SUMMARY_COLLECTION_NAME]
+    doc = await coll.find_one({"conversationId": conversation_id})
+    if doc and isinstance(doc.get("summary"), str):
+        return doc["summary"]
+    return None
+
+
+# --- Knowledge graph triples ---
+async def insert_triples(conversation_id: str, triples: list[dict[str, Any]]) -> None:
+    if not triples:
+        return
+    await ensure_conversation_client_connected()
+    db = conversation_mongo_client.client[CONVERSATIONS_DB_NAME]
+    coll = db[CONVERSATIONS_KG_COLLECTION_NAME]
+    docs = []
+    for t in triples:
+        d = dict(t)
+        d["conversationId"] = conversation_id
+        d["timestamp"] = _now_iso()
+        docs.append(d)
+    if docs:
+        await coll.insert_many(docs)
+
+
+async def get_related_entities(conversation_id: str, terms: list[str], limit: int = 20) -> list[dict[str, Any]]:
+    if not terms:
+        return []
+    await ensure_conversation_client_connected()
+    db = conversation_mongo_client.client[CONVERSATIONS_DB_NAME]
+    coll = db[CONVERSATIONS_KG_COLLECTION_NAME]
+    query = {
+        "conversationId": conversation_id,
+        "$or": [
+            {"subj": {"$in": terms}},
+            {"obj": {"$in": terms}},
+        ],
+    }
+    cursor = coll.find(query).limit(int(limit))
+    return [doc async for doc in cursor]
 
