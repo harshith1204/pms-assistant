@@ -880,6 +880,25 @@ class MongoDBAgent:
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
+                # Index user message into semantic memory (short-term vector store)
+                try:
+                    await memory_indexer.upsert_message(
+                        conversation_id=conversation_id, role="user", text=query, metadata={},
+                    )
+                except Exception:
+                    pass
+
+                # Retrieve compact, relevant prior memory snippets
+                try:
+                    prior = await memory_retriever.retrieve(
+                        conversation_id=conversation_id, query=query, top_k=6,
+                        roles=["user", "assistant", "tool"],
+                    )
+                except Exception:
+                    prior = []
+                prior_text = compress_for_prompt(prior)
+                if prior_text:
+                    messages.insert(0, SystemMessage(content=f"Relevant prior context (compact):\n{prior_text}"))
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
@@ -990,6 +1009,14 @@ class MongoDBAgent:
                         print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
+                        # Index assistant response into semantic memory
+                        try:
+                            await memory_indexer.upsert_message(
+                                conversation_id=conversation_id, role="assistant", text=getattr(response, "content", "") or "",
+                                metadata={},
+                            )
+                        except Exception:
+                            pass
                         yield response.content
                         return
 
@@ -1027,6 +1054,20 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
+                            # Index tool output and extract triples into KG stores
+                            try:
+                                await memory_indexer.upsert_message(
+                                    conversation_id=conversation_id, role="tool", text=tool_message.content,
+                                    metadata={"tool_call_id": tool_message.tool_call_id},
+                                )
+                                triples = extract_triples_from_text(tool_message.content)
+                                if triples:
+                                    await insert_triples(conversation_id, triples)
+                                    if memgraph_store:
+                                        from asyncio import to_thread
+                                        await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
+                            except Exception:
+                                pass
                             # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True
@@ -1041,6 +1082,20 @@ class MongoDBAgent:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             conversation_memory.add_message(conversation_id, tool_message)
+                            # Index tool output and extract triples into KG stores
+                            try:
+                                await memory_indexer.upsert_message(
+                                    conversation_id=conversation_id, role="tool", text=tool_message.content,
+                                    metadata={"tool_call_id": tool_message.tool_call_id},
+                                )
+                                triples = extract_triples_from_text(tool_message.content)
+                                if triples:
+                                    await insert_triples(conversation_id, triples)
+                                    if memgraph_store:
+                                        from asyncio import to_thread
+                                        await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
+                            except Exception:
+                                pass
                             # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True

@@ -31,12 +31,15 @@ class ConversationMemoryRetriever:
         client = self._rag.qdrant_client
         model = self._rag.embedding_model
 
-        query_vec = await asyncio.get_running_loop().run_in_executor(None, model.encode, query)
+        query_vec_raw = await asyncio.get_running_loop().run_in_executor(None, model.encode, query)
+        query_vec = query_vec_raw.tolist() if hasattr(query_vec_raw, "tolist") else query_vec_raw
 
         must: List[Any] = [FieldCondition(key="conversation_id", match=MatchValue(value=conversation_id))]
+        should: Optional[List[Any]] = None
         if roles:
-            must.append(FieldCondition(key="role", match=MatchValue(any=roles)))  # type: ignore[arg-type]
-        q_filter = Filter(must=must)
+            # Use OR over roles for wide compatibility across qdrant-client versions
+            should = [FieldCondition(key="role", match=MatchValue(value=r)) for r in roles]
+        q_filter = Filter(must=must, should=should) if should else Filter(must=must)
 
         prefetch = [
             Prefetch(query=NearestQuery(nearest=query_vec), using="dense", limit=max(24, top_k * 4), filter=q_filter)

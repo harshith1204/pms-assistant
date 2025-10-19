@@ -43,9 +43,12 @@ class ConversationMemoryIndexer:
                 client = self._rag.qdrant_client
                 model = self._rag.embedding_model
                 try:
-                    dim = int(getattr(model, "get_sentence_embedding_dimension", lambda: len(model.encode("dim").tolist()))())  # type: ignore[misc]
+                    dim = int(getattr(model, "get_sentence_embedding_dimension", lambda: None)())
                 except Exception:
-                    dim = len(model.encode("sample").tolist())
+                    dim = None
+                if not dim:
+                    probe = model.encode("dimension_probe")
+                    dim = len(probe.tolist() if hasattr(probe, "tolist") else probe)
                 try:
                     client.get_collection(self._collection)
                 except Exception:

@@ -14,6 +14,7 @@ MONGODB_CONNECTION_STRING = "mongodb://backendInterns:mUXe57JwdugphnEn@4.213.88.
 QDRANT_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfubjbSDBCTZaH321Eya7qis_tP6sHMAZ3Gki6Y"
 QDRANT_URL = "https://dc88ad91-1e1e-48b4-bf73-0e5c1db1cffd.europe-west3-0.gcp.cloud.qdrant.io"  # Default Qdrant URL
 QDRANT_COLLECTION_NAME = "pms_collection"  # Collection for page and work item content
+MEMORY_QDRANT_COLLECTION_NAME = "conversation_memory"  # Dedicated collection for short-term conversation memory
 EMBEDDING_MODEL = "google/embeddinggemma-300m"  # Sentence transformer model for embeddings
  
 # Retrieval packing configuration
