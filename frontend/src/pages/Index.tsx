@@ -64,6 +64,9 @@ const Index = () => {
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  // Track the ScrollArea root and whether we should stick to the bottom
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef<boolean>(true);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -633,10 +636,37 @@ const Index = () => {
     setFeedbackText("");
   };
 
-  // Auto-scroll to bottom on message updates
+  // Observe viewport scroll to know whether user is near the bottom
+  useEffect(() => {
+    const viewport = scrollAreaRef.current?.querySelector(
+      '[data-radix-scroll-area-viewport]'
+    ) as HTMLElement | null;
+    if (!viewport) return;
+    const onScroll = () => {
+      const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      // Consider within 96px as "near bottom" so we keep sticking during small drifts
+      shouldStickToBottomRef.current = distanceFromBottom < 96;
+    };
+    viewport.addEventListener("scroll", onScroll);
+    // Initialize state on mount
+    onScroll();
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, [showGettingStarted, showPersonalization]);
+
+  // Auto-scroll to bottom on message updates (streaming and sends)
   useEffect(() => {
     if (showGettingStarted || showPersonalization) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const viewport = scrollAreaRef.current?.querySelector(
+      '[data-radix-scroll-area-viewport]'
+    ) as HTMLElement | null;
+    if (!viewport) return;
+
+    const last = messages[messages.length - 1];
+    const shouldScroll = shouldStickToBottomRef.current || last?.role === "user";
+    if (shouldScroll) {
+      // Scroll the actual viewport of Radix ScrollArea, not the page
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    }
   }, [messages, isLoading, showGettingStarted, showPersonalization]);
 
   return (
@@ -708,7 +738,7 @@ const Index = () => {
             </div>
           </div>
         ) : (
-          <ScrollArea className="flex-1 scrollbar-thin">
+          <ScrollArea ref={scrollAreaRef} className="flex-1 scrollbar-thin">
             <div className="mx-auto max-w-4xl">
               {messages.map((message) => (
                 <ChatMessage
