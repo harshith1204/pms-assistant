@@ -19,6 +19,22 @@ class MemgraphStore:
         uri = os.getenv("MEMGRAPH_URI", "bolt://localhost:7687")
         user = os.getenv("MEMGRAPH_USER", "neo4j")
         pwd = os.getenv("MEMGRAPH_PASSWORD", "password")
+
+        # Handle different URI formats - extract host/port if username is in URI
+        # Look for the pattern: scheme://user@host:port/database
+        if "@" in uri and "://" in uri:
+            # Find the last @ symbol that's after the :// part
+            scheme_end = uri.find("://")
+            if scheme_end != -1:
+                after_scheme = uri[scheme_end + 3:]  # Skip "://"
+                if "@" in after_scheme:
+                    # Find the last @ after the scheme (handles email addresses with @)
+                    last_at = after_scheme.rfind("@")
+                    if last_at != -1:
+                        host_part = after_scheme[last_at + 1:]  # Everything after the last @
+                        scheme = uri[:scheme_end + 3]  # scheme + "://"
+                        uri = f"{scheme}{host_part}"
+
         self._driver = GraphDatabase.driver(uri, auth=(user, pwd))
 
     def close(self) -> None:

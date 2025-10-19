@@ -42,7 +42,7 @@ class ConversationMemoryRetriever:
         q_filter = Filter(must=must, should=should) if should else Filter(must=must)
 
         prefetch = [
-            Prefetch(query=NearestQuery(nearest=query_vec), using="dense", limit=max(24, top_k * 4), filter=q_filter)
+            Prefetch(query=NearestQuery(nearest=query_vec), using="summary", limit=max(24, top_k * 4), filter=q_filter)
         ]
         fusion = FusionQuery(fusion=Fusion.RRF)
 

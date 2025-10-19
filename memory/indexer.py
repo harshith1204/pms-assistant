@@ -55,7 +55,7 @@ class ConversationMemoryIndexer:
                     client.create_collection(
                         collection_name=self._collection,
                         vectors_config={
-                            "dense": VectorParams(size=dim, distance=Distance.COSINE)
+                            "summary": VectorParams(size=dim, distance=Distance.COSINE)
                         },
                     )
 
@@ -93,7 +93,7 @@ class ConversationMemoryIndexer:
                 points=[
                     {
                         "id": point_id,
-                        "vector": {"dense": vector.tolist() if hasattr(vector, "tolist") else vector},
+                        "vector": {"summary": vector.tolist() if hasattr(vector, "tolist") else vector},
                         "payload": payload,
                     }
                 ],
