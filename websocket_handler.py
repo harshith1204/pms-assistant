@@ -148,16 +148,20 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
         # === MAIN MESSAGE LOOP ===
         while authenticated:
+            print(f"[DEBUG] Entering main message loop for user: {user_id_global}")
             await websocket.send_json({
                 "type": "connected",
                 "user_id": user_context["user_id"],
                 "timestamp": datetime.now().isoformat()
             })
 
+            print("[DEBUG] Awaiting next message...")
             data_str = await websocket.receive_text()
+            print(f"[DEBUG] <== Received raw data from '{user_id_global}': {data_str}")
             data = json.loads(data_str)
             
             if data.get("type") == "ping":
+                print("[DEBUG] Received ping, sending pong.")
                 await websocket.send_json({
                     "type": "pong",
                     "timestamp": datetime.now().isoformat()
@@ -262,10 +266,12 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             })
 
     except WebSocketDisconnect:
+        print(f"[DEBUG] WebSocketDisconnect exception caught for user: {user_id}")
         if user_id:
             ws_manager.disconnect(user_id)
         print(f"Client {user_id} disconnected")
     except Exception as e:
+        print(f"[DEBUG] An unexpected top-level exception occurred for user '{user_id}': {e}")
         if not websocket.client_state.name == 'DISCONNECTED':
             await websocket.send_json({
                 "type": "error",
