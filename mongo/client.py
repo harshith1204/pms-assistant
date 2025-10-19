@@ -20,16 +20,12 @@ except Exception:
 from mongo.constants import (
     DATABASE_NAME,
     MONGODB_CONNECTION_STRING,
+    BUSINESS_UUID,
+    ENFORCE_BUSINESS_FILTER,
     uuid_str_to_mongo_binary,
     COLLECTIONS_WITH_DIRECT_BUSINESS,
 )
 
-from websocket_handler import business_id_global , user_id_global
-
-BUSINESS_UUID: str | None = business_id_global
-USER_ID : str | None = user_id_global
-# Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
-ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
 
 class DirectMongoClient:
     """Direct MongoDB client using Motor (async PyMongo) - replaces MongoDB MCP"""

@@ -1,4 +1,3 @@
-
 """WebSocket handler for streaming chat responses"""
 from fastapi import WebSocket, WebSocketDisconnect , status , WebSocketException
 from typing import Dict, Any, AsyncGenerator
@@ -89,7 +88,7 @@ class WebSocketManager:
         self.active_connections: Dict[str, WebSocket] = {}
 
     async def connect(self, websocket: WebSocket, user_id: str):
-        """Accept and store a new WebSocket connection"""
+        """Store a new WebSocket connection"""
         self.active_connections[user_id] = websocket
         print(f"Client {user_id} connected. Total connections: {len(self.active_connections)}")
 
@@ -122,6 +121,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     """Handle WebSocket chat connections with streaming"""
     global user_id_global, business_id_global
     user_id = None
+
     try:
         await websocket.accept()
 
@@ -161,7 +161,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             data = json.loads(data_str)
             
             if data.get("type") == "ping":
-                print("[DEBUG] Received ping, sending pong.")
+                # Handle ping/pong for connection keepalive
                 await websocket.send_json({
                     "type": "pong",
                     "timestamp": datetime.now().isoformat()
@@ -174,10 +174,9 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{user_id}"
-            print(f"conversation_id: {conversation_id}")
             force_planner = data.get("planner", False)
 
-
+            # Send user message acknowledgment
             await websocket.send_json({
                 "type": "user_message",
                 "content": message,
@@ -259,6 +258,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     from tools import set_generation_websocket
                     set_generation_websocket(None)
 
+            # Send completion message
             await websocket.send_json({
                 "type": "complete",
                 "conversation_id": conversation_id,
