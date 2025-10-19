@@ -38,6 +38,7 @@ from mongo.conversations import (
 from memory.indexer import get_memory_indexer
 from memory.retriever import ConversationMemoryRetriever, compress_for_prompt
 from memory.graph import extract_triples_from_text
+from memory.memgraph_store import get_memgraph_store
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -206,6 +207,11 @@ llm = ChatGroq(
 # Semantic memory singletons
 memory_indexer = get_memory_indexer()
 memory_retriever = ConversationMemoryRetriever()
+memgraph_store = None
+try:
+    memgraph_store = get_memgraph_store()
+except Exception:
+    memgraph_store = None
 
 
 class TTLCache:
@@ -782,6 +788,10 @@ class MongoDBAgent:
                             triples = extract_triples_from_text(tool_message.content)
                             if triples:
                                 await insert_triples(conversation_id, triples)
+                                if memgraph_store:
+                                    # Write to Memgraph synchronously in a thread to avoid blocking loop
+                                    from asyncio import to_thread
+                                    await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
                         except Exception:
                             pass
                         # Skip saving 'result' events to DB
@@ -801,6 +811,9 @@ class MongoDBAgent:
                             triples = extract_triples_from_text(tool_message.content)
                             if triples:
                                 await insert_triples(conversation_id, triples)
+                                if memgraph_store:
+                                    from asyncio import to_thread
+                                    await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
                         except Exception:
                             pass
                         # Skip saving 'result' events to DB
