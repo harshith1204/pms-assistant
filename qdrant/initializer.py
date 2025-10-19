@@ -7,7 +7,8 @@ import re
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector,
+    Distance, VectorParams,
 )
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
