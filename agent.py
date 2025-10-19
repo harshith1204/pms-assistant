@@ -590,17 +590,7 @@ class MongoDBAgent:
                 # Retrieve semantic memory snippets for this query (no reranker/budget)
                 try:
                     prior = await memory_retriever.retrieve(
-                        conversation_id=conversation_id, query=query, top_k=8,
-                        roles=["user", "assistant", "tool", "action"],
-                    )
-                except Exception:
-                    prior = []
-                prior_text = compress_for_prompt(prior)
-
-                # Retrieve semantic memory snippets for this query (no reranker/budget)
-                try:
-                    prior = await memory_retriever.retrieve(
-                        conversation_id=conversation_id, query=query, top_k=8,
+                        conversation_id=conversation_id, query=query, top_k=6,
                         roles=["user", "assistant", "tool", "action"],
                     )
                 except Exception:
@@ -621,17 +611,6 @@ class MongoDBAgent:
                             messages.append(SystemMessage(content=f"Conversation durable summary:\n{persisted_summary}"))
                     except Exception:
                         pass
-                # Include persisted rolling summary if available
-                try:
-                    persisted_summary = await get_conversation_summary(conversation_id)
-                    if persisted_summary:
-                        messages.append(SystemMessage(content=f"Conversation durable summary:\n{persisted_summary}"))
-                except Exception:
-                    pass
-                # Include compact semantic memory bullets
-                if prior_text:
-                    messages.append(SystemMessage(content=f"Relevant prior context (compact):\n{prior_text}"))
-
                 messages.extend(minimal_context)
 
                 # Add current user message
@@ -640,13 +619,6 @@ class MongoDBAgent:
 
                 # Persist the human message
                 conversation_memory.add_message(conversation_id, human_message)
-                # Index user message into semantic memory
-                try:
-                    await memory_indexer.upsert_message(
-                        conversation_id=conversation_id, role="user", text=query, metadata={},
-                    )
-                except Exception:
-                    pass
                 # Index user message into semantic memory
                 try:
                     await memory_indexer.upsert_message(
