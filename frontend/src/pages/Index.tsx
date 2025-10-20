@@ -64,6 +64,8 @@ const Index = () => {
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  const scrollRootRef = useRef<HTMLDivElement | null>(null);
+  const isUserAtBottomRef = useRef<boolean>(true);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -678,8 +680,33 @@ const Index = () => {
   // Auto-scroll to bottom on message updates
   useEffect(() => {
     if (showGettingStarted || showPersonalization) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const viewport = scrollRootRef.current?.querySelector('[data-scroll-viewport]') as HTMLElement | null;
+    if (!viewport) return;
+
+    const hasOverflow = viewport.scrollHeight > viewport.clientHeight + 1;
+    const shouldAutoScroll = hasOverflow && isUserAtBottomRef.current;
+    if (shouldAutoScroll) {
+      endRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages, isLoading, showGettingStarted, showPersonalization]);
+
+  // Track whether the user is near the bottom to preserve their position
+  useEffect(() => {
+    const viewport = scrollRootRef.current?.querySelector('[data-scroll-viewport]') as HTMLElement | null;
+    if (!viewport) return;
+
+    const onScroll = () => {
+      const threshold = 32; // px
+      const hasOverflow = viewport.scrollHeight > viewport.clientHeight + 1;
+      const distanceFromBottom = viewport.scrollHeight - (viewport.scrollTop + viewport.clientHeight);
+      isUserAtBottomRef.current = !hasOverflow || distanceFromBottom <= threshold;
+    };
+
+    // Initialize position state on mount
+    onScroll();
+    viewport.addEventListener("scroll", onScroll);
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
@@ -750,8 +777,8 @@ const Index = () => {
             </div>
           </div>
         ) : (
-          <ScrollArea className="flex-1 scrollbar-thin">
-            <div className="mx-auto max-w-4xl">
+          <ScrollArea ref={scrollRootRef} className="flex-1 scrollbar-thin">
+            <div className="mx-auto max-w-4xl pb-24">
               {messages.map((message) => (
                 <ChatMessage
                   key={message.id}
