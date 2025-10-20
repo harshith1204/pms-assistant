@@ -15,6 +15,7 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 import os
+import re
 
 
 import math
@@ -249,6 +250,56 @@ class TTLCache:
 
 
 
+
+def sanitize_tool_output_for_agent(output_text: Any) -> str:
+    """Remove irrelevant/internal sections from tool outputs before LLM ingestion.
+
+    Heuristics (string-based, non-destructive to core content):
+    - Drop lines like "Query: '...'" and banner headers.
+    - Remove intent and generated pipeline blocks from mongo_query.
+    - Remove retrieval banners from RAG results but keep titles and CONTENT blocks.
+    - Collapse excessive blank lines.
+    """
+    try:
+        text = str(output_text or "")
+    except Exception:
+        text = ""
+
+    if not text:
+        return ""
+
+    # Remove single-line banners and obvious meta
+    single_line_patterns = [
+        r"^\s*Query:\s*'.*?'\s*$",
+        r"^\s*🔍\s*RAG SEARCH:.*$",
+        r"^\s*Found\s+\d+\s+result\(s\).*$",
+        r"^\s*🔍\s*CHUNK-AWARE RETRIEVAL:.*$",
+    ]
+
+    # Remove multi-line sections: UNDERSTOOD INTENT and GENERATED PIPELINE
+    # Match header at line-start anywhere; consume until blank line or end
+    def strip_block(src: str, header_label: str) -> str:
+        pattern = rf"(?ms)^\s*{re.escape(header_label)}\s*\n.*?(?=\n\s*\n|\Z)"
+        return re.sub(pattern, "", src)
+
+    cleaned = text
+    cleaned = strip_block(cleaned, "📋 UNDERSTOOD INTENT:")
+    cleaned = strip_block(cleaned, "🔧 GENERATED PIPELINE:")
+
+    # Remove any remaining single-line noise
+    lines = []
+    for line in cleaned.splitlines():
+        if any(re.search(pat, line) for pat in single_line_patterns):
+            continue
+        lines.append(line)
+    cleaned = "\n".join(lines)
+
+    # Preserve CONTENT blocks; ensure we don't strip their markers
+    # Collapse 3+ blank lines to at most 1
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    # Fallback: if we over-sanitized to empty, return the original text
+    return cleaned or text
 
 # Lightweight helper to create natural, user-facing action statements
 async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
@@ -518,14 +569,27 @@ class MongoDBAgent:
                 
                 result = await actual_tool.ainvoke(tool_call["args"])
                 
-                pass
-                        
+                # Sanitize and trim tool output before feeding back to the LLM
+                cleaned = sanitize_tool_output_for_agent(result)
+                
+                # Light token cap to avoid runaway prompts (keep content-heavy parts mostly intact)
+                def _cap_tokens(text: str, max_tokens: int = 3200) -> str:
+                    try:
+                        from qdrant.token_utils import choose_counter, trim_to_token_limit  # type: ignore
+                        counter = choose_counter(None)
+                        return trim_to_token_limit(text, counter=counter, max_tokens=max_tokens)
+                    except Exception:
+                        # Rough fallback: ~4 chars/token
+                        approx_chars = max_tokens * 4
+                        return text if len(text) <= approx_chars else text[:approx_chars]
+                cleaned = _cap_tokens(cleaned)
+                
             except Exception as tool_exc:
-                result = f"Tool execution error: {tool_exc}"
+                cleaned = f"Tool execution error: {tool_exc}"
                 pass
 
             tool_message = ToolMessage(
-                content=str(result),
+                content=str(cleaned),
                 tool_call_id=tool_call["id"],
             )
             return tool_message, True

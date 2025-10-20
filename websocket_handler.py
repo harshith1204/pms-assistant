@@ -67,9 +67,15 @@ class StreamingCallbackHandler(AsyncCallbackHandler):
         """Called when a tool finishes executing"""
         # Suppress raw tool outputs unless explicitly enabled
         if self.stream_tool_outputs:
+            # Sanitize before streaming to UI as well
+            try:
+                from agent import sanitize_tool_output_for_agent  # local import to avoid cycles
+                safe = sanitize_tool_output_for_agent(output)
+            except Exception:
+                safe = str(output)
             payload = {
                 "type": "tool_end",
-                "output": output,
+                "output": safe,
                 "timestamp": datetime.now().isoformat()
             }
         else:
