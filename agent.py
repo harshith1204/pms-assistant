@@ -788,7 +788,9 @@ class MongoDBAgent:
                             )
                             triples = extract_triples_from_text(tool_message.content)
                             if triples:
-                                await insert_triples(conversation_id, triples)
+                                # Gate Mongo persistence behind env flag (default disabled)
+                                if os.getenv("STORE_KG_IN_MONGO", "false").lower() == "true":
+                                    await insert_triples(conversation_id, triples)
                                 if memgraph_store:
                                     # Write to Memgraph synchronously in a thread to avoid blocking loop
                                     from asyncio import to_thread
@@ -811,7 +813,8 @@ class MongoDBAgent:
                             )
                             triples = extract_triples_from_text(tool_message.content)
                             if triples:
-                                await insert_triples(conversation_id, triples)
+                                if os.getenv("STORE_KG_IN_MONGO", "false").lower() == "true":
+                                    await insert_triples(conversation_id, triples)
                                 if memgraph_store:
                                     from asyncio import to_thread
                                     await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
@@ -1094,7 +1097,8 @@ class MongoDBAgent:
                                 )
                                 triples = extract_triples_from_text(tool_message.content)
                                 if triples:
-                                    await insert_triples(conversation_id, triples)
+                                    if os.getenv("STORE_KG_IN_MONGO", "false").lower() == "true":
+                                        await insert_triples(conversation_id, triples)
                                     if memgraph_store:
                                         from asyncio import to_thread
                                         await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
@@ -1122,7 +1126,8 @@ class MongoDBAgent:
                                 )
                                 triples = extract_triples_from_text(tool_message.content)
                                 if triples:
-                                    await insert_triples(conversation_id, triples)
+                                    if os.getenv("STORE_KG_IN_MONGO", "false").lower() == "true":
+                                        await insert_triples(conversation_id, triples)
                                     if memgraph_store:
                                         from asyncio import to_thread
                                         await to_thread(memgraph_store.upsert_triples, conversation_id, triples)
