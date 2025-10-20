@@ -74,7 +74,7 @@ class ConversationMongoClient:
 
 
 # Initialize conversations client with the provided connection string
-CONVERSATIONS_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
+CONVERSATIONS_CONNECTION_STRING = "mongodb://ReadWriteAccessWriter:ReadWrite%402025Writer@135.235.173.29:27017/db.writer.simpo.ai?authSource=admin"
 conversation_mongo_client = ConversationMongoClient(CONVERSATIONS_CONNECTION_STRING)
 
 
