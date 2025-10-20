@@ -70,3 +70,66 @@ def extract_triples_from_text(text: str) -> List[Dict[str, Any]]:
                 triples.append({"subj": subj, "pred": pred, "obj": obj, "kind": "text"})
     return triples
 
+
+def extract_candidate_terms_from_text(text: str, max_terms: int = 12) -> List[str]:
+    """Extract lightweight candidate entity terms from free text.
+
+    Heuristics (no LLM):
+    - Keep tokens with >= 3 chars
+    - Prefer TitleCase, UPPERCASE, tokens with digits, hyphen, slash or underscore
+    - Deduplicate while preserving order; cap to max_terms
+    """
+    if not isinstance(text, str) or not text.strip():
+        return []
+
+    # Split on non-word separators, keep simple tokens
+    raw_tokens = re.split(r"[^A-Za-z0-9_\-/]+", text)
+    seen: set[str] = set()
+    terms: List[str] = []
+
+    def looks_like_entity(tok: str) -> bool:
+        if len(tok) < 3:
+            return False
+        if any(ch in tok for ch in "-/_"):
+            return True
+        if any(ch.isdigit() for ch in tok):
+            return True
+        # TitleCase or UPPERCASE signals named entity/module/acronym
+        return tok.isupper() or (tok[0].isupper() and any(c.islower() for c in tok[1:]))
+
+    for tok in raw_tokens:
+        if not tok:
+            continue
+        if looks_like_entity(tok) and tok not in seen:
+            seen.add(tok)
+            terms.append(tok)
+            if len(terms) >= max_terms:
+                break
+    return terms
+
+
+def format_kg_triples_for_prompt(triples: List[Dict[str, Any]], max_lines: int = 16) -> str:
+    """Format KG triples as compact bullets for a system prompt.
+
+    Output form: "- subj -(pred)-> obj"
+    Deduplicates identical triples and caps the number of lines.
+    """
+    if not triples:
+        return ""
+    seen: set[tuple[str, str, str]] = set()
+    lines: List[str] = []
+    for t in triples:
+        subj = str(t.get("subj") or "").strip()
+        pred = str(t.get("pred") or "").strip()
+        obj = str(t.get("obj") or "").strip()
+        if not subj or not pred or not obj:
+            continue
+        key = (subj, pred, obj)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"- {subj} -({pred})-> {obj}")
+        if len(lines) >= max_lines:
+            break
+    return "\n".join(lines)
+

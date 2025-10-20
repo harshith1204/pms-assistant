@@ -34,10 +34,15 @@ from mongo.conversations import (
     save_conversation_summary,
     get_conversation_summary,
     insert_triples,
+    get_related_entities,
 )
 from memory.indexer import get_memory_indexer
 from memory.retriever import ConversationMemoryRetriever, compress_for_prompt
-from memory.graph import extract_triples_from_text
+from memory.graph import (
+    extract_triples_from_text,
+    extract_candidate_terms_from_text,
+    format_kg_triples_for_prompt,
+)
 from memory.memgraph_store import get_memgraph_store
 
 
@@ -611,6 +616,17 @@ class MongoDBAgent:
                             messages.append(SystemMessage(content=f"Conversation durable summary:\n{persisted_summary}"))
                     except Exception:
                         pass
+                # Knowledge Graph: retrieve related triples based on candidate terms from the query
+                try:
+                    kg_terms = extract_candidate_terms_from_text(query)
+                    if kg_terms:
+                        kg_triples = await get_related_entities(conversation_id, kg_terms, limit=24)
+                        kg_text = format_kg_triples_for_prompt(kg_triples, max_lines=18)
+                        if kg_text:
+                            messages.append(SystemMessage(content=f"Related entities (knowledge graph):\n{kg_text}"))
+                except Exception:
+                    # Best-effort; do not block on KG
+                    pass
                 messages.extend(minimal_context)
 
                 # Add current user message
@@ -899,6 +915,18 @@ class MongoDBAgent:
                 prior_text = compress_for_prompt(prior)
                 if prior_text:
                     messages.insert(0, SystemMessage(content=f"Relevant prior context (compact):\n{prior_text}"))
+                # Knowledge Graph: retrieve related triples based on candidate terms from the query
+                try:
+                    kg_terms = extract_candidate_terms_from_text(query)
+                    if kg_terms:
+                        kg_triples = await get_related_entities(conversation_id, kg_terms, limit=24)
+                        kg_text = format_kg_triples_for_prompt(kg_triples, max_lines=18)
+                        if kg_text:
+                            # Insert near the front alongside prior context
+                            messages.insert(0, SystemMessage(content=f"Related entities (knowledge graph):\n{kg_text}"))
+                except Exception:
+                    # Best-effort; do not block on KG
+                    pass
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
