@@ -43,6 +43,7 @@ export function ChatInterface() {
   const isInThinkingModeRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isNearBottomRef = useRef<boolean>(true);
   const { toast } = useToast();
   
   // WebSocket connection
@@ -292,15 +293,35 @@ export function ChatInterface() {
     isInThinkingModeRef.current = isInThinkingMode;
   }, [isInThinkingMode]);
 
+  // Track whether the user is near the bottom of the scroll area
   useEffect(() => {
-    // Auto-scroll to bottom when new messages arrive
-    if (scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      }
+    const viewport = scrollAreaRef.current?.querySelector(
+      '[data-radix-scroll-area-viewport]'
+    ) as HTMLElement | null;
+    if (!viewport) return;
+
+    const handleScroll = () => {
+      const nearBottom =
+        viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 64;
+      isNearBottomRef.current = nearBottom;
+    };
+
+    // Initialize state
+    handleScroll();
+    viewport.addEventListener("scroll", handleScroll);
+    return () => viewport.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    // Auto-scroll to bottom only if user was near bottom
+    const viewport = scrollAreaRef.current?.querySelector(
+      '[data-radix-scroll-area-viewport]'
+    ) as HTMLElement | null;
+    if (!viewport) return;
+    if (isNearBottomRef.current) {
+      viewport.scrollTop = viewport.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, currentStreamingMessage, currentThoughtMessage]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -313,6 +334,8 @@ export function ChatInterface() {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
+    // On user send, snap to bottom so the view follows the latest message
+    isNearBottomRef.current = true;
     setMessages(prev => [...prev, userMessage]);
     const currentInput = input.trim();
     setInput("");
@@ -349,7 +372,7 @@ export function ChatInterface() {
     <div className="flex flex-col h-full">
       {/* Messages Area */}
       <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
-        <div className="space-y-4 max-w-4xl mx-auto">
+        <div className="space-y-4 max-w-4xl mx-auto pb-24 pt-2">
           {(() => {
             const allMessages = messages;
             const filteredMessages = allMessages.filter((message) => showThinking || message.type !== "thought");
