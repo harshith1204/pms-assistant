@@ -1,5 +1,10 @@
 import { API_HTTP_URL } from "@/config";
 
+function authHeaders() {
+  const token = localStorage.getItem("access_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export type CreatePageRequest = {
   title: string;
   content: { blocks: any[] };
@@ -17,7 +22,7 @@ export type CreatePageResponse = {
 export async function createPage(payload: CreatePageRequest): Promise<CreatePageResponse> {
   const res = await fetch(`${API_HTTP_URL}/pages`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({
       title: payload.title,
       content: payload.content,

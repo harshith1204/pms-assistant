@@ -15,6 +15,7 @@ from planner import plan_and_execute_query
 from mongo.conversations import save_user_message
 import os
 import contextlib
+from auth import verify_ws_token
 
 load_dotenv()
 
@@ -132,12 +133,32 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         #     "businessId": "default_business",
         # }
 
-        # Load business ID from OS environment variable
+        # Load business ID from OS environment variable as default
         business_id_from_env = os.getenv("BUSINESS_ID", "default_business")
-        user_context = {
-            "user_id": "default_user",
-            "businessId": business_id_from_env,
-        }
+
+        # Try to authenticate via query param token or Sec-WebSocket-Protocol header
+        token: str | None = None
+        try:
+            token = websocket.query_params.get("token")
+        except Exception:
+            token = None
+        if not token:
+            # Some clients send token in a custom header (not standard). We also allow 'Authorization: Bearer <token>'
+            auth_header = websocket.headers.get("authorization")
+            if auth_header and auth_header.lower().startswith("bearer "):
+                token = auth_header.split(" ", 1)[1]
+        try:
+            claims = verify_ws_token(token, required_roles=["VIEWER", "EDITOR", "ADMIN"])
+            user_context = {
+                "user_id": str(claims.get("sub") or "anonymous"),
+                "businessId": str(claims.get("businessId") or business_id_from_env),
+                "email": claims.get("email"),
+                "roles": claims.get("roles", []),
+            }
+        except ValueError:
+            # If WS auth is disabled, verify_ws_token returns anonymous; if enabled and invalid, close connection
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
 
         # Set globals for access in other files
         user_id_global = user_context["user_id"]

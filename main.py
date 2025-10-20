@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
 from generate.router import router as generate_router
+from auth import roles_required, require_user, create_access_token, ALLOW_DEV_LOGIN
 
 # Load environment variables from .env file
 load_dotenv()
@@ -138,7 +139,7 @@ async def health_check():
 
 
 @app.get("/conversations")
-async def list_conversations():
+async def list_conversations(user: dict = Depends(roles_required("VIEWER", "EDITOR", "ADMIN"))):
     """List conversation ids and titles from Mongo."""
     try:
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
@@ -163,7 +164,7 @@ async def list_conversations():
 
 
 @app.get("/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, user: dict = Depends(roles_required("VIEWER", "EDITOR", "ADMIN"))):
     """Get a conversation's messages."""
     try:
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
@@ -196,7 +197,7 @@ async def get_conversation(conversation_id: str):
 
 
 @app.post("/work-items", response_model=WorkItemCreateResponse)
-async def create_work_item(req: WorkItemCreateRequest):
+async def create_work_item(req: WorkItemCreateRequest, user: dict = Depends(roles_required("EDITOR", "ADMIN"))):
     """Create a minimal work item in MongoDB 'workItem' collection.
 
     Fields stored: title, description, project (identifier), sequenceId, createdAt/updatedAt.
@@ -257,7 +258,7 @@ async def create_work_item(req: WorkItemCreateRequest):
 
 
 @app.post("/pages", response_model=PageCreateResponse)
-async def create_page(req: PageCreateRequest):
+async def create_page(req: PageCreateRequest, user: dict = Depends(roles_required("EDITOR", "ADMIN"))):
     """Create a minimal page in MongoDB 'page' collection with Editor.js content."""
     try:
         if not mongodb_tools.client:
@@ -298,7 +299,7 @@ async def create_page(req: PageCreateRequest):
 
 
 @app.post("/conversations/reaction")
-async def set_reaction(req: ReactionRequest):
+async def set_reaction(req: ReactionRequest, user: dict = Depends(roles_required("VIEWER", "EDITOR", "ADMIN"))):
     """Set like/dislike and optional feedback on an assistant message."""
     try:
         ok = await update_message_reaction(
@@ -330,6 +331,23 @@ async def websocket_chat(websocket: WebSocket):
         await mongodb_agent.connect()
 
     await handle_chat_websocket(websocket, mongodb_agent)
+
+
+@app.post("/dev/login")
+async def dev_login(payload: dict):
+    """Development-only endpoint to mint JWTs.
+
+    Body: { "sub": str, "email"?: str, "roles"?: [str], "businessId"?: str }
+    Controlled via ALLOW_DEV_LOGIN env var.
+    """
+    if not ALLOW_DEV_LOGIN:
+        raise HTTPException(status_code=404, detail="Not found")
+    sub = str(payload.get("sub") or "dev_user")
+    email = payload.get("email")
+    roles = payload.get("roles") or ["VIEWER"]
+    business_id = payload.get("businessId")
+    token = create_access_token(sub=sub, email=email, roles=roles, business_id=business_id)
+    return {"access_token": token, "token_type": "bearer"}
 
 
 if __name__ == "__main__":
