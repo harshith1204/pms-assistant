@@ -15,6 +15,7 @@ from datetime import datetime
 import time
 from collections import defaultdict, deque
 import os
+import re
 
 
 import math
@@ -249,6 +250,10 @@ class TTLCache:
 
 
 
+
+def sanitize_tool_output_for_agent(output_text: Any) -> str:
+    """Deprecated: tool outputs should be compacted at tool level."""
+    return str(output_text or "")
 
 # Lightweight helper to create natural, user-facing action statements
 async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
@@ -517,15 +522,14 @@ class MongoDBAgent:
                 pass
                 
                 result = await actual_tool.ainvoke(tool_call["args"])
+                cleaned = sanitize_tool_output_for_agent(result)
                 
-                pass
-                        
             except Exception as tool_exc:
-                result = f"Tool execution error: {tool_exc}"
+                cleaned = f"Tool execution error: {tool_exc}"
                 pass
 
             tool_message = ToolMessage(
-                content=str(result),
+                content=str(cleaned),
                 tool_call_id=tool_call["id"],
             )
             return tool_message, True

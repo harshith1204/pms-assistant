@@ -468,48 +468,18 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
         result = await plan_and_execute_query(query)
 
         if result["success"]:
-            response = f"🎯 INTELLIGENT QUERY RESULT:\n"
-            response += f"Query: '{query}'\n\n"
-
-            # Show parsed intent
-            intent = result["intent"]
-            response += f"📋 UNDERSTOOD INTENT:\n"
-            if result.get("planner"):
-                response += f"• Planner: {result['planner']}\n"
-            response += f"• Primary Entity: {intent['primary_entity']}\n"
-            if intent['target_entities']:
-                response += f"• Related Entities: {', '.join(intent['target_entities'])}\n"
-            if intent['filters']:
-                response += f"• Filters: {intent['filters']}\n"
-            if intent['aggregations']:
-                response += f"• Aggregations: {', '.join(intent['aggregations'])}\n"
-            response += "\n"
-
-            # Show the generated pipeline (first few stages)
-            pipeline = result.get("pipeline")
-            pipeline_js = result.get("pipeline_js")
-            if pipeline_js:
-                response += f"🔧 GENERATED PIPELINE:\n"
-                response += pipeline_js
-                response += "\n"
-            elif pipeline:
-                response += f"🔧 GENERATED PIPELINE:\n"
-                # Import the formatting function from planner
-                try:
-                    from planner import _format_pipeline_for_display
-                    formatted_pipeline = _format_pipeline_for_display(pipeline)
-                    response += formatted_pipeline
-                except ImportError:
-                    # Fallback to JSON format if import fails
-                    for i, stage in enumerate(pipeline):
-                        stage_name = list(stage.keys())[0]
-                        # Format the stage content nicely
-                        stage_content = json.dumps(stage[stage_name], indent=2)
-                        # Truncate very long content for readability but show complete structure
-                        if len(stage_content) > 200:
-                            stage_content = stage_content + "..."
-                        response += f"• {stage_name}: {stage_content}\n"
-                response += "\n"
+            # Compact summary header (no query echo, no pipeline dump)
+            response = "🎯 QUERY RESULT:\n"
+            intent = result.get("intent", {}) or {}
+            primary_entity = intent.get("primary_entity")
+            aggregates = intent.get("aggregations") or []
+            if primary_entity or aggregates:
+                bits = []
+                if primary_entity:
+                    bits.append(f"entity={primary_entity}")
+                if aggregates:
+                    bits.append(f"aggs={', '.join(aggregates)}")
+                response += "(" + ", ".join(bits) + ")\n\n"
 
             # Show results (compact preview)
             rows = result.get("result")
@@ -771,10 +741,10 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             print(response)
             return response
         else:
-            return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
+            return f"❌ QUERY FAILED: {result['error']}"
 
     except Exception as e:
-        return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
+        return f"❌ QUERY ERROR: {str(e)}"
 
 
 @tool
@@ -894,7 +864,9 @@ async def rag_search(
             return format_reconstructed_results(
                 docs=reconstructed_docs,
                 show_full_content=True,
-                show_chunk_details=True
+                show_chunk_details=False,
+                compact_header=True,
+                max_docs=10,
             )
         
         # Fallback to standard retrieval
@@ -903,8 +875,8 @@ async def rag_search(
         if not results:
             return f"❌ No results found for query: '{query}'"
         
-        # Build response header
-        response = f"🔍 RAG SEARCH: '{query}'\n"
+        # Build compact header (no query echo)
+        response = "🔍 RAG RESULTS\n"
         response += f"Found {len(results)} result(s)"
         if content_type:
             response += f" (type: {content_type})"
@@ -940,8 +912,7 @@ async def rag_search(
                 if meta:
                     response += f"    {' | '.join(meta)}\n"
                 
-                # Always include FULL content for LLM synthesis (no truncation)
-                # This enables the LLM to generate properly formatted responses based on actual content
+                # Include full content for synthesis (intentional)
                 if result.get('content'):
                     content_text = result['content']
                     response += f"\n    === CONTENT START ===\n{content_text}\n    === CONTENT END ===\n"
@@ -1001,7 +972,7 @@ async def rag_search(
     except ImportError:
         return "❌ RAG not available. Install: qdrant-client, sentence-transformers"
     except Exception as e:
-        return f"❌ RAG SEARCH ERROR: {str(e)}"
+        return f"❌ RAG ERROR: {str(e)}"
 
 
 # Global websocket registry for content generation

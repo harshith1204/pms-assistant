@@ -602,7 +602,10 @@ class ChunkAwareRetriever:
 def format_reconstructed_results(
     docs: List[ReconstructedDocument],
     show_full_content: bool = True,
-    show_chunk_details: bool = True
+    show_chunk_details: bool = True,
+    *,
+    compact_header: bool = True,
+    max_docs: Optional[int] = None,
 ) -> str:
     """
     Format reconstructed documents for display to LLM.
@@ -619,9 +622,11 @@ def format_reconstructed_results(
         return "No results found."
     
     response_parts = []
-    response_parts.append(f"🔍 CHUNK-AWARE RETRIEVAL: {len(docs)} document(s) reconstructed\n")
+    if not compact_header:
+        response_parts.append(f"🔍 CHUNK-AWARE RETRIEVAL: {len(docs)} document(s) reconstructed\n")
     
-    for i, doc in enumerate(docs, 1):
+    doc_iter = docs[: (max_docs or len(docs))]
+    for i, doc in enumerate(doc_iter, 1):
         response_parts.append(f"\n[{i}] {doc.content_type.upper()}: {doc.title}")
         response_parts.append(f"    Relevance: {doc.max_score:.3f} (avg: {doc.avg_score:.3f})")
         response_parts.append(f"    Coverage: {doc.chunk_coverage}")
