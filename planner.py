@@ -1604,6 +1604,20 @@ class PipelineGenerator:
                     gte_key = gte_key or rng.get("from")
                     lte_key = lte_key or rng.get("to")
 
+            # Also interpret relative tokens provided directly in _from/_to
+            # e.g. createdTimeStamp_from: "last_week" or updatedTimeStamp_to: "yesterday"
+            if isinstance(gte_key, str):
+                rng_from = _parse_relative_window(gte_key)
+                if rng_from:
+                    gte_key = rng_from.get("from")
+                    # If caller did not specify an upper bound, use the window's natural end
+                    if lte_key is None:
+                        lte_key = rng_from.get("to")
+            if isinstance(lte_key, str):
+                rng_to = _parse_relative_window(lte_key)
+                if rng_to:
+                    lte_key = rng_to.get("to")
+
             if gte_key is None and lte_key is None:
                 return
             range_expr: Dict[str, Any] = {}

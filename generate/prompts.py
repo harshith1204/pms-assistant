@@ -117,3 +117,112 @@ PAGE_TYPE_PROMPTS = {
 """
 }
 
+# Work Item Generation Prompts
+WORK_ITEM_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates concise, actionable work item titles and descriptions.
+Use the provided template as a structure and the user's prompt for specifics.
+Return markdown in the description. Keep the title under 120 characters.
+Respond as JSON only, without code fences or surrounding text.
+Example response: {"title": "Code Review: Login Flow", "description": "## Summary\\nReview the login flow..."}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line, no surrounding quotes.
+- Description: markdown body with headings/bullets as needed.
+- Example: {{"title": "Code Review: Login Flow", "description": "## Summary\nReview the login flow..."}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+# Work Item Surprise-Me Prompts
+WORK_ITEM_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances work item descriptions to be more detailed, actionable, and comprehensive.
+Take the provided title and existing description, and generate a much more detailed and professional description.
+Add specific details, steps, requirements, and context that would make this work item more actionable for team members.
+Return markdown in the description with proper formatting, sections, and bullet points.
+Keep the same title but significantly enhance the description.
+Respond as JSON only, without code fences or surrounding text.
+Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Description:
+{description}
+
+Instructions:
+- Enhance the existing description to be much more detailed and actionable
+- Add specific requirements, implementation steps, acceptance criteria
+- Include relevant technical details, dependencies, and success metrics
+- Structure the description with proper markdown formatting including headers, bullet points, and sections
+- Maintain the same title but significantly expand the description
+- Produce a JSON object with fields: title, description
+- Do not wrap the response in code fences or add explanatory text"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates a comprehensive, professional, and actionable work item description from only a title.
+Create a detailed description suitable for enterprise project management.
+Include sections such as Overview, Scope, Requirements, Implementation Plan, Acceptance Criteria, Dependencies, Risks, and Success Metrics.
+Return markdown in the description with proper headers and bullet points.
+Keep the same title; only generate the description.
+Respond as JSON only, without code fences or surrounding text.
+Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate a comprehensive, detailed, and actionable description for this work item
+- Include specific requirements, implementation steps, acceptance criteria, dependencies, risks, and success metrics
+- Use clear markdown structure with headers and bullet points
+- Maintain the same title; output only the description content
+- Produce a JSON object with fields: title, description
+- Do not wrap the response in code fences or add explanatory text"""
+    }
+}
+
+# Page Content Generation Prompts
+PAGE_CONTENT_GENERATION_PROMPTS = {
+    'system_prompt_template': """You are an AI assistant specialized in generating professional business content for enterprise project management pages in Editor.js block format.
+
+**Business Context:**
+- Organization Type: Enterprise Business Environment
+- Page Type: {page_type}
+
+{page_prompt_dict}
+
+**Content Requirements:**
+- Generate content in Editor.js block format as a JSON object with a "blocks" array
+- Each block should have: id (unique string), type (header, paragraph, list, table, etc.), and data object
+- Use appropriate block types for business content:
+  * Headers for sections and subsections (levels 1-4)
+  * Paragraphs for detailed explanations
+  * Ordered/unordered lists for action items, milestones, and key points
+  * Tables for metrics, comparisons, and data presentation
+- Structure content with clear hierarchy based on the page type requirements
+- Include specific business metrics, KPIs, and measurable outcomes relevant to {page_type}
+- Use professional formatting with proper business terminology
+- Return only valid JSON with "blocks" array, no markdown or other formatting
+
+**User Request:**
+{prompt}
+
+**Response Format:**
+{{"blocks": [
+  {{"id": "unique_id_1", "type": "header", "data": {{"text": "Executive Summary", "level": 2}}}},
+  {{"id": "unique_id_2", "type": "paragraph", "data": {{"text": "This project status report provides comprehensive insights into key performance indicators and strategic milestones for the quarter."}}}},
+  {{"id": "unique_id_3", "type": "header", "data": {{"text": "Key Performance Indicators", "level": 3}}}},
+  {{"id": "unique_id_4", "type": "list", "data": {{"style": "unordered", "items": ["Revenue Growth: 15% increase", "Customer Satisfaction: 92% score", "Project Completion Rate: 85%"]}}}}
+]}}"""
+}
+
