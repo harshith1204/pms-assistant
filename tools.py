@@ -784,7 +784,8 @@ async def rag_search(
     group_by: Optional[str] = None,
     limit: int = 10,
     show_content: bool = True,
-    use_chunk_aware: bool = True
+    use_chunk_aware: bool = True,
+    member_context: Optional[Any] = None  # MemberContext for RBAC filtering
 ) -> str:
     """Universal RAG search tool - returns FULL chunk content for LLM synthesis.
     
@@ -851,6 +852,24 @@ async def rag_search(
             await RAGTool.initialize()
             rag_tool = RAGTool.get_instance()
         
+        # Get member context from global if not provided
+        if member_context is None:
+            try:
+                from mongo.client import MEMBER_CONTEXT
+                member_context = MEMBER_CONTEXT
+            except:
+                member_context = None
+        
+        # Get accessible project names for RBAC filtering
+        accessible_project_names = None
+        if member_context:
+            try:
+                from rbac.rag_filters import get_member_project_names_from_db
+                accessible_project_names = await get_member_project_names_from_db(member_context)
+            except Exception as e:
+                print(f"Warning: Could not fetch project names for RAG RBAC: {e}")
+                accessible_project_names = []
+        
         # Resolve effective limit based on content_type defaults (opt-in when caller uses default)
         effective_limit: int = limit
         if content_type:
@@ -883,11 +902,24 @@ async def rag_search(
                 chunks_per_doc=chunks_per_doc,
                 include_adjacent=include_adjacent,
                 min_score=min_score,
-                context_token_budget=RAG_CONTEXT_TOKEN_BUDGET
+                context_token_budget=RAG_CONTEXT_TOKEN_BUDGET,
+                accessible_project_names=accessible_project_names  # RBAC filtering
             )
             
             if not reconstructed_docs:
                 return f"❌ No results found for query: '{query}'"
+            
+            # Apply additional RBAC filtering to results
+            if member_context and accessible_project_names is not None:
+                from rbac.rag_filters import filter_reconstructed_docs_by_project
+                reconstructed_docs = filter_reconstructed_docs_by_project(
+                    reconstructed_docs, 
+                    member_context, 
+                    accessible_project_names
+                )
+                
+                if not reconstructed_docs:
+                    return f"❌ No accessible results found for query: '{query}' (filtered by project access)"
             
             # Always pass full content chunks to the agent by default for synthesis
             # Force show_full_content=True so downstream LLM has full context
@@ -902,6 +934,14 @@ async def rag_search(
         
         if not results:
             return f"❌ No results found for query: '{query}'"
+        
+        # Apply RBAC filtering to standard results
+        if member_context and accessible_project_names is not None:
+            from rbac.rag_filters import filter_rag_results_by_project
+            results = filter_rag_results_by_project(results, member_context, accessible_project_names)
+            
+            if not results:
+                return f"❌ No accessible results found for query: '{query}' (filtered by project access)"
         
         # Build response header
         response = f"🔍 RAG SEARCH: '{query}'\n"
