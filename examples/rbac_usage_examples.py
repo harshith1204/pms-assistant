@@ -202,7 +202,7 @@ async def list_all_members(
     member: Annotated[MemberContext, Depends(require_permissions(Permission.ADMIN_FULL_ACCESS))]
 ):
     """
-    Admin-only endpoint. Only members with ADMIN role can access.
+    Endpoint requiring explicit permission; roles are not used for access.
     """
     from mongo.constants import mongodb_tools, DATABASE_NAME
     
@@ -248,13 +248,8 @@ async def get_project_details(
         "status": project.get("status")
     }
     
-    # Add sensitive info for admins only
-    if member.is_admin():
-        response["settings"] = project.get("settings")
-        response["financial_data"] = project.get("financials")
-    
     # Add moderate detail for members
-    elif member.role.value == "MEMBER":
+    if member.role.value == "MEMBER":
         response["team_members"] = project.get("members")
     
     return response
@@ -315,16 +310,16 @@ async def delete_work_item(
     if not work_item:
         raise HTTPException(status_code=404, detail="Work item not found")
     
-    # Check if member owns the resource or is admin
+    # Check if member owns the resource
     created_by = work_item.get("createdBy", {})
     creator_id = created_by.get("_id")
     
     is_owner = str(creator_id) == member.member_id
     
-    if not (is_owner or member.is_admin()):
+    if not is_owner:
         raise HTTPException(
             status_code=403,
-            detail="You can only delete work items you created"
+            detail="Only the creator can delete this work item"
         )
     
     # Delete the work item

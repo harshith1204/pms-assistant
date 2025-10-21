@@ -176,17 +176,15 @@ class MemberContext:
         return all(self.has_permission(perm) for perm in permissions)
     
     def can_access_project(self, project_id: str) -> bool:
-        """Check if member can access a specific project"""
-        if self.role == Role.ADMIN:
-            return True
+        """Check if member can access a specific project based on membership only"""
         # Prefer explicit project_roles mapping when present
         if self.project_roles:
             return project_id in self.project_roles
         return project_id in self.project_ids
     
     def is_admin(self) -> bool:
-        """Check if member is an admin"""
-        return self.role == Role.ADMIN
+        """Deprecated: Admin bypass removed; kept for compatibility."""
+        return False
 
     def get_project_role(self, project_id: str) -> Optional[Role]:
         """Get the member's role for a specific project, if known"""
@@ -199,8 +197,6 @@ class MemberContext:
 
         Falls back to global role when project role is unknown.
         """
-        if self.role == Role.ADMIN:
-            return True
         project_role = self.get_project_role(project_id) or self.role
         role_perms = ROLE_PERMISSIONS.get(project_role, set())
         return permission in role_perms

@@ -10,7 +10,19 @@ Improves context quality by:
 
 from typing import List, Dict, Any, Optional, Set, Tuple
 import re
-from mongo.constants import BUSINESS_UUID
+def _get_business_uuid() -> str | None:
+    """Resolve active business UUID from env or websocket context."""
+    try:
+        from mongo.constants import BUSINESS_UUID as ENV_BUSINESS_UUID  # type: ignore
+    except Exception:
+        ENV_BUSINESS_UUID = None  # type: ignore
+    if ENV_BUSINESS_UUID:
+        return ENV_BUSINESS_UUID  # type: ignore[return-value]
+    try:
+        from websocket_handler import business_id_global  # type: ignore
+        return business_id_global
+    except Exception:
+        return None
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
@@ -117,8 +129,9 @@ class ChunkAwareRetriever:
         must_conditions = []
         if content_type:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
-        if BUSINESS_UUID:
-            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
+        biz_uuid = _get_business_uuid()
+        if biz_uuid:
+            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=biz_uuid)))
         
         # Apply RBAC project filtering if accessible_project_names is provided
         if accessible_project_names is not None:
@@ -352,9 +365,10 @@ class ChunkAwareRetriever:
                         filter_conditions.append(
                             FieldCondition(key="content_type", match=MatchValue(value=content_type))
                         )
-                    if BUSINESS_UUID:
+                    biz_uuid = _get_business_uuid()
+                    if biz_uuid:
                         filter_conditions.append(
-                            FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID))
+                            FieldCondition(key="business_id", match=MatchValue(value=biz_uuid))
                         )
                     
                     # Use scroll to find specific chunk (more efficient than search for exact match)

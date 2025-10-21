@@ -855,9 +855,10 @@ async def rag_search(
         # Get member context from global if not provided
         if member_context is None:
             try:
-                from mongo.client import MEMBER_CONTEXT
-                member_context = MEMBER_CONTEXT
-            except:
+                # Resolve latest member context dynamically to avoid stale globals
+                from mongo.client import _get_current_member_context  # type: ignore
+                member_context = _get_current_member_context()
+            except Exception:
                 member_context = None
         
         # Get accessible project names for RBAC filtering

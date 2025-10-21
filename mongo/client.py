@@ -24,13 +24,33 @@ from mongo.constants import (
     COLLECTIONS_WITH_DIRECT_BUSINESS,
 )
 
-from websocket_handler import business_id_global, user_id_global, member_context_global
+def _get_current_member_context():
+    """Fetch latest MemberContext from websocket globals, if available."""
+    try:
+        # Import inside function to avoid circular imports and get latest value
+        from websocket_handler import member_context_global  # type: ignore
+        return member_context_global
+    except Exception:
+        return None
 
-BUSINESS_UUID: str | None = business_id_global
-USER_ID: str | None = user_id_global
-MEMBER_CONTEXT = member_context_global  # Member context for RBAC filtering
-# Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
-ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
+
+def _get_current_business_uuid() -> str | None:
+    """Determine the active business UUID from env or websocket context."""
+    try:
+        # Prefer environment-scoped business ID
+        from mongo.constants import BUSINESS_UUID as ENV_BUSINESS_UUID  # type: ignore
+    except Exception:
+        ENV_BUSINESS_UUID = None  # type: ignore
+
+    if ENV_BUSINESS_UUID:
+        return ENV_BUSINESS_UUID  # type: ignore[return-value]
+
+    # Fallback to websocket-provided business id when available
+    try:
+        from websocket_handler import business_id_global  # type: ignore
+        return business_id_global
+    except Exception:
+        return None
 
 class DirectMongoClient:
     """Direct MongoDB client using Motor (async PyMongo) - replaces MongoDB MCP"""
@@ -110,23 +130,24 @@ class DirectMongoClient:
             try:
                 # Prepare business scoping and RBAC injection (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
-                
-                # 1. Apply member-based RBAC filtering first
-                if MEMBER_CONTEXT:
+
+                # Resolve latest contexts dynamically to avoid stale globals
+                member_context = _get_current_member_context()
+                biz_uuid = _get_current_business_uuid()
+                enforce_business = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(biz_uuid)
+
+                # 1. Apply member-based RBAC filtering first (project-scoped only)
+                if member_context is not None:
                     try:
                         from rbac.filters import apply_member_pipeline_filter
-                        from rbac.permissions import MemberContext
-                        
-                        if isinstance(MEMBER_CONTEXT, MemberContext):
-                            # Apply member filter to the pipeline
-                            injected_stages = apply_member_pipeline_filter([], MEMBER_CONTEXT)
+                        injected_stages = apply_member_pipeline_filter([], member_context)  # type: ignore[arg-type]
                     except Exception as e:
                         print(f"Warning: RBAC filter construction failed: {e}")
-                
+
                 # 2. Apply business scoping on top of RBAC
-                if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
+                if enforce_business and biz_uuid:
                     try:
-                        biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
+                        biz_bin = uuid_str_to_mongo_binary(biz_uuid)
                         if collection in COLLECTIONS_WITH_DIRECT_BUSINESS:
                             injected_stages.append({"$match": {"business._id": biz_bin}})
                         elif collection == "members":
