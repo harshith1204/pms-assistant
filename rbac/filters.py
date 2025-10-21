@@ -37,7 +37,7 @@ def apply_member_filter(
     if member.is_admin():
         return query
     
-    # Build project access filter
+    # Build project access filter (everyone has read access, but scope by memberships)
     if project_id:
         # Specific project requested - verify access
         if not member.can_access_project(project_id):
@@ -49,7 +49,7 @@ def apply_member_filter(
         project_binaries = [uuid_str_to_mongo_binary(pid) for pid in member.project_ids]
         project_filter = {"project._id": {"$in": project_binaries}}
     else:
-        # No project access - return nothing
+        # If no explicit memberships, return nothing (defensive)
         return {"_id": {"$exists": False}}
     
     # Combine with existing query

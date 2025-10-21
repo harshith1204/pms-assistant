@@ -81,6 +81,44 @@ async def get_member_projects(member_id: str) -> list[str]:
         return []
 
 
+async def get_member_project_roles(member_id: str) -> dict[str, Role]:
+    """Get a mapping of project_id -> Role for a member from members collection.
+    
+    Each document in `members` represents a membership of a member in a project
+    and stores a `role` that should be interpreted as the role within that project.
+    """
+    try:
+        if not mongodb_tools.client:
+            await mongodb_tools.connect()
+        db = mongodb_tools.client[DATABASE_NAME]
+        members_collection = db["members"]
+
+        member_uuid = uuid_str_to_mongo_binary(member_id)
+        cursor = members_collection.find({"memberId": member_uuid})
+
+        project_roles: dict[str, Role] = {}
+        async for member_doc in cursor:
+            project = member_doc.get("project", {})
+            project_id = project.get("_id")
+            if not project_id:
+                continue
+            if hasattr(project_id, 'hex'):
+                project_id_str = str(uuid.UUID(bytes=project_id))
+            else:
+                project_id_str = str(project_id)
+
+            role_str = (member_doc.get("role") or "VIEWER").upper()
+            try:
+                project_roles[project_id_str] = Role(role_str)
+            except ValueError:
+                project_roles[project_id_str] = Role.VIEWER
+
+        return project_roles
+    except Exception as e:
+        print(f"Error fetching member project roles: {e}")
+        return {}
+
+
 async def get_current_member(
     x_member_id: Annotated[Optional[str], Header()] = None,
     authorization: Annotated[Optional[str], Header()] = None,
@@ -126,43 +164,48 @@ async def get_current_member(
                 detail="Authentication required. Please provide X-Member-Id header or Authorization token."
             )
     
-    # Fetch member from database
+    # Fetch one member doc to obtain profile details, and compile project roles across memberships
     member_doc = await get_member_by_id(member_id)
-    
-    if not member_doc:
+    project_roles = await get_member_project_roles(member_id)
+    project_ids = list(project_roles.keys()) or await get_member_projects(member_id)
+
+    if not member_doc and not project_roles:
         raise HTTPException(
             status_code=404,
             detail=f"Member not found: {member_id}"
         )
-    
-    # Get member's project access
-    project_ids = await get_member_projects(member_id)
-    
-    # Extract role (default to MEMBER if not specified)
-    role_str = member_doc.get("role", "MEMBER")
-    try:
-        role = Role(role_str)
-    except ValueError:
-        # If role doesn't match enum, default to MEMBER for safety
-        print(f"Warning: Unknown role '{role_str}' for member {member_id}, defaulting to MEMBER")
-        role = Role.MEMBER
-    
-    # Get display name (prefer displayName over name)
-    display_name = member_doc.get("displayName") or member_doc.get("name", "")
-    
-    # Get email (handle empty strings)
-    email = member_doc.get("email", "")
-    if not email or not email.strip():
-        email = None  # Use None for empty emails
-    
+
+    # Derive a conservative global role: default VIEWER; if any membership is MEMBER, elevate to MEMBER
+    derived_global_role = Role.VIEWER
+    if any(r in (Role.MEMBER, Role.ADMIN) for r in project_roles.values()):
+        derived_global_role = Role.MEMBER
+
+    # Extract role from member doc if present; otherwise fall back to derived role
+    if member_doc:
+        role_str = member_doc.get("role", derived_global_role.value)
+        try:
+            role = Role(role_str)
+        except ValueError:
+            print(f"Warning: Unknown role '{role_str}' for member {member_id}, defaulting to {derived_global_role.value}")
+            role = derived_global_role
+        display_name = member_doc.get("displayName") or member_doc.get("name", "")
+        email = member_doc.get("email", "") or None
+        member_type = member_doc.get("type")
+    else:
+        role = derived_global_role
+        display_name = ""
+        email = None
+        member_type = None
+
     # Build member context
     context = MemberContext(
         member_id=member_id,
         name=display_name,
-        email=email or "",  # MemberContext expects string, use empty string for None
+        email=(email or ""),
         role=role,
         project_ids=project_ids,
-        type=member_doc.get("type"),
+        project_roles=project_roles,
+        type=member_type,
         business_id=None,  # Can be extracted from project if needed
     )
     
