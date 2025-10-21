@@ -19,15 +19,8 @@ def should_filter_rag_by_project(member: Optional[MemberContext]) -> bool:
     Returns:
         True if filtering should be applied
     """
-    if not member:
-        return False
-    
-    # Admins see everything
-    if member.is_admin():
-        return False
-    
-    # All other roles are filtered by project
-    return True
+    # Filter whenever a member context exists; access is project-scoped only
+    return bool(member)
 
 
 def get_member_project_names(member: MemberContext) -> List[str]:
@@ -59,10 +52,6 @@ async def get_member_project_names_from_db(member: MemberContext) -> List[str]:
         List of project names that member can access
     """
     from mongo.constants import mongodb_tools, DATABASE_NAME, uuid_str_to_mongo_binary
-    
-    if member.is_admin():
-        # Admin can see all projects - return None to indicate no filter
-        return None
     
     if not member.project_ids:
         # No project access - return empty list
@@ -114,8 +103,8 @@ def filter_rag_results_by_project(
     Returns:
         Filtered list of results
     """
-    # No filtering if no member context or member is admin
-    if not member or member.is_admin():
+    # No filtering if no member context
+    if not member:
         return results
     
     # No accessible projects - return empty
@@ -174,8 +163,8 @@ def filter_reconstructed_docs_by_project(
     Returns:
         Filtered list of documents
     """
-    # No filtering if no member context or member is admin
-    if not member or member.is_admin():
+    # No filtering if no member context
+    if not member:
         return docs
     
     # No accessible projects - return empty

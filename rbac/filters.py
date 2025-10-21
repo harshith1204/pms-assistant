@@ -33,9 +33,6 @@ def apply_member_filter(
     Returns:
         Enhanced query with member filters applied
     """
-    # Admins bypass all filters
-    if member.is_admin():
-        return query
     
     # Build project access filter (everyone has read access, but scope by memberships)
     if project_id:
@@ -73,11 +70,6 @@ def get_member_project_filter(member: MemberContext, project_id: Optional[str] =
     Returns:
         MongoDB filter dict
     """
-    if member.is_admin():
-        if project_id:
-            return {"project._id": uuid_str_to_mongo_binary(project_id)}
-        return {}
-    
     if project_id:
         if not member.can_access_project(project_id):
             return {"_id": {"$exists": False}}
@@ -133,10 +125,6 @@ def can_access_resource(
     Returns:
         True if member can access, False otherwise
     """
-    # Admins can access everything
-    if member.is_admin():
-        return True
-    
     # Check project access
     project = resource.get("project", {})
     if isinstance(project, dict):
@@ -187,9 +175,6 @@ def filter_results_by_access(
     Returns:
         Filtered list of accessible documents
     """
-    if member.is_admin():
-        return results
-    
     return [
         result for result in results
         if can_access_resource(result, member, resource_type)

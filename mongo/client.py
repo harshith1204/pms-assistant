@@ -111,14 +111,12 @@ class DirectMongoClient:
                 # Prepare business scoping and RBAC injection (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
                 
-                # 1. Apply member-based RBAC filtering first
+                # 1. Apply member-based RBAC filtering first (project-scoped only)
                 if MEMBER_CONTEXT:
                     try:
                         from rbac.filters import apply_member_pipeline_filter
                         from rbac.permissions import MemberContext
-                        
                         if isinstance(MEMBER_CONTEXT, MemberContext):
-                            # Apply member filter to the pipeline
                             injected_stages = apply_member_pipeline_filter([], MEMBER_CONTEXT)
                     except Exception as e:
                         print(f"Warning: RBAC filter construction failed: {e}")
