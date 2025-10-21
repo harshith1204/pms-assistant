@@ -158,6 +158,15 @@ REL: Dict[str, Dict[str, dict]] = {
             "as": "project",
             "many": False
         }
+    },
+    "epic":{
+        "project":{
+             "target": "project",
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "project",
+            "many": False
+        }
     }
 }
 
@@ -233,6 +242,16 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
     "projectState": {
         "_id", "projectId", "name", "icon",
         "subStates.name", "subStates.order"
+    },
+    "epic":{
+        "_id","title", "description","stateMaster._id","stateMaster.name",
+        "isMandatory", "isActive","state._id","state.name","priority","assignee",
+        "label","project._id","project.name","business._id","bugNo",
+        # "propertyType.value","propertyType.attributeType",
+        # "propertyType.attributeValue","propertyType.attributeOptions"
+        "createdBy._id", "createdBy.name",
+        "createdTimeStamp", "updatedTimeStamp", "dueDate",
+        "assignee", "assignee._id", "assignee.name", "label"
     }
 }
 
@@ -245,6 +264,7 @@ ALIASES: Dict[str, Dict[str, str]] = {
     "page": {},
     "cycle": {},
     "projectState": {},
+    "epic": { "bug": "bugNo", "stateName": "state.name", "last_date": "updatedTimeStamp","start_date" : "createdTimeStamp","assignee_name": "assignee.name"}
 }
 
 def resolve_field_alias(collection: str, field: str) -> str:
