@@ -213,33 +213,53 @@ async def get_current_member(
 
 
 class PermissionChecker:
-    """Dependency class to check if member has required permissions"""
-    
+    """Dependency class to enforce project-scoped permissions.
+
+    This checker prioritizes per-project permissions derived from the member's
+    memberships. If a `project_id` is present in the endpoint's parameters,
+    permissions are validated within that project's role. Otherwise, access is
+    allowed and row-level filters will apply.
+    """
+
     def __init__(self, required_permissions: list[Permission]):
         self.required_permissions = required_permissions
-    
-    async def __call__(self, member: Annotated[MemberContext, Depends(get_current_member)]) -> MemberContext:
-        """Check if member has all required permissions
-        
+
+    async def __call__(
+        self,
+        member: Annotated[MemberContext, Depends(get_current_member)],
+        **kwargs,
+    ) -> MemberContext:
+        """Validate required permissions in the context of the provided project.
+
         Args:
             member: Current member context
-            
+            kwargs: Path/query/body parameters (may include `project_id`)
+
         Returns:
             MemberContext if authorized
-            
+
         Raises:
-            HTTPException: If member lacks required permissions
+            HTTPException: If member lacks required permissions for the project
         """
-        if not member.has_all_permissions(self.required_permissions):
-            missing_perms = [
-                perm for perm in self.required_permissions 
-                if not member.has_permission(perm)
-            ]
-            raise HTTPException(
-                status_code=403,
-                detail=f"Insufficient permissions. Required: {[p.value for p in missing_perms]}"
-            )
-        
+        # Try common parameter names for project id
+        project_id = (
+            kwargs.get("project_id")
+            or kwargs.get("projectId")
+            or kwargs.get("project")
+        )
+
+        if project_id:
+            # Enforce permissions within the specific project context
+            missing_in_project: list[str] = []
+            for perm in self.required_permissions:
+                if not member.has_project_permission(perm, project_id):
+                    missing_in_project.append(perm.value)
+            if missing_in_project:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Insufficient project permissions for project {project_id}. Required: {missing_in_project}",
+                )
+        # If no project_id provided, allow; row-level project filters will restrict visibility
         return member
 
 

@@ -10,7 +10,7 @@ from bson.binary import Binary
 import uuid
 
 from rbac.permissions import MemberContext, Role
-from mongo.constants import uuid_str_to_mongo_binary
+from mongo.constants import uuid_str_to_mongo_binary, BUSINESS_UUID, COLLECTIONS_WITH_DIRECT_BUSINESS
 
 
 def apply_member_filter(
@@ -49,6 +49,16 @@ def apply_member_filter(
         # If no explicit memberships, return nothing (defensive)
         return {"_id": {"$exists": False}}
     
+    # Optionally apply business scoping (for collections that store business directly)
+    if BUSINESS_UUID and collection in COLLECTIONS_WITH_DIRECT_BUSINESS:
+        try:
+            biz_filter = {"business._id": uuid_str_to_mongo_binary(BUSINESS_UUID)}  # type: ignore[arg-type]
+            # Combine project and business filters via $and
+            project_filter = {"$and": [project_filter, biz_filter]}
+        except Exception:
+            # If conversion fails, skip business filter rather than fail the query
+            pass
+
     # Combine with existing query
     if "$and" in query:
         query["$and"].append(project_filter)
@@ -99,9 +109,7 @@ def apply_member_pipeline_filter(
     Returns:
         Pipeline with member filter injected
     """
-    if member.is_admin() and not project_id:
-        # Admin with no specific project - no filter needed
-        return pipeline
+    # Always apply project filter; access is strictly project-scoped
     
     # Build filter stage
     filter_stage = {"$match": get_member_project_filter(member, project_id)}

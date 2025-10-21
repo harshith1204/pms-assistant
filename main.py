@@ -157,7 +157,7 @@ async def list_conversations(
     try:
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
         # Filter conversations by member_id (only show user's own conversations)
-        query = {} if member.is_admin() else {"userId": member.member_id}
+        query = {"userId": member.member_id}
         cursor = coll.find(query, {"conversationId": 1, "messages": {"$slice": -1}, "updatedAt": 1}).sort("updatedAt", -1).limit(100)
         results = []
         async for doc in cursor:
@@ -187,9 +187,7 @@ async def get_conversation(
     try:
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
         # Build query with member access check
-        query = {"conversationId": conversation_id}
-        if not member.is_admin():
-            query["userId"] = member.member_id
+        query = {"conversationId": conversation_id, "userId": member.member_id}
         
         doc = await coll.find_one(query)
         if not doc:
@@ -354,11 +352,10 @@ async def set_reaction(
     """Set like/dislike and optional feedback on an assistant message."""
     try:
         # Verify member has access to this conversation
-        if not member.is_admin():
-            coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
-            conv = await coll.find_one({"conversationId": req.conversation_id, "userId": member.member_id})
-            if not conv:
-                raise HTTPException(status_code=403, detail="Access denied to this conversation")
+        coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
+        conv = await coll.find_one({"conversationId": req.conversation_id, "userId": member.member_id})
+        if not conv:
+            raise HTTPException(status_code=403, detail="Access denied to this conversation")
         
         ok = await update_message_reaction(
             conversation_id=req.conversation_id,
