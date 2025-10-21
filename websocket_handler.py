@@ -117,6 +117,7 @@ ws_manager = WebSocketManager()
 
 user_id_global = None
 business_id_global = None
+member_context_global = None  # Store MemberContext for RBAC
 
 async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     """Handle WebSocket chat connections with streaming"""
@@ -142,6 +143,44 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         # Set globals for access in other files
         user_id_global = user_context["user_id"]
         business_id_global = user_context["businessId"]
+        
+        # Initialize member context for RBAC
+        # In production, extract member_id from JWT or session
+        member_id_from_auth = user_context.get("member_id") or os.getenv("DEFAULT_MEMBER_ID")
+        
+        if member_id_from_auth:
+            try:
+                from rbac.auth import get_member_by_id, get_member_projects
+                from rbac.permissions import MemberContext, Role
+                
+                # Fetch member details
+                member_doc = await get_member_by_id(member_id_from_auth)
+                if member_doc:
+                    project_ids = await get_member_projects(member_id_from_auth)
+                    role_str = member_doc.get("role", "MEMBER")
+                    try:
+                        role = Role(role_str)
+                    except ValueError:
+                        role = Role.MEMBER
+                    
+                    member_context_global = MemberContext(
+                        member_id=member_id_from_auth,
+                        name=member_doc.get("name", ""),
+                        email=member_doc.get("email", ""),
+                        role=role,
+                        project_ids=project_ids,
+                        business_id=user_context["businessId"],
+                        type=member_doc.get("type"),
+                    )
+                    print(f"✅ Member authenticated: {member_context_global.name} ({member_context_global.role.value})")
+                else:
+                    print(f"⚠️  Member not found: {member_id_from_auth}")
+                    member_context_global = None
+            except Exception as e:
+                print(f"⚠️  Failed to initialize member context: {e}")
+                member_context_global = None
+        else:
+            member_context_global = None
 
         await ws_manager.connect(websocket, user_context["user_id"])
         authenticated = True

@@ -24,10 +24,11 @@ from mongo.constants import (
     COLLECTIONS_WITH_DIRECT_BUSINESS,
 )
 
-from websocket_handler import business_id_global , user_id_global
+from websocket_handler import business_id_global, user_id_global, member_context_global
 
 BUSINESS_UUID: str | None = business_id_global
-USER_ID : str | None = user_id_global
+USER_ID: str | None = user_id_global
+MEMBER_CONTEXT = member_context_global  # Member context for RBAC filtering
 # Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
 ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
 
@@ -107,8 +108,22 @@ class DirectMongoClient:
                 raise RuntimeError("MongoDB client not initialized. Call connect() first.")
             
             try:
-                # Prepare business scoping injection (prepend stages)
+                # Prepare business scoping and RBAC injection (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
+                
+                # 1. Apply member-based RBAC filtering first
+                if MEMBER_CONTEXT:
+                    try:
+                        from rbac.filters import apply_member_pipeline_filter
+                        from rbac.permissions import MemberContext
+                        
+                        if isinstance(MEMBER_CONTEXT, MemberContext):
+                            # Apply member filter to the pipeline
+                            injected_stages = apply_member_pipeline_filter([], MEMBER_CONTEXT)
+                    except Exception as e:
+                        print(f"Warning: RBAC filter construction failed: {e}")
+                
+                # 2. Apply business scoping on top of RBAC
                 if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
                     try:
                         biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
@@ -139,7 +154,7 @@ class DirectMongoClient:
                             ])
                     except Exception:
                         # Do not fail query if business filter construction fails
-                        injected_stages = []
+                        pass
 
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
