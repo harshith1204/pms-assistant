@@ -191,6 +191,7 @@ class LLMIntentParser:
             "issues": "workItem",
             "tickets": "workItem",
             "ticket": "workItem",
+            "epic" : "epic",
         }
 
     def _is_placeholder(self, v) -> bool:
@@ -340,7 +341,8 @@ class LLMIntentParser:
             "- Work items belong to projects, cycles, and modules\n"
             "- Work items are assigned to team members\n"
             "- Projects contain cycles and modules\n"
-            "- Cycles and modules belong to projects\n\n"
+            "- Cycles and modules belong to projects\n"
+            "- Epics contain multiple work items and belong to a project\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -1047,6 +1049,11 @@ class PipelineGenerator:
                 'project': 'project',
                 'business': 'project',
             },
+            'epic': {
+                'project': 'project',
+                'business': 'project',
+            }
+
         }.get(collection, {})
 
         # Include explicit target entities requested by the intent (supports multi-hop like "project.cycles")
@@ -1663,6 +1670,24 @@ class PipelineGenerator:
             if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
                 primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
 
+        elif collection == "epic":
+            if 'priority' in filters:
+                primary_filters['priority'] = filters['priority']
+            if 'state' in filters:
+                # Map logical state filter to embedded field
+                primary_filters['state.name'] = filters['state']
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # module.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+
         return primary_filters
 
     def _extract_secondary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
@@ -1813,6 +1838,9 @@ class PipelineGenerator:
             ],
             "projectState": [
                 "name", "subStates.name", "subStates.order"
+            ],
+            "epic": [
+                "title", "priority", "state.name", "createdTimeStamp", "project.name"
             ],
         }
 
