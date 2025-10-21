@@ -143,13 +143,23 @@ async def get_current_member(
     try:
         role = Role(role_str)
     except ValueError:
+        # If role doesn't match enum, default to MEMBER for safety
+        print(f"Warning: Unknown role '{role_str}' for member {member_id}, defaulting to MEMBER")
         role = Role.MEMBER
+    
+    # Get display name (prefer displayName over name)
+    display_name = member_doc.get("displayName") or member_doc.get("name", "")
+    
+    # Get email (handle empty strings)
+    email = member_doc.get("email", "")
+    if not email or not email.strip():
+        email = None  # Use None for empty emails
     
     # Build member context
     context = MemberContext(
         member_id=member_id,
-        name=member_doc.get("name", ""),
-        email=member_doc.get("email", ""),
+        name=display_name,
+        email=email or "",  # MemberContext expects string, use empty string for None
         role=role,
         project_ids=project_ids,
         type=member_doc.get("type"),
