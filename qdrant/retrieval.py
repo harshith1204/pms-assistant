@@ -84,6 +84,8 @@ class ChunkAwareRetriever:
         sparse_limit_multiplier: float = 2.0,
         # Packing budget (approx token budget for merged content)
         context_token_budget: Optional[int] = None,
+        # RBAC filtering (member-based project access)
+        accessible_project_names: Optional[List[str]] = None,
     ) -> List[ReconstructedDocument]:
         """
         Perform chunk-aware search with context reconstruction.
@@ -109,12 +111,26 @@ class ChunkAwareRetriever:
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
         query_embedding = self.embedding_model.encode(query).tolist()
         
-        # Build filter with optional content_type and global business scoping
+        # Build filter with optional content_type, business scoping, and RBAC project filtering
+        from qdrant_client.models import MatchAny
+        
         must_conditions = []
         if content_type:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
         if BUSINESS_UUID:
             must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
+        
+        # Apply RBAC project filtering if accessible_project_names is provided
+        if accessible_project_names is not None:
+            if len(accessible_project_names) == 0:
+                # No accessible projects - return empty results
+                return []
+            else:
+                # Filter by accessible project names
+                must_conditions.append(
+                    FieldCondition(key="project_name", match=MatchAny(any=accessible_project_names))
+                )
+        
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
         # Fetch more chunks initially to ensure we have multiple per document
