@@ -208,7 +208,10 @@ def require_permissions(*permissions: Permission):
         async def list_work_items(member: MemberContext = Depends(require_permissions(Permission.WORK_ITEM_READ))):
             ...
     """
-    return Depends(PermissionChecker(list(permissions)))
+    # Return a callable dependency (PermissionChecker instance). Do NOT wrap in Depends here
+    # because usage sites already call Depends(require_permissions(...)), and double-wrapping
+    # would pass a non-callable Depends object to FastAPI.
+    return PermissionChecker(list(permissions))
 
 
 class ResourceOwnerChecker:
