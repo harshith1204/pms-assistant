@@ -6,7 +6,7 @@ Defines permissions, roles, and access control logic based on member ID
 
 from enum import Enum
 from typing import Set, Dict, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class Permission(str, Enum):
@@ -139,9 +139,12 @@ ROLE_PERMISSIONS: Dict[Role, Set[Permission]] = {
     },
     
     Role.GUEST: {
-        # Guests have minimal read access
-        Permission.PAGE_READ,
+        # Guests have read access across the app; visibility is scoped by project membership
         Permission.PROJECT_READ,
+        Permission.PAGE_READ,
+        Permission.WORK_ITEM_READ,
+        Permission.CYCLE_READ,
+        Permission.MODULE_READ,
     },
 }
 
@@ -154,6 +157,8 @@ class MemberContext:
     email: str
     role: Role
     project_ids: List[str]  # Projects this member has access to
+    # Map of project_id -> role for that project (derived from members collection)
+    project_roles: Dict[str, Role] = field(default_factory=dict)
     business_id: Optional[str] = None
     type: Optional[str] = None  # PUBLIC, PRIVATE, etc.
     
@@ -172,11 +177,33 @@ class MemberContext:
     
     def can_access_project(self, project_id: str) -> bool:
         """Check if member can access a specific project"""
-        return project_id in self.project_ids or self.role == Role.ADMIN
+        if self.role == Role.ADMIN:
+            return True
+        # Prefer explicit project_roles mapping when present
+        if self.project_roles:
+            return project_id in self.project_roles
+        return project_id in self.project_ids
     
     def is_admin(self) -> bool:
         """Check if member is an admin"""
         return self.role == Role.ADMIN
+
+    def get_project_role(self, project_id: str) -> Optional[Role]:
+        """Get the member's role for a specific project, if known"""
+        if self.role == Role.ADMIN:
+            return Role.ADMIN
+        return self.project_roles.get(project_id)
+
+    def has_project_permission(self, permission: Permission, project_id: str) -> bool:
+        """Check a permission within the context of a specific project.
+
+        Falls back to global role when project role is unknown.
+        """
+        if self.role == Role.ADMIN:
+            return True
+        project_role = self.get_project_role(project_id) or self.role
+        role_perms = ROLE_PERMISSIONS.get(project_role, set())
+        return permission in role_perms
 
 
 class PermissionError(Exception):

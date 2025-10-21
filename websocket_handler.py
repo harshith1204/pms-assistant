@@ -150,13 +150,14 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         
         if member_id_from_auth:
             try:
-                from rbac.auth import get_member_by_id, get_member_projects
+                from rbac.auth import get_member_by_id, get_member_projects, get_member_project_roles
                 from rbac.permissions import MemberContext, Role
                 
                 # Fetch member details
                 member_doc = await get_member_by_id(member_id_from_auth)
                 if member_doc:
-                    project_ids = await get_member_projects(member_id_from_auth)
+                    project_roles = await get_member_project_roles(member_id_from_auth)
+                    project_ids = list(project_roles.keys()) or await get_member_projects(member_id_from_auth)
                     role_str = member_doc.get("role", "MEMBER")
                     try:
                         role = Role(role_str)
@@ -169,6 +170,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         email=member_doc.get("email", ""),
                         role=role,
                         project_ids=project_ids,
+                        project_roles=project_roles,
                         business_id=user_context["businessId"],
                         type=member_doc.get("type"),
                     )

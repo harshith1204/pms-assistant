@@ -62,10 +62,12 @@ class TestPermissions:
     def test_guest_minimal_access(self):
         """Guest should have minimal access"""
         guest_perms = ROLE_PERMISSIONS[Role.GUEST]
-        assert Permission.PAGE_READ in guest_perms
+        # Everyone has read access; view is scoped by project memberships
         assert Permission.PROJECT_READ in guest_perms
-        # Should NOT have work item access
-        assert Permission.WORK_ITEM_READ not in guest_perms
+        assert Permission.PAGE_READ in guest_perms
+        assert Permission.WORK_ITEM_READ in guest_perms
+        assert Permission.CYCLE_READ in guest_perms
+        assert Permission.MODULE_READ in guest_perms
 
 
 class TestMemberContext:
