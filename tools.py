@@ -672,6 +672,16 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         subs = entity.get("subStates")
                         sub_count = len(subs) if isinstance(subs, list) else 0
                         return f"• {name or 'State'} — icon={icon or 'N/A'}, substates={sub_count}"
+                    
+                    if e == "epic":
+                        title = entity.get("title") or entity.get("name")
+                        description = entity.get("description")
+                        state = entity.get("stateName") or get_nested(entity, "state.name")
+                        priority = entity.get("priority")
+                        assignee = entity.get("assigneeName") or get_nested(entity, "assignee.name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        Bug = entity.get("bugNo")
+                        return f"• {title or 'Epic'} — description={description or 'N/A'}, state={state or 'N/A'}, priority={priority or 'N/A'}, project={project or 'N/A'}, assignee={assignee or 'N/A'}, bugNo={Bug or 'N/A'}"
                     # Default fallback
                     title = entity.get("title") or entity.get("name") or "Item"
                     return f"• {truncate_str(title, 80)}"

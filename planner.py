@@ -1851,7 +1851,7 @@ class PipelineGenerator:
                 "name", "subStates.name", "subStates.order"
             ],
             "epic": [
-                "title", "priority", "state.name", "createdTimeStamp", "project.name"
+                "title", "priority", "state.name", "createdTimeStamp", "project.name","description","assignee.name","bugNo"
             ],
         }
 
