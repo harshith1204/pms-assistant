@@ -24,6 +24,130 @@ except Exception:  # pragma: no cover - optional dependency
 router = APIRouter()
 
 
+def _strip_code_fences(text: str) -> str:
+    """Remove simple markdown code fences from a string if present."""
+    try:
+        s = (text or "").strip()
+        if s.startswith("```") and s.endswith("```"):
+            # Remove first and last fence; tolerate language tag after opening fence
+            s = s[3:]  # drop opening ```
+            # Drop optional language identifier (e.g., json)
+            while s and s[0] in "\n \tabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                if s[0] == "\n":
+                    s = s[1:]
+                    break
+                # consume characters until newline (language tag)
+                s = s[1:]
+            # Remove trailing closing fence
+            if s.endswith("```"):
+                s = s[:-3]
+            return s.strip()
+        return s
+    except Exception:
+        return text
+
+
+def _try_json_loads(value: str):
+    try:
+        return json.loads(value)
+    except Exception:
+        return None
+
+
+def _unwrap_description(desc_val, fallback: str) -> str:
+    """Normalize description value to a plain markdown string.
+
+    Handles cases where the model nests JSON inside the description field
+    (e.g., description is a JSON string containing {"title", "description"}).
+    """
+    # Base case: already a plain string
+    if isinstance(desc_val, str):
+        s = desc_val.strip()
+
+        # If looks like a JSON object/text block, attempt to parse/unescape
+        # 1) Remove code fences if any
+        s_no_fence = _strip_code_fences(s)
+
+        # 2) If it's a JSON string (e.g., "{...}") try json.loads
+        parsed_once = _try_json_loads(s_no_fence)
+        if isinstance(parsed_once, dict):
+            inner_desc = parsed_once.get("description")
+            if isinstance(inner_desc, str) and inner_desc.strip():
+                return inner_desc.strip()
+            # If no inner description, fall back to stringified markdown-ish content if present
+            return s_no_fence
+        if isinstance(parsed_once, str):
+            # It was a JSON-encoded string; try a second parse in case it contains an object
+            parsed_twice = _try_json_loads(parsed_once)
+            if isinstance(parsed_twice, dict) and isinstance(parsed_twice.get("description"), str):
+                return parsed_twice["description"].strip()
+            if isinstance(parsed_twice, str) and parsed_twice.strip():
+                return parsed_twice.strip()
+        # Not JSON, return as-is
+        return s
+
+    # If dict-like, prefer its 'description' key
+    if isinstance(desc_val, dict):
+        inner = desc_val.get("description")
+        if isinstance(inner, str) and inner.strip():
+            return inner.strip()
+        # Fallback: no string description; surface nothing rather than dumping JSON
+        return fallback
+
+    # If list, join lines
+    if isinstance(desc_val, list):
+        try:
+            parts = [str(x).strip() for x in desc_val if str(x).strip()]
+            if parts:
+                return "\n".join(parts)
+        except Exception:
+            pass
+        return fallback
+
+    # Unknown type, fallback
+    return fallback
+
+
+def _extract_title_and_description(raw_content: str, fallback_title: str, fallback_description: str) -> tuple[str, str]:
+    """Best-effort extract of title and markdown description from model output."""
+    content = _strip_code_fences(raw_content or "")
+
+    # Try to locate a JSON object within content
+    parsed = None
+    try:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            parsed = json.loads(content[start : end + 1])
+        else:
+            # Try direct full parse (in case content itself is valid JSON)
+            parsed = json.loads(content)
+    except Exception:
+        parsed = None
+
+    title = fallback_title
+    description = fallback_description
+
+    if isinstance(parsed, dict):
+        # Title: prefer explicit field
+        if isinstance(parsed.get("title"), str) and parsed["title"].strip():
+            title = parsed["title"].strip()
+        # Description: aggressively unwrap any nested JSON
+        description = _unwrap_description(parsed.get("description"), fallback_description).strip() or fallback_description
+        return title, description
+
+    # Not a JSON object → treat the whole content as description body
+    body = (content or "").strip()
+    if body:
+        # First headline/line becomes title if none
+        first_line = body.splitlines()[0].strip()
+        if not title and first_line:
+            title = first_line[:120]
+        description = body
+
+    return title.strip() or fallback_title, description.strip() or fallback_description
+
+
 @router.post("/generate-work-item", response_model=GenerateResponse)
 def generate_work_item(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
@@ -56,27 +180,14 @@ def generate_work_item(req: GenerateRequest) -> GenerateResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
 
-    # Best-effort parse: if JSON-like present, extract; else use raw content
-    title = req.template.title
-    description = req.template.content
-    parsed = None
-    try:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            parsed = json.loads(content[start : end + 1])
-    except Exception:
-        parsed = None
+    # Robust parse to avoid nested JSON in description
+    title, description = _extract_title_and_description(
+        raw_content=content,
+        fallback_title=req.template.title,
+        fallback_description=req.template.content,
+    )
 
-    if isinstance(parsed, dict):
-        title = parsed.get("title") or title
-        description = parsed.get("description") or description
-    else:
-        description = content.strip() or description
-        first_line = description.splitlines()[0] if description else req.prompt
-        title = first_line[:120]
-
-    return GenerateResponse(title=title.strip(), description=description.strip())
+    return GenerateResponse(title=title, description=description)
 
 
 @router.post("/generate-work-item-surprise-me", response_model=GenerateResponse)
@@ -118,25 +229,14 @@ def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateRe
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
 
-    # Best-effort parse: if JSON-like present, extract; else use raw content
-    title = req.title
-    description = provided_description
-    parsed = None
-    try:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            parsed = json.loads(content[start : end + 1])
-    except Exception:
-        parsed = None
+    # Robust parse to avoid nested JSON in description
+    title, description = _extract_title_and_description(
+        raw_content=content,
+        fallback_title=req.title,
+        fallback_description=provided_description,
+    )
 
-    if isinstance(parsed, dict):
-        title = parsed.get("title") or title
-        description = parsed.get("description") or description
-    else:
-        description = content.strip() or description
-
-    return GenerateResponse(title=title.strip(), description=description.strip())
+    return GenerateResponse(title=title, description=description)
 
 
 @router.options("/stream-page-content")
