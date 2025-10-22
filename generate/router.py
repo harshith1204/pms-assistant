@@ -76,6 +76,8 @@ def generate_work_item(req: GenerateRequest) -> GenerateResponse:
         first_line = description.splitlines()[0] if description else req.prompt
         title = first_line[:120]
 
+    # Keep as-is: this endpoint expects JSON and already extracts description
+
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
@@ -114,29 +116,13 @@ def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateRe
                 {"role": "user", "content": user_prompt},
             ],
         )
-        content = completion.choices[0].message.content or ""
+        # The model is instructed to return ONLY markdown description
+        generated_description = (completion.choices[0].message.content or "").strip()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
 
-    # Best-effort parse: if JSON-like present, extract; else use raw content
-    title = req.title
-    description = provided_description
-    parsed = None
-    try:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            parsed = json.loads(content[start : end + 1])
-    except Exception:
-        parsed = None
-
-    if isinstance(parsed, dict):
-        title = parsed.get("title") or title
-        description = parsed.get("description") or description
-    else:
-        description = content.strip() or description
-
-    return GenerateResponse(title=title.strip(), description=description.strip())
+    # Always return the original title and the generated markdown description
+    return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 
 @router.options("/stream-page-content")
