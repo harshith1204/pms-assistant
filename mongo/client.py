@@ -260,29 +260,40 @@ class DirectMongoClient:
                         }},
                         {"$addFields": {
                             "__mem_count__": {"$size": "$__mem__"},
-                            "__mem_staff_ids__": {
+                            "__mem_data__": {
                                 "$map": {
-                                    "input": "$__mem__",
+                                    "input": {"$slice": ["$__mem__", 3]},
                                     "as": "m",
-                                    "in": "$$m.staff._id"
+                                    "in": {
+                                        "_id": "$$m._id",
+                                        "memberId": "$$m.memberId",
+                                        "staff_id": "$$m.staff._id",
+                                        "name": "$$m.name"
+                                    }
                                 }
                             }
                         }},
                         {"$project": {
                             "name": 1,
                             "__mem_count__": 1,
-                            "__mem_staff_ids__": 1
+                            "__mem_data__": 1
                         }},
-                        {"$limit": 5}
+                        {"$limit": 10}
                     ]
                     debug_cursor = coll.aggregate(debug_pipeline)
                     debug_results = await debug_cursor.to_list(length=None)
-                    print(f"   Found {len(debug_results)} total projects:")
+                    print(f"   Found {len(debug_results)} total projects (showing first 10):")
                     for proj in debug_results:
                         print(f"      - {proj.get('name')}: {proj.get('__mem_count__')} members")
-                        if proj.get('__mem_staff_ids__'):
-                            print(f"        Staff IDs: {proj.get('__mem_staff_ids__')[:3]}")
-                    print(f"   Looking for staff._id = {mem_bin}\n")
+                        if proj.get('__mem_data__'):
+                            for m in proj.get('__mem_data__', [])[:2]:
+                                print(f"        Member: {m.get('name')}")
+                                print(f"          _id: {m.get('_id')}")
+                                print(f"          memberId: {m.get('memberId')}")
+                                print(f"          staff._id: {m.get('staff_id')}")
+                                if m.get('_id') == mem_bin or m.get('memberId') == mem_bin or m.get('staff_id') == mem_bin:
+                                    print(f"          ✓✓✓ MATCH FOUND! ✓✓✓")
+                    print(f"\n   Target UUID = {mem_bin}\n")
                 
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
