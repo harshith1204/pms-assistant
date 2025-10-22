@@ -37,4 +37,44 @@
   },
   "role": "ADMIN",
   "_class": "com.lm.project.project_management.pms.model.Members"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "xKLm9PzbDB7aQfTwNqD2vA==",
+      "subType": "03"
+    }
+  },
+  "memberId": {
+    "$binary": {
+      "base64": "HGm3S+9pBx8TR97O1mE0tQ==",
+      "subType": "03"
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "GERBNxWW/9lPeQtYn4LUpA==",
+        "subType": "03"
+      }
+    },
+    "name": "gggg"
+  },
+  "name": "vihan",
+  "email": "v@gmail.com",
+  "joiningDate": {
+    "$date": "2025-08-11T12:17:00.000Z"
+  },
+  "type": "PUBLIC",
+  "staff": {
+    "_id": {
+      "$binary": {
+        "base64": "HGm3S+9pBx8TR97O1mE0tQ==",
+        "subType": "03"
+      }
+    },
+    "name": "vihan"
+  },
+  "role": "ADMIN",
+  "_class": "com.lm.project.project_management.pms.model.Members"
 }]
