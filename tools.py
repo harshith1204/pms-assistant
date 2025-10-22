@@ -622,7 +622,15 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                             total_hours += total_mins // 60
                             total_mins = total_mins % 60
                             base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
-                        
+                            
+                            descriptions = [
+                                log.get("description", "").strip()
+                                for log in work_logs
+                                if isinstance(log, dict) and log.get("description")
+                            ]
+                            descriptions_text = "; ".join(descriptions) if descriptions else "No descriptions"
+
+                            base += f", descriptions=[{descriptions_text}]"
                         return base
                     if e == "project":
                         pid = entity.get("projectDisplayId")
