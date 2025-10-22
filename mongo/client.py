@@ -153,9 +153,13 @@ class DirectMongoClient:
                                 {"$match": {"__biz_proj__.business._id": biz_bin}},
                                 {"$unset": "__biz_proj__"},
                             ])
-                    except Exception:
-                        # Do not fail query if business filter construction fails
-                        pass
+                    except ValueError as e:
+                        # Invalid UUID format - log and skip business filter
+                        print(f"⚠️  Invalid BUSINESS_UUID format '{biz_uuid}': {e}")
+                        print(f"   Skipping business filter for {collection}")
+                    except Exception as e:
+                        # Other errors - log and skip business filter
+                        print(f"⚠️  Error applying business filter for {collection}: {e}")
 
                 # 2) Member-level project RBAC scoping
                 if enforce_member and member_uuid:
@@ -186,9 +190,13 @@ class DirectMongoClient:
                         elif collection == "projectState":
                             injected_stages.extend(_membership_join("projectId"))
                         # Other collections: no-op
-                    except Exception:
-                        # Do not fail query if member filter construction fails
-                        pass
+                    except ValueError as e:
+                        # Invalid UUID format - log and skip member filter
+                        print(f"⚠️  Invalid MEMBER_UUID format '{member_uuid}': {e}")
+                        print(f"   Skipping member filter for {collection}")
+                    except Exception as e:
+                        # Other errors - log and skip member filter
+                        print(f"⚠️  Error applying member filter for {collection}: {e}")
 
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
