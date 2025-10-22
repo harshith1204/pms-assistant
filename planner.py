@@ -342,7 +342,7 @@ class LLMIntentParser:
             "- Work items are assigned to team members\n"
             "- Projects contain cycles and modules\n"
             "- Cycles and modules belong to projects\n"
-            "- Epics contain multiple work items and belong to a project\n\n"
+            "- Epics contain multiple features and belong to a project lifecycle.\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -366,6 +366,8 @@ class LLMIntentParser:
             "- estimateSystem: TIME|POINTS|etc (for workItem)\n"
             "- estimate: object with hr/min fields (for workItem)\n"
             "- workLogs: array of work log entries with user, hours, minutes, description, loggedAt (for workItem)\n\n"
+            "- state_name: Backlog|New|Started|Unstarted|Completed (for epic)\n"
+            "- priority: URGENT|HIGH|MEDIUM|LOW (for epic)\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -541,6 +543,15 @@ class LLMIntentParser:
         # Map legacy 'status' to 'state' for workItem if present
         if primary == "workItem" and "status" in raw_filters and "state" not in raw_filters:
             raw_filters["state"] = raw_filters.pop("status")
+
+        # For epic collection, accept 'state_name' as the canonical filter key
+        # and also map legacy 'status' to 'state_name' when provided by LLMs/users
+        if primary == "epic":
+            if "status" in raw_filters and "state_name" not in raw_filters:
+                raw_filters["state_name"] = raw_filters.pop("status")
+            # Some LLMs may emit 'state' for epics; prefer 'state_name'
+            if "state" in raw_filters and "state_name" not in raw_filters:
+                raw_filters["state_name"] = raw_filters.pop("state")
 
         # Allow plain 'status' for project/cycle as their canonical status
         if primary in ("project", "cycle") and "status" in raw_filters:
