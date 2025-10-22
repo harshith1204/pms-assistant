@@ -132,8 +132,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         #     "businessId": "default_business",
         # }
 
-        # Load business ID from OS environment variable
-        business_id_from_env = os.getenv("BUSINESS_ID", "default_business")
+        # Load business ID from OS environment variable (support both BUSINESS_ID and BUSINESS_UUID)
+        business_id_from_env = os.getenv("BUSINESS_ID") or os.getenv("BUSINESS_UUID") or "default_business"
         user_context = {
             "user_id": "default_user",
             "businessId": business_id_from_env,
