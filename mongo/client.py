@@ -24,15 +24,9 @@ from mongo.constants import (
     COLLECTIONS_WITH_DIRECT_BUSINESS,
 )
 
-def _get_current_member_context():
-    """Fetch latest MemberContext from websocket globals, if available."""
-    try:
-        # Import inside function to avoid circular imports and get latest value
-        from websocket_handler import member_context_global  # type: ignore
-        return member_context_global
-    except Exception as e:
-        print(f"⚠️  Failed to get member context: {e}")
-        return None
+_MEMBER_CONTEXT_CACHE = None  # type: ignore[var-annotated]
+_MEMBER_CONTEXT_CACHE_MEMBER_ID: str | None = None
+
 
 
 def _get_current_business_uuid() -> str | None:
@@ -52,6 +46,83 @@ def _get_current_business_uuid() -> str | None:
         return business_id_global
     except Exception:
         return None
+
+
+async def _resolve_member_context():
+    """Resolve a MemberContext for data-level RBAC without relying on WS auth.
+
+    Priority:
+    1) Websocket-provided `member_context_global` if present
+    2) Build from environment DEFAULT_MEMBER_ID/MEMBER_ID by reading `members` collection
+    3) Return None if nothing available (queries will still be business-scoped)
+    """
+    # Declare global variables at the start of the function
+    global _MEMBER_CONTEXT_CACHE, _MEMBER_CONTEXT_CACHE_MEMBER_ID
+
+    # 1) Websocket-provided context
+    try:
+        from websocket_handler import member_context_global  # type: ignore
+        if member_context_global is not None:
+            # Cache and return
+            _MEMBER_CONTEXT_CACHE = member_context_global
+            _MEMBER_CONTEXT_CACHE_MEMBER_ID = getattr(member_context_global, "member_id", None)
+            return member_context_global
+    except Exception:
+        pass
+
+    # 2) Build from env member id
+    member_id = os.getenv("DEFAULT_MEMBER_ID") or os.getenv("MEMBER_ID")
+    if not member_id:
+        return None
+
+    # Serve from cache if up-to-date
+    if _MEMBER_CONTEXT_CACHE is not None and _MEMBER_CONTEXT_CACHE_MEMBER_ID == member_id:
+        return _MEMBER_CONTEXT_CACHE
+
+    try:
+        # Import lazily to avoid circular imports during module load
+        from rbac.permissions import MemberContext  # type: ignore
+        from rbac.auth import (  # type: ignore
+            get_member_by_id,
+            get_member_project_memberships,
+            get_member_projects,
+        )
+
+        # Fetch profile and memberships
+        member_doc = await get_member_by_id(member_id)
+        project_memberships = await get_member_project_memberships(member_id)
+        project_ids = list(project_memberships.keys()) or await get_member_projects(member_id)
+
+        # Build MemberContext (gracefully handle missing profile)
+        display_name = (member_doc or {}).get("displayName") or (member_doc or {}).get("name", "")
+        email = (member_doc or {}).get("email") or ""
+        member_type = (member_doc or {}).get("type")
+
+        ctx = MemberContext(
+            member_id=member_id,
+            name=display_name,
+            email=email,
+            project_ids=project_ids,
+            project_memberships=project_memberships,
+            type=member_type,
+            business_id=None,
+        )
+
+        # Cache and return
+        _MEMBER_CONTEXT_CACHE = ctx
+        _MEMBER_CONTEXT_CACHE_MEMBER_ID = member_id
+        return ctx
+    except Exception as e:
+        print(f"⚠️  Failed to resolve member context from env: {e}")
+        return None
+
+
+async def get_member_context():
+    """Public async API to obtain the current MemberContext.
+
+    Used by tools (e.g., RAG) to enforce data-level RBAC outside HTTP deps.
+    """
+    return await _resolve_member_context()
 
 class DirectMongoClient:
     """Direct MongoDB client using Motor (async PyMongo) - replaces MongoDB MCP"""
@@ -133,7 +204,7 @@ class DirectMongoClient:
                 injected_stages: List[Dict[str, Any]] = []
 
                 # Resolve latest contexts dynamically to avoid stale globals
-                member_context = _get_current_member_context()
+                member_context = await _resolve_member_context()
                 biz_uuid = _get_current_business_uuid()
                 enforce_business = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(biz_uuid)
 
