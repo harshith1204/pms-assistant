@@ -130,8 +130,10 @@ class DirectMongoClient:
                 # Prepare business and member scoping injections (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
 
-                # 1) Business scoping
-                if enforce_business and biz_uuid:
+                # 1) Business scoping (ONLY if member filtering is NOT enabled)
+                # Member-based access takes precedence over business-based access
+                if enforce_business and biz_uuid and not enforce_member:
+                    print(f"   Applying business filter (member filter disabled)")
                     try:
                         biz_bin = uuid_str_to_mongo_binary(biz_uuid)
                         if collection in COLLECTIONS_WITH_DIRECT_BUSINESS:
@@ -166,6 +168,8 @@ class DirectMongoClient:
                     except Exception as e:
                         # Other errors - log and skip business filter
                         print(f"⚠️  Error applying business filter for {collection}: {e}")
+                elif enforce_business and biz_uuid and enforce_member:
+                    print(f"   ⚠️  Business filter SKIPPED - member filter takes precedence")
 
                 # 2) Member-level project RBAC scoping
                 if enforce_member and member_uuid:
@@ -178,6 +182,23 @@ class DirectMongoClient:
 
                         def _membership_join(local_field: str) -> List[Dict[str, Any]]:
                             """Build a $lookup + $match + $unset pipeline ensuring the document's project belongs to member."""
+                            # DEBUG: Add a stage to see what members are found
+                            debug_stage = {
+                                "$addFields": {
+                                    "__mem_debug__": {
+                                        "$map": {
+                                            "input": "$__mem__",
+                                            "as": "m",
+                                            "in": {
+                                                "_id": "$$m._id",
+                                                "memberId": "$$m.memberId",
+                                                "staff_id": "$$m.staff._id"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
                             return [
                                 {"$lookup": {
                                     "from": "members",
