@@ -852,14 +852,19 @@ async def rag_search(
             await RAGTool.initialize()
             rag_tool = RAGTool.get_instance()
         
-        # Get member context from global if not provided
+        # Get member context if not provided (async resolution to enforce RBAC)
         if member_context is None:
             try:
-                # Resolve latest member context dynamically to avoid stale globals
-                from mongo.client import _get_current_member_context  # type: ignore
-                member_context = _get_current_member_context()
+                # Prefer async resolver to build context from env/members collection
+                from mongo.client import get_member_context  # type: ignore
+                member_context = await get_member_context()
             except Exception:
-                member_context = None
+                # Fallback to best-effort sync cache if available
+                try:
+                    from mongo.client import _get_current_member_context  # type: ignore
+                    member_context = _get_current_member_context()
+                except Exception:
+                    member_context = None
         
         # Get accessible project names for RBAC filtering
         accessible_project_names = None
