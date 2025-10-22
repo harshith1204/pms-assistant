@@ -121,7 +121,7 @@ member_context_global = None  # Store MemberContext for RBAC
 
 async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     """Handle WebSocket chat connections with streaming"""
-    global user_id_global, business_id_global
+    global user_id_global, business_id_global, member_context_global
     user_id = None
     try:
         await websocket.accept()
@@ -159,7 +159,6 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 if member_doc:
                     project_memberships = await get_member_project_memberships(member_id_from_auth)
                     project_ids = list(project_memberships.keys()) or await get_member_projects(member_id_from_auth)
-                    
                     member_context_global = MemberContext(
                         member_id=member_id_from_auth,
                         name=member_doc.get("name", ""),
@@ -169,7 +168,6 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         business_id=user_context["businessId"],
                         type=member_doc.get("type"),
                     )
-                    print(f"✅ Member authenticated: {member_context_global.name}")
                 else:
                     print(f"⚠️  Member not found: {member_id_from_auth}")
                     member_context_global = None

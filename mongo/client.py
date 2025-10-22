@@ -30,7 +30,8 @@ def _get_current_member_context():
         # Import inside function to avoid circular imports and get latest value
         from websocket_handler import member_context_global  # type: ignore
         return member_context_global
-    except Exception:
+    except Exception as e:
+        print(f"⚠️  Failed to get member context: {e}")
         return None
 
 
@@ -142,7 +143,9 @@ class DirectMongoClient:
                         from rbac.filters import apply_member_pipeline_filter
                         injected_stages = apply_member_pipeline_filter([], member_context, None, collection)  # type: ignore[arg-type]
                     except Exception as e:
-                        print(f"Warning: RBAC filter construction failed: {e}")
+                        print(f"❌ MongoDB Client: RBAC filter construction failed: {e}")
+                else:
+                    print(f"⚠️  MongoDB Client: No member context available - RBAC filters NOT applied for collection '{collection}'")
 
                 # 2. Apply business scoping on top of RBAC
                 if enforce_business and biz_uuid:
@@ -181,9 +184,13 @@ class DirectMongoClient:
                 db = self.client[database]
                 coll = db[collection]
                 effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
+                
+                print(f"📊 MongoDB Query: collection='{collection}', pipeline stages={len(effective_pipeline)} (original: {len(pipeline)}, injected: {len(injected_stages)})")
+                if injected_stages:
+                    print(f"   First stage (RBAC filter): {injected_stages[0]}")
+                
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
-                
                 pass
                 
                 return results
