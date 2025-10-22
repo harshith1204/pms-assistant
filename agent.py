@@ -407,6 +407,34 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
                 "timestamp": datetime.now().isoformat()
             })
 
+    async def emit_llm_burst(self, text: str) -> None:
+        """Emit a minimal start → single-token → end sequence for final text.
+
+        Used when a planning step produced a direct final answer without streaming
+        callbacks enabled, so the UI still receives a coherent assistant message.
+        """
+        if not self.websocket:
+            return
+        try:
+            await self.websocket.send_json({
+                "type": "llm_start",
+                "timestamp": datetime.now().isoformat()
+            })
+            if text:
+                await self.websocket.send_json({
+                    "type": "token",
+                    "content": text,
+                    "timestamp": datetime.now().isoformat()
+                })
+            await self.websocket.send_json({
+                "type": "llm_end",
+                "elapsed_time": 0,
+                "timestamp": datetime.now().isoformat()
+            })
+        except Exception:
+            # Best-effort; do not raise
+            pass
+
     async def on_tool_end(self, output: str, **kwargs):
         """Called when a tool finishes executing.
 
@@ -657,12 +685,13 @@ class MongoDBAgent:
                             pass
                 last_response = response
 
-                # Persist assistant message
+                # Persist assistant message only if this is a final answer (no tool calls)
                 conversation_memory.add_message(conversation_id, response)
-                try:
-                    await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                except Exception as e:
-                    print(f"Warning: failed to save assistant message: {e}")
+                if not getattr(response, "tool_calls", None):
+                    try:
+                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                    except Exception as e:
+                        print(f"Warning: failed to save assistant message: {e}")
 
                 # If no tools requested, we are done
                 if not getattr(response, "tool_calls", None):
@@ -876,10 +905,15 @@ class MongoDBAgent:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
-                        response = await llm_with_tools.ainvoke(
-                            invoke_messages,
-                            config={"callbacks": [callback_handler]},
-                        )
+                        # Stream only during finalization; suppress streaming during planning/tool steps
+                        stream_this_turn = need_finalization is True
+                        if stream_this_turn:
+                            response = await llm_with_tools.ainvoke(
+                                invoke_messages,
+                                config={"callbacks": [callback_handler]},
+                            )
+                        else:
+                            response = await llm_with_tools.ainvoke(invoke_messages)
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
@@ -889,14 +923,21 @@ class MongoDBAgent:
                                 pass
                     last_response = response
 
-                    # Persist assistant message
+                    # Persist assistant message only if this is a final answer (no tool calls)
                     conversation_memory.add_message(conversation_id, response)
-                    try:
-                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                    except Exception as e:
-                        print(f"Warning: failed to save assistant message: {e}")
+                    if not getattr(response, "tool_calls", None):
+                        try:
+                            await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                        except Exception as e:
+                            print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
+                        # If we did not stream this turn (planning produced a direct answer), emit a burst now
+                        if 'stream_this_turn' in locals() and not stream_this_turn and callback_handler:
+                            try:
+                                await callback_handler.emit_llm_burst(str(getattr(response, "content", "") or ""))
+                            except Exception:
+                                pass
                         yield response.content
                         return
 
