@@ -6,7 +6,7 @@ import uuid
 import asyncio
 import contextlib
 from motor.motor_asyncio import AsyncIOMotorClient
-
+from .client import biz_uuid , member_uuid
 try:
     from openinference.semconv.trace import SpanAttributes as OI
 except Exception:
@@ -130,6 +130,8 @@ async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
 async def save_user_message(conversation_id: str, content: str) -> None:
     await append_message(
         conversation_id,
+        biz_uuid,
+        member_uuid,
         {
             "type": "user",
             "content": content or "",
@@ -140,6 +142,8 @@ async def save_user_message(conversation_id: str, content: str) -> None:
 async def save_assistant_message(conversation_id: str, content: str) -> None:
     await append_message(
         conversation_id,
+        biz_uuid,
+        member_uuid,
         {
             "type": "assistant",
             "content": content or "",
@@ -159,6 +163,8 @@ async def save_action_event(
         return
     await append_message(
         conversation_id,
+        biz_uuid,
+        member_uuid,
         {
             "type": "action",
             "content": text or "",
@@ -175,6 +181,8 @@ async def save_generated_work_item(conversation_id: str, work_item: Dict[str, An
     """
     await append_message(
         conversation_id,
+        biz_uuid,
+        member_uuid,
         _ensure_message_shape({
             "type": "work_item",
             "content": "",  # keep content empty; UI renders from structured field
@@ -200,6 +208,8 @@ async def save_generated_page(conversation_id: str, page: Dict[str, Any]) -> Non
 
     await append_message(
         conversation_id,
+        biz_uuid,
+        member_uuid,
         _ensure_message_shape({
             "type": "page",
             "content": "",
