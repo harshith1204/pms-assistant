@@ -110,7 +110,7 @@ async def _get_collection():
     return await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
 
 
-async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
+async def append_message(conversation_id: str, message: Dict[str, Any], user_id: Optional[str] = None) -> None:
     coll = await _get_collection()
     safe_message = _ensure_message_shape(message)
     await coll.update_one(
@@ -119,6 +119,7 @@ async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
             "$setOnInsert": {
                 "conversationId": conversation_id,
                 "createdAt": _now_iso(),
+                **({"userId": user_id} if user_id else {}),
             },
             "$push": {"messages": safe_message},
             "$set": {"updatedAt": _now_iso()},
@@ -127,13 +128,14 @@ async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
     )
 
 
-async def save_user_message(conversation_id: str, content: str) -> None:
+async def save_user_message(conversation_id: str, content: str, user_id: Optional[str] = None) -> None:
     await append_message(
         conversation_id,
         {
             "type": "user",
             "content": content or "",
         },
+        user_id=user_id,
     )
 
 

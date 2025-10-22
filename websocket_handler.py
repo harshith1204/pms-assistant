@@ -134,7 +134,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         # }
 
         # Load business ID from OS environment variable
-        business_id_from_env = "8a683ad2-26cb-ed1e-29b2-da199d5763bd"
+        business_id_from_env = os.getenv("BUSINESS_UUID") or "default_business"
         user_context = {
             "user_id": "default_user",
             "businessId": business_id_from_env,
@@ -144,8 +144,35 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         user_id_global = user_context["user_id"]
         business_id_global = user_context["businessId"]
         
-        # RBAC disabled for frontend: do not initialize member context
-        member_context_global = None
+        # Initialize member context for RBAC from environment (no frontend auth headers)
+        member_id_from_env = os.getenv("DEFAULT_MEMBER_ID")
+        if member_id_from_env:
+            try:
+                from rbac.auth import get_member_by_id, get_member_projects, get_member_project_memberships
+                from rbac.permissions import MemberContext
+
+                member_doc = await get_member_by_id(member_id_from_env)
+                if member_doc:
+                    project_memberships = await get_member_project_memberships(member_id_from_env)
+                    project_ids = list(project_memberships.keys()) or await get_member_projects(member_id_from_env)
+                    member_context_global = MemberContext(
+                        member_id=member_id_from_env,
+                        name=member_doc.get("displayName") or member_doc.get("name", ""),
+                        email=member_doc.get("email", ""),
+                        project_ids=project_ids,
+                        project_memberships=project_memberships,
+                        business_id=user_context["businessId"],
+                        type=member_doc.get("type"),
+                    )
+                else:
+                    print(f"⚠️  Member not found for DEFAULT_MEMBER_ID: {member_id_from_env}")
+                    member_context_global = None
+            except Exception as e:
+                print(f"⚠️  Failed to initialize member context from env: {e}")
+                member_context_global = None
+        else:
+            print("⚠️  DEFAULT_MEMBER_ID not set; RBAC filters will not be applied to pipelines")
+            member_context_global = None
 
         await ws_manager.connect(websocket, user_context["user_id"])
         authenticated = True
@@ -187,7 +214,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
             # Persist user message to SimpoAssist.conversations
             try:
-                await save_user_message(conversation_id, message)
+                # Persist and tag conversation owner on first insert using env member id
+                await save_user_message(conversation_id, message, user_id=(member_id_from_env or None))
             except Exception as e:
                 # Non-fatal: log to console, continue processing
                 print(f"Warning: failed to save user message: {e}")
