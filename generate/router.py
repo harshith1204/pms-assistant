@@ -2,6 +2,55 @@ import os
 import json
 from fastapi import APIRouter, HTTPException, Request
 
+# Helpers to robustly parse model output that sometimes double-encodes JSON
+def _unwrap_description(candidate):
+    """Return a clean markdown description string.
+
+    Some model responses incorrectly place a JSON object as a string inside the
+    description, e.g. "{\"title\":\"X\",\"description\":\"...\"}".
+    This function detects and unwraps such cases to return only the inner
+    description text.
+    """
+    # If already a dict, prefer its 'description' field
+    if isinstance(candidate, dict):
+        inner = candidate.get("description")
+        if isinstance(inner, str) and inner.strip():
+            return inner.strip()
+        # Fallback to common alternative keys
+        for key in ("content", "body", "text"):
+            inner_alt = candidate.get(key)
+            if isinstance(inner_alt, str) and inner_alt.strip():
+                return inner_alt.strip()
+        # Last resort: stringify the dict
+        return json.dumps(candidate, ensure_ascii=False)
+
+    # Coerce non-strings
+    if not isinstance(candidate, str):
+        return str(candidate)
+
+    s = candidate.strip()
+    # Fast-path: nothing that looks like JSON
+    if not (s.startswith("{") and s.endswith("}")):
+        return s
+
+    # Attempt to parse nested JSON string
+    try:
+        nested = json.loads(s)
+        if isinstance(nested, dict):
+            inner = nested.get("description")
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
+            for key in ("content", "body", "text"):
+                inner_alt = nested.get(key)
+                if isinstance(inner_alt, str) and inner_alt.strip():
+                    return inner_alt.strip()
+    except Exception:
+        # If parsing fails, return the original string
+        return s
+
+    # If no usable field found, return original
+    return s
+
 from .models import (
     GenerateRequest,
     GenerateResponse,
@@ -76,6 +125,9 @@ def generate_work_item(req: GenerateRequest) -> GenerateResponse:
         first_line = description.splitlines()[0] if description else req.prompt
         title = first_line[:120]
 
+    # Normalize description to avoid double-encoded JSON structures
+    description = _unwrap_description(description)
+
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
@@ -135,6 +187,9 @@ def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateRe
         description = parsed.get("description") or description
     else:
         description = content.strip() or description
+
+    # Normalize description to avoid double-encoded JSON structures
+    description = _unwrap_description(description)
 
     return GenerateResponse(title=title.strip(), description=description.strip())
 
