@@ -31,6 +31,12 @@ USER_ID : str | None = user_id_global
 # Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
 ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
 
+# --- Member-level RBAC scoping ---
+# Accept either MEMBER_ID or STAFF_ID (canonical UUID string)
+MEMBER_UUID: str | None = os.getenv("MEMBER_ID") or os.getenv("STAFF_ID")
+# Enable when explicitly requested or when MEMBER_UUID present
+ENFORCE_MEMBER_FILTER: bool = os.getenv("ENFORCE_MEMBER_FILTER", "").lower() in ("1", "true", "yes") or bool(MEMBER_UUID)
+
 class DirectMongoClient:
     """Direct MongoDB client using Motor (async PyMongo) - replaces MongoDB MCP"""
 
@@ -107,8 +113,10 @@ class DirectMongoClient:
                 raise RuntimeError("MongoDB client not initialized. Call connect() first.")
             
             try:
-                # Prepare business scoping injection (prepend stages)
+                # Prepare business and member scoping injections (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
+
+                # 1) Business scoping
                 if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
                     try:
                         biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
@@ -140,6 +148,39 @@ class DirectMongoClient:
                     except Exception:
                         # Do not fail query if business filter construction fails
                         injected_stages = []
+
+                # 2) Member-level project RBAC scoping
+                if ENFORCE_MEMBER_FILTER and MEMBER_UUID:
+                    try:
+                        mem_bin = uuid_str_to_mongo_binary(MEMBER_UUID)
+
+                        def _membership_join(local_field: str) -> List[Dict[str, Any]]:
+                            """Build a $lookup + $match + $unset pipeline ensuring the document's project belongs to member."""
+                            return [
+                                {"$lookup": {
+                                    "from": "members",
+                                    "localField": local_field,
+                                    "foreignField": "project._id",
+                                    "as": "__mem__",
+                                }},
+                                # Ensure at least one membership document for this member
+                                {"$match": {"__mem__": {"$elemMatch": {"staff._id": mem_bin}}}},
+                                {"$unset": "__mem__"},
+                            ]
+
+                        if collection == "members":
+                            # Only allow viewing own memberships
+                            injected_stages.append({"$match": {"staff._id": mem_bin}})
+                        elif collection == "project":
+                            injected_stages.extend(_membership_join("_id"))
+                        elif collection in ("workItem", "cycle", "module", "page"):
+                            injected_stages.extend(_membership_join("project._id"))
+                        elif collection == "projectState":
+                            injected_stages.extend(_membership_join("projectId"))
+                        # Other collections: no-op
+                    except Exception:
+                        # Do not fail query if member filter construction fails
+                        pass
 
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
