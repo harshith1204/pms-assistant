@@ -6,6 +6,7 @@ import uuid
 import asyncio
 import contextlib
 from motor.motor_asyncio import AsyncIOMotorClient
+import os
 
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -106,6 +107,36 @@ def _ensure_message_shape(message: Dict[str, Any]) -> Dict[str, Any]:
     return enriched
 
 
+def _resolve_business_and_member_ids() -> Dict[str, str]:
+    """Resolve business and member identifiers from runtime websocket context or environment.
+
+    Returns keys: 'businessId' and 'memberId' with string values (possibly empty when unavailable).
+    """
+    business_id: str = ""
+    member_id: str = ""
+
+    # Prefer runtime websocket context if available (set by websocket_handler)
+    try:
+        import websocket_handler as _ws_ctx  # dynamic import to avoid circular dependency at module import time
+        ws_business = getattr(_ws_ctx, "business_id_global", None)
+        ws_member = getattr(_ws_ctx, "user_id_global", None)
+        if isinstance(ws_business, str) and ws_business:
+            business_id = ws_business
+        if isinstance(ws_member, str) and ws_member:
+            member_id = ws_member
+    except Exception:
+        # Best-effort: fall back to environment below
+        pass
+
+    # Fall back to environment variables when not present in runtime context
+    if not business_id:
+        business_id = os.getenv("BUSINESS_UUID") or os.getenv("BUSINESS_ID") or ""
+    if not member_id:
+        member_id = os.getenv("MEMBER_UUID") or os.getenv("STAFF_ID") or ""
+
+    return {"businessId": business_id, "memberId": member_id}
+
+
 async def _get_collection():
     return await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
 
@@ -113,15 +144,31 @@ async def _get_collection():
 async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
     coll = await _get_collection()
     safe_message = _ensure_message_shape(message)
+    # Resolve business/member identifiers and persist them at the document level
+    ctx_ids = _resolve_business_and_member_ids()
+
+    set_on_insert: Dict[str, Any] = {
+        "conversationId": conversation_id,
+        "createdAt": _now_iso(),
+    }
+    if ctx_ids.get("businessId"):
+        set_on_insert["businessId"] = ctx_ids["businessId"]
+    if ctx_ids.get("memberId"):
+        set_on_insert["memberId"] = ctx_ids["memberId"]
+
+    set_fields: Dict[str, Any] = {"updatedAt": _now_iso()}
+    # Also set/refresh IDs in case they were missing on existing docs
+    if ctx_ids.get("businessId"):
+        set_fields["businessId"] = ctx_ids["businessId"]
+    if ctx_ids.get("memberId"):
+        set_fields["memberId"] = ctx_ids["memberId"]
+
     await coll.update_one(
         {"conversationId": conversation_id},
         {
-            "$setOnInsert": {
-                "conversationId": conversation_id,
-                "createdAt": _now_iso(),
-            },
+            "$setOnInsert": set_on_insert,
             "$push": {"messages": safe_message},
-            "$set": {"updatedAt": _now_iso()},
+            "$set": set_fields,
         },
         upsert=True,
     )
