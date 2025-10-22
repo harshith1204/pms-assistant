@@ -35,18 +35,34 @@ class _LazyMongoDBTools:
 mongodb_tools = _LazyMongoDBTools()
 
 # --- Global business scoping ---
-# Business UUID to scope all queries/searches. Set via env 
+# Business UUID to scope all queries/searches. Set via env.
+# Some modules import this; define it here to avoid import errors
+BUSINESS_UUID: str = os.getenv("BUSINESS_UUID", "")
+
 COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page"}
 
 def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
-    """Convert canonical UUID string to Mongo Binary subtype 3 (legacy UUID).
+    """Convert canonical UUID string to Binary subtype 3 using Java legacy layout.
 
-    Many documents store UUIDs as Binary subtype 3. This returns a Binary value
-    suitable for equality matching in queries (e.g., {'business._id': value}).
+    The data in the collections was written by a Java driver using the
+    "JAVA_LEGACY" representation (Binary subtype 3) where the first three
+    UUID components (time_low, time_mid, time_hi_and_version) are stored in
+    little-endian byte order. To match these values correctly from Python,
+    we must reverse the byte order of those fields when constructing the
+    Binary value.
     """
     if not isinstance(uuid_str, str) or not uuid_str:
         raise ValueError("uuid_str must be a non-empty string")
     u = uuid.UUID(uuid_str)
-    # Subtype 3 = OLD_UUID_SUBTYPE in BSON; PyMongo accepts literal 3
-    return Binary(u.bytes, subtype=3)
+    b = u.bytes  # standard big-endian layout
+
+    # Convert to Java legacy (subtype 3) by reversing the first 3 components:
+    # - time_low (4 bytes)
+    # - time_mid (2 bytes)
+    # - time_hi_and_version (2 bytes)
+    # The remaining 8 bytes stay in their original order
+    java_legacy_bytes = b[3::-1] + b[5:3:-1] + b[7:5:-1] + b[8:]
+
+    # Subtype 3 = OLD_UUID_SUBTYPE in BSON
+    return Binary(java_legacy_bytes, subtype=3)
 

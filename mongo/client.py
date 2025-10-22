@@ -110,10 +110,15 @@ class DirectMongoClient:
                 def _flag(name: str) -> bool:
                     return os.getenv(name, "").lower() in ("1", "true", "yes")
 
-                # Prefer runtime websocket context; fall back to env vars
-                biz_uuid: str | None = getattr(_ws_ctx, "business_id_global", None) or os.getenv("BUSINESS_UUID")
+                # Prefer runtime websocket context; fall back to env vars (support both *UUID and *ID names)
+                biz_uuid: str | None = (
+                    getattr(_ws_ctx, "business_id_global", None)
+                    or os.getenv("BUSINESS_UUID")
+                    or os.getenv("BUSINESS_ID")
+                )
                 member_uuid: str | None = (
                     os.getenv("MEMBER_UUID")
+                    or os.getenv("MEMBER_ID")
                     or os.getenv("STAFF_ID")
                     or getattr(_ws_ctx, "user_id_global", None)
                 )
@@ -139,7 +144,7 @@ class DirectMongoClient:
                                     "foreignField": "_id",
                                     "as": "__biz_proj__"
                                 }},
-                                {"$match": {"__biz_proj__.business._id": biz_bin}},
+                                {"$match": {"__biz_proj__": {"$elemMatch": {"business._id": biz_bin}}}},
                                 {"$unset": "__biz_proj__"},
                             ])
                         elif collection == "projectState":
@@ -150,7 +155,7 @@ class DirectMongoClient:
                                     "foreignField": "_id",
                                     "as": "__biz_proj__"
                                 }},
-                                {"$match": {"__biz_proj__.business._id": biz_bin}},
+                                {"$match": {"__biz_proj__": {"$elemMatch": {"business._id": biz_bin}}}},
                                 {"$unset": "__biz_proj__"},
                             ])
                     except Exception:
@@ -171,14 +176,14 @@ class DirectMongoClient:
                                     "foreignField": "project._id",
                                     "as": "__mem__",
                                 }},
-                                # Ensure at least one membership document for this member
-                                {"$match": {"__mem__": {"$elemMatch": {"staff._id": mem_bin}}}},
+                                # Ensure at least one membership document for this member (staff._id OR memberId)
+                                {"$match": {"__mem__": {"$elemMatch": {"$or": [{"staff._id": mem_bin}, {"memberId": mem_bin}]}}}},
                                 {"$unset": "__mem__"},
                             ]
 
                         if collection == "members":
-                            # Only allow viewing own memberships
-                            injected_stages.append({"$match": {"staff._id": mem_bin}})
+                            # Only allow viewing own memberships (staff._id OR memberId)
+                            injected_stages.append({"$match": {"$or": [{"staff._id": mem_bin}, {"memberId": mem_bin}]}})
                         elif collection == "project":
                             injected_stages.extend(_membership_join("_id"))
                         elif collection in ("workItem", "cycle", "module", "page"):
