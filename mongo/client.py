@@ -138,11 +138,16 @@ class DirectMongoClient:
 
                 # 1. Apply member-based RBAC filtering first (project-scoped only)
                 if member_context is not None:
+                    print(f"🔐 MongoDB Client: Applying RBAC filters for member {member_context.member_id} on collection '{collection}'")
+                    print(f"   Member has access to {len(member_context.project_ids)} projects: {member_context.project_ids}")
                     try:
                         from rbac.filters import apply_member_pipeline_filter
                         injected_stages = apply_member_pipeline_filter([], member_context, None, collection)  # type: ignore[arg-type]
+                        print(f"✅ MongoDB Client: RBAC filter applied successfully - {len(injected_stages)} stage(s) injected")
                     except Exception as e:
-                        print(f"Warning: RBAC filter construction failed: {e}")
+                        print(f"❌ MongoDB Client: RBAC filter construction failed: {e}")
+                else:
+                    print(f"⚠️  MongoDB Client: No member context available - RBAC filters NOT applied for collection '{collection}'")
 
                 # 2. Apply business scoping on top of RBAC
                 if enforce_business and biz_uuid:
@@ -181,8 +186,15 @@ class DirectMongoClient:
                 db = self.client[database]
                 coll = db[collection]
                 effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
+                
+                print(f"📊 MongoDB Query: collection='{collection}', pipeline stages={len(effective_pipeline)} (original: {len(pipeline)}, injected: {len(injected_stages)})")
+                if injected_stages:
+                    print(f"   First stage (RBAC filter): {injected_stages[0]}")
+                
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
+                
+                print(f"📈 MongoDB Results: Found {len(results)} documents in collection '{collection}'")
                 
                 pass
                 

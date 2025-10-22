@@ -160,6 +160,11 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     project_memberships = await get_member_project_memberships(member_id_from_auth)
                     project_ids = list(project_memberships.keys()) or await get_member_projects(member_id_from_auth)
                     
+                    print(f"🔑 Member Authentication: member_id={member_id_from_auth}")
+                    print(f"   Member doc found: name={member_doc.get('name')}, email={member_doc.get('email')}")
+                    print(f"   Project memberships: {len(project_memberships)} memberships")
+                    print(f"   Project IDs: {project_ids}")
+                    
                     member_context_global = MemberContext(
                         member_id=member_id_from_auth,
                         name=member_doc.get("name", ""),
@@ -169,7 +174,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         business_id=user_context["businessId"],
                         type=member_doc.get("type"),
                     )
-                    print(f"✅ Member authenticated: {member_context_global.name}")
+                    print(f"✅ Member authenticated: {member_context_global.name} with {len(project_ids)} project(s)")
                 else:
                     print(f"⚠️  Member not found: {member_id_from_auth}")
                     member_context_global = None

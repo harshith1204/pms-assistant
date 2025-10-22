@@ -46,19 +46,25 @@ def apply_member_filter(
     
     # Build project access filter (strictly by memberships)
     project_field = _project_field_for_collection(collection)
+    print(f"🔒 RBAC apply_member_filter: collection={collection}, project_field={project_field}, member={member.member_id}, project_ids={member.project_ids}")
+    
     if project_id:
         # Specific project requested - verify access
         if not member.can_access_project(project_id):
             # Return impossible filter if no access
+            print(f"❌ RBAC: Member {member.member_id} cannot access project {project_id}")
             return {"_id": {"$exists": False}}
         value = uuid_str_to_mongo_binary(project_id)
         project_filter = {project_field: value}
+        print(f"✅ RBAC: Filtering by specific project {project_id}")
     elif member.project_ids:
         # Filter by all accessible projects
         project_binaries = [uuid_str_to_mongo_binary(pid) for pid in member.project_ids]
         project_filter = {project_field: {"$in": project_binaries}}
+        print(f"✅ RBAC: Filtering by {len(member.project_ids)} accessible projects: {member.project_ids}")
     else:
         # If no explicit memberships, return nothing (defensive)
+        print(f"❌ RBAC: Member {member.member_id} has no project access")
         return {"_id": {"$exists": False}}
     
     # Optionally apply business scoping (for collections that store business directly)
@@ -97,16 +103,23 @@ def get_member_project_filter(
         MongoDB filter dict
     """
     project_field = _project_field_for_collection(collection or "") if collection else "project._id"
+    print(f"🔒 RBAC get_member_project_filter: collection={collection}, project_field={project_field}, member={member.member_id}, project_ids={member.project_ids}")
 
     if project_id:
         if not member.can_access_project(project_id):
+            print(f"❌ RBAC: Member {member.member_id} cannot access project {project_id}")
             return {"_id": {"$exists": False}}
-        return {project_field: uuid_str_to_mongo_binary(project_id)}
+        filter_result = {project_field: uuid_str_to_mongo_binary(project_id)}
+        print(f"✅ RBAC: Built filter for specific project: {filter_result}")
+        return filter_result
     
     if member.project_ids:
         project_binaries = [uuid_str_to_mongo_binary(pid) for pid in member.project_ids]
-        return {project_field: {"$in": project_binaries}}
+        filter_result = {project_field: {"$in": project_binaries}}
+        print(f"✅ RBAC: Built filter for {len(member.project_ids)} projects: {filter_result}")
+        return filter_result
     
+    print(f"❌ RBAC: Member {member.member_id} has no project access")
     return {"_id": {"$exists": False}}
 
 
@@ -131,10 +144,15 @@ def apply_member_pipeline_filter(
     # Always apply project filter; access is strictly project-scoped
     
     # Build filter stage
-    filter_stage = {"$match": get_member_project_filter(member, project_id, collection)}
+    project_filter = get_member_project_filter(member, project_id, collection)
+    filter_stage = {"$match": project_filter}
+    
+    print(f"🔒 RBAC apply_member_pipeline_filter: Injecting filter stage: {filter_stage}")
     
     # Inject at the beginning
-    return [filter_stage] + pipeline
+    result_pipeline = [filter_stage] + pipeline
+    print(f"✅ RBAC: Pipeline now has {len(result_pipeline)} stages (added 1 RBAC filter)")
+    return result_pipeline
 
 
 def can_access_resource(
