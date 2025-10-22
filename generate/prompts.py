@@ -150,8 +150,11 @@ Take the provided title and existing description, and generate a much more detai
 Add specific details, steps, requirements, and context that would make this work item more actionable for team members.
 Return markdown in the description with proper formatting, sections, and bullet points.
 Keep the same title but significantly enhance the description.
-Respond as JSON only, without code fences or surrounding text.
-Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
+CRITICAL OUTPUT RULES:
+- Respond as JSON only (no code fences, no prose), with EXACT fields: title (string), description (string).
+- The description MUST be a pure markdown string. Do NOT nest JSON inside the description. Do NOT include keys like title/description inside the description. Do NOT double-encode or escape as a JSON object string.
+- The title must NOT be repeated inside the description.
+Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...\\n## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
 
         'user_prompt_template': """Current Title:
 {title}
@@ -165,7 +168,8 @@ Instructions:
 - Include relevant technical details, dependencies, and success metrics
 - Structure the description with proper markdown formatting including headers, bullet points, and sections
 - Maintain the same title but significantly expand the description
-- Produce a JSON object with fields: title, description
+- Produce a JSON object with EXACT fields: title, description
+- The description MUST be pure markdown text only (no nested JSON or additional keys)
 - Do not wrap the response in code fences or add explanatory text"""
     },
 
@@ -175,8 +179,11 @@ Create a detailed description suitable for enterprise project management.
 Include sections such as Overview, Scope, Requirements, Implementation Plan, Acceptance Criteria, Dependencies, Risks, and Success Metrics.
 Return markdown in the description with proper headers and bullet points.
 Keep the same title; only generate the description.
-Respond as JSON only, without code fences or surrounding text.
-Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
+CRITICAL OUTPUT RULES:
+- Respond as JSON only (no code fences, no prose), with EXACT fields: title (string), description (string).
+- The description MUST be a pure markdown string. Do NOT nest JSON inside the description. Do NOT include keys like title/description inside the description. Do NOT double-encode or escape as a JSON object string.
+- The title must NOT be repeated inside the description.
+Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...\\n## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
 
         'user_prompt_template': """Title:
 {title}
@@ -186,7 +193,8 @@ Instructions:
 - Include specific requirements, implementation steps, acceptance criteria, dependencies, risks, and success metrics
 - Use clear markdown structure with headers and bullet points
 - Maintain the same title; output only the description content
-- Produce a JSON object with fields: title, description
+- Produce a JSON object with EXACT fields: title, description
+- The description MUST be pure markdown text only (no nested JSON or additional keys)
 - Do not wrap the response in code fences or add explanatory text"""
     }
 }

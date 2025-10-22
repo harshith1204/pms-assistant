@@ -119,6 +119,14 @@ def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateRe
         raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
 
     # Best-effort parse: if JSON-like present, extract; else use raw content
+    def _strip_code_fences(text: str) -> str:
+        s = (text or "").strip()
+        # Remove common code fences if present
+        if s.startswith("```"):
+            s = s.replace("```json", "").replace("```JSON", "")
+            s = s.replace("```", "")
+        return s.strip()
+
     title = req.title
     description = provided_description
     parsed = None
@@ -126,17 +134,63 @@ def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateRe
         start = content.find("{")
         end = content.rfind("}")
         if start != -1 and end != -1 and end > start:
-            parsed = json.loads(content[start : end + 1])
+            candidate = content[start : end + 1]
+            candidate = _strip_code_fences(candidate)
+            parsed = json.loads(candidate)
     except Exception:
         parsed = None
 
     if isinstance(parsed, dict):
-        title = parsed.get("title") or title
-        description = parsed.get("description") or description
+        # Prefer top-level fields
+        title = (parsed.get("title") or title or "").strip()
+        desc_field = parsed.get("description")
+
+        # Unwrap nested JSON mistakenly placed inside description
+        if isinstance(desc_field, dict):
+            nested = desc_field
+        elif isinstance(desc_field, str):
+            nested = None
+            desc_str = _strip_code_fences(desc_field)
+            try:
+                if "{" in desc_str and "}" in desc_str:
+                    s2 = desc_str[desc_str.find("{") : desc_str.rfind("}") + 1]
+                    nested_candidate = json.loads(s2)
+                    if isinstance(nested_candidate, dict):
+                        nested = nested_candidate
+            except Exception:
+                nested = None
+
+        else:
+            nested = None
+
+        if isinstance(nested, dict) and ("description" in nested or "title" in nested):
+            # Use nested description; keep top-level title unless missing
+            nested_desc = nested.get("description")
+            if isinstance(nested_desc, str) and nested_desc.strip():
+                description = nested_desc
+            # If top-level title missing, fall back to nested title
+            if not title and isinstance(nested.get("title"), str):
+                title = nested.get("title", title)
+        else:
+            # Use raw description string if present
+            if isinstance(desc_field, str) and desc_field.strip():
+                description = desc_field
+            elif provided_description:
+                description = provided_description
+            else:
+                description = ""
     else:
+        # No JSON parsed; treat entire content as description
         description = content.strip() or description
 
-    return GenerateResponse(title=title.strip(), description=description.strip())
+    # Final cleanup: strip code fences and remove duplicated title line in description
+    description = _strip_code_fences(description)
+    if isinstance(description, str) and isinstance(title, str):
+        first_line = (description.splitlines()[0] if description else "").strip().rstrip(":")
+        if first_line.lower() == (title or "").strip().lower():
+            description = "\n".join(description.splitlines()[1:]).lstrip()
+
+    return GenerateResponse(title=(title or "").strip(), description=(description or "").strip())
 
 
 @router.options("/stream-page-content")
