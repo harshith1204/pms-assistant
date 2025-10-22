@@ -27,18 +27,10 @@ from mongo.constants import (
     COLLECTIONS_WITH_DIRECT_BUSINESS,
 )
 
-from websocket_handler import business_id_global , user_id_global
+import websocket_handler as _ws_ctx
 
-BUSINESS_UUID: str | None = business_id_global
-USER_ID : str | None = user_id_global
-# Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
-ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
-
-# --- Member-level RBAC scoping ---
-# Accept either MEMBER_ID or STAFF_ID (canonical UUID string)
-MEMBER_UUID: str | None = os.getenv("MEMBER_ID") or os.getenv("STAFF_ID")
-# Enable when explicitly requested or when MEMBER_UUID present
-ENFORCE_MEMBER_FILTER: bool = os.getenv("ENFORCE_MEMBER_FILTER", "").lower() in ("1", "true", "yes") or bool(MEMBER_UUID)
+# NOTE: Do NOT capture RBAC context at import time.
+# Read business/member IDs at query time to reflect the active websocket user.
 
 class DirectMongoClient:
     """Direct MongoDB client using Motor (async PyMongo) - replaces MongoDB MCP"""
@@ -116,13 +108,28 @@ class DirectMongoClient:
                 raise RuntimeError("MongoDB client not initialized. Call connect() first.")
             
             try:
+                # --- Resolve RBAC context at query time ---
+                def _flag(name: str) -> bool:
+                    return os.getenv(name, "").lower() in ("1", "true", "yes")
+
+                # Prefer runtime websocket context; fall back to env vars
+                biz_uuid: str | None = getattr(_ws_ctx, "business_id_global", None) or os.getenv("BUSINESS_ID")
+                member_uuid: str | None = (
+                    os.getenv("MEMBER_ID")
+                    or os.getenv("STAFF_ID")
+                    or getattr(_ws_ctx, "user_id_global", None)
+                )
+
+                enforce_business: bool = _flag("ENFORCE_BUSINESS_FILTER") or bool(biz_uuid)
+                enforce_member: bool = _flag("ENFORCE_MEMBER_FILTER") or bool(member_uuid)
+
                 # Prepare business and member scoping injections (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
 
                 # 1) Business scoping
-                if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
+                if enforce_business and biz_uuid:
                     try:
-                        biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
+                        biz_bin = uuid_str_to_mongo_binary(biz_uuid)
                         if collection in COLLECTIONS_WITH_DIRECT_BUSINESS:
                             injected_stages.append({"$match": {"business._id": biz_bin}})
                         elif collection == "members":
@@ -150,12 +157,12 @@ class DirectMongoClient:
                             ])
                     except Exception:
                         # Do not fail query if business filter construction fails
-                        injected_stages = []
+                        pass
 
                 # 2) Member-level project RBAC scoping
-                if ENFORCE_MEMBER_FILTER and MEMBER_UUID:
+                if enforce_member and member_uuid:
                     try:
-                        mem_bin = uuid_str_to_mongo_binary(MEMBER_UUID)
+                        mem_bin = uuid_str_to_mongo_binary(member_uuid)
 
                         def _membership_join(local_field: str) -> List[Dict[str, Any]]:
                             """Build a $lookup + $match + $unset pipeline ensuring the document's project belongs to member."""
