@@ -117,7 +117,7 @@ ws_manager = WebSocketManager()
 
 user_id_global = None
 business_id_global = None
-member_context_global = None  # Store MemberContext for RBAC
+member_context_global = None  # Store MemberContext (unused when RBAC disabled)
 
 async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     """Handle WebSocket chat connections with streaming"""
@@ -144,38 +144,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         user_id_global = user_context["user_id"]
         business_id_global = user_context["businessId"]
         
-        # Initialize member context for RBAC
-        # In production, extract member_id from JWT or session
-        #member_id_from_auth = user_context.get("member_id") or os.getenv("DEFAULT_MEMBER_ID")
-        member_id_from_auth = "ce64c080-378b-fd1e-db34-e3004c95fda1"
-        
-        if member_id_from_auth:
-            try:
-                from rbac.auth import get_member_by_id, get_member_projects, get_member_project_memberships
-                from rbac.permissions import MemberContext
-                
-                # Fetch member details
-                member_doc = await get_member_by_id(member_id_from_auth)
-                if member_doc:
-                    project_memberships = await get_member_project_memberships(member_id_from_auth)
-                    project_ids = list(project_memberships.keys()) or await get_member_projects(member_id_from_auth)
-                    member_context_global = MemberContext(
-                        member_id=member_id_from_auth,
-                        name=member_doc.get("name", ""),
-                        email=member_doc.get("email", ""),
-                        project_ids=project_ids,
-                        project_memberships=project_memberships,
-                        business_id=user_context["businessId"],
-                        type=member_doc.get("type"),
-                    )
-                else:
-                    print(f"⚠️  Member not found: {member_id_from_auth}")
-                    member_context_global = None
-            except Exception as e:
-                print(f"⚠️  Failed to initialize member context: {e}")
-                member_context_global = None
-        else:
-            member_context_global = None
+        # RBAC disabled for frontend: do not initialize member context
+        member_context_global = None
 
         await ws_manager.connect(websocket, user_context["user_id"])
         authenticated = True

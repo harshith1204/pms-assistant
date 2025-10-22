@@ -1,16 +1,12 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any, Annotated
+from typing import Optional, List, Dict, Any
 import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
 from generate.router import router as generate_router
-from rbac import (
-    get_current_member,
-    MemberContext
-)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -142,15 +138,12 @@ async def health_check():
 
 
 @app.get("/conversations")
-async def list_conversations(
-    member: Annotated[MemberContext, Depends(get_current_member)]
-):
+async def list_conversations():
     """List conversation ids and titles from Mongo."""
     try:
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
-        # Filter conversations by member_id (only show user's own conversations)
-        query = {"userId": member.member_id}
-        cursor = coll.find(query, {"conversationId": 1, "messages": {"$slice": -1}, "updatedAt": 1}).sort("updatedAt", -1).limit(100)
+        # No authentication: list recent conversations (best-effort)
+        cursor = coll.find({}, {"conversationId": 1, "messages": {"$slice": -1}, "updatedAt": 1}).sort("updatedAt", -1).limit(100)
         results = []
         async for doc in cursor:
             conv_id = doc.get("conversationId")
@@ -173,20 +166,13 @@ async def list_conversations(
 @app.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
-    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Get a conversation's messages."""
     try:
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
-        # Build query with member access check
-        query = {"conversationId": conversation_id, "userId": member.member_id}
-        
-        doc = await coll.find_one(query)
+        # No authentication: fetch by conversationId only
+        doc = await coll.find_one({"conversationId": conversation_id})
         if not doc:
-            # Check if conversation exists but user doesn't have access
-            exists = await coll.find_one({"conversationId": conversation_id})
-            if exists:
-                raise HTTPException(status_code=403, detail="Access denied to this conversation")
             return {"id": conversation_id, "messages": []}
         
         messages = doc.get("messages") or []
@@ -217,17 +203,12 @@ async def get_conversation(
 @app.post("/work-items", response_model=WorkItemCreateResponse)
 async def create_work_item(
     req: WorkItemCreateRequest,
-    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Create a minimal work item in MongoDB 'workItem' collection.
 
     Fields stored: title, description, project (identifier), sequenceId, createdAt/updatedAt.
     """
     try:
-        # Verify project access if project_id provided
-        if req.project_id and not member.can_access_project(req.project_id):
-            raise HTTPException(status_code=403, detail="Access denied to this project")
-        
         if not mongodb_tools.client:
             # Ensure Mongo connected via direct client
             await mongodb_tools.connect()
@@ -263,10 +244,10 @@ async def create_work_item(
             doc["project"] = {"identifier": req.project_identifier}
         if seq is not None:
             doc["sequenceId"] = seq
-        # Use authenticated member as creator
+        # Anonymous creator (no RBAC)
         doc["createdBy"] = {
-            "_id": member.member_id,
-            "name": member.name or req.created_by or "Unknown"
+            "_id": req.created_by or "anonymous",
+            "name": req.created_by or "Anonymous"
         }
 
         result = await coll.insert_one(doc)
@@ -288,14 +269,9 @@ async def create_work_item(
 @app.post("/pages", response_model=PageCreateResponse)
 async def create_page(
     req: PageCreateRequest,
-    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Create a minimal page in MongoDB 'page' collection with Editor.js content."""
     try:
-        # Verify project access if project_id provided
-        if req.project_id and not member.can_access_project(req.project_id):
-            raise HTTPException(status_code=403, detail="Access denied to this project")
-        
         if not mongodb_tools.client:
             await mongodb_tools.connect()
 
@@ -316,10 +292,10 @@ async def create_page(
         }
         if req.project_id:
             doc["project"] = {"id": req.project_id}
-        # Use authenticated member as creator
+        # Anonymous creator (no RBAC)
         doc["createdBy"] = {
-            "_id": member.member_id,
-            "name": member.name or req.created_by or "Unknown"
+            "_id": req.created_by or "anonymous",
+            "name": req.created_by or "Anonymous"
         }
 
         result = await coll.insert_one(doc)
@@ -339,16 +315,9 @@ async def create_page(
 @app.post("/conversations/reaction")
 async def set_reaction(
     req: ReactionRequest,
-    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Set like/dislike and optional feedback on an assistant message."""
     try:
-        # Verify member has access to this conversation
-        coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
-        conv = await coll.find_one({"conversationId": req.conversation_id, "userId": member.member_id})
-        if not conv:
-            raise HTTPException(status_code=403, detail="Access denied to this conversation")
-        
         ok = await update_message_reaction(
             conversation_id=req.conversation_id,
             message_id=req.message_id,
