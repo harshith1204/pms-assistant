@@ -264,39 +264,61 @@ const Index = () => {
       if (evt.content_type === "work_item" && evt.success && (evt as any).data) {
         const data: any = (evt as any).data;
         const id = `workitem-${Date.now()}`;
-        // Try to derive identifier and link if backend sends them in future
         const projectIdentifier = (data.projectIdentifier as string) || undefined;
         const sequenceId = (data.sequenceId as string | number) || undefined;
         const link = (data.link as string) || undefined;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id,
-            role: "assistant",
-            content: "",
-            workItem: {
-              title: (data.title as string) || "Work item",
-              description: (data.description as string) || "",
-              projectIdentifier,
-              sequenceId,
-              link,
-            },
+
+        // Build candidate message
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          workItem: {
+            title: (data.title as string) || "Work item",
+            description: (data.description as string) || "",
+            projectIdentifier,
+            sequenceId,
+            link,
           },
-        ]);
+        };
+
+        // De-duplicate against the tail of current list to prevent duplicates
+        setMessages((prev) => {
+          const hash = (wi: NonNullable<Message['workItem']>) => [
+            (wi.title || '').trim(),
+            (wi.description || '').trim(),
+            wi.projectIdentifier || '',
+            wi.sequenceId === undefined || wi.sequenceId === null ? '' : String(wi.sequenceId),
+            wi.link || ''
+          ].join('|');
+          const candidateHash = hash(candidate.workItem);
+          const exists = prev.slice(-10).some((m) => m.workItem && hash(m.workItem) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
       } else if (evt.content_type === "page" && evt.success && (evt as any).data) {
         const data: any = (evt as any).data;
         const id = `page-${Date.now()}`;
         const title = (data.title as string) || "Generated Page";
         const blocks = typeof data === "object" && data && Array.isArray((data as any).blocks) ? { blocks: (data as any).blocks } : { blocks: [] };
-        setMessages((prev) => [
-          ...prev,
-          {
-            id,
-            role: "assistant",
-            content: "",
-            page: { title, blocks },
-          },
-        ]);
+
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          page: { title, blocks },
+        };
+
+        setMessages((prev) => {
+          const hash = (pg: NonNullable<Message['page']>) => [
+            (pg.title || '').trim(),
+            JSON.stringify((pg.blocks && Array.isArray(pg.blocks.blocks)) ? pg.blocks.blocks : [])
+          ].join('|');
+          const candidateHash = hash(candidate.page!);
+          const exists = prev.slice(-10).some((m) => m.page && hash(m.page) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
       } else {
         const id = `assistant-${Date.now()}`;
         setMessages((prev) => [
@@ -354,9 +376,35 @@ const Index = () => {
             const msgs = await getConversationMessages(convId);
             setMessages((prev) => {
               const transformed = transformConversationMessages(msgs);
-              const ephemeralWorkItems = prev.filter((m) => !!m.workItem);
-              const ephemeralPages = prev.filter((m) => !!m.page);
-              return [...transformed, ...ephemeralWorkItems, ...ephemeralPages];
+
+              // De-duplicate ephemeral generated artifacts that were optimistically added
+              // before the canonical conversation messages were fetched.
+              const hashWorkItem = (wi: NonNullable<Message['workItem']>) => [
+                (wi.title || '').trim(),
+                (wi.description || '').trim(),
+                wi.projectIdentifier || '',
+                wi.sequenceId === undefined || wi.sequenceId === null ? '' : String(wi.sequenceId),
+                wi.link || ''
+              ].join('|');
+
+              const hashPage = (pg: NonNullable<Message['page']>) => [
+                (pg.title || '').trim(),
+                JSON.stringify((pg.blocks && Array.isArray(pg.blocks.blocks)) ? pg.blocks.blocks : [])
+              ].join('|');
+
+              const serverWorkItemHashes = new Set(
+                transformed.filter((m) => !!m.workItem).map((m) => hashWorkItem(m.workItem!))
+              );
+              const serverPageHashes = new Set(
+                transformed.filter((m) => !!m.page).map((m) => hashPage(m.page!))
+              );
+
+              const remainingEphemeralWorkItems = prev.filter((m) => m.workItem)
+                .filter((m) => !serverWorkItemHashes.has(hashWorkItem(m.workItem!)));
+              const remainingEphemeralPages = prev.filter((m) => m.page)
+                .filter((m) => !serverPageHashes.has(hashPage(m.page!)));
+
+              return [...transformed, ...remainingEphemeralWorkItems, ...remainingEphemeralPages];
             });
           } catch {
             // ignore
