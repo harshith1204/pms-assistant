@@ -191,20 +191,7 @@ class LLMIntentParser:
             "issues": "workItem",
             "tickets": "workItem",
             "ticket": "workItem",
-            # timeline synonyms
-            "timeline": "timeline",
-            "timelines": "timeline",
-            "history": "timeline",
-            "activity": "timeline",
-            "activities": "timeline",
-            "change": "timeline",
-            "changes": "timeline",
-            "event": "timeline",
-            "events": "timeline",
-            "log": "timeline",
-            "logs": "timeline",
-            "audit": "timeline",
-            "audits": "timeline",
+            "epic" : "epic",
         }
 
     def _is_placeholder(self, v) -> bool:
@@ -355,7 +342,7 @@ class LLMIntentParser:
             "- Work items are assigned to team members\n"
             "- Projects contain cycles and modules\n"
             "- Cycles and modules belong to projects\n"
-            "- Timeline events reference a project (and optionally a work item) and include: type, fieldChanged, message, commentText, oldValue/newValue, user.name (actor), timestamp\n\n"
+            "- Epics contain multiple features and belong to a project lifecycle.\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -379,6 +366,8 @@ class LLMIntentParser:
             "- estimateSystem: TIME|POINTS|etc (for workItem)\n"
             "- estimate: object with hr/min fields (for workItem)\n"
             "- workLogs: array of work log entries with user, hours, minutes, description, loggedAt (for workItem)\n\n"
+            "- state_name: Backlog|New|Started|Unstarted|Completed (for epic)\n"
+            "- priority: URGENT|HIGH|MEDIUM|LOW (for epic)\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -554,6 +543,15 @@ class LLMIntentParser:
         # Map legacy 'status' to 'state' for workItem if present
         if primary == "workItem" and "status" in raw_filters and "state" not in raw_filters:
             raw_filters["state"] = raw_filters.pop("status")
+
+        # For epic collection, accept 'state_name' as the canonical filter key
+        # and also map legacy 'status' to 'state_name' when provided by LLMs/users
+        if primary == "epic":
+            if "status" in raw_filters and "state_name" not in raw_filters:
+                raw_filters["state_name"] = raw_filters.pop("status")
+            # Some LLMs may emit 'state' for epics; prefer 'state_name'
+            if "state" in raw_filters and "state_name" not in raw_filters:
+                raw_filters["state_name"] = raw_filters.pop("state")
 
         # Allow plain 'status' for project/cycle as their canonical status
         if primary in ("project", "cycle") and "status" in raw_filters:
@@ -1126,10 +1124,11 @@ class PipelineGenerator:
                 'project': 'project',
                 'business': 'project',
             },
-            'timeline': {
+            'epic': {
                 'project': 'project',
-                'workItem': 'workItem',
-            },
+                'business': 'project',
+            }
+
         }.get(collection, {})
 
         # Include explicit target entities requested by the intent (supports multi-hop like "project.cycles")
@@ -1794,32 +1793,23 @@ class PipelineGenerator:
             if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
                 primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
 
-        elif collection == "timeline":
-            # timeline supports type/status-like filtering via 'type'
-            if 'status' in filters and isinstance(filters['status'], str):
-                primary_filters['type'] = {'$regex': f"^{filters['status']}$", '$options': 'i'}
-            if 'type' in filters and isinstance(filters['type'], str):
-                primary_filters['type'] = {'$regex': filters['type'], '$options': 'i'}
-            if 'fieldChanged' in filters and isinstance(filters['fieldChanged'], str):
-                primary_filters['fieldChanged'] = {'$regex': filters['fieldChanged'], '$options': 'i'}
-            if 'message' in filters and isinstance(filters['message'], str):
-                primary_filters['message'] = {'$regex': filters['message'], '$options': 'i'}
-            if 'commentText' in filters and isinstance(filters['commentText'], str):
-                primary_filters['commentText'] = {'$regex': filters['commentText'], '$options': 'i'}
-            if 'oldValue' in filters and isinstance(filters['oldValue'], str):
-                primary_filters['oldValue'] = {'$regex': filters['oldValue'], '$options': 'i'}
-            if 'newValue' in filters and isinstance(filters['newValue'], str):
-                primary_filters['newValue'] = {'$regex': filters['newValue'], '$options': 'i'}
-            if 'actor_name' in filters and isinstance(filters['actor_name'], str):
-                primary_filters['user.name'] = {'$regex': filters['actor_name'], '$options': 'i'}
-            if 'work_item_title' in filters and isinstance(filters['work_item_title'], str):
-                primary_filters['workItemTitle'] = {'$regex': filters['work_item_title'], '$options': 'i'}
+        elif collection == "epic":
+            if 'priority' in filters:
+                primary_filters['priority'] = filters['priority']
+            if 'state' in filters:
+                # Map logical state filter to embedded field
+                primary_filters['state.name'] = filters['state']
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
             if 'project_name' in filters and isinstance(filters['project_name'], str):
                 primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
-            if 'business_name' in filters and isinstance(filters['business_name'], str):
-                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
-            # date range on 'timestamp'
-            _apply_date_range(primary_filters, 'timestamp', filters)
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # module.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
         return primary_filters
 
@@ -1972,10 +1962,8 @@ class PipelineGenerator:
             "projectState": [
                 "name", "subStates.name", "subStates.order"
             ],
-            "timeline": [
-                "type", "fieldChanged", "message", "commentText",
-                "oldValue", "newValue", "timestamp",
-                "workItemTitle", "project.name", "business.name", "user.name"
+            "epic": [
+                "title", "priority", "state.name", "createdTimeStamp", "project.name","description","assignee.name","bugNo"
             ],
         }
 

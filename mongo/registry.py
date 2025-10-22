@@ -159,20 +159,12 @@ REL: Dict[str, Dict[str, dict]] = {
             "many": False
         }
     },
-    # Timeline events reference business, project, and workItem by embedded subdocs/ids
-    "timeline": {
-        "project": {
-            "target": "project",
+    "epic":{
+        "project":{
+             "target": "project",
             "localField": "project._id",
             "foreignField": "_id",
-            "as": "projectDoc",
-            "many": False
-        },
-        "workItem": {
-            "target": "workItem",
-            "localField": "workItemId",
-            "foreignField": "_id",
-            "as": "workItemDoc",
+            "as": "project",
             "many": False
         }
     }
@@ -251,13 +243,15 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "_id", "projectId", "name", "icon",
         "subStates.name", "subStates.order"
     },
-    "timeline": {
-        "_id", "type", "fieldChanged", "message", "commentText",
-        "oldValue", "newValue", "timestamp",
-        "workItemId", "workItemTitle",
-        "project._id", "project.name",
-        "business._id", "business.name",
-        "user._id", "user.name",
+    "epic":{
+        "_id","title", "description","stateMaster._id","stateMaster.name",
+        "isMandatory", "isActive","state._id","state.name","priority","assignee",
+        "label","project._id","project.name","business._id","bugNo",
+        # "propertyType.value","propertyType.attributeType",
+        # "propertyType.attributeValue","propertyType.attributeOptions"
+        "createdBy._id", "createdBy.name",
+        "createdTimeStamp", "updatedTimeStamp", "dueDate",
+        "assignee", "assignee._id", "assignee.name", "label"
     }
 }
 
@@ -270,7 +264,7 @@ ALIASES: Dict[str, Dict[str, str]] = {
     "page": {},
     "cycle": {},
     "projectState": {},
-    "timeline": {"actor_name": "user.name", "work_item_title": "workItemTitle"},
+    "epic": { "bug": "bugNo", "stateName": "state.name", "last_date": "updatedTimeStamp","start_date" : "createdTimeStamp","assignee_name": "assignee.name"}
 }
 
 def resolve_field_alias(collection: str, field: str) -> str:

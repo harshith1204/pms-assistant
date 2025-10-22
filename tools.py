@@ -636,7 +636,15 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                             total_hours += total_mins // 60
                             total_mins = total_mins % 60
                             base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
-                        
+                            
+                            descriptions = [
+                                log.get("description", "").strip()
+                                for log in work_logs
+                                if isinstance(log, dict) and log.get("description")
+                            ]
+                            descriptions_text = "; ".join(descriptions) if descriptions else "No descriptions"
+
+                            base += f", descriptions=[{descriptions_text}]"
                         return base
                     if e == "project":
                         pid = entity.get("projectDisplayId")
@@ -678,49 +686,16 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         subs = entity.get("subStates")
                         sub_count = len(subs) if isinstance(subs, list) else 0
                         return f"• {name or 'State'} — icon={icon or 'N/A'}, substates={sub_count}"
-                    if e == "timeline":
-                        work_item_title = entity.get("workItemTitle") or "Unknown Work Item"
-                        event_type = entity.get("type") or "Unknown"
-                        user_name = get_nested(entity, "user.name") or "Unknown User"
-                        message = entity.get("message") or ""
-                        field_changed = entity.get("fieldChanged")
-                        timestamp = entity.get("timestamp")
-
-                        # Format timestamp if available
-                        time_str = ""
-                        if timestamp:
-                            try:
-                                # Handle MongoDB date format
-                                if isinstance(timestamp, dict) and "$date" in timestamp:
-                                    dt = timestamp["$date"]
-                                    if isinstance(dt, str):
-                                        # Parse ISO string
-                                        from datetime import datetime
-                                        dt_obj = datetime.fromisoformat(dt.replace('Z', '+00:00'))
-                                        time_str = f" at {dt_obj.strftime('%Y-%m-%d %H:%M')}"
-                            except:
-                                time_str = ""
-
-                        # Create a concise description
-                        if event_type == "TIME_LOGGED":
-                            new_value = entity.get("newValue", "")
-                            comment = entity.get("commentText", "")
-                            desc = f"time logged: {new_value}"
-                            if comment:
-                                desc += f" ({comment})"
-                        elif event_type == "STATE_CHANGED":
-                            old_val = entity.get("oldValue", "")
-                            new_val = entity.get("newValue", "")
-                            field = field_changed or "State"
-                            desc = f"{field} changed from {old_val} to {new_val}"
-                        elif event_type == "CREATED":
-                            desc = "work item created"
-                        elif event_type == "UPDATED":
-                            desc = "work item updated"
-                        else:
-                            desc = message or f"{event_type.lower()} event"
-
-                        return f"• {truncate_str(work_item_title, 50)} — {desc} by {user_name}{time_str}"
+                    
+                    if e == "epic":
+                        title = entity.get("title") or entity.get("name")
+                        description = entity.get("description")
+                        state = entity.get("stateName") or get_nested(entity, "state.name")
+                        priority = entity.get("priority")
+                        assignee = entity.get("assigneeName") or get_nested(entity, "assignee.name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        Bug = entity.get("bugNo")
+                        return f"• {title or 'Epic'} — description={description or 'N/A'}, state={state or 'N/A'}, priority={priority or 'N/A'}, project={project or 'N/A'}, assignee={assignee or 'N/A'}, bugNo={Bug or 'N/A'}"
                     # Default fallback
                     title = entity.get("title") or entity.get("name") or "Item"
                     return f"• {truncate_str(title, 80)}"
