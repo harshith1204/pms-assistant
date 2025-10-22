@@ -13,8 +13,6 @@ from pydantic import BaseModel
 from rbac import (
     get_current_member,
     MemberContext,
-    Permission,
-    require_permissions,
 )
 from rbac.filters import apply_member_filter
 from mongo.constants import mongodb_tools, DATABASE_NAME
@@ -39,7 +37,7 @@ class CycleResponse(BaseModel):
 
 @router.get("/cycles", response_model=List[CycleResponse])
 async def list_cycles(
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.CYCLE_READ))],
+    member: Annotated[MemberContext, Depends(get_current_member)],
     status: Optional[str] = None,
     project_id: Optional[str] = None
 ):
@@ -91,7 +89,7 @@ async def list_cycles(
 @router.get("/cycles/{cycle_id}", response_model=CycleResponse)
 async def get_cycle(
     cycle_id: str,
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.CYCLE_READ))]
+    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """
     Get a specific cycle by ID.
@@ -147,7 +145,7 @@ class ModuleResponse(BaseModel):
 
 @router.get("/modules", response_model=List[ModuleResponse])
 async def list_modules(
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.MODULE_READ))],
+    member: Annotated[MemberContext, Depends(get_current_member)],
     project_id: Optional[str] = None
 ):
     """
@@ -198,7 +196,7 @@ async def list_modules(
 @router.get("/modules/{module_id}", response_model=ModuleResponse)
 async def get_module(
     module_id: str,
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.MODULE_READ))]
+    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """
     Get a specific module by ID.
@@ -257,7 +255,7 @@ class WorkItemListResponse(BaseModel):
 
 @router.get("/work-items", response_model=List[WorkItemListResponse])
 async def list_work_items(
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.WORK_ITEM_READ))],
+    member: Annotated[MemberContext, Depends(get_current_member)],
     status: Optional[str] = None,
     priority: Optional[str] = None,
     project_id: Optional[str] = None
@@ -333,7 +331,7 @@ class PageListResponse(BaseModel):
 
 @router.get("/pages", response_model=List[PageListResponse])
 async def list_pages(
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.PAGE_READ))],
+    member: Annotated[MemberContext, Depends(get_current_member)],
     visibility: Optional[str] = None,
     project_id: Optional[str] = None
 ):

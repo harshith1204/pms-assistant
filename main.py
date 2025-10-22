@@ -10,8 +10,6 @@ from generate.router import router as generate_router
 from rbac import (
     get_current_member,
     MemberContext,
-    Permission,
-    require_permissions,
     require_project_access,
 )
 from rbac.filters import (
@@ -151,7 +149,7 @@ async def health_check():
 
 @app.get("/conversations")
 async def list_conversations(
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.CONVERSATION_READ))]
+    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """List conversation ids and titles from Mongo."""
     try:
@@ -181,7 +179,7 @@ async def list_conversations(
 @app.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.CONVERSATION_READ))]
+    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Get a conversation's messages."""
     try:
@@ -225,7 +223,7 @@ async def get_conversation(
 @app.post("/work-items", response_model=WorkItemCreateResponse)
 async def create_work_item(
     req: WorkItemCreateRequest,
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.WORK_ITEM_CREATE))]
+    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Create a minimal work item in MongoDB 'workItem' collection.
 
@@ -296,7 +294,7 @@ async def create_work_item(
 @app.post("/pages", response_model=PageCreateResponse)
 async def create_page(
     req: PageCreateRequest,
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.PAGE_CREATE))]
+    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Create a minimal page in MongoDB 'page' collection with Editor.js content."""
     try:
@@ -347,7 +345,7 @@ async def create_page(
 @app.post("/conversations/reaction")
 async def set_reaction(
     req: ReactionRequest,
-    member: Annotated[MemberContext, Depends(require_permissions(Permission.CONVERSATION_READ))]
+    member: Annotated[MemberContext, Depends(get_current_member)]
 ):
     """Set like/dislike and optional feedback on an assistant message."""
     try:

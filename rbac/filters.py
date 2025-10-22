@@ -9,15 +9,25 @@ from typing import Dict, Any, List, Optional
 from bson.binary import Binary
 import uuid
 
-from rbac.permissions import MemberContext, Role
+from rbac.permissions import MemberContext
 from mongo.constants import uuid_str_to_mongo_binary, BUSINESS_UUID, COLLECTIONS_WITH_DIRECT_BUSINESS
+
+
+def _project_field_for_collection(collection: str) -> str:
+    """Return the field path that stores project reference for a collection."""
+    if collection == "project":
+        return "_id"
+    if collection == "projectState":
+        return "projectId"
+    # Default schema uses nested project object with _id
+    return "project._id"
 
 
 def apply_member_filter(
     query: Dict[str, Any],
     collection: str,
     member: MemberContext,
-    project_id: Optional[str] = None
+    project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Apply member-based filtering to MongoDB query
     
@@ -34,17 +44,19 @@ def apply_member_filter(
         Enhanced query with member filters applied
     """
     
-    # Build project access filter (everyone has read access, but scope by memberships)
+    # Build project access filter (strictly by memberships)
+    project_field = _project_field_for_collection(collection)
     if project_id:
         # Specific project requested - verify access
         if not member.can_access_project(project_id):
             # Return impossible filter if no access
             return {"_id": {"$exists": False}}
-        project_filter = {"project._id": uuid_str_to_mongo_binary(project_id)}
+        value = uuid_str_to_mongo_binary(project_id)
+        project_filter = {project_field: value}
     elif member.project_ids:
         # Filter by all accessible projects
         project_binaries = [uuid_str_to_mongo_binary(pid) for pid in member.project_ids]
-        project_filter = {"project._id": {"$in": project_binaries}}
+        project_filter = {project_field: {"$in": project_binaries}}
     else:
         # If no explicit memberships, return nothing (defensive)
         return {"_id": {"$exists": False}}
@@ -70,7 +82,11 @@ def apply_member_filter(
     return query
 
 
-def get_member_project_filter(member: MemberContext, project_id: Optional[str] = None) -> Dict[str, Any]:
+def get_member_project_filter(
+    member: MemberContext,
+    project_id: Optional[str] = None,
+    collection: Optional[str] = None,
+) -> Dict[str, Any]:
     """Get MongoDB filter for member's accessible projects
     
     Args:
@@ -80,14 +96,16 @@ def get_member_project_filter(member: MemberContext, project_id: Optional[str] =
     Returns:
         MongoDB filter dict
     """
+    project_field = _project_field_for_collection(collection or "") if collection else "project._id"
+
     if project_id:
         if not member.can_access_project(project_id):
             return {"_id": {"$exists": False}}
-        return {"project._id": uuid_str_to_mongo_binary(project_id)}
+        return {project_field: uuid_str_to_mongo_binary(project_id)}
     
     if member.project_ids:
         project_binaries = [uuid_str_to_mongo_binary(pid) for pid in member.project_ids]
-        return {"project._id": {"$in": project_binaries}}
+        return {project_field: {"$in": project_binaries}}
     
     return {"_id": {"$exists": False}}
 
@@ -95,7 +113,8 @@ def get_member_project_filter(member: MemberContext, project_id: Optional[str] =
 def apply_member_pipeline_filter(
     pipeline: List[Dict[str, Any]],
     member: MemberContext,
-    project_id: Optional[str] = None
+    project_id: Optional[str] = None,
+    collection: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Apply member filtering to MongoDB aggregation pipeline
     
@@ -112,7 +131,7 @@ def apply_member_pipeline_filter(
     # Always apply project filter; access is strictly project-scoped
     
     # Build filter stage
-    filter_stage = {"$match": get_member_project_filter(member, project_id)}
+    filter_stage = {"$match": get_member_project_filter(member, project_id, collection)}
     
     # Inject at the beginning
     return [filter_stage] + pipeline
