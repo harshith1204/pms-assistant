@@ -110,40 +110,83 @@ async def _get_collection():
     return await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
 
 
-async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
+async def append_message(
+    conversation_id: str,
+    message: Dict[str, Any],
+    *,
+    member_id: Optional[str] = None,
+    business_id: Optional[str] = None,
+) -> None:
+    """Append a message and ensure conversation metadata fields are set.
+
+    Adds/updates conversation-level fields `memberId` and `businessId` when provided.
+    These are set on insert for new conversations and updated on existing conversations
+    (useful for backfilling older records missing these fields).
+    """
     coll = await _get_collection()
     safe_message = _ensure_message_shape(message)
+
+    # Build update document
+    now = _now_iso()
+    set_on_insert: Dict[str, Any] = {
+        "conversationId": conversation_id,
+        "createdAt": now,
+    }
+    if isinstance(member_id, str) and member_id:
+        set_on_insert["memberId"] = member_id
+    if isinstance(business_id, str) and business_id:
+        set_on_insert["businessId"] = business_id
+
+    set_fields: Dict[str, Any] = {"updatedAt": now}
+    if isinstance(member_id, str) and member_id:
+        set_fields["memberId"] = member_id
+    if isinstance(business_id, str) and business_id:
+        set_fields["businessId"] = business_id
+
     await coll.update_one(
         {"conversationId": conversation_id},
         {
-            "$setOnInsert": {
-                "conversationId": conversation_id,
-                "createdAt": _now_iso(),
-            },
+            "$setOnInsert": set_on_insert,
             "$push": {"messages": safe_message},
-            "$set": {"updatedAt": _now_iso()},
+            "$set": set_fields,
         },
         upsert=True,
     )
 
 
-async def save_user_message(conversation_id: str, content: str) -> None:
+async def save_user_message(
+    conversation_id: str,
+    content: str,
+    *,
+    member_id: Optional[str] = None,
+    business_id: Optional[str] = None,
+) -> None:
     await append_message(
         conversation_id,
         {
             "type": "user",
             "content": content or "",
         },
+        member_id=member_id,
+        business_id=business_id,
     )
 
 
-async def save_assistant_message(conversation_id: str, content: str) -> None:
+async def save_assistant_message(
+    conversation_id: str,
+    content: str,
+    *,
+    member_id: Optional[str] = None,
+    business_id: Optional[str] = None,
+) -> None:
     await append_message(
         conversation_id,
         {
             "type": "assistant",
             "content": content or "",
         },
+        member_id=member_id,
+        business_id=business_id,
     )
 
 
@@ -154,6 +197,8 @@ async def save_action_event(
     *,
     step: Optional[int] = None,
     tool_name: Optional[str] = None,
+    member_id: Optional[str] = None,
+    business_id: Optional[str] = None,
 ) -> None:
     if kind != "action":
         return
@@ -165,10 +210,18 @@ async def save_action_event(
             "step": step,
             "toolName": tool_name,
         },
+        member_id=member_id,
+        business_id=business_id,
     )
 
 
-async def save_generated_work_item(conversation_id: str, work_item: Dict[str, Any]) -> None:
+async def save_generated_work_item(
+    conversation_id: str,
+    work_item: Dict[str, Any],
+    *,
+    member_id: Optional[str] = None,
+    business_id: Optional[str] = None,
+) -> None:
     """Persist a generated work item as a conversation message.
 
     Expects a minimal payload: {title, description?, projectIdentifier?, sequenceId?, link?}
@@ -185,11 +238,19 @@ async def save_generated_work_item(conversation_id: str, work_item: Dict[str, An
                 **({"sequenceId": work_item.get("sequenceId")} if work_item.get("sequenceId") is not None else {}),
                 **({"link": work_item.get("link")} if work_item.get("link") is not None else {}),
             },
-        })
+        }),
+        member_id=member_id,
+        business_id=business_id,
     )
 
 
-async def save_generated_page(conversation_id: str, page: Dict[str, Any]) -> None:
+async def save_generated_page(
+    conversation_id: str,
+    page: Dict[str, Any],
+    *,
+    member_id: Optional[str] = None,
+    business_id: Optional[str] = None,
+) -> None:
     """Persist a generated page as a conversation message.
 
     Expects payload: {title, blocks: {blocks: [...]}}
@@ -207,7 +268,9 @@ async def save_generated_page(conversation_id: str, page: Dict[str, Any]) -> Non
                 "title": (page.get("title") if isinstance(page, dict) else None) or "Generated Page",
                 "blocks": blocks,
             },
-        })
+        }),
+        member_id=member_id,
+        business_id=business_id,
     )
 
 
