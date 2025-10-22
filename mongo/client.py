@@ -120,6 +120,12 @@ class DirectMongoClient:
 
                 enforce_business: bool = _flag("ENFORCE_BUSINESS_FILTER") or bool(biz_uuid)
                 enforce_member: bool = _flag("ENFORCE_MEMBER_FILTER") or bool(member_uuid)
+                
+                print(f"🔐 RBAC Status for '{collection}':")
+                print(f"   biz_uuid: {biz_uuid}")
+                print(f"   member_uuid: {member_uuid}")
+                print(f"   enforce_business: {enforce_business}")
+                print(f"   enforce_member: {enforce_member}")
 
                 # Prepare business and member scoping injections (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
@@ -163,8 +169,12 @@ class DirectMongoClient:
 
                 # 2) Member-level project RBAC scoping
                 if enforce_member and member_uuid:
+                    print(f"🔍 DEBUG: Applying member filter for collection '{collection}'")
+                    print(f"   member_uuid: {member_uuid}")
+                    print(f"   enforce_member: {enforce_member}")
                     try:
                         mem_bin = uuid_str_to_mongo_binary(member_uuid)
+                        print(f"   mem_bin: {mem_bin}")
 
                         def _membership_join(local_field: str) -> List[Dict[str, Any]]:
                             """Build a $lookup + $match + $unset pipeline ensuring the document's project belongs to member."""
@@ -176,32 +186,37 @@ class DirectMongoClient:
                                     "as": "__mem__",
                                 }},
                                 # Ensure at least one membership document for this member
-                                # Match against both _id (member ID) and staff._id for compatibility
-                                {"$match": {"__mem__": {"$elemMatch": {
+                                # Check any of the three possible ID fields
+                                {"$match": {
                                     "$or": [
-                                        {"_id": mem_bin},
-                                        {"staff._id": mem_bin},
-                                        {"memberId": mem_bin}
+                                        {"__mem__": {"$elemMatch": {"_id": mem_bin}}},
+                                        {"__mem__": {"$elemMatch": {"staff._id": mem_bin}}},
+                                        {"__mem__": {"$elemMatch": {"memberId": mem_bin}}}
                                     ]
-                                }}}},
+                                }},
                                 {"$unset": "__mem__"},
                             ]
 
                         if collection == "members":
                             # Only allow viewing own memberships
                             # Match against both _id and staff._id for compatibility
-                            injected_stages.append({"$match": {
+                            member_filter = {"$match": {
                                 "$or": [
                                     {"_id": mem_bin},
                                     {"staff._id": mem_bin},
                                     {"memberId": mem_bin}
                                 ]
-                            }})
+                            }}
+                            print(f"   Adding member filter: {member_filter}")
+                            injected_stages.append(member_filter)
                         elif collection == "project":
+                            print(f"   Adding membership join for project collection")
                             injected_stages.extend(_membership_join("_id"))
                         elif collection in ("workItem", "cycle", "module", "page"):
+                            print(f"   Adding membership join for {collection} collection")
                             injected_stages.extend(_membership_join("project._id"))
                         elif collection == "projectState":
+                            print(f"   Adding membership join for projectState collection")
                             injected_stages.extend(_membership_join("projectId"))
                         # Other collections: no-op
                     except ValueError as e:
@@ -216,8 +231,19 @@ class DirectMongoClient:
                 db = self.client[database]
                 coll = db[collection]
                 effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
+                
+                if injected_stages:
+                    print(f"\n🔧 RBAC Pipeline Injection for '{collection}':")
+                    print(f"   Injected stages: {len(injected_stages)}")
+                    for i, stage in enumerate(injected_stages):
+                        print(f"   Stage {i}: {list(stage.keys())}")
+                    print(f"   Original pipeline stages: {len(pipeline)}")
+                    print(f"   Total pipeline stages: {len(effective_pipeline)}\n")
+                
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
+                
+                print(f"📊 Query Results: {len(results)} documents returned for collection '{collection}'")
                 
                 pass
                 
