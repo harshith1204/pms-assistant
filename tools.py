@@ -1063,6 +1063,8 @@ async def rag_search(
 # Global websocket registry for content generation
 _GENERATION_WEBSOCKET = None
 _GENERATION_CONVERSATION_ID = None
+_GENERATION_MEMBER_ID = None
+_GENERATION_BUSINESS_ID = None
 
 def set_generation_websocket(websocket):
     """Set the websocket connection for direct content streaming."""
@@ -1073,15 +1075,23 @@ def get_generation_websocket():
     """Get the current websocket connection."""
     return _GENERATION_WEBSOCKET
 
-def set_generation_context(websocket, conversation_id):
+def set_generation_context(websocket, conversation_id, member_id=None, business_id=None):
     """Set websocket and conversation context for generated content persistence."""
-    global _GENERATION_WEBSOCKET, _GENERATION_CONVERSATION_ID
+    global _GENERATION_WEBSOCKET, _GENERATION_CONVERSATION_ID, _GENERATION_MEMBER_ID, _GENERATION_BUSINESS_ID
     _GENERATION_WEBSOCKET = websocket
     _GENERATION_CONVERSATION_ID = conversation_id
+    _GENERATION_MEMBER_ID = member_id
+    _GENERATION_BUSINESS_ID = business_id
 
 def get_generation_conversation_id():
     """Get the current conversation id for generated content context."""
     return _GENERATION_CONVERSATION_ID
+
+def _get_generation_member_id():
+    return _GENERATION_MEMBER_ID
+
+def _get_generation_business_id():
+    return _GENERATION_BUSINESS_ID
 
 
 @tool
@@ -1169,7 +1179,10 @@ async def generate_content(
                         "projectIdentifier": (result or {}).get("projectIdentifier") if isinstance(result, dict) else None,
                         "sequenceId": (result or {}).get("sequenceId") if isinstance(result, dict) else None,
                         "link": (result or {}).get("link") if isinstance(result, dict) else None,
-                    })
+                    },
+                    member_id=_get_generation_member_id(),
+                    business_id=_get_generation_business_id(),
+                    )
             except Exception as e:
                 # Non-fatal
                 print(f"Warning: failed to persist generated work item to conversation: {e}")
@@ -1237,7 +1250,10 @@ async def generate_content(
                     await save_generated_page(conv_id, {
                         "title": (title or "Generated Page").strip(),
                         "blocks": blocks
-                    })
+                    },
+                    member_id=_get_generation_member_id(),
+                    business_id=_get_generation_business_id(),
+                    )
             except Exception as e:
                 print(f"Warning: failed to persist generated page to conversation: {e}")
             

@@ -185,7 +185,12 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
             # Persist user message to SimpoAssist.conversations
             try:
-                await save_user_message(conversation_id, message)
+                await save_user_message(
+                    conversation_id,
+                    message,
+                    member_id=user_id,
+                    business_id=business_id,
+                )
             except Exception as e:
                 # Non-fatal: log to console, continue processing
                 print(f"Warning: failed to save user message: {e}")
@@ -234,7 +239,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     # Set websocket for content generation tool (direct streaming to frontend)
                     from tools import set_generation_context
                     # Provide websocket + conversation context for persisting generated artifacts
-                    set_generation_context(websocket, conversation_id)
+                    set_generation_context(websocket, conversation_id, member_id=user_id, business_id=business_id)
                     
                     # Use regular LLM with tool calling
                     agent_span_cm = contextlib.nullcontext()

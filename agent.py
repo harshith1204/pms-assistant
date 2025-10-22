@@ -29,6 +29,7 @@ import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
 from mongo.conversations import save_assistant_message, save_action_event
+from websocket_handler import user_id_global as _ws_member_id, business_id_global as _ws_business_id
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -355,7 +356,14 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
             # Still log action to DB if possible
             try:
                 if self.conversation_id:
-                    await save_action_event(self.conversation_id, "action", text, step=self._step_counter + 1)
+                    await save_action_event(
+                        self.conversation_id,
+                        "action",
+                        text,
+                        step=self._step_counter + 1,
+                        member_id=_ws_member_id,
+                        business_id=_ws_business_id,
+                    )
             except Exception:
                 pass
             return
@@ -369,7 +377,14 @@ class PhoenixCallbackHandler(AsyncCallbackHandler):
         await self.websocket.send_json(payload)
         try:
             if self.conversation_id:
-                await save_action_event(self.conversation_id, "action", text, step=self._step_counter)
+                await save_action_event(
+                    self.conversation_id,
+                    "action",
+                    text,
+                    step=self._step_counter,
+                    member_id=_ws_member_id,
+                    business_id=_ws_business_id,
+                )
         except Exception:
             pass
 
@@ -660,7 +675,12 @@ class MongoDBAgent:
                 # Persist assistant message
                 conversation_memory.add_message(conversation_id, response)
                 try:
-                    await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                    await save_assistant_message(
+                        conversation_id,
+                        getattr(response, "content", "") or "",
+                        member_id=_ws_member_id,
+                        business_id=_ws_business_id,
+                    )
                 except Exception as e:
                     print(f"Warning: failed to save assistant message: {e}")
 
@@ -676,7 +696,13 @@ class MongoDBAgent:
                 try:
                     action_text = await generate_action_statement(query, response.tool_calls)
                     try:
-                        await save_action_event(conversation_id, "action", action_text)
+                        await save_action_event(
+                            conversation_id,
+                            "action",
+                            action_text,
+                            member_id=_ws_member_id,
+                            business_id=_ws_business_id,
+                        )
                     except Exception:
                         pass
                 except Exception:
@@ -892,7 +918,12 @@ class MongoDBAgent:
                     # Persist assistant message
                     conversation_memory.add_message(conversation_id, response)
                     try:
-                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                        await save_assistant_message(
+                            conversation_id,
+                            getattr(response, "content", "") or "",
+                            member_id=_ws_member_id,
+                            business_id=_ws_business_id,
+                        )
                     except Exception as e:
                         print(f"Warning: failed to save assistant message: {e}")
 
