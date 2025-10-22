@@ -6,12 +6,9 @@ based on member ID and roles.
 """
 
 from rbac.permissions import (
-    Permission,
-    Role,
     MemberContext,
     PermissionError,
     ResourceAccessError,
-    ROLE_PERMISSIONS,
 )
 
 from rbac.auth import (
@@ -24,13 +21,10 @@ from rbac.auth import (
 )
 
 __all__ = [
-    # Permissions
-    "Permission",
-    "Role",
+    # Core types
     "MemberContext",
     "PermissionError",
     "ResourceAccessError",
-    "ROLE_PERMISSIONS",
     # Auth
     "get_current_member",
     "require_permissions",

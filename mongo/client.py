@@ -140,7 +140,7 @@ class DirectMongoClient:
                 if member_context is not None:
                     try:
                         from rbac.filters import apply_member_pipeline_filter
-                        injected_stages = apply_member_pipeline_filter([], member_context)  # type: ignore[arg-type]
+                        injected_stages = apply_member_pipeline_filter([], member_context, None, collection)  # type: ignore[arg-type]
                     except Exception as e:
                         print(f"Warning: RBAC filter construction failed: {e}")
 

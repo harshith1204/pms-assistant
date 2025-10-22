@@ -146,35 +146,30 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         
         # Initialize member context for RBAC
         # In production, extract member_id from JWT or session
-        member_id_from_auth = user_context.get("member_id") or os.getenv("DEFAULT_MEMBER_ID")
+        #member_id_from_auth = user_context.get("member_id") or os.getenv("DEFAULT_MEMBER_ID")
+        member_id_from_auth = "ce64c080-378b-fd1e-db34-e3004c95fda1"
         
         if member_id_from_auth:
             try:
-                from rbac.auth import get_member_by_id, get_member_projects, get_member_project_roles
-                from rbac.permissions import MemberContext, Role
+                from rbac.auth import get_member_by_id, get_member_projects, get_member_project_memberships
+                from rbac.permissions import MemberContext
                 
                 # Fetch member details
                 member_doc = await get_member_by_id(member_id_from_auth)
                 if member_doc:
-                    project_roles = await get_member_project_roles(member_id_from_auth)
-                    project_ids = list(project_roles.keys()) or await get_member_projects(member_id_from_auth)
-                    role_str = member_doc.get("role", "MEMBER")
-                    try:
-                        role = Role(role_str)
-                    except ValueError:
-                        role = Role.MEMBER
+                    project_memberships = await get_member_project_memberships(member_id_from_auth)
+                    project_ids = list(project_memberships.keys()) or await get_member_projects(member_id_from_auth)
                     
                     member_context_global = MemberContext(
                         member_id=member_id_from_auth,
                         name=member_doc.get("name", ""),
                         email=member_doc.get("email", ""),
-                        role=role,
                         project_ids=project_ids,
-                        project_roles=project_roles,
+                        project_memberships=project_memberships,
                         business_id=user_context["businessId"],
                         type=member_doc.get("type"),
                     )
-                    print(f"✅ Member authenticated: {member_context_global.name} ({member_context_global.role.value})")
+                    print(f"✅ Member authenticated: {member_context_global.name}")
                 else:
                     print(f"⚠️  Member not found: {member_id_from_auth}")
                     member_context_global = None
