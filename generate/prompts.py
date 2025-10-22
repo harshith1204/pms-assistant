@@ -146,12 +146,11 @@ Instructions:
 WORK_ITEM_SURPRISE_ME_PROMPTS = {
     'with_description': {
         'system_prompt': """You are an assistant that enhances work item descriptions to be more detailed, actionable, and comprehensive.
-Take the provided title and existing description, and generate a much more detailed and professional description.
+Take the provided title and existing description and generate a much more detailed and professional description.
 Add specific details, steps, requirements, and context that would make this work item more actionable for team members.
-Return markdown in the description with proper formatting, sections, and bullet points.
-Keep the same title but significantly enhance the description.
-Respond as JSON only, without code fences or surrounding text.
-Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
+Return ONLY the markdown description with proper formatting, sections, and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
 
         'user_prompt_template': """Current Title:
 {title}
@@ -163,20 +162,18 @@ Instructions:
 - Enhance the existing description to be much more detailed and actionable
 - Add specific requirements, implementation steps, acceptance criteria
 - Include relevant technical details, dependencies, and success metrics
-- Structure the description with proper markdown formatting including headers, bullet points, and sections
-- Maintain the same title but significantly expand the description
-- Produce a JSON object with fields: title, description
-- Do not wrap the response in code fences or add explanatory text"""
+- Structure the description with markdown headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
     },
 
     'without_description': {
         'system_prompt': """You are an assistant that generates a comprehensive, professional, and actionable work item description from only a title.
 Create a detailed description suitable for enterprise project management.
 Include sections such as Overview, Scope, Requirements, Implementation Plan, Acceptance Criteria, Dependencies, Risks, and Success Metrics.
-Return markdown in the description with proper headers and bullet points.
-Keep the same title; only generate the description.
-Respond as JSON only, without code fences or surrounding text.
-Example response: {"title": "Implement User Authentication", "description": "## Overview\\nThis task involves implementing...## Requirements\\n- User registration form\\n- Login validation\\n## Steps\\n1. Design database schema..."}.""",
+Return ONLY the markdown description with proper headers and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
 
         'user_prompt_template': """Title:
 {title}
@@ -185,9 +182,8 @@ Instructions:
 - Generate a comprehensive, detailed, and actionable description for this work item
 - Include specific requirements, implementation steps, acceptance criteria, dependencies, risks, and success metrics
 - Use clear markdown structure with headers and bullet points
-- Maintain the same title; output only the description content
-- Produce a JSON object with fields: title, description
-- Do not wrap the response in code fences or add explanatory text"""
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
     }
 }
 
