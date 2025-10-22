@@ -186,9 +186,9 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Persist user message to SimpoAssist.conversations
+            # Persist user message to SimpoAssist.conversations, carrying user id for ownership
             try:
-                await save_user_message(conversation_id, message)
+                await save_user_message(conversation_id, message, user_id=user_context["user_id"]) 
             except Exception as e:
                 # Non-fatal: log to console, continue processing
                 print(f"Warning: failed to save user message: {e}")

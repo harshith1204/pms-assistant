@@ -210,8 +210,12 @@ async def get_conversation(
                 entry["page"] = m.get("page")
             norm.append(entry)
         return {"id": conversation_id, "messages": norm}
+    except HTTPException:
+        # Preserve explicit HTTP exceptions like 403/404
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Avoid leaking internals; keep message concise
+        raise HTTPException(status_code=500, detail="Failed to load conversation")
 
 
 @app.post("/work-items", response_model=WorkItemCreateResponse)

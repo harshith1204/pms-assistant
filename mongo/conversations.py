@@ -110,30 +110,48 @@ async def _get_collection():
     return await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
 
 
-async def append_message(conversation_id: str, message: Dict[str, Any]) -> None:
+async def append_message(conversation_id: str, message: Dict[str, Any], user_id: Optional[str] = None) -> None:
+    """Append a message to a conversation, ensuring metadata is set.
+
+    - Sets conversationId and createdAt on insert
+    - Always updates updatedAt
+    - Sets/updates userId when provided (backfills legacy docs without userId)
+    """
     coll = await _get_collection()
     safe_message = _ensure_message_shape(message)
+
+    set_on_insert: Dict[str, Any] = {
+        "conversationId": conversation_id,
+        "createdAt": _now_iso(),
+    }
+    if user_id is not None:
+        # Prefer to set userId at creation time as well
+        set_on_insert["userId"] = user_id
+
+    set_fields: Dict[str, Any] = {"updatedAt": _now_iso()}
+    if user_id is not None:
+        # Backfill/ensure userId on existing docs lacking it
+        set_fields["userId"] = user_id
+
     await coll.update_one(
         {"conversationId": conversation_id},
         {
-            "$setOnInsert": {
-                "conversationId": conversation_id,
-                "createdAt": _now_iso(),
-            },
+            "$setOnInsert": set_on_insert,
             "$push": {"messages": safe_message},
-            "$set": {"updatedAt": _now_iso()},
+            "$set": set_fields,
         },
         upsert=True,
     )
 
 
-async def save_user_message(conversation_id: str, content: str) -> None:
+async def save_user_message(conversation_id: str, content: str, *, user_id: Optional[str] = None) -> None:
     await append_message(
         conversation_id,
         {
             "type": "user",
             "content": content or "",
         },
+        user_id=user_id,
     )
 
 
