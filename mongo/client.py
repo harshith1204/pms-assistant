@@ -182,29 +182,16 @@ class DirectMongoClient:
 
                         def _membership_join(local_field: str) -> List[Dict[str, Any]]:
                             """Build a $lookup + $match + $unset pipeline ensuring the document's project belongs to member."""
-                            # DEBUG: Add a stage to see what members are found
-                            debug_stage = {
-                                "$addFields": {
-                                    "__mem_debug__": {
-                                        "$map": {
-                                            "input": "$__mem__",
-                                            "as": "m",
-                                            "in": {
-                                                "_id": "$$m._id",
-                                                "memberId": "$$m.memberId",
-                                                "staff_id": "$$m.staff._id"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            
                             return [
                                 {"$lookup": {
                                     "from": "members",
                                     "localField": local_field,
                                     "foreignField": "project._id",
                                     "as": "__mem__",
+                                }},
+                                # DEBUG: Add field to see member count
+                                {"$addFields": {
+                                    "__mem_count__": {"$size": "$__mem__"}
                                 }},
                                 # Ensure at least one membership document for this member
                                 # Check any of the three possible ID fields
@@ -215,7 +202,7 @@ class DirectMongoClient:
                                         {"__mem__": {"$elemMatch": {"memberId": mem_bin}}}
                                     ]
                                 }},
-                                {"$unset": "__mem__"},
+                                {"$unset": ["__mem__", "__mem_count__"]},
                             ]
 
                         if collection == "members":
@@ -260,6 +247,42 @@ class DirectMongoClient:
                         print(f"   Stage {i}: {list(stage.keys())}")
                     print(f"   Original pipeline stages: {len(pipeline)}")
                     print(f"   Total pipeline stages: {len(effective_pipeline)}\n")
+                
+                # DEBUG: Before filtering, let's see if ANY documents exist
+                if injected_stages and collection == "project":
+                    print(f"\n🔬 DEBUG: Checking what lookup returns BEFORE filtering...")
+                    debug_pipeline = [
+                        {"$lookup": {
+                            "from": "members",
+                            "localField": "_id",
+                            "foreignField": "project._id",
+                            "as": "__mem__",
+                        }},
+                        {"$addFields": {
+                            "__mem_count__": {"$size": "$__mem__"},
+                            "__mem_staff_ids__": {
+                                "$map": {
+                                    "input": "$__mem__",
+                                    "as": "m",
+                                    "in": "$$m.staff._id"
+                                }
+                            }
+                        }},
+                        {"$project": {
+                            "name": 1,
+                            "__mem_count__": 1,
+                            "__mem_staff_ids__": 1
+                        }},
+                        {"$limit": 5}
+                    ]
+                    debug_cursor = coll.aggregate(debug_pipeline)
+                    debug_results = await debug_cursor.to_list(length=None)
+                    print(f"   Found {len(debug_results)} total projects:")
+                    for proj in debug_results:
+                        print(f"      - {proj.get('name')}: {proj.get('__mem_count__')} members")
+                        if proj.get('__mem_staff_ids__'):
+                            print(f"        Staff IDs: {proj.get('__mem_staff_ids__')[:3]}")
+                    print(f"   Looking for staff._id = {mem_bin}\n")
                 
                 cursor = coll.aggregate(effective_pipeline)
                 results = await cursor.to_list(length=None)
