@@ -112,15 +112,15 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ content, className }
           h4: ({node, ...props}) => (
             <h4 className="text-lg font-semibold mt-3 mb-2 text-foreground" {...props} />
           ),
-          // Lists with better spacing
+          // Enhanced lists with custom styling
           ul: ({node, ...props}) => (
-            <ul className="list-disc list-outside ml-6 my-3 space-y-1.5" {...props} />
+            <ul className="markdown-ul my-3 space-y-2" {...props} />
           ),
           ol: ({node, ...props}) => (
-            <ol className="list-decimal list-outside ml-6 my-3 space-y-1.5" {...props} />
+            <ol className="markdown-ol my-3 space-y-2" {...props} />
           ),
           li: ({node, ...props}) => (
-            <li className="pl-1" {...props} />
+            <li className="leading-relaxed" {...props} />
           ),
           // Paragraphs with better spacing
           p: ({node, ...props}) => (
