@@ -568,7 +568,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 filtered = parsed
 
 
-            def format_llm_friendly(data, max_items=20, primary_entity: Optional[str] = None):
+            def format_llm_friendly(data, max_items=50, primary_entity: Optional[str] = None):
                 """Format data in a more LLM-friendly way to avoid hallucinations."""
                 def get_nested(d: Dict[str, Any], key: str) -> Any:
                     if key in d:
@@ -729,7 +729,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                 sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
 
                             # Show all groups if max_items is None, otherwise limit
-                            display_limit = len(sorted_data) if max_items is None else 15
+                            display_limit = len(sorted_data) if max_items is None else 25
                             for item in sorted_data[:display_limit]:
                                 group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
                                 group_label = ', '.join(group_values)
@@ -740,13 +740,13 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                     count = item.get('count', 0)
                                     response += f"• {group_label}: {count} items\n"
 
-                            if max_items is not None and len(data) > 15:
+                            if max_items is not None and len(data) > 25:
                                 if has_minutes:
-                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[15:])
-                                    response += f"• ... and {len(data) - 15} other categories: {remaining} min\n"
+                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[25:])
+                                    response += f"• ... and {len(data) - 25} other categories: {remaining} min\n"
                                 else:
-                                    remaining = sum(item.get('count', 0) for item in sorted_data[15:])
-                                    response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
+                                    remaining = sum(item.get('count', 0) for item in sorted_data[25:])
+                                    response += f"• ... and {len(data) - 25} other categories: {remaining} items\n"
                             elif max_items is None and len(data) > display_limit:
                                 if has_minutes:
                                     remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[display_limit:])
@@ -765,14 +765,13 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                     # Handle list of documents - show summary instead of raw JSON
                     if max_items is not None and len(data) > max_items:
                         response = f"📊 RESULTS SUMMARY:\n"
-                        response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
+                        response += f"Found {len(data)} items. Showing key details for last {max_items}:\n\n"
                         # Show sample items in a collection-aware way
-                        for i, item in enumerate(data[:max_items], 1):
+                        for i, item in enumerate(data[-max_items:], len(data) - max_items + 1):
                             if isinstance(item, dict):
                                 response += render_line(item) + "\n"
                         if len(data) > max_items:
-                            response += f"• ... and {len(data) - max_items} more items\n"
-                        return response
+                            response += f"• ... and {len(data) - max_items} items were omitted above\n"
                     else:
                         # Show all items or small list - show in formatted way
                         response = "📊 RESULTS:\n"
@@ -815,7 +814,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
 
             # Format in LLM-friendly way
-            max_items = None if show_all else 20
+            max_items = None if show_all else 50
             formatted_result = format_llm_friendly(filtered, max_items=max_items, primary_entity=primary_entity)
             # If members primary entity and no rows, proactively hint about filters
             try:
