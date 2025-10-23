@@ -76,6 +76,38 @@ class PageCreateResponse(BaseModel):
     content: str  # stringified Editor.js JSON
     link: Optional[str] = None
 
+class CycleCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    project_id: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    created_by: Optional[str] = None
+
+class CycleCreateResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    projectId: Optional[str] = None
+    link: Optional[str] = None
+
+class ModuleCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    project_id: Optional[str] = None
+    lead: Optional[str] = None
+    members: Optional[List[str]] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    created_by: Optional[str] = None
+
+class ModuleCreateResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    projectId: Optional[str] = None
+    link: Optional[str] = None
+
 # Global MongoDB agent instance
 mongodb_agent = None
 
@@ -197,6 +229,10 @@ async def get_conversation(conversation_id: str):
                 entry["workItem"] = m.get("workItem")
             if m.get("type") == "page" and isinstance(m.get("page"), dict):
                 entry["page"] = m.get("page")
+            if m.get("type") == "cycle" and isinstance(m.get("cycle"), dict):
+                entry["cycle"] = m.get("cycle")
+            if m.get("type") == "module" and isinstance(m.get("module"), dict):
+                entry["module"] = m.get("module")
             norm.append(entry)
         return {"id": conversation_id, "messages": norm}
     except Exception as e:
@@ -297,6 +333,96 @@ async def create_page(req: PageCreateRequest):
             id=str(result.inserted_id),
             title=doc["title"],
             content=doc["content"],
+            link=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/cycles", response_model=CycleCreateResponse)
+async def create_cycle(req: CycleCreateRequest):
+    """Create a minimal cycle (sprint) in MongoDB 'cycle' collection."""
+    try:
+        if not mongodb_tools.client:
+            await mongodb_tools.connect()
+
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["cycle"]
+
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat()
+
+        doc: Dict[str, Any] = {
+            "title": (req.title or "").strip() or "Untitled Cycle",
+            "description": (req.description or "").strip(),
+            "createdAt": now_iso,
+            "updatedAt": now_iso,
+        }
+        if req.project_id:
+            doc["project"] = {"id": req.project_id}
+        if req.start_date:
+            doc["startDate"] = req.start_date
+        if req.end_date:
+            doc["endDate"] = req.end_date
+        if req.created_by:
+            doc["createdBy"] = {"name": req.created_by}
+
+        result = await coll.insert_one(doc)
+
+        return CycleCreateResponse(
+            id=str(result.inserted_id),
+            title=doc["title"],
+            description=doc["description"],
+            projectId=req.project_id,
+            link=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/modules", response_model=ModuleCreateResponse)
+async def create_module(req: ModuleCreateRequest):
+    """Create a minimal module in MongoDB 'module' collection."""
+    try:
+        if not mongodb_tools.client:
+            await mongodb_tools.connect()
+
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["module"]
+
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat()
+
+        doc: Dict[str, Any] = {
+            "title": (req.title or "").strip() or "Untitled Module",
+            "description": (req.description or "").strip(),
+            "createdAt": now_iso,
+            "updatedAt": now_iso,
+        }
+        if req.project_id:
+            doc["project"] = {"id": req.project_id}
+        if req.lead:
+            doc["lead"] = {"name": req.lead}
+        if req.members:
+            doc["members"] = [{"name": m} for m in req.members]
+        if req.start_date:
+            doc["startDate"] = req.start_date
+        if req.end_date:
+            doc["endDate"] = req.end_date
+        if req.created_by:
+            doc["createdBy"] = {"name": req.created_by}
+
+        result = await coll.insert_one(doc)
+
+        return ModuleCreateResponse(
+            id=str(result.inserted_id),
+            title=doc["title"],
+            description=doc["description"],
+            projectId=req.project_id,
             link=None,
         )
     except HTTPException:
