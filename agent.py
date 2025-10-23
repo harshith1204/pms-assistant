@@ -196,10 +196,13 @@ class TTLCache:
 
 
 # Lightweight helper to create natural, user-facing action statements
-async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]], callback_handler: Optional[AsyncCallbackHandler] = None) -> str:
+async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
     """Generate a concise, user-facing action sentence based on planned tool calls.
 
     The sentence avoids exposing internal tooling and focuses on intent/benefit.
+    
+    NOTE: This internal LLM call does NOT use streaming callbacks to avoid exposing
+    the action generation process to the frontend. Only the final action result is emitted.
     """
     try:
         if not tool_calls:
@@ -251,15 +254,13 @@ async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, 
             model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
             temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
             max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
-            streaming=True,
+            streaming=False,  # Disable streaming for internal action generation
             verbose=False,
             top_p=0.8,
         )
-        # Use the existing model with proper callback handler integration
-        if callback_handler:
-            resp = await llm.ainvoke(action_prompt, config={"callbacks": [callback_handler]})
-        else:
-            resp = await llm.ainvoke(action_prompt)
+        # Call WITHOUT callback handler - this is an internal utility LLM call
+        # The result will be emitted via emit_dynamic_action, not as raw tokens
+        resp = await llm.ainvoke(action_prompt)
         action_text = str(getattr(resp, "content", "")).strip().strip("\".")
         if not action_text or len(action_text) > 100:
             return "Gathering relevant information for you..."
@@ -658,7 +659,7 @@ class MongoDBAgent:
                 # - Sequential needs are handled by the LLM making separate calls
                 # Emit a dynamic, user-facing action line before running any tools
                 try:
-                    action_text = await generate_action_statement(query, response.tool_calls, callback_handler=None)
+                    action_text = await generate_action_statement(query, response.tool_calls)
                     try:
                         await save_action_event(conversation_id, "action", action_text)
                     except Exception:
@@ -869,7 +870,6 @@ class MongoDBAgent:
                                 synth_action = await generate_action_statement(
                                     query,
                                     [{"name": "synthesize", "args": {"query": "finalize answer from gathered findings"}}],
-                                    callback_handler=callback_handler,
                                 )
                                 if callback_handler:
                                     await callback_handler.emit_dynamic_action(synth_action)
@@ -905,7 +905,7 @@ class MongoDBAgent:
                     # The LLM decides execution order by how it calls tools
                     # Emit a dynamic, user-facing action line before running any tools
                     try:
-                        action_text = await generate_action_statement(query, response.tool_calls, callback_handler=callback_handler)
+                        action_text = await generate_action_statement(query, response.tool_calls)
                         if callback_handler:
                             await callback_handler.emit_dynamic_action(action_text)
                     except Exception:
