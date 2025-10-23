@@ -16,6 +16,7 @@ import Marker from '@editorjs/marker';
 import Delimiter from '@editorjs/delimiter';
 import Embed from '@editorjs/embed';
 import ImageTool from '@editorjs/image';
+import { Briefcase } from 'lucide-react';
 
 export type PageCreateInlineProps = {
   initialEditorJs?: { blocks: Block[] };
@@ -31,6 +32,13 @@ interface Block {
 }
 
 // Editor.js data format is already compatible, no conversion needed
+
+const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode }>> = ({ icon, children }) => (
+  <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background">
+    {icon}
+    <span className="whitespace-nowrap">{children}</span>
+  </div>
+);
 
 const Placeholder: React.FC = () => (
   <div className="absolute pointer-events-none text-muted-foreground/70">Write page content…</div>
@@ -406,6 +414,12 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-background/60 backdrop-blur-[1px]">
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="px-8 pb-4 pt-3">
+          <div className="flex flex-wrap gap-2">
+            <FieldChip icon={<Briefcase className="h-3.5 w-3.5" />}>Project</FieldChip>
           </div>
         </div>
 
