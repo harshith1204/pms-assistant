@@ -194,6 +194,79 @@ class TTLCache:
 
 
 
+# Lightweight helper to create natural, user-facing action statements
+async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
+    """Generate a concise, user-facing action sentence based on planned tool calls.
+
+    The sentence avoids exposing internal tooling and focuses on intent/benefit.
+    
+    NOTE: This internal LLM call does NOT use streaming callbacks to avoid exposing
+    the action generation process to the frontend. Only the final action result is emitted.
+    """
+    try:
+        if not tool_calls:
+            return "Thinking through your request..."
+
+        # Build a compact description of planned actions
+        tool_summaries: List[str] = []
+        for tc in tool_calls:
+            try:
+                name = tc.get("name")
+                args = tc.get("args", {}) or {}
+            except Exception:
+                name, args = "tool", {}
+
+            if name == "mongo_query":
+                q = str(args.get("query", "")).strip()
+                tool_summaries.append(f"query structured data about: {q}")
+            elif name == "rag_search":
+                q = str(args.get("query", "")).strip()
+                ctype = args.get("content_type")
+                if ctype:
+                    tool_summaries.append(f"search {ctype} content about: {q}")
+                else:
+                    tool_summaries.append(f"search all content about: {q}")
+            elif name == "generate_content":
+                p = str(args.get("prompt", "")).strip()
+                ctype = str(args.get("content_type", "content"))
+                tool_summaries.append(f"generate a new {ctype} about: {p}")
+            else:
+                tool_summaries.append("gather relevant information")
+
+        tools_desc = "; and ".join([s for s in tool_summaries if s])
+
+        action_prompt = [
+            SystemMessage(content=(
+                "You are a helpful project management assistant. "
+                "Based on the user's request and your planned actions, generate ONE short, natural sentence "
+                "that explains what you're doing next in a friendly, confident tone. "
+                "Do NOT mention tools, databases, or technical details. "
+                "Focus on intent and user benefit. Keep it under 15 words."
+            )),
+            HumanMessage(content=(
+                f"User asked: '{user_query}'\n"
+                f"Planned actions: {tools_desc}\n"
+                "Your next step (one sentence):"
+            )),
+        ]
+        llm = ChatGroq(
+            model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+            temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
+            max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
+            streaming=False,  # Disable streaming for internal action generation
+            verbose=False,
+            top_p=0.8,
+        )
+        # Call WITHOUT callback handler - this is an internal utility LLM call
+        # The result will be emitted via emit_dynamic_action, not as raw tokens
+        resp = await llm.ainvoke(action_prompt)
+        action_text = str(getattr(resp, "content", "")).strip().strip("\".")
+        if not action_text or len(action_text) > 100:
+            return "Gathering relevant information for you..."
+        return action_text
+    except Exception:
+        return "Gathering relevant information for you..."
+
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
@@ -583,12 +656,15 @@ class MongoDBAgent:
                 # The LLM decides execution order by how it calls tools:
                 # - Multiple tools in one response = parallel execution
                 # - Sequential needs are handled by the LLM making separate calls
-                # Save intermediate response content as action (if present)
-                if response.content:
+                # Generate user-friendly action from tool calls (don't save intermediate response to DB)
+                try:
+                    action_text = await generate_action_statement(query, response.tool_calls)
                     try:
-                        await save_action_event(conversation_id, "action", response.content)
+                        await save_action_event(conversation_id, "action", action_text)
                     except Exception:
                         pass
+                except Exception:
+                    pass
                 messages.append(response)
                 did_any_tool = False
                 
@@ -793,6 +869,16 @@ class MongoDBAgent:
                                 "If the user asked to browse or see examples, summarize briefly and offer to expand. "
                                 "For work items, present canonical fields succinctly."
                             ))
+                            # Emit a dynamic action statement to indicate synthesis/finalization
+                            try:
+                                synth_action = await generate_action_statement(
+                                    query,
+                                    [{"name": "synthesize", "args": {"query": "finalize answer from gathered findings"}}],
+                                )
+                                if callback_handler:
+                                    await callback_handler.emit_dynamic_action(synth_action)
+                            except Exception:
+                                pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
                         
