@@ -31,17 +31,34 @@ interface ChatMessageProps {
     title: string;
     blocks: { blocks: any[] };
   };
+  cycle?: {
+    title: string;
+    description?: string;
+    startDate?: string;
+    endDate?: string;
+  };
+  module?: {
+    title: string;
+    description?: string;
+    projectName?: string;
+  };
 }
 
 import WorkItemCreateInline from "@/components/WorkItemCreateInline";
 import WorkItemCard from "@/components/WorkItemCard";
 import PageCreateInline from "@/components/PageCreateInline";
 import PageCard from "@/components/PageCard";
+import CycleCreateInline from "@/components/CycleCreateInline";
+import CycleCard from "@/components/CycleCard";
+import ModuleCreateInline from "@/components/ModuleCreateInline";
+import ModuleCard from "@/components/ModuleCard";
 import { createWorkItem } from "@/api/workitems";
 import { createPage } from "@/api/pages";
+import { createCycle } from "@/api/cycles";
+import { createModule } from "@/api/modules";
 import { toast } from "@/components/ui/use-toast";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -50,6 +67,8 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [savedWorkItem, setSavedWorkItem] = useState<null | { id: string; title: string; description: string; projectIdentifier?: string; sequenceId?: string | number; link?: string }>(null);
   const [saving, setSaving] = useState(false);
   const [savedPage, setSavedPage] = useState<null | { id: string; title: string; content: string; link?: string }>(null);
+  const [savedCycle, setSavedCycle] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
+  const [savedModule, setSavedModule] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -169,6 +188,64 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                     toast({ title: "Page saved", description: "Your page has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save page", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+              />
+            )
+          ) : cycle ? (
+            savedCycle ? (
+              <CycleCard
+                title={savedCycle.title}
+                description={savedCycle.description}
+                link={savedCycle.link}
+                className="mt-1"
+              />
+            ) : (
+              <CycleCreateInline
+                title={cycle.title}
+                description={cycle.description}
+                onSave={async ({ title, description }) => {
+                  try {
+                    setSaving(true);
+                    const projectId = localStorage.getItem("projectId") || undefined;
+                    const created = await createCycle({ title, description, projectId, startDate: cycle.startDate, endDate: cycle.endDate });
+                    setSavedCycle(created);
+                    toast({ title: "Cycle saved", description: "Your cycle has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save cycle", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+              />
+            )
+          ) : module ? (
+            savedModule ? (
+              <ModuleCard
+                title={savedModule.title}
+                description={savedModule.description}
+                link={savedModule.link}
+                className="mt-1"
+              />
+            ) : (
+              <ModuleCreateInline
+                title={module.title}
+                description={module.description}
+                onSave={async ({ title, description }) => {
+                  try {
+                    setSaving(true);
+                    const projectId = localStorage.getItem("projectId") || undefined;
+                    const created = await createModule({ title, description, projectId });
+                    setSavedModule(created);
+                    toast({ title: "Module saved", description: "Your module has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save module", description: String(e?.message || e), variant: "destructive" as any });
                   } finally {
                     setSaving(false);
                   }
