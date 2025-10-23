@@ -222,7 +222,17 @@ redis-cli monitor
 ### Issue: Conversations not persisting across server restarts
 
 **Solution:**
-This is expected behavior! Redis cache is meant for **temporary storage** (24h TTL). Conversations are **permanently stored in MongoDB** via the `mongo/conversations.py` module. When users load old conversations from MongoDB, they are cached in Redis for fast access.
+This is expected behavior! Redis cache is meant for **temporary storage** (24h TTL). Conversations are **permanently stored in MongoDB** via the `mongo/conversations.py` module. When users load old conversations from MongoDB, they are **automatically cached in Redis** for fast access.
+
+### Issue: How to verify conversations are being cached?
+
+**Solution:**
+Watch the application logs for these messages:
+```
+ℹ️ Conversation conv_123 not in cache, loading from MongoDB...
+✅ Loaded 15 messages from MongoDB into Redis cache for conversation conv_123
+ℹ️ Conversation conv_123 found in cache, TTL refreshed to 86400s
+```
 
 ## Benefits Summary
 

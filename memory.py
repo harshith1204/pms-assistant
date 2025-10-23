@@ -339,6 +339,97 @@ class RedisConversationMemory:
             # Best-effort; log but don't fail
             print(f"⚠️ Failed to update summary: {e}")
 
+    async def load_conversation_from_mongodb(self, conversation_id: str) -> bool:
+        """Load an existing conversation from MongoDB into Redis cache
+        
+        This is called when a user opens an older conversation to ensure it's
+        available in Redis cache for fast access.
+        
+        Returns:
+            bool: True if conversation was loaded successfully, False otherwise
+        """
+        try:
+            # Import here to avoid circular dependency
+            from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
+            
+            # Fetch conversation from MongoDB
+            coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
+            doc = await coll.find_one({"conversationId": conversation_id})
+            
+            if not doc:
+                print(f"ℹ️ No conversation found in MongoDB for {conversation_id}")
+                return False
+            
+            messages = doc.get("messages") or []
+            if not messages:
+                print(f"ℹ️ Empty conversation in MongoDB for {conversation_id}")
+                return False
+            
+            # Convert MongoDB messages to LangChain messages and load into Redis
+            loaded_count = 0
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                
+                msg_type = msg.get("type", "assistant")
+                content = msg.get("content", "")
+                
+                # Convert to appropriate LangChain message type
+                if msg_type == "user":
+                    lc_message = HumanMessage(content=content)
+                elif msg_type == "assistant":
+                    lc_message = AIMessage(content=content)
+                elif msg_type == "system":
+                    lc_message = SystemMessage(content=content)
+                else:
+                    # Skip action/tool/work_item/page messages for now
+                    # Only load conversational messages into memory
+                    continue
+                
+                # Add to Redis cache
+                await self.add_message(conversation_id, lc_message)
+                loaded_count += 1
+            
+            print(f"✅ Loaded {loaded_count} messages from MongoDB into Redis cache for conversation {conversation_id}")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Failed to load conversation from MongoDB: {e}")
+            return False
+
+    async def ensure_conversation_cached(self, conversation_id: str) -> None:
+        """Ensure a conversation is cached in Redis, loading from MongoDB if needed
+        
+        This should be called at the start of any conversation interaction to ensure
+        the conversation history is available in Redis cache.
+        """
+        await self._ensure_connected()
+        
+        # Check if conversation exists in Redis
+        key = self._get_conversation_key(conversation_id)
+        
+        if self.use_fallback:
+            # In fallback mode, try to load from MongoDB
+            await self.load_conversation_from_mongodb(conversation_id)
+            return
+        
+        try:
+            exists = await self.redis_client.exists(key)
+            
+            if exists:
+                # Conversation is cached, refresh TTL
+                await self.redis_client.expire(key, self.ttl_seconds)
+                print(f"ℹ️ Conversation {conversation_id} found in cache, TTL refreshed to {self.ttl_seconds}s")
+            else:
+                # Conversation not in cache, load from MongoDB
+                print(f"ℹ️ Conversation {conversation_id} not in cache, loading from MongoDB...")
+                await self.load_conversation_from_mongodb(conversation_id)
+                
+        except RedisError as e:
+            print(f"⚠️ Redis error in ensure_conversation_cached: {e}")
+            # Try to load from MongoDB anyway
+            await self.load_conversation_from_mongodb(conversation_id)
+
     async def close(self):
         """Close Redis connection"""
         if self.redis_client:

@@ -169,8 +169,12 @@ async def list_conversations():
 
 @app.get("/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
-    """Get a conversation's messages."""
+    """Get a conversation's messages and cache it in Redis for fast access."""
     try:
+        # Ensure conversation is cached in Redis (loads from MongoDB if needed)
+        from memory import conversation_memory
+        await conversation_memory.ensure_conversation_cached(conversation_id)
+        
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
         doc = await coll.find_one({"conversationId": conversation_id})
         if not doc:
