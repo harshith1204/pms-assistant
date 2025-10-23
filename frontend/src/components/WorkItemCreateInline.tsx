@@ -5,7 +5,7 @@ import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2 } from "lucide-react";
+import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2, Briefcase } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +69,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
 
         <div className="px-5 pb-4 pt-3">
           <div className="flex flex-wrap gap-2">
+            <FieldChip icon={<Briefcase className="h-3.5 w-3.5" />}>Project</FieldChip>
             <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>Backlog</FieldChip>
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>None</FieldChip>
             <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
