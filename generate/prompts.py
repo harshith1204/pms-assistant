@@ -187,6 +187,146 @@ Instructions:
     }
 }
 
+# Cycle Generation Prompts
+CYCLE_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates concise, actionable cycle (sprint) titles and descriptions.
+Use the provided template as a structure and the user's prompt for specifics.
+Return markdown in the description. Keep the title under 120 characters.
+Respond as JSON only, without code fences or surrounding text.
+Example response: {"title": "Sprint 2024-Q4", "description": "## Goals\\nDeliver authentication feature..."}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line cycle/sprint name, no surrounding quotes.
+- Description: markdown body with sprint goals, objectives, and key deliverables.
+- Example: {{"title": "Sprint 2024-Q4", "description": "## Sprint Goals\\n- Complete authentication module\\n- Deploy payment integration"}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+# Cycle Surprise-Me Prompts
+CYCLE_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances cycle (sprint) descriptions to be more detailed, actionable, and comprehensive.
+Take the provided title and existing description and generate a much more detailed and professional sprint description.
+Add specific sprint goals, objectives, deliverables, capacity planning, and success criteria.
+Return ONLY the markdown description with proper formatting, sections, and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Description:
+{description}
+
+Instructions:
+- Enhance the existing description to be much more detailed and actionable for sprint planning
+- Add specific sprint goals, key deliverables, capacity planning, and success metrics
+- Include team objectives, dependencies, and potential risks
+- Structure the description with markdown headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates a comprehensive, professional, and actionable cycle (sprint) description from only a title.
+Create a detailed sprint description suitable for enterprise agile project management.
+Include sections such as Sprint Goals, Key Deliverables, Team Capacity, Success Metrics, Dependencies, and Risks.
+Return ONLY the markdown description with proper headers and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate a comprehensive, detailed, and actionable description for this sprint/cycle
+- Include specific sprint goals, deliverables, capacity planning, success metrics, dependencies, and risks
+- Use clear markdown structure with headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    }
+}
+
+# Module Generation Prompts
+MODULE_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates concise, actionable module titles and descriptions.
+Use the provided template as a structure and the user's prompt for specifics.
+Return markdown in the description. Keep the title under 120 characters.
+Respond as JSON only, without code fences or surrounding text.
+Example response: {"title": "Authentication Module", "description": "## Overview\\nCore authentication and authorization system..."}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line module name, no surrounding quotes.
+- Description: markdown body with module overview, scope, and objectives.
+- Example: {{"title": "Authentication Module", "description": "## Overview\\nCore authentication system\\n## Scope\\n- User login\\n- SSO integration"}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+# Module Surprise-Me Prompts
+MODULE_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances module descriptions to be more detailed, actionable, and comprehensive.
+Take the provided title and existing description and generate a much more detailed and professional module description.
+Add specific module objectives, scope, deliverables, team structure, and success criteria.
+Return ONLY the markdown description with proper formatting, sections, and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Description:
+{description}
+
+Instructions:
+- Enhance the existing description to be much more detailed and actionable for module planning
+- Add specific module objectives, scope, deliverables, team roles, and success metrics
+- Include dependencies, milestones, and potential risks
+- Structure the description with markdown headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates a comprehensive, professional, and actionable module description from only a title.
+Create a detailed module description suitable for enterprise project management.
+Include sections such as Module Overview, Scope, Objectives, Team Structure, Deliverables, Success Metrics, Dependencies, and Risks.
+Return ONLY the markdown description with proper headers and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate a comprehensive, detailed, and actionable description for this module
+- Include specific module objectives, scope, deliverables, team structure, success metrics, dependencies, and risks
+- Use clear markdown structure with headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    }
+}
+
 # Page Content Generation Prompts
 PAGE_CONTENT_GENERATION_PROMPTS = {
     'system_prompt_template': """You are an AI assistant specialized in generating professional business content for enterprise project management pages in Editor.js block format.
