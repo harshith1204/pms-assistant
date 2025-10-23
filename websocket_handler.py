@@ -229,6 +229,10 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             print(f"conversation_id: {conversation_id}")
             force_planner = data.get("planner", False)
 
+            # Proactively cache older conversations to reduce Redis latency
+            from memory import conversation_memory
+            await conversation_memory.ensure_conversation_cached(conversation_id)
+
 
             await websocket.send_json({
                 "type": "user_message",
