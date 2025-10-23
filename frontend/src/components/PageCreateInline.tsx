@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import EditorJS from '@editorjs/editorjs';
 import Header from '@editorjs/header';
@@ -16,10 +17,16 @@ import Marker from '@editorjs/marker';
 import Delimiter from '@editorjs/delimiter';
 import Embed from '@editorjs/embed';
 import ImageTool from '@editorjs/image';
-import { Briefcase } from 'lucide-react';
+import { Briefcase, Wand2, Eye, EyeOff, Save, X, Calendar, Users } from 'lucide-react';
+import { createPage, CreatePageRequest } from "@/api/pages";
+import { getProjectSettings, ProjectMember } from "@/api/projects";
 
 export type PageCreateInlineProps = {
   initialEditorJs?: { blocks: Block[] };
+  projectId?: string;
+  projectName?: string;
+  businessId?: string;
+  businessName?: string;
   onSave?: (values: { title: string; editorJs: { blocks: Block[] } }) => void;
   onDiscard?: () => void;
   className?: string;
@@ -44,7 +51,16 @@ const Placeholder: React.FC = () => (
   <div className="absolute pointer-events-none text-muted-foreground/70">Write page content…</div>
 );
 
-export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEditorJs, onSave, onDiscard, className }) => {
+export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
+  initialEditorJs,
+  projectId,
+  projectName,
+  businessId,
+  businessName,
+  onSave,
+  onDiscard,
+  className
+}) => {
   const editorRef = useRef<EditorJS | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [isPreview, setIsPreview] = useState<boolean>(false);
@@ -54,12 +70,48 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
         id: 'test-block',
         type: 'paragraph',
         data: {
-          text: 'This is a test paragraph to verify the editor is working. If you can see and edit this text, the editor is functioning correctly.'
+          text: 'Start writing your page content here...'
         }
       }
     ]
   });
   const [editorReady, setEditorReady] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  // Page specific state
+  const [pageTitle, setPageTitle] = useState<string>('');
+  const [visibility, setVisibility] = useState<'PUBLIC' | 'PRIVATE' | 'ARCHIVED'>('PUBLIC');
+  const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [selectedMembers, setSelectedMembers] = useState<any[]>([]);
+  const [selectedCycles, setSelectedCycles] = useState<any[]>([]);
+  const [selectedModules, setSelectedModules] = useState<any[]>([]);
+
+  // Data fetched from API
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [cycles, setCycles] = useState<any[]>([]);
+  const [modules, setModules] = useState<any[]>([]);
+
+  // UI state
+  const [showMemberPicker, setShowMemberPicker] = useState<boolean>(false);
+  const [showCyclePicker, setShowCyclePicker] = useState<boolean>(false);
+  const [showModulePicker, setShowModulePicker] = useState<boolean>(false);
+  const [wordCount, setWordCount] = useState<number>(0);
+  const [readTime, setReadTime] = useState<string>('0 minutes');
+
+  React.useEffect(() => {
+    if (projectId && businessId) {
+      loadProjectData();
+    }
+  }, [projectId, businessId]);
+
+  const loadProjectData = async () => {
+    try {
+      const settings = await getProjectSettings(projectId!, businessId!);
+      setMembers(settings.members || []);
+    } catch (error) {
+      console.error('Failed to load project data:', error);
+    }
+  };
 
   // Debug logging
   console.log('PageCreateInline props:', { initialEditorJs });
@@ -138,19 +190,28 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
             },
           },
           placeholder: "Write page content…",
-          minHeight: 220,
-          autofocus: true,
+          minHeight: 400,
+          autofocus: !isPreview,
+          onChange: async () => {
+            if (editorRef.current) {
+              try {
+                const output = await editorRef.current.save();
+                calculateReadTime(output.blocks);
+              } catch (error) {
+                console.error('Failed to calculate read time:', error);
+              }
+            }
+          }
         });
 
         editorRef.current.isReady
           .then(() => {
             console.log('Editor.js is ready to work!');
             setEditorReady(true);
-            // Update local state after editor is ready
-            setEditorData(initialEditorJs || { blocks: [] });
+            calculateReadTime(editorData.blocks);
 
             // Auto-focus the editor
-            if (editorRef.current && editorRef.current.focus) {
+            if (editorRef.current && editorRef.current.focus && !isPreview) {
               try {
                 editorRef.current.focus();
               } catch (error) {
@@ -370,16 +431,71 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
   }, [initialEditorJs]);
 
   const handleSave = async () => {
+    if (!pageTitle.trim()) {
+      alert('Please enter a page title');
+      return;
+    }
+
     if (editorRef.current) {
+      setIsLoading(true);
+
       try {
         const outputData = await editorRef.current.save();
         console.log('Editor.js save data:', outputData);
         setEditorData(outputData);
-        onSave?.({ title: "Untitled Page", editorJs: outputData });
+
+        const contentString = JSON.stringify(outputData);
+
+        const payload: CreatePageRequest = {
+          title: pageTitle.trim(),
+          content: contentString,
+          business: {
+            id: businessId || '',
+            name: businessName || ''
+          },
+          project: {
+            id: projectId || '',
+            name: projectName || ''
+          },
+          createdBy: {
+            id: localStorage.getItem('staffId') || '',
+            name: localStorage.getItem('staffName') || ''
+          },
+          visibility: visibility,
+          locked: isLocked,
+          favourite: false,
+          readTime: readTime,
+          wordCount: wordCount,
+          linkedCycle: selectedCycles,
+          linkedModule: selectedModules,
+          linkedMembers: selectedMembers,
+          linkedPages: []
+        };
+
+        const response = await createPage(payload);
+        onSave?.({ title: pageTitle.trim(), editorJs: outputData });
       } catch (error) {
         console.error('Saving failed: ', error);
+        alert('Failed to save page. Please try again.');
+      } finally {
+        setIsLoading(false);
       }
     }
+  };
+
+  const calculateReadTime = (blocks: Block[]) => {
+    const text = blocks
+      .filter(block => block.data?.text)
+      .map(block => block.data.text)
+      .join(' ')
+      .replace(/<[^>]*>/g, '');
+
+    const words = text.split(/\s+/).length;
+    setWordCount(words);
+
+    const wordsPerMinute = 225;
+    const minutes = Math.ceil(words / wordsPerMinute);
+    setReadTime(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
   };
 
   // No separate preview renderer needed; we use EditorJS read-only mode
@@ -390,41 +506,126 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
     <Card className={cn("border-muted/70 shadow-lg", className)}>
       <CardContent className="p-0">
 
-        <div className="px-8 pt-8 pb-4">
-          <div className="flex items-center justify-end gap-3">
-            <span className={cn("text-sm font-medium", !isPreview && "text-foreground", isPreview && "text-muted-foreground")}>Edit</span>
-            <Switch checked={isPreview} onCheckedChange={(v) => setIsPreview(Boolean(v))} />
-            <span className={cn("text-sm font-medium", isPreview && "text-foreground", !isPreview && "text-muted-foreground")}>Preview</span>
-          </div>
-          <div className="mt-6 relative">
-            <div
-              ref={editorContainerRef}
-              className="border-2 rounded-lg bg-background min-h-[400px] max-h-[600px] overflow-auto editor-container"
-              style={{
-                padding: '55px',
-                fontSize: '15px',
-                lineHeight: '1.7',
-                border: '2px solid hsl(var(--border))',
-                backgroundColor: 'hsl(var(--background))',
-                color: 'hsl(var(--foreground))',
-              }}
-              aria-busy={!editorReady}
+        {/* Header with title and actions */}
+        <div className="px-8 pt-8 pb-4 border-b">
+          <div className="flex items-center justify-between mb-4">
+            <Input
+              value={pageTitle}
+              onChange={(e) => setPageTitle(e.target.value)}
+              placeholder="Page title"
+              className="text-2xl font-semibold border-none px-0 shadow-none focus-visible:ring-0"
             />
-            {!editorReady && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-background/60 backdrop-blur-[1px]">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">{wordCount} words • {readTime}</span>
+              <span className={cn("text-sm font-medium", !isPreview && "text-foreground", isPreview && "text-muted-foreground")}>Edit</span>
+              <Switch checked={isPreview} onCheckedChange={(v) => setIsPreview(Boolean(v))} />
+              <span className={cn("text-sm font-medium", isPreview && "text-foreground", !isPreview && "text-muted-foreground")}>Preview</span>
+            </div>
+          </div>
+
+          {/* Visibility and member controls */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Visibility:</span>
+                <Button
+                  variant={visibility === 'PUBLIC' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setVisibility('PUBLIC')}
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  Public
+                </Button>
+                <Button
+                  variant={visibility === 'PRIVATE' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setVisibility('PRIVATE')}
+                >
+                  <EyeOff className="h-4 w-4 mr-1" />
+                  Private
+                </Button>
               </div>
-            )}
+
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Linked:</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowCyclePicker(true)}
+                >
+                  <Calendar className="h-4 w-4 mr-1" />
+                  {selectedCycles.length > 0 ? `${selectedCycles.length} cycle${selectedCycles.length > 1 ? 's' : ''}` : 'Cycles'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowModulePicker(true)}
+                >
+                  {selectedModules.length > 0 ? `${selectedModules.length} module${selectedModules.length > 1 ? 's' : ''}` : 'Modules'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowMemberPicker(true)}
+                >
+                  <Users className="h-4 w-4 mr-1" />
+                  {selectedMembers.length > 0 ? `${selectedMembers.length} member${selectedMembers.length > 1 ? 's' : ''}` : 'Members'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm">
+                <Wand2 className="h-4 w-4 mr-1" />
+                Templates
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsLocked(!isLocked)}
+              >
+                {isLocked ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
           </div>
         </div>
 
-        <div className="px-8 pb-4 pt-3">
-          <div className="flex flex-wrap gap-2">
-            <FieldChip icon={<Briefcase className="h-3.5 w-3.5" />}>Project</FieldChip>
-          </div>
+        {/* Editor */}
+        <div className="relative">
+          <div
+            ref={editorContainerRef}
+            className="min-h-[400px] max-h-[600px] overflow-auto editor-container"
+            style={{
+              padding: '32px',
+              fontSize: '15px',
+              lineHeight: '1.7',
+              backgroundColor: 'hsl(var(--background))',
+              color: 'hsl(var(--foreground))',
+            }}
+            aria-busy={!editorReady}
+          />
+          {!editorReady && (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+              <div className="text-muted-foreground">Loading editor...</div>
+            </div>
+          )}
         </div>
 
-        <div className="px-8 py-6 border-t-2 flex items-center justify-end gap-3 bg-muted/20">
-          <Button onClick={handleSave} size="lg" className="px-8">Save Page</Button>
+        {/* Footer with save actions */}
+        <div className="px-8 py-6 border-t-2 flex items-center justify-between bg-muted/20">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Last saved: Never</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={onDiscard}>
+              <X className="h-4 w-4 mr-1" />
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={isLoading} size="lg" className="px-8">
+              <Save className="h-4 w-4 mr-1" />
+              {isLoading ? 'Saving...' : 'Save Page'}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
