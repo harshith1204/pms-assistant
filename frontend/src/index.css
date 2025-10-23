@@ -129,6 +129,31 @@ All colors MUST be HSL.
     @apply font-medium;
   }
 
+  /* Syntax highlighting enhancements */
+  .hljs {
+    @apply rounded-lg p-4 text-sm;
+    background: #0d1117 !important;
+  }
+
+  /* Code block scrollbar styling */
+  pre::-webkit-scrollbar {
+    height: 8px;
+  }
+
+  pre::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+  }
+
+  pre::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+  }
+
+  pre::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
   /* Editor.js specific styles */
   .editor-container .ce-block__content,
   .editor-container .ce-toolbar__content {

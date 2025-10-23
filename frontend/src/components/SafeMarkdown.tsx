@@ -3,8 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github-dark.css";
 
 export type SafeMarkdownProps = {
   content: string;
@@ -42,7 +42,7 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ content, className }
     <div className={className}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], rehypeHighlight]}
         components={{
           // Links with better styling
           a: ({node, ...props}) => (
@@ -66,26 +66,13 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ content, className }
               );
             }
             
-            // Code block with syntax highlighting
-            const language = match[1];
-            return (
-              <SyntaxHighlighter
-                style={vscDarkPlus}
-                language={language}
-                PreTag="div"
-                className="rounded-lg !mt-2 !mb-3 text-sm"
-                customStyle={{
-                  margin: 0,
-                  borderRadius: '0.5rem',
-                  padding: '1rem',
-                }}
-              >
-                {String(children).replace(/\n$/, '')}
-              </SyntaxHighlighter>
-            );
+            // Code block - rehype-highlight handles the syntax highlighting
+            return <code className={className} {...props}>{children}</code>;
           },
-          // Remove default pre styling since code handles it
-          pre: ({node, ...props}) => <div {...props} />,
+          // Style pre blocks containing code
+          pre: ({node, ...props}) => (
+            <pre className="rounded-lg bg-[#0d1117] p-4 overflow-x-auto my-3 border border-border/30" {...props} />
+          ),
           // Images with better styling
           img: ({node, ...props}) => (
             <img loading="lazy" decoding="async" className="max-w-full rounded-lg shadow-sm my-3" {...props} />
