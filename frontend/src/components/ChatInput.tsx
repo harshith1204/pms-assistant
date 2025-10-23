@@ -10,9 +10,10 @@ interface ChatInputProps {
   onSendMessage: (message: string) => void;
   isLoading?: boolean;
   showSuggestedPrompts?: boolean;
+  onFocus?: () => void;
 }
 
-export const ChatInput = ({ onSendMessage, isLoading = false, showSuggestedPrompts = true }: ChatInputProps) => {
+export const ChatInput = ({ onSendMessage, isLoading = false, showSuggestedPrompts = true, onFocus }: ChatInputProps) => {
   const [message, setMessage] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -49,6 +50,7 @@ export const ChatInput = ({ onSendMessage, isLoading = false, showSuggestedPromp
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={onFocus}
             placeholder="Ask me to create pages, tasks, or help with project management..."
             className="min-h-[36px] flex items-center max-h-[200px] resize-none border-0 bg-transparent px-0 py-0.5 text-base leading-[1.3] text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 scrollbar-thin flex-1"
             disabled={isLoading}

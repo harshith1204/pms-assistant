@@ -64,6 +64,11 @@ const Index = () => {
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+  const latestUserMessageRef = useRef<HTMLDivElement | null>(null);
+  const [shouldScrollToLatest, setShouldScrollToLatest] = useState(false);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -343,6 +348,8 @@ const Index = () => {
     } else if (evt.type === "complete") {
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
+      // Don't trigger scroll on complete to keep the view stable
+      setShouldScrollToLatest(false);
       // Reconcile to canonical conversation ID when provided by backend
       const canonicalId = (evt as any).conversation_id as string | undefined;
       const currentActive = activeConversationIdRef.current;
@@ -535,6 +542,8 @@ const Index = () => {
     setShowGettingStarted(false);
     // Ensure we exit the settings view when a conversation is selected
     setShowPersonalization(false);
+    // Don't trigger scroll-to-latest when loading existing conversation
+    setShouldScrollToLatest(false);
     try {
       const msgs = await getConversationMessages(id);
       setMessages(transformConversationMessages(msgs));
@@ -572,6 +581,7 @@ const Index = () => {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
+    setShouldScrollToLatest(true);
 
     // Ensure we have an active conversation id
     let convId = activeConversationId;
@@ -681,11 +691,121 @@ const Index = () => {
     setFeedbackText("");
   };
 
-  // Auto-scroll to bottom on message updates
+  // Set up scroll event listener to detect manual scrolling
+  useEffect(() => {
+    if (!scrollAreaRef.current) return;
+    
+    const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+    if (!scrollContainer) return;
+    
+    const handleScroll = () => {
+      // Clear any existing timeout
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      
+      // Set user scrolling flag
+      setIsUserScrolling(true);
+      
+      // Reset flag after user stops scrolling for 1 second
+      scrollTimeoutRef.current = setTimeout(() => {
+        setIsUserScrolling(false);
+      }, 1000);
+    };
+    
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
+    
+    return () => {
+      scrollContainer.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, [scrollAreaRef.current]);
+
+  // Handle scrolling to show only latest interaction
   useEffect(() => {
     if (showGettingStarted || showPersonalization) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading, showGettingStarted, showPersonalization]);
+    
+    // Don't auto-scroll if user is manually scrolling
+    if (shouldScrollToLatest && !isUserScrolling && scrollAreaRef.current) {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        const scrollContainer = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]');
+        if (!scrollContainer) return;
+        
+        // Find all message elements
+        const messageElements = Array.from(scrollContainer.querySelectorAll('[data-message-role]'));
+        
+        // Find the index of the last user message
+        let lastUserMessageIndex = -1;
+        for (let i = messageElements.length - 1; i >= 0; i--) {
+          if (messageElements[i].getAttribute('data-message-role') === 'user') {
+            lastUserMessageIndex = i;
+            break;
+          }
+        }
+        
+        if (lastUserMessageIndex === -1) return;
+        
+        const latestUserMessageElement = messageElements[lastUserMessageIndex] as HTMLElement;
+        
+        // Calculate the total height of all messages before the latest user message
+        let heightBeforeLatestUser = 0;
+        for (let i = 0; i < lastUserMessageIndex; i++) {
+          const element = messageElements[i] as HTMLElement;
+          heightBeforeLatestUser += element.offsetHeight;
+        }
+        
+        // Get container viewport height
+        const containerHeight = scrollContainer.clientHeight;
+        
+        // Calculate the optimal scroll position
+        // We want to scroll so that previous messages are above the viewport
+        // Add some padding so the latest user message isn't right at the top edge
+        const targetScrollTop = heightBeforeLatestUser - 24; // 24px padding from top
+        
+        // Make sure we don't scroll past the content
+        const maxScrollTop = scrollContainer.scrollHeight - containerHeight;
+        const finalScrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
+        
+        // Animate the scroll with easing
+        const startScrollTop = scrollContainer.scrollTop;
+        const distance = finalScrollTop - startScrollTop;
+        const duration = 800; // 800ms for smoother animation
+        let startTime: number | null = null;
+        
+        const animateScroll = (currentTime: number) => {
+          if (!startTime) startTime = currentTime;
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          
+          // Custom easing function for natural feel
+          const easeOutQuart = (t: number) => {
+            return 1 - Math.pow(1 - t, 4);
+          };
+          
+          const easedProgress = easeOutQuart(progress);
+          scrollContainer.scrollTop = startScrollTop + (distance * easedProgress);
+          
+          if (progress < 1) {
+            requestAnimationFrame(animateScroll);
+          } else {
+            // After scroll completes, ensure focus is on the input
+            const chatInput = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+            if (chatInput) {
+              chatInput.focus();
+            }
+          }
+        };
+        
+        requestAnimationFrame(animateScroll);
+      }, 150); // Slightly longer delay to ensure render is complete
+      
+      // Reset the flag after animation completes
+      setTimeout(() => setShouldScrollToLatest(false), 1000);
+    }
+  }, [messages, shouldScrollToLatest, isUserScrolling, showGettingStarted, showPersonalization]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
@@ -756,23 +876,39 @@ const Index = () => {
             </div>
           </div>
         ) : (
-          <ScrollArea className="flex-1 scrollbar-thin">
+          <ScrollArea 
+            className={cn(
+              "flex-1 scrollbar-thin transition-opacity duration-300",
+              shouldScrollToLatest ? "opacity-95" : "opacity-100"
+            )} 
+            ref={scrollAreaRef}
+          >
             <div className="mx-auto max-w-4xl">
-              {messages.map((message) => (
-                <ChatMessage
-                  key={message.id}
-                  id={message.id}
-                  role={message.role}
-                  content={message.content}
-                  isStreaming={message.isStreaming}
-                  liked={message.liked}
-                  internalActivity={message.internalActivity}
-                  workItem={message.workItem}
-                  page={message.page}
-                  onLike={handleLike}
-                  onDislike={handleDislike}
-                />
-              ))}
+              {messages.map((message, index) => {
+                const isLatestUserMessage = message.role === "user" && 
+                  index === messages.map((m, i) => m.role === "user" ? i : -1).filter(i => i !== -1).pop();
+                
+                return (
+                  <div
+                    key={message.id}
+                    ref={isLatestUserMessage ? latestUserMessageRef : undefined}
+                    data-message-role={message.role}
+                  >
+                    <ChatMessage
+                      id={message.id}
+                      role={message.role}
+                      content={message.content}
+                      isStreaming={message.isStreaming}
+                      liked={message.liked}
+                      internalActivity={message.internalActivity}
+                      workItem={message.workItem}
+                      page={message.page}
+                      onLike={handleLike}
+                      onDislike={handleDislike}
+                    />
+                  </div>
+                );
+              })}
               <div ref={endRef} />
             </div>
           </ScrollArea>
@@ -808,7 +944,17 @@ const Index = () => {
                 </Card>
               </div>
             )}
-            <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} showSuggestedPrompts={isEmpty} />
+            <ChatInput 
+              onSendMessage={handleSendMessage} 
+              isLoading={isLoading} 
+              showSuggestedPrompts={isEmpty}
+              onFocus={() => {
+                // Scroll to latest when input is focused (if not already there)
+                if (!isUserScrolling && messages.length > 0) {
+                  setShouldScrollToLatest(true);
+                }
+              }}
+            />
           </div>
         )}
       </div>
