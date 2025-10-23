@@ -677,7 +677,9 @@ const Index = () => {
     // Ensure we have an active conversation id
     let convId = activeConversationId;
     if (!convId) {
-      convId = `conv_${Date.now()}`;
+      // Create a new UUID v4 for the conversation id on the client for optimistic UI
+      // The backend will accept this string id as-is
+      convId = crypto.randomUUID();
       setActiveConversationId(convId);
       // Push new conversation id into URL
       const currentInUrl = getConversationIdFromUrl();

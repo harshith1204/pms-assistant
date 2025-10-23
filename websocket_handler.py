@@ -225,7 +225,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 business_id_global = business_id
 
             message = data.get("message", "")
-            conversation_id = data.get("conversation_id") or f"conv_{user_id}"
+            # Prefer client-provided conversation_id; otherwise generate a new UUID v4
+            conversation_id = data.get("conversation_id") or str(uuid.uuid4())
             print(f"conversation_id: {conversation_id}")
             force_planner = data.get("planner", False)
 

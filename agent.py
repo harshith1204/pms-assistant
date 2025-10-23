@@ -14,6 +14,7 @@ from typing import Tuple
 import tools
 from datetime import datetime
 import time
+import uuid
 from collections import defaultdict, deque
 import os
 
@@ -523,7 +524,7 @@ class MongoDBAgent:
                 pass
                 # Use default conversation ID if none provided
                 if not conversation_id:
-                    conversation_id = f"conv_{int(time.time())}"
+                    conversation_id = str(uuid.uuid4())
 
                 # Get conversation history (automatically loads from MongoDB if cache empty)
                 conversation_context = await conversation_memory.get_recent_context(conversation_id)
@@ -748,7 +749,7 @@ class MongoDBAgent:
             with (span_cm if span_cm is not None else contextlib.nullcontext()):
                 # Use default conversation ID if none provided
                 if not conversation_id:
-                    conversation_id = f"conv_{int(time.time())}"
+                    conversation_id = str(uuid.uuid4())
 
                 # Get conversation history (automatically loads from MongoDB if cache empty)
                 conversation_context = await conversation_memory.get_recent_context(conversation_id)
