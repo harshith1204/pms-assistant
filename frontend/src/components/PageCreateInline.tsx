@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { fetchProjects, Project } from "@/api/projects";
+import { FolderKanban } from "lucide-react";
 import { cn } from "@/lib/utils";
 import EditorJS from '@editorjs/editorjs';
 import Header from '@editorjs/header';
@@ -19,7 +22,7 @@ import ImageTool from '@editorjs/image';
 
 export type PageCreateInlineProps = {
   initialEditorJs?: { blocks: Block[] };
-  onSave?: (values: { title: string; editorJs: { blocks: Block[] } }) => void;
+  onSave?: (values: { title: string; editorJs: { blocks: Block[] }; projectId?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -52,6 +55,16 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
     ]
   });
   const [editorReady, setEditorReady] = useState<boolean>(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [projects, setProjects] = useState<Project[]>([]);
+
+  useEffect(() => {
+    const loadProjects = async () => {
+      const projectsList = await fetchProjects();
+      setProjects(projectsList);
+    };
+    loadProjects();
+  }, []);
 
   // Debug logging
   console.log('PageCreateInline props:', { initialEditorJs });
@@ -367,7 +380,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
         const outputData = await editorRef.current.save();
         console.log('Editor.js save data:', outputData);
         setEditorData(outputData);
-        onSave?.({ title: "Untitled Page", editorJs: outputData });
+        onSave?.({ title: "Untitled Page", editorJs: outputData, projectId: selectedProjectId || undefined });
       } catch (error) {
         console.error('Saving failed: ', error);
       }
@@ -383,10 +396,27 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
       <CardContent className="p-0">
 
         <div className="px-8 pt-8 pb-4">
-          <div className="flex items-center justify-end gap-3">
-            <span className={cn("text-sm font-medium", !isPreview && "text-foreground", isPreview && "text-muted-foreground")}>Edit</span>
-            <Switch checked={isPreview} onCheckedChange={(v) => setIsPreview(Boolean(v))} />
-            <span className={cn("text-sm font-medium", isPreview && "text-foreground", !isPreview && "text-muted-foreground")}>Preview</span>
+          <div className="flex items-center justify-between gap-3">
+            <div className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm bg-background min-w-[200px]">
+              <FolderKanban className="h-4 w-4 text-muted-foreground" />
+              <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                <SelectTrigger className="h-7 border-0 p-0 text-sm focus:ring-0 focus:ring-offset-0">
+                  <SelectValue placeholder="Select project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((project) => (
+                    <SelectItem key={project._id} value={project._id}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className={cn("text-sm font-medium", !isPreview && "text-foreground", isPreview && "text-muted-foreground")}>Edit</span>
+              <Switch checked={isPreview} onCheckedChange={(v) => setIsPreview(Boolean(v))} />
+              <span className={cn("text-sm font-medium", isPreview && "text-foreground", !isPreview && "text-muted-foreground")}>Preview</span>
+            </div>
           </div>
           <div className="mt-6 relative">
             <div
