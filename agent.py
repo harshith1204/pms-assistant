@@ -523,8 +523,8 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Get conversation history
-                conversation_context = conversation_memory.get_recent_context(conversation_id)
+                # Get conversation history (automatically loads from MongoDB if cache empty)
+                conversation_context = await conversation_memory.get_recent_context(conversation_id)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
@@ -538,7 +538,7 @@ class MongoDBAgent:
                 messages.append(human_message)
 
                 # Persist the human message
-                conversation_memory.add_message(conversation_id, human_message)
+                await conversation_memory.add_message(conversation_id, human_message)
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
@@ -635,7 +635,7 @@ class MongoDBAgent:
                 last_response = response
 
                 # Persist assistant message
-                conversation_memory.add_message(conversation_id, response)
+                await conversation_memory.add_message(conversation_id, response)
                 try:
                     await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
                 except Exception as e:
@@ -679,7 +679,7 @@ class MongoDBAgent:
                     # Process results in order
                     for tool_message, success in tool_results:
                         messages.append(tool_message)
-                        conversation_memory.add_message(conversation_id, tool_message)
+                        await conversation_memory.add_message(conversation_id, tool_message)
                         # Skip saving 'result' events to DB
                         if success:
                             did_any_tool = True
@@ -688,7 +688,7 @@ class MongoDBAgent:
                     for tool_call in response.tool_calls:
                         tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                         messages.append(tool_message)
-                        conversation_memory.add_message(conversation_id, tool_message)
+                        await conversation_memory.add_message(conversation_id, tool_message)
                         # Skip saving 'result' events to DB
                         if success:
                             did_any_tool = True
@@ -707,8 +707,8 @@ class MongoDBAgent:
             # If we exit the loop due to step cap, return the best available answer
             if last_response is not None:
                 # Register turn and update summary if needed
-                conversation_memory.register_turn(conversation_id)
-                if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                await conversation_memory.register_turn(conversation_id)
+                if await conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
                     try:
                         asyncio.create_task(
                             conversation_memory.update_summary_async(conversation_id, self.llm_base)
@@ -746,8 +746,8 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Get conversation history
-                conversation_context = conversation_memory.get_recent_context(conversation_id)
+                # Get conversation history (automatically loads from MongoDB if cache empty)
+                conversation_context = await conversation_memory.get_recent_context(conversation_id)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
@@ -763,7 +763,7 @@ class MongoDBAgent:
                 callback_handler = PhoenixCallbackHandler(websocket, conversation_id)
 
                 # Persist the human message
-                conversation_memory.add_message(conversation_id, human_message)
+                await conversation_memory.add_message(conversation_id, human_message)
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
@@ -881,7 +881,7 @@ class MongoDBAgent:
                     last_response = response
 
                     # Persist assistant message
-                    conversation_memory.add_message(conversation_id, response)
+                    await conversation_memory.add_message(conversation_id, response)
                     try:
                         await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
                     except Exception as e:
@@ -924,7 +924,7 @@ class MongoDBAgent:
                         for tool_message, success in tool_results:
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
-                            conversation_memory.add_message(conversation_id, tool_message)
+                            await conversation_memory.add_message(conversation_id, tool_message)
                             # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True
@@ -938,7 +938,7 @@ class MongoDBAgent:
                             tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
-                            conversation_memory.add_message(conversation_id, tool_message)
+                            await conversation_memory.add_message(conversation_id, tool_message)
                             # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True
@@ -952,8 +952,8 @@ class MongoDBAgent:
                 # Step cap reached; send best available response
                 if last_response is not None:
                     # Register turn and update summary if needed
-                    conversation_memory.register_turn(conversation_id)
-                    if conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
+                    await conversation_memory.register_turn(conversation_id)
+                    if await conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
                         try:
                             asyncio.create_task(
                                 conversation_memory.update_summary_async(conversation_id, self.llm_base)
