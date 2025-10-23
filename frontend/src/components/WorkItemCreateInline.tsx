@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2 } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
@@ -28,7 +27,6 @@ const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode }>> =
 export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ title = "", description = "", onSave, onDiscard, className }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
-  const [createMore, setCreateMore] = React.useState<boolean>(false);
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
@@ -83,13 +81,8 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
           </div>
         </div>
 
-        <div className="px-5 py-4 border-t flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-foreground">
-            <Switch checked={createMore} onCheckedChange={(v) => setCreateMore(Boolean(v))} />
-            <span>Create more</span>
-          </div>
+        <div className="px-5 py-4 border-t flex items-center justify-end">
           <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={onDiscard}>Discard</Button>
             <Button onClick={handleSave}>Save</Button>
           </div>
         </div>
