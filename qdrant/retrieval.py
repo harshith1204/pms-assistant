@@ -113,8 +113,9 @@ class ChunkAwareRetriever:
         must_conditions = []
         if content_type:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
-        if BUSINESS_UUID:
-            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID)))
+        business_uuid = BUSINESS_UUID()
+        if business_uuid:
+            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
         # Fetch more chunks initially to ensure we have multiple per document
@@ -336,9 +337,10 @@ class ChunkAwareRetriever:
                         filter_conditions.append(
                             FieldCondition(key="content_type", match=MatchValue(value=content_type))
                         )
-                    if BUSINESS_UUID:
+                    business_uuid = BUSINESS_UUID()
+                    if business_uuid:
                         filter_conditions.append(
-                            FieldCondition(key="business_id", match=MatchValue(value=BUSINESS_UUID))
+                            FieldCondition(key="business_id", match=MatchValue(value=business_uuid))
                         )
                     
                     # Use scroll to find specific chunk (more efficient than search for exact match)
