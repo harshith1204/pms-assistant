@@ -681,6 +681,17 @@ const Index = () => {
     setFeedbackText("");
   };
 
+  // Only show messages from the latest user message onward
+  const visibleMessages = useMemo(() => {
+    if (messages.length === 0) return messages;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        return messages.slice(i);
+      }
+    }
+    return messages;
+  }, [messages]);
+
   // Auto-scroll to bottom on message updates
   useEffect(() => {
     if (showGettingStarted || showPersonalization) return;
@@ -762,7 +773,7 @@ const Index = () => {
         ) : (
           <ScrollArea className="flex-1 scrollbar-thin">
             <div className="mx-auto max-w-4xl pb-8">
-              {messages.map((message) => (
+              {visibleMessages.map((message) => (
                 <ChatMessage
                   key={message.id}
                   id={message.id}
