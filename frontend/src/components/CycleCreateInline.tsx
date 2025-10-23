@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input";
 import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Calendar, Wand2 } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
@@ -33,6 +35,13 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
+  const [projectId, setProjectId] = React.useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem("projectId") || undefined;
+    } catch {
+      return undefined;
+    }
+  });
 
   const handleSave = () => {
     onSave?.({ title: name.trim(), description: desc });
@@ -48,6 +57,26 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
             placeholder="Title"
             className="h-11 text-base"
           />
+        </div>
+
+        <div className="px-5 pt-3">
+          <Label htmlFor="cycle-project-select" className="text-xs text-muted-foreground">Project</Label>
+          <Select
+            value={projectId}
+            onValueChange={(v) => {
+              setProjectId(v);
+              try { localStorage.setItem("projectId", v); } catch {}
+            }}
+          >
+            <SelectTrigger id="cycle-project-select" className="mt-1 h-9">
+              <SelectValue placeholder="Select a project" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="proj-alpha">Project Alpha</SelectItem>
+              <SelectItem value="proj-beta">Project Beta</SelectItem>
+              <SelectItem value="proj-gamma">Project Gamma</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="px-5 pt-4">
