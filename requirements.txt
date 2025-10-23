@@ -40,4 +40,8 @@ numpy
 transformers
 torch
 
+# Redis for conversation memory cache
+redis
+redis[hiredis]
+
 # (Phoenix and OpenTelemetry removed; using internal no-op shims)

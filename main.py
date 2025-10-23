@@ -102,6 +102,11 @@ async def lifespan(app: FastAPI):
     print("Shutting down MongoDB Agent...")
     await mongodb_agent.disconnect()
     print("MongoDB Agent disconnected.")
+    
+    # Close Redis conversation memory
+    from memory import conversation_memory
+    await conversation_memory.close()
+    print("Redis conversation memory closed.")
 
 # Create FastAPI app
 app = FastAPI(
