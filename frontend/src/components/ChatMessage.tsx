@@ -91,12 +91,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const isDisliked = liked === false;
 
   return (
-    <div className="p-6 animate-fade-in">
+    <div className="p-3 animate-fade-in">
       {isUser ? (
         <div className="flex gap-4 flex-row-reverse">
           <div className="flex-1 text-right">
             <div className="flex justify-end">
-              <div className="inline-block max-w-[80%] px-5 py-1 rounded-full text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-primary/10  text-right">
+              <div className="inline-block max-w-[80%] px-5 py-2 rounded-full text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-primary/10  text-right">
                 {displayedContent}
                 {isStreaming && currentIndex < content.length && (
                   <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />
@@ -180,7 +180,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
           ) : (
             <SafeMarkdown
               content={displayedContent}
-              className="prose prose-sm max-w-none dark:prose-invert"
+              className="prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground prose-strong:text-foreground prose-li:text-foreground"
             />
           )}
           {isStreaming && currentIndex < content.length && (

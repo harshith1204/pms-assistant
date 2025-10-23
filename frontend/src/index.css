@@ -68,6 +68,175 @@ All colors MUST be HSL.
     @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
   }
 
+  /* Enhanced prose styling for markdown content */
+  .prose {
+    max-width: none;
+  }
+
+  .prose code {
+    @apply text-sm;
+  }
+
+  .prose pre {
+    @apply my-3 rounded-lg;
+  }
+
+  .prose table {
+    @apply w-full border-collapse;
+  }
+
+  .prose thead {
+    @apply bg-muted/50;
+  }
+
+  .prose th {
+    @apply px-4 py-2 text-left font-semibold border-b border-border;
+  }
+
+  .prose td {
+    @apply px-4 py-2 border-b border-border;
+  }
+
+  .prose blockquote {
+    @apply border-l-4 border-primary/50 bg-primary/5 pl-4 pr-4 py-2 rounded-r-lg;
+  }
+
+  .prose strong {
+    @apply font-bold;
+  }
+
+  .prose em {
+    @apply italic;
+  }
+
+  .prose h2 {
+    @apply border-b border-border/50 pb-2;
+  }
+
+  .prose ul {
+    @apply space-y-1.5;
+  }
+
+  .prose ol {
+    @apply space-y-1.5;
+  }
+
+<<<<<<< Current (Your changes)
+=======
+  /* Enhanced unordered list styling with custom bullets */
+  .markdown-ul {
+    list-style: none;
+    margin-left: 0;
+    padding-left: 0;
+  }
+
+  .markdown-ul > li {
+    position: relative;
+    padding-left: 1.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .markdown-ul > li::before {
+    content: '';
+    position: absolute;
+    left: 0.5rem;
+    top: 0.6em;
+    width: 0.375rem;
+    height: 0.375rem;
+    background: hsl(var(--primary));
+    border-radius: 50%;
+  }
+
+  /* Nested unordered lists */
+  .markdown-ul .markdown-ul > li::before {
+    width: 0.3rem;
+    height: 0.3rem;
+    background: hsl(var(--primary) / 0.6);
+  }
+
+  /* Enhanced ordered list styling with custom numbers */
+  .markdown-ol {
+    list-style: none;
+    counter-reset: markdown-counter;
+    margin-left: 0;
+    padding-left: 0;
+  }
+
+  .markdown-ol > li {
+    position: relative;
+    padding-left: 2.25rem;
+    margin-bottom: 0.5rem;
+    counter-increment: markdown-counter;
+  }
+
+  .markdown-ol > li::before {
+    content: counter(markdown-counter);
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+    border-radius: 50%;
+    font-weight: 600;
+    font-size: 0.75rem;
+    line-height: 1;
+  }
+
+  /* Nested ordered lists */
+  .markdown-ol .markdown-ol {
+    counter-reset: markdown-counter-nested;
+    margin-top: 0.5rem;
+  }
+
+  .markdown-ol .markdown-ol > li {
+    counter-increment: markdown-counter-nested;
+  }
+
+  .markdown-ol .markdown-ol > li::before {
+    content: counter(markdown-counter) "." counter(markdown-counter-nested);
+    font-size: 0.7rem;
+    background: hsl(var(--primary) / 0.08);
+  }
+
+>>>>>>> Incoming (Background Agent changes)
+  .prose hr {
+    @apply my-6 border-border;
+  }
+
+  .prose a {
+    @apply font-medium;
+  }
+
+  /* Syntax highlighting enhancements */
+  .hljs {
+    @apply rounded-lg p-4 text-sm;
+    background: #0d1117 !important;
+  }
+
+  /* Code block scrollbar styling */
+  pre::-webkit-scrollbar {
+    height: 8px;
+  }
+
+  pre::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+  }
+
+  pre::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+  }
+
+  pre::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
   /* Editor.js specific styles */
   .editor-container .ce-block__content,
   .editor-container .ce-toolbar__content {
