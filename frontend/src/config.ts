@@ -1,5 +1,8 @@
+// HTTP APIs use stage environment URLs
 export const API_HTTP_URL = import.meta.env.VITE_API_HTTP_URL || "https://stage-project.simpo.ai";
-export const API_WS_URL = import.meta.env.VITE_API_WS_URL || "wss://stage-project.simpo.ai/ws/chat";
+
+// WebSocket uses localhost for development
+export const API_WS_URL = import.meta.env.VITE_API_WS_URL || "ws://localhost:7000/ws/chat";
 
 // AI Template Service URL for generating content
 export const AI_TEMPLATE_SERVICE_URL = "https://stage-aiplanboard.simpo.ai";
