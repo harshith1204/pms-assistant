@@ -837,6 +837,8 @@ const Index = () => {
                   internalActivity={message.internalActivity}
                   workItem={message.workItem}
                   page={message.page}
+                  cycle={message.cycle}
+                  module={message.module}
                   onLike={handleLike}
                   onDislike={handleDislike}
                 />
