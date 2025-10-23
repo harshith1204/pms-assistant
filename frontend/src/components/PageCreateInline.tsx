@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -52,6 +54,13 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
     ]
   });
   const [editorReady, setEditorReady] = useState<boolean>(false);
+  const [projectId, setProjectId] = useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem("projectId") || undefined;
+    } catch {
+      return undefined;
+    }
+  });
 
   // Debug logging
   console.log('PageCreateInline props:', { initialEditorJs });
@@ -387,6 +396,25 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
             <span className={cn("text-sm font-medium", !isPreview && "text-foreground", isPreview && "text-muted-foreground")}>Edit</span>
             <Switch checked={isPreview} onCheckedChange={(v) => setIsPreview(Boolean(v))} />
             <span className={cn("text-sm font-medium", isPreview && "text-foreground", !isPreview && "text-muted-foreground")}>Preview</span>
+          </div>
+          <div className="mt-4">
+            <Label htmlFor="page-project-select" className="text-xs text-muted-foreground">Project</Label>
+            <Select
+              value={projectId}
+              onValueChange={(v) => {
+                setProjectId(v);
+                try { localStorage.setItem("projectId", v); } catch {}
+              }}
+            >
+              <SelectTrigger id="page-project-select" className="mt-1 h-9">
+                <SelectValue placeholder="Select a project" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="proj-alpha">Project Alpha</SelectItem>
+                <SelectItem value="proj-beta">Project Beta</SelectItem>
+                <SelectItem value="proj-gamma">Project Gamma</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="mt-6 relative">
             <div
