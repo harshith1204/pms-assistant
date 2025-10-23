@@ -64,6 +64,8 @@ const Index = () => {
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  const lastUserMessageRef = useRef<HTMLDivElement | null>(null);
+  const shouldScrollToNewMessage = useRef<boolean>(false);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -572,6 +574,8 @@ const Index = () => {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
+    // Signal that we should scroll to the new user message
+    shouldScrollToNewMessage.current = true;
 
     // Ensure we have an active conversation id
     let convId = activeConversationId;
@@ -681,11 +685,16 @@ const Index = () => {
     setFeedbackText("");
   };
 
-  // Auto-scroll to bottom on message updates
+  // Auto-scroll behavior: scroll to new user message when sent, otherwise stay in place
   useEffect(() => {
     if (showGettingStarted || showPersonalization) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading, showGettingStarted, showPersonalization]);
+    
+    // If we just sent a new message, scroll to position the new user message at the top
+    if (shouldScrollToNewMessage.current && lastUserMessageRef.current) {
+      lastUserMessageRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      shouldScrollToNewMessage.current = false;
+    }
+  }, [messages, showGettingStarted, showPersonalization]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
@@ -758,21 +767,32 @@ const Index = () => {
         ) : (
           <ScrollArea className="flex-1 scrollbar-thin">
             <div className="mx-auto max-w-4xl">
-              {messages.map((message) => (
-                <ChatMessage
-                  key={message.id}
-                  id={message.id}
-                  role={message.role}
-                  content={message.content}
-                  isStreaming={message.isStreaming}
-                  liked={message.liked}
-                  internalActivity={message.internalActivity}
-                  workItem={message.workItem}
-                  page={message.page}
-                  onLike={handleLike}
-                  onDislike={handleDislike}
-                />
-              ))}
+              {messages.map((message, index) => {
+                const isLastUserMessage = message.role === "user" && 
+                  index === messages.length - 1 || 
+                  (index === messages.length - 2 && messages[messages.length - 1]?.role === "assistant");
+                
+                return (
+                  <div 
+                    key={message.id} 
+                    ref={isLastUserMessage ? lastUserMessageRef : null}
+                    className="transition-all duration-500 ease-out"
+                  >
+                    <ChatMessage
+                      id={message.id}
+                      role={message.role}
+                      content={message.content}
+                      isStreaming={message.isStreaming}
+                      liked={message.liked}
+                      internalActivity={message.internalActivity}
+                      workItem={message.workItem}
+                      page={message.page}
+                      onLike={handleLike}
+                      onDislike={handleDislike}
+                    />
+                  </div>
+                );
+              })}
               <div ref={endRef} />
             </div>
           </ScrollArea>
