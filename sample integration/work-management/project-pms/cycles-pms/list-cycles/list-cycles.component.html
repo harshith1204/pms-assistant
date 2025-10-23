@@ -1,0 +1,291 @@
+<div class="main_section">
+  <div class="main-content h-100" *ngIf="!cycleSelected">
+    <div class="views-header">
+    <div class="header-left">
+      <div class="projectName text">{{data?.projectName}}</div>
+          <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon>
+      <div class="views-title text">
+        <span class="views-icon">
+          <i class="fas fa-layer-group"></i>
+        </span>
+        Cycles
+      </div>
+    </div>
+
+    <div class="header-right">
+      <button class="add-view-button" (click)="createCycle()">
+        Add Cycle
+      </button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="cycle-section">
+      <div class="cycle-header" (click)="toggleSection('active')">
+        <i class="fas fa-circle active-icon"></i>
+        <span>Active cycles ({{activeCycles.length || 0}})</span>
+        <i class="fas" [ngClass]="{'fa-chevron-down': !isActiveExpanded, 'fa-chevron-up': isActiveExpanded}"></i>
+      </div>
+      <div class="cycle-content" [ngClass]="{'expanded': isActiveExpanded}">
+
+        <div *ngIf="activeCycles.length === 0" class="p-3">
+          <div class="empty-state text-center py-5">
+            <div class="empty-icon mb-3">
+              <i class="fas fa-circle fa-3x text-muted"></i>
+            </div>
+            <p class="text-muted">No active cycles found</p>
+          </div>
+        </div>
+
+        <div *ngFor="let cycle of activeCycles" class="cycle-item d-flex flex-column">
+          <div class="cycle-item-info w-100 d-flex justify-content-between align-items-center" >
+            <div class="title custom-width cursor-pointer" (click)="navigateToWorkItems(cycle)">
+              <!-- <span class="progress-circle">0%</span> -->
+              <span class="progress-circle">{{cycle.completionPercentage}}%</span>
+              {{cycle.title || 'Untitled Cycle'}}
+            </div>
+
+            <div class="rightSide d-flex align-items-center gap-2 justify-content-between">
+              <div class="date-range">
+                <button class="date-btn d-flex align-items-center">
+                  <i class="fas fa-calendar me-2"></i>
+                  {{(cycle.startDate | date: 'dd/MM/yyyy') || 'Start date'}} -
+                  {{(cycle.endDate | date: 'dd/MM/yyyy') || 'End date'}}
+                </button>
+              </div>
+              <div class="actions d-flex align-items-center">
+                 <div class="icon-btn" style="width: auto;" [matTooltip]="isFavourite(cycle.id) ? 'Unmark Favourite' : 'Mark as Favourite'"
+     (click)="changeFav(cycle); $event.stopPropagation()">
+  <mat-icon [ngClass]="{ 'favourite': isFavourite(cycle.id) }" color="warn">
+    {{ isFavourite(cycle.id) ? 'star' : 'star_border' }}
+  </mat-icon>
+</div>                         <button class="more-btn"><i class="fas fa-ellipsis-h" matButton [matMenuTriggerFor]="menu"></i></button>
+              </div>
+            </div>
+            <mat-menu #menu="matMenu">
+                  <button mat-menu-item (click)="editModule(cycle)">
+                    <div class="edit d-flex align-items-center gap-2"><i class="material-icons">edit</i> Edit</div>
+                  </button>
+                  <button mat-menu-item (click)="deleteModule(cycle.id)">
+                    <div class="delete d-flex align-items-center gap-2"><i class="material-icons">delete</i> Delete</div>
+                  </button>
+                </mat-menu>
+          </div>
+          <!-- <div *ngIf="activeCycles.indexOf(cycle) === 0">
+          <div class="row g-4">
+            <div class="col-6">
+              <div class="card h-100">
+                <div class="card-header">Progress</div>
+                <div class="card-body d-flex align-items-center justify-content-center text-center">
+                  <div class="empty-state">
+                    <div class="empty-icon mb-3">
+                      <i class="fas fa-chart-line fa-3x text-muted"></i>
+                    </div>
+                    <p class="text-muted">Add work items to the cycle to view its progress</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="card h-100">
+                <div class="card-header">Work item burndown</div>
+                <div class="card-body d-flex align-items-center justify-content-center text-center">
+                  <div class="empty-state">
+                    <div class="empty-icon mb-3">
+                      <i class="fas fa-chart-bar fa-3x text-muted"></i>
+                    </div>
+                    <p class="text-muted">Add work items to the cycle to view the burndown chart</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row mt-4">
+            <div class="col-12">
+              <div class="work-items-panel">
+                <ul class="nav nav-tabs" role="tablist">
+                  <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="priority-tab" data-bs-toggle="tab" data-bs-target="#priority-items" type="button" role="tab">
+                      Priority work items
+                    </button>
+                  </li>
+                  <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="assignees-tab" data-bs-toggle="tab" data-bs-target="#assignees" type="button" role="tab">
+                      Assignees
+                    </button>
+                  </li>
+                  <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="labels-tab" data-bs-toggle="tab" data-bs-target="#labels" type="button" role="tab">
+                      Labels
+                    </button>
+                  </li>
+                </ul>
+                <div class="tab-content p-3">
+                  <div class="tab-pane fade show active" id="priority-items" role="tabpanel">
+                    <div class="empty-state text-center py-5">
+                      <div class="empty-icon mb-3">
+                        <i class="fas fa-tasks fa-3x text-muted"></i>
+                      </div>
+                      <p class="text-muted">Add work items to see priority breakdown</p>
+                    </div>
+                  </div>
+                  <div class="tab-pane fade" id="assignees" role="tabpanel">
+                    <div class="empty-state text-center py-5">
+                      <div class="empty-icon mb-3">
+                        <i class="fas fa-users fa-3x text-muted"></i>
+                      </div>
+                      <p class="text-muted">Add work items to the cycle to see assignee breakdown</p>
+                    </div>
+                  </div>
+                  <div class="tab-pane fade" id="labels" role="tabpanel">
+                    <div class="empty-state text-center py-5">
+                      <div class="empty-icon mb-3">
+                        <i class="fas fa-tags fa-3x text-muted"></i>
+                      </div>
+                      <p class="text-muted">Add labels to work items to see the breakdown of work by labels</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div> -->
+        </div>
+    
+        
+      </div>
+    </div>
+
+    <div class="cycle-section">
+      <div class="cycle-header" (click)="toggleSection('upcoming')">
+        <i class="fas fa-clock upcoming-icon"></i>
+        <span>Upcoming cycles ({{upcomingCycles.length || 0}})</span>
+        <i class="fas" [ngClass]="{'fa-chevron-down': !isUpcomingExpanded, 'fa-chevron-up': isUpcomingExpanded}"></i>
+      </div>
+      <div class="cycle-content" [ngClass]="{'expanded': isUpcomingExpanded}">
+
+        <div *ngIf="upcomingCycles.length === 0" class="p-3">
+          <div class="empty-state text-center py-5">
+            <div class="empty-icon mb-3">
+              <i class="fas fa-clock fa-3x text-muted"></i>
+            </div>
+            <p class="text-muted">No upcoming cycles found</p>
+          </div>
+        </div>
+
+        <div *ngFor="let cycle of upcomingCycles" class="cycle-item">
+          <div class="cycle-item-info d-flex justify-content-between align-items-center">
+            <div class="title custom-width cursor-pointer" (click)="navigateToWorkItems(cycle)">
+              <span class="progress-circle">{{cycle.completionPercentage}}%</span>
+              {{cycle.title || 'Untitled Cycle'}}
+            </div>
+            <div class="rightSide d-flex align-items-center gap-2 justify-content-between ">
+              <div class="date-range">
+                <button class="date-btn d-flex align-items-center">
+                  <i class="fas fa-calendar me-2"></i>
+                  {{(cycle.startDate | date: 'dd/MM/yyyy') || 'Start date'}} -
+                  {{(cycle.endDate | date: 'dd/MM/yyyy') || 'End date'}}
+                </button>
+              </div>
+              <div class="actions d-flex align-items-center">
+                 <div class="icon-btn" style="width: auto;" [matTooltip]="isFavourite(cycle.id) ? 'Unmark Favourite' : 'Mark as Favourite'"
+  (click)="changeFav(cycle); $event.stopPropagation()">
+  <mat-icon 
+    class="favorite-icon" 
+    [ngClass]="{ 'highlighted': isFavourite(cycle.id) }">
+    {{ isFavourite(cycle.id) ? 'star' : 'star_border' }}
+  </mat-icon>
+</div>         
+       <button class="more-btn"><i class="fas fa-ellipsis-h" matButton [matMenuTriggerFor]="menu"></i></button>
+              </div>
+              <mat-menu #menu="matMenu">
+                  <button mat-menu-item (click)="editModule(cycle)">
+                    <div class="edit d-flex align-items-center gap-2"><i class="material-icons">edit</i> Edit</div>
+                  </button>
+                  <button mat-menu-item (click)="deleteModule(cycle.id)">
+                    <div class="delete d-flex align-items-center gap-2"><i class="material-icons">delete</i> Delete</div>
+                  </button>
+                </mat-menu>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="cycle-section">
+    <div class="cycle-header" (click)="toggleSection('completed')">
+      <i class="fas fa-check-circle completed-icon"></i>
+      <span>Completed cycles ({{completedCycles.length || 0}})</span>
+      <i class="fas" [ngClass]="{'fa-chevron-down': !isCompletedExpanded, 'fa-chevron-up': isCompletedExpanded}"></i>
+    </div>
+    <div class="cycle-content" [ngClass]="{'expanded': isCompletedExpanded}">
+
+      <div *ngIf="completedCycles?.length === 0" class="p-3">
+        <div class="empty-state text-center py-5">
+          <div class="empty-icon mb-3">
+            <i class="fas fa-check-circle fa-3x text-muted"></i>
+          </div>
+          <p class="text-muted">No completed cycles found</p>
+        </div>
+      </div>
+
+      <div *ngFor="let cycle of completedCycles" class="cycle-item">
+        <div class="cycle-item-info d-flex justify-content-between align-items-center" >
+          <div class="title custom-width cursor-pointer" (click)="navigateToWorkItems(cycle)">
+            <span class="progress-circle">{{cycle.completionPercentage}}%</span>
+            {{cycle?.title || 'Untitled Cycle'}}
+          </div>
+
+            <div class="rightSide d-flex align-items-center gap-2 justify-content-between">
+            <div class="date-range">
+              <button class="date-btn d-flex align-items-center" >
+                <i class="fas fa-calendar me-2"></i>
+                {{(cycle?.startDate | date: 'dd/MM/yyyy') || 'Start date'}} -
+                {{(cycle?.endDate | date: 'dd/MM/yyyy') || 'End date'}}
+              </button>
+            </div>
+            <div class="actions d-flex align-items-center">
+                 <div class="icon-btn" style="width: auto;" [matTooltip]="isFavourite(cycle.id) ? 'Unmark Favourite' : 'Mark as Favourite'"
+  (click)="changeFav(cycle); $event.stopPropagation()">
+  <mat-icon 
+    class="favorite-icon" 
+    [ngClass]="{ 'highlighted': isFavourite(cycle.id) }">
+    {{ isFavourite(cycle.id) ? 'star' : 'star_border' }}
+  </mat-icon>
+</div>                       <button class="more-btn"><i class="fas fa-ellipsis-h" matButton [matMenuTriggerFor]="menu"></i></button>
+            </div>
+            <mat-menu #menu="matMenu">
+                  <button mat-menu-item (click)="editModule(cycle)">
+                    <div class="edit d-flex align-items-center gap-2"><i class="material-icons">edit</i> Edit</div>
+                  </button>
+                  <button mat-menu-item (click)="deleteModule(cycle.id)">
+                    <div class="delete d-flex align-items-center gap-2"><i class="material-icons">delete</i> Delete</div>
+                  </button>
+                </mat-menu>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+  </div>
+
+</div>
+
+<div *ngIf="cycleSelected" class="h-100 p-3">
+  <div class="module-header w-100 d-flex align-items-center">
+    <div class="title_heading d-flex align-items-center">
+      <div class="text cursor-pointer" (click)="closeWorkitemsModule()">
+    <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_left</mat-icon>
+    </div>
+    <!-- <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon> -->
+    <div class="text">{{cycleData?.title || cycleName}}</div>
+    <!-- <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon> -->
+    <!-- <div class="text">All Work Items</div> -->
+    </div>
+  </div>
+  <app-cycle-workitems [data]="cycleData" [projectData]="projectWholeData"></app-cycle-workitems>
+</div>

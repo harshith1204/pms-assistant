@@ -1,0 +1,235 @@
+<div class="main_section">
+    <div class="header">
+        <div class="left_side d-flex align-items-center gap-3">
+            <div class="title-container">
+                <span class="emoji"></span>
+                <span class="wpss text">{{projectName}}</span>
+                    <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon>
+                <span class="pages">Pages</span>
+            </div>
+            <div class="count_section">
+              {{files?.length}} 
+              <span *ngIf="activeTab === 'PUBLIC'">Public</span>
+              <span *ngIf="activeTab === 'PRIVATE'">Private</span>  
+              <span *ngIf="activeTab === 'ARCHIVED'">Archived</span>
+              Pages
+            </div>
+        </div>
+        <div class="right_side d-flex align-items-center gap-2" >
+          <div class="search-container">
+            <!-- <div class="search_icon">
+                        <img src="https://d2yx15pncgmu63.cloudfront.net/prod-images/619530c1751455755108search.png" alt="">
+                      </div> -->
+            <input type="text" placeholder="Search pages" class="search-input with-icon" [(ngModel)]="searchText"
+              (input)="onSearchChange()" />
+          </div>
+          <div (click)="openFilterMenu()" class="filter_btn">
+            <img src="https://d2yx15pncgmu63.cloudfront.net/prod-images/542223c1751455713485fi_2676824.png" alt="">
+          </div>
+            <button class="add-page-btn" (click)="createPages()" *ngIf="files?.length != 0">
+                Add page
+            </button>
+        </div>
+    </div>
+
+   <!-- Loading State -->
+   <section class="loader_section" *ngIf="pageLoader">
+     <div class="api_loader">
+       <app-anime-loader></app-anime-loader>
+     </div>
+   </section>
+
+   <!-- Files List State -->
+   <div class="files-list" *ngIf="!pageLoader && files.length > 0">
+     <div class="file-row" *ngFor="let file of files">
+       <div class="pages-row w-100 d-flex justify-content-between align-items-center cursor-pointer" (click)="viewPageDetails(file)">
+         <div class="file-info">
+           <mat-icon class="file-icon">description</mat-icon>
+           <span [matTooltip]="file.title">{{ file.title | slice:0:40 }}{{ file.title?.length > 40 ? '...' : '' }}</span>
+         </div>
+        <div class="right-side d-flex align-items-center gap-2">
+          <div class="linked_module" *ngIf="file.linkedModule?.length > 0">
+            <div class="linked_icon d-flex align-items-center gap-1 cursor-pointer" 
+                 [matTooltip]="getLinkedModuleName(file.linkedModule)">
+              <img class="mb-1 w-100" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/110157c1758030283999mod.svg"
+                alt="">
+            </div>
+          </div>
+          <div class="linked_cycle" *ngIf="file.linkedCycle?.length > 0">
+            <div class="linked_icon d-flex align-items-center gap-1 cursor-pointer"
+                 [matTooltip]="getLinkedCycleName(file.linkedCycle)">
+              <img class="mb-1 w-100"
+                src="https://d2z9497xp8xb12.cloudfront.net/prod-images/673587c1758030306856cycle.svg" alt="">
+            </div>
+          </div>
+          <div class="linked_page" *ngIf="file.linkedPages?.length > 0">
+            <div class="linked_icon d-flex align-items-center gap-1 cursor-pointer"
+                 [matTooltip]="getLinkedPageName(file.linkedPages)">
+              <img class="w-100 custom_icon"
+                src="https://d2z9497xp8xb12.cloudfront.net/prod-images/535210c1758030323997Page.svg" alt="">
+            </div>
+          </div>
+          <!-- <div class="added_member"></div> -->
+          <div class="file-actions" (click)="stopPropagation($event)">
+            <button class="v-button" [matTooltip]="'Created by ' + file.createdBy.name">
+              {{ getFirstLetter(file.createdBy.name) }}
+            </button>
+        
+            <button class="globe-button" [matTooltip]="getVisibilityTooltip(file.visibility)">
+              <mat-icon [ngSwitch]="file.visibility" [ngClass]="getVisibilityClass(file.visibility)">
+                <ng-container *ngSwitchCase="'PUBLIC'">public</ng-container>
+                <ng-container *ngSwitchCase="'PRIVATE'">supervised_user_circle</ng-container>
+                <ng-container *ngSwitchCase="'ARCHIVED'">archive</ng-container>
+                <ng-container *ngSwitchDefault>help</ng-container>
+              </mat-icon>
+            </button>
+        
+            <!-- <button class="action-button" (click)="viewPageDetails(file.id)">
+                             <mat-icon>info</mat-icon>
+                           </button> -->
+        
+            <button class="action-button" (click)="changeFav(file)"
+              [matTooltip]="isFavourite(file.id) ? 'Unmark Favourite' : 'Mark as Favourite'">
+              <mat-icon [ngClass]="{ 'fav-active': isFavourite(file.id) }">
+                {{ isFavourite(file.id) ? 'star' : 'star_border' }}
+              </mat-icon>
+            </button>
+        
+            <button class="action-button" (click)="toggleLock(file)">
+              <mat-icon [ngClass]="file.locked ? 'lock-icon' : 'unlock-icon'">
+                {{ file.locked ? 'lock' : 'lock_open' }}
+              </mat-icon>
+            </button>
+        
+            <button class="action-button" [matMenuTriggerFor]="pageActionsMenu">
+              <mat-icon>more_vert</mat-icon>
+            </button>
+            <mat-menu #pageActionsMenu="matMenu">
+              <!-- <button mat-menu-item (click)="openInNewTab(file)">
+                         <mat-icon class="menu-item-icon">open_in_new</mat-icon>
+                         <span>Open in new tab</span>
+                       </button> -->
+              <button mat-menu-item (click)="copyLink(file)">
+                <mat-icon class="menu-item-icon">content_copy</mat-icon>
+                <span>Copy link</span>
+              </button>
+              <!-- <button mat-menu-item (click)="makeCopy(file)">
+                         <mat-icon class="menu-item-icon">file_copy</mat-icon>
+                         <span>Make a copy</span>
+                       </button> -->
+              <button mat-menu-item (click)="toggleLock(file)">
+                <mat-icon class="menu-item-icon">
+                  {{ file.locked ? 'lock_open' : 'lock' }}
+                </mat-icon>
+                <span>{{ file.locked ? 'Unlock' : 'Lock' }}</span>
+              </button>
+              
+              <!-- Visibility Options -->
+              <ng-container [ngSwitch]="file.visibility">
+                <ng-container *ngSwitchCase="'PUBLIC'">
+                  <button mat-menu-item (click)="toggleVisibility(file)">
+                    <mat-icon class="menu-item-icon">visibility_off</mat-icon>
+                    <span>Make Private</span>
+                  </button>
+                  <button mat-menu-item (click)="setVisibility(file, 'ARCHIVED')">
+                    <mat-icon class="menu-item-icon">archive</mat-icon>
+                    <span>Archive</span>
+                  </button>
+                </ng-container>
+                <ng-container *ngSwitchCase="'PRIVATE'">
+                  <button mat-menu-item (click)="toggleVisibility(file)">
+                    <mat-icon class="menu-item-icon">visibility</mat-icon>
+                    <span>Make Public</span>
+                  </button>
+                  <button mat-menu-item (click)="setVisibility(file, 'ARCHIVED')">
+                    <mat-icon class="menu-item-icon">archive</mat-icon>
+                    <span>Archive</span>
+                  </button>
+                </ng-container>
+                <ng-container *ngSwitchCase="'ARCHIVED'">
+                  <button mat-menu-item (click)="restoreVisibility(file)">
+                    <mat-icon class="menu-item-icon">restore</mat-icon>
+                    <span>Restore</span>
+                  </button>
+                </ng-container>
+              </ng-container>
+              
+              <button mat-menu-item class="delete-menu-item" (click)="openDeleteConfirmation(file)">
+                <mat-icon class="menu-item-icon">delete</mat-icon>
+                <span>Delete</span>
+              </button>
+            </mat-menu>
+        
+          </div>
+        </div>
+         
+       </div>
+       
+     </div>
+   </div>
+
+   <!-- Empty State -->
+   <div *ngIf="!pageLoader && files?.length == 0"
+        class="empty h-100 d-flex flex-column align-items-center justify-content-center gap-2">
+     <div class="text d-flex justify-content-center">
+       <h4>Build Your Project's Knowledge Base</h4>
+     </div>
+     <div class="text d-flex justify-content-center">
+       Use Pages to capture meeting notes, create project docs, and keep all your important information in one place.
+     </div>
+     <button class="add-page-btn" (click)="createPages()">
+         Start Writing
+     </button>
+   </div>
+<!-- <div class="files-list" *ngIf="files.length === 0">
+  <div class="no-files-message" style="margin: 20% 20% 20% 30%;" >
+    No Pages created yet.
+  </div>
+  </div> -->
+
+</div>
+
+<div class="modal fade" id="deleteConfirmationModal" tabindex="-1" aria-labelledby="deleteConfirmationModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content custom-modal-content">
+      <div class="modal-body  p-4">
+        <div class="modal-icon-container mb-4">
+          <div class="warning-icon">
+            <span class="exclamation-mark">!</span>
+          </div>
+        </div>
+        <h5 class="modal-title custom-modal-title" id="deleteConfirmationModalLabel">
+          Delete {{ selectedPageForDeletion?.name || 'Item' }}
+        </h5>
+        <p class="custom-modal-message">
+          Are you sure you want to delete this item? This action cannot be undone.
+        </p>
+      </div>
+      <div class="modal-footer d-flex border-0 ">
+        <button type="button" class="btn custom-cancel-btn" (click)="closeDeleteConfirmation()">Cancel</button>
+        <button type="button" class="btn custom-confirm-btn" (click)="confirmDelete()">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- <div *ngIf="selectedPage">
+    <div class="viewPage">
+      <div class="page-header d-flex align-items-center">
+    <div class="text goback cursor-pointer" (click)="closeViewPage()">Go Back</div>
+    <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon>
+    <div class="text">{{pageId?.name}}</div>
+    <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon>
+    <div class="text">All Work Items</div>
+  </div>
+      <app-view-page [pageId]="pageId" [projectDetails]="projectDetails"></app-view-page>
+    </div>
+</div>
+<div class="h-100" *ngIf="createNewPage">
+  <div class="page-header d-flex align-items-center">
+    <div class="text goback cursor-pointer" (click)="closeCreatePage()">Go Back</div>
+    <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon>
+    <div class="text">Create New Page</div>
+  </div>
+  <app-create-pages [projectDetails]="projectDetails"></app-create-pages>
+</div> -->

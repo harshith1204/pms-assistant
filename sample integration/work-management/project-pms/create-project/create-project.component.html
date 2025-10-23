@@ -1,0 +1,94 @@
+<div class="dialog-wrapper">
+    <div class="dialog-header">
+       <div class="image_container">
+  <img class="img_sec w-100 h-100" [src]="imagePreview || defaultImage" alt="Cover Image" />
+  <div *ngIf="imgLoader" class="loader-overlay">
+    <div class="spinner"></div>
+  </div>
+</div>
+        <div class="close-btn" (click)="onClose()">
+            <mat-icon>close</mat-icon>
+        </div>
+        <div class="icon-btn">
+            <button class="emoji-btn d-flex align-items-center justify-content-center" (click)="toggleEmojiPicker()">
+                <span *ngIf="selectedEmoji; else defaultIcon" class="selected-emoji">{{ selectedEmoji }}</span>
+                <ng-template #defaultIcon>
+                    <img class="w-100" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/662267c17558553178131023656.png" alt="">
+                </ng-template>
+            </button>
+        </div>
+    <div class="change_cover_wrapper">
+        <button class="change_cover_btn" type="button" (click)="fileInput.click()">
+            Change Cover
+        </button>
+    
+        <!-- Hidden file input -->
+        <input #fileInput type="file" name="myfile" accept="image/x-png,image/jpeg,image/jpg"
+            (change)="updatePostImage($event)" style="display: none" />
+    </div>
+    <div *ngIf="showEmojiPicker" class="emoji-picker-container">
+        <emoji-mart (emojiSelect)="addEmoji($event)"></emoji-mart>
+    </div>
+    </div>
+
+    <div class="dialog-content">
+        <div class="projectDetails d-flex gap-3">
+            <div class="form-field projectName">
+                <label>Project Name <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="projectName" placeholder="Enter project name" 
+                       (input)="onProjectNameChange($event)">
+            </div>
+            <div class="form-field">
+                <label>Project ID <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="projectId" placeholder="Enter project ID"
+                       (focus)="onProjectIdFocus()" (input)="onProjectIdChange()">
+            </div>
+        </div>
+        
+
+
+        <div class="form-field">
+            <label>Description</label>
+            <textarea [(ngModel)]="ProjectDesription" placeholder="Enter project description"></textarea>
+        </div>
+        <div class="bottom_field d-flex gap-5 align-items-center">
+            <div class="form-field custom-field">
+                <label>Project Lead</label>
+                <mat-form-field appearance="outline">
+                    <mat-select [(ngModel)]="selectedLeadId" placeholder="Select Project Lead" >
+                        <mat-option *ngFor="let lead of staffList" [value]="lead.id">
+                            {{lead.name}}
+                        </mat-option>
+                    </mat-select>
+                </mat-form-field>
+            </div>
+
+        <div class="form-row" style="display: flex; gap: 16px;">
+            <div class="form-field" style="flex: 1;">
+                <label>Access Type</label>
+                <div class="access-type-group">
+                    <div class="access-type-option" 
+                         [class.selected]="accessType === 'PUBLIC'"
+                         (click)="accessType = 'PUBLIC'">
+                        Public
+                    </div>
+                    <div class="access-type-option" 
+                         [class.selected]="accessType === 'PRIVATE'"
+                         (click)="accessType = 'PRIVATE'">
+                        Private
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <div class="dialog-footer">
+        <button class="btn btn-secondary" (click)="onClose()">Cancel</button>
+        <button class="btn btn-primary" (click)="projectCreationAPI()" [disabled]="buttonLoader">
+            <span *ngIf="buttonLoader" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+            {{ buttonLoader ? 'Creating...' : 'Create Project' }}
+        </button>
+    </div>
+</div>
+

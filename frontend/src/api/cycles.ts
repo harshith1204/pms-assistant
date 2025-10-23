@@ -3,10 +3,14 @@ import { API_HTTP_URL } from "@/config";
 export type CreateCycleRequest = {
   title: string;
   description?: string;
-  projectId?: string;
   startDate?: string;
   endDate?: string;
-  createdBy?: string;
+  projectId: string;
+  businessId: string;
+  createdBy?: {
+    id: string;
+    name: string;
+  };
 };
 
 export type CreateCycleResponse = {
@@ -15,24 +19,54 @@ export type CreateCycleResponse = {
   description: string;
   projectId?: string;
   link?: string;
+  data?: any;
 };
 
 export async function createCycle(payload: CreateCycleRequest): Promise<CreateCycleResponse> {
-  const res = await fetch(`${API_HTTP_URL}/cycles`, {
+  const res = await fetch(`${API_HTTP_URL}/project/cycle`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      title: payload.title,
-      description: payload.description || "",
-      project_id: payload.projectId,
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      created_by: payload.createdBy,
-    }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Failed to create cycle (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getProjectCycles(businessId: string, projectId: string): Promise<any> {
+  const res = await fetch(`${API_HTTP_URL}/project/cycle/get-all?businessId=${businessId}&projectId=${projectId}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get cycles (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function deleteCycle(cycleId: string): Promise<any> {
+  const res = await fetch(`${API_HTTP_URL}/project/cycle?id=${cycleId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to delete cycle (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getDefaultCycle(): Promise<any> {
+  const res = await fetch(`${API_HTTP_URL}/project/default-cycle`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get default cycle (${res.status})`);
   }
   return res.json();
 }

@@ -1,0 +1,253 @@
+.dialog-wrapper {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+}
+
+.dialog-header {
+    // padding: 16px 24px;
+    border-bottom: 1px solid #e0e0e0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+
+    h2 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 500;
+    }
+
+    .close-btn {
+        cursor: pointer;
+        width: 32px;
+        height: 32px;
+        padding: 4px;
+    }
+}
+
+.dialog-content {
+    flex: 1;
+    padding: 18px;
+    overflow-y: auto;
+
+    .form-field {
+        margin-bottom: 20px;
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+
+            .required {
+                color: #dc3545;
+            }
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 14px;
+
+            &:focus {
+                border-color: #80bdff;
+                outline: 0;
+                box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+            }
+        }
+
+        textarea {
+            resize: vertical;
+        }
+    }
+}
+
+.dialog-footer {
+    padding: 12px 24px;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+
+    .btn {
+        padding: 8px 24px;
+        border-radius: 4px;
+        font-weight: 500;
+        font-size: 14px;
+        min-width: 120px;
+        
+        &.btn-secondary {
+            background: transparent;
+            border: 1px solid #2E1F47;
+            color: #2E1F47;
+            
+            &:hover {
+                background: #f5f5f5;
+            }
+        }
+        
+        &.btn-primary {
+            background: var(--primary-bg-color);
+            border: none;
+            color: white;
+            
+            &:hover {
+                background: var(--primary-bg-color);
+            }
+        }
+    }
+}
+.projectName{
+    width: 60%;
+}
+
+.image_container{
+    width: 100%;
+    height: 20vh;
+    position: relative;
+    
+    .loader-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(255, 255, 255, 0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10;
+    }
+    
+    .spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #007bff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+}
+.img_sec{
+    object-fit: cover;
+}
+.close-btn{
+    position: absolute;
+    top: 0;
+    right: 0;
+}
+.change_cover_btn{
+    position: absolute;
+    width: max-content;
+    border-radius: 5px;
+    border: none;
+    font-size: 11px;
+    bottom: 6px;
+    right: 6px;
+    padding: 2px 10px;
+}
+
+.access-type-group {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+}
+
+.access-type-option {
+    padding: 5px 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+        background-color: #f5f5f5;
+    }
+
+    &.selected {
+        background:var(--primary-bg-color);
+        color: white;
+        border: var(--primary-bg-color);
+    }
+}
+.custom-field{
+    width: 40%;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+.icon-btn{
+    position: absolute;
+    bottom: 4px;
+    left: 7px;
+}
+.emoji-btn{
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    background: white;
+    border-radius: 4px;
+    padding: 0px 5px;
+    
+    .selected-emoji {
+        font-size: 18px;
+        line-height: 1;
+    }
+}
+
+// Simple Emoji Picker Container
+.emoji-picker-container {
+    position: absolute;
+    top: 100%;
+    left: 10px;
+    z-index: 1000;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    border: 1px solid #e1e5e9;
+    padding: 1rem;
+    height: 44vh;
+    width: 60%;
+    
+    ::ng-deep emoji-mart {
+        border: none;
+        font-family: inherit;
+
+        .emoji-mart{
+            width: 100% !important;
+            height: 100%;
+            overflow-y: scroll;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .emoji-mart-anchors{
+            display: flex;
+            justify-content: space-between;
+        }
+        .emoji-mart-search-icon{
+            display: none;
+        }
+        .emoji-mart-bar {
+            border-color: #e1e5e9;
+            display: none;
+        }
+        
+        .emoji-mart-category-label .emoji-mart-sr-only .emoji-mart-search-icon {
+            background: #f8f9fa;
+        }
+        
+        .emoji-mart-search input {
+            border-radius: 20px;
+            border: 1px solid #e1e5e9;
+            padding: 8px 12px;
+            width: 100%;
+        }
+    }
+}

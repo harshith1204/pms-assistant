@@ -1,0 +1,177 @@
+<div class="main_section">
+    <div class="views-header">
+    <div class="header-left">
+      <div class="projectName">Project Name</div>
+      <div class="separator">&gt;</div>
+      <div class="views-title">
+        <span class="views-icon">
+          <i class="fas fa-layer-group"></i>
+        </span>
+        Intake 
+      </div>
+    </div>
+    
+    <div class="header-right">
+      <button class="add-view-button" (click)="createTempWorkItem()">
+        Add Work Item
+      </button>
+    </div>
+  </div>
+    <div class="intake_container h-100 d-flex">
+        <div class="left_side d-flex flex-column">
+            <div class="left_header d-flex flex-column w-100">
+                <div class="tabs">
+                    <a *ngFor="let tab of tabs" 
+                        [class.active]="activeTab === tab"
+                        (click)="switchTab(tab)">
+                        {{ tab }}
+                    </a>
+                </div>
+                <div class="status">
+                    <div class="status-label">Status</div>
+                    <div class="status_display">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Pending
+                    </div>
+                </div>
+            </div>
+            <div class="left_content">
+                <!-- <div class="empty">
+                    <img class="w-100" src="https://d2yx15pncgmu63.cloudfront.net/prod-images/430943c1750507509634filter-issue-light.png" alt="">
+                    <div class="empty_text">
+                        No matching work items
+                    </div>
+                </div> -->
+                <div class="work-items-list" *ngIf="workItems?.length">
+                    <div class="work-item" *ngFor="let item of workItems" 
+                         [class.selected]="selectedWorkItem?.id === item.id"
+                         (click)="selectWorkItem(item)">
+                        <div class="item-header">
+                            <div class="item-id">{{item.id}}</div>
+                        </div>
+                        <div class="item-description">{{item.description}}</div>
+                        <div class="item-footer">
+                            <div class="item-date d-flex align-items-center">
+                                <span>{{item.date}}</span>
+                                <i class="fas fa-clock ms-2"></i>
+                            </div>
+                            <div class="avatar">V</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="left_content common_style d-flex justify-content-center" *ngIf="!workItems?.length">
+                <div class="empty">
+                    <img class="w-100" src="https://d2yx15pncgmu63.cloudfront.net/prod-images/426829c1750508531323issue-detail-light.png" alt="">
+                    <div class="empty_text">Select a work item to view its details.</div>
+                </div>
+            </div>
+        </div>
+        <div class="right_side d-flex flex-column w-100">
+            <div class="right_content" *ngIf="selectedWorkItem; else emptyRightState">
+                <div class="workitem-header d-flex justify-content-between align-items-center p-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="project_workitem_id">{{selectedWorkItem.id}}</div>
+                        <div class="status-badge pending">
+                            <i class="fas fa-clock"></i>
+                            Pending
+                        </div>
+                    </div>
+                    <div class="action-buttons d-flex gap-2">
+                        <button class="btn btn-success btn-sm" (click)="acceptWorkItem()">
+                            <i class="fas fa-check me-1"></i>
+                            Accept
+                        </button>
+                        <button class="btn btn-danger btn-sm" (click)="declineWorkItem()">
+                            <i class="fas fa-times me-1"></i>
+                            Decline
+                        </button>
+                        <button class="btn btn-light btn-sm">
+                            <i class="fas fa-ellipsis-v"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="top_content d-flex flex-column p-3 gap-2">
+                    <div class="workitem_name">{{selectedWorkItem.title || selectedWorkItem.description}}</div>
+                    <div class="workitem_desc">{{selectedWorkItem.description}}</div>
+                    <div class="project_last_edit d-flex justify-content-end align-items-center">
+                        <span class="icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-history size-3.5 w-100 h-100 d-flex"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l4 2"></path></svg>
+                        </span>
+                        Last edited by {{selectedWorkItem.assignee || 'vikas'}} {{selectedWorkItem.lastModified || 'about 4 hours ago'}}
+                    </div>
+                </div>
+                <div class="properties p-3">
+                <h3 class="properties-title mb-3">Properties</h3>
+                <div class="properties-list d-flex flex-column gap-3">
+                    <div class="property-item d-flex align-items-center gap-2">
+                        <mat-icon>radio_button_checked</mat-icon>
+                        <span class="property-label">State</span>
+                        <span class="property-value">Backlog</span>
+                    </div>
+                    <div class="property-item d-flex align-items-center gap-2">
+                        <mat-icon>person</mat-icon>
+                        <span class="property-label">Assignees</span>
+                        <span class="property-value text-muted">Add assignees</span>
+                    </div>
+                    <div class="property-item d-flex align-items-center gap-2">
+                        <mat-icon>signal_cellular_alt</mat-icon>
+                        <span class="property-label">Priority</span>
+                        <span class="property-value">None</span>
+                    </div>
+                    
+                    <div class="property-item d-flex align-items-center gap-2">
+                        <mat-icon>event</mat-icon>
+                        <span class="property-label">Due date</span>
+                        <span class="property-value text-danger">Jun 24, 2025</span>
+                    </div>           
+                    <div class="property-item d-flex align-items-center gap-2">
+                        <mat-icon>label</mat-icon>
+                        <span class="property-label">Labels</span>
+                        <span class="property-value text-muted">Select label</span>
+                    </div>
+        </div>
+                </div>
+                <div class="activity p-3">
+                    <div class="activity-header d-flex justify-content-between align-items-center mb-3">
+                        <h3 class="activity-title">Activity</h3>
+                        <button class="filter-btn d-flex align-items-center gap-1">
+                            <mat-icon>filter_list</mat-icon>
+                            Filters
+                        </button>
+                    </div>
+                    <div class="activity-list">
+                        <div class="activity-item d-flex gap-3">
+                            <div class="user-avatar">V</div>
+                            <div class="activity-content">
+                                <span class="user-name">vikas</span> created the work item.
+                                <div class="activity-time text-muted">about 5 hours ago</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="comment-section mt-3">
+                        <div class="comment-input">
+                            <quill-editor class="w-100" [(ngModel)]="editorContent" 
+                                        [modules]="editorConfig"
+                                        [styles]="{ 'min-height': '120px', 'max-height': '300px' }">
+                            </quill-editor>
+                            <div class="d-flex justify-content-end">
+                                <button class="comment-btn" (click)="submitComment()">Comment</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <ng-template #emptyRightState>
+                <div class="right_content common_style d-flex justify-content-center">
+                    <div class="empty">
+                        <img class="w-100" src="https://d2yx15pncgmu63.cloudfront.net/prod-images/426829c1750508531323issue-detail-light.png" alt="">
+                        <div class="empty_text">Select a work item to view its details.</div>
+                    </div>
+                </div>
+            </ng-template>
+        </div>
+    </div>
+</div>

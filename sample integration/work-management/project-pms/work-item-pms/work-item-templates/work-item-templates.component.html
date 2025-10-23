@@ -1,0 +1,121 @@
+<div class="work-item-templates" *ngIf="!showAsModal; else modalTemplate">
+  <!-- Template Selection Interface -->
+  <div class="templates-header">
+    <h3 class="templates-title">Choose Template</h3>
+    <button class="close-btn" (click)="closeTemplatesModal()" *ngIf="showAsModal">
+      <span class="material-icons">close</span>
+    </button>
+  </div>
+
+  
+  
+  <!-- Templates Grid -->
+  <div class="templates-grid">
+    <div class="template-card"
+         *ngFor="let template of filteredTemplates"
+         (click)="selectTemplate(template)"
+         [class.selected]="selectedTemplate?.id === template.id">
+      <div class="template-icon" [style.background-color]="template.color">
+        {{ template.icon }}
+      </div>
+      <div class="template-content">
+        <h4 class="template-name">{{ template.name }}</h4>
+      </div>
+      <div class="selected-badge" *ngIf="selectedTemplate?.id === template.id">
+        <span class="material-icons">check</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Selected Summary -->
+  <div class="selected-summary" *ngIf="selectedTemplate">
+    <div class="summary-text">
+      <span class="label">Selected:</span>
+      <span class="value">{{ selectedTemplate?.name }}</span>
+    </div>
+    <button class="change-btn" (click)="cancelTemplate()">Change</button>
+  </div>
+
+  <!-- Prompt and Actions (single) -->
+  <div class="prompt-section">
+    <label class="prompt-label">Customize with your requirements:</label>
+    <textarea
+      [(ngModel)]="userPrompt"
+      placeholder="Describe what you want to accomplish with this work item. Be as specific as possible to get better results when using AI assistance..."
+      class="prompt-input"
+      rows="4"
+      maxlength="500">
+    </textarea>
+  </div>
+  
+  <div class="template-actions">
+    <button (click)="closeTemplatesModal()" class="btn-secondary">Cancel</button>
+    <button (click)="onGenerateWithAI()" class="btn-primary" [disabled]="!selectedTemplate || !userPrompt.trim()">
+      <span class="material-icons">sparkles</span>
+      Generate with AI
+    </button>
+  </div>
+</div>
+
+<!-- Modal Template -->
+<ng-template #modalTemplate>
+  <div class="templates-modal">
+    <div class="modal-header">
+      <h2>Choose Template</h2>
+      <button class="close-btn" (click)="closeTemplatesModal()">
+        <span class="material-icons">close</span>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      
+
+      <!-- Templates Grid -->
+      <div class="templates-grid">
+        <div class="template-card"
+             *ngFor="let template of filteredTemplates"
+             (click)="selectTemplate(template)"
+             [class.selected]="selectedTemplate?.id === template.id">
+          <div class="template-icon" [style.background-color]="template.color">
+            {{ template.icon }}
+          </div>
+          <div class="template-content">
+            <h4 class="template-name">{{ template.name }}</h4>
+          </div>
+          <div class="selected-badge" *ngIf="selectedTemplate?.id === template.id">
+            <span class="material-icons">check</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selected Summary (modal) -->
+      <div class="selected-summary" *ngIf="selectedTemplate">
+        <div class="summary-text">
+          <span class="label">Selected:</span>
+          <span class="value">{{ selectedTemplate?.name }}</span>
+        </div>
+        <button class="change-btn" (click)="cancelTemplate()">Change</button>
+      </div>
+
+      <!-- Prompt and Actions (single in modal) -->
+      <div class="prompt-section">
+        <label class="prompt-label">Task Prompt:</label>
+        <textarea
+          [(ngModel)]="userPrompt"
+          placeholder="Describe what you want to accomplish with this work item..."
+          class="prompt-input"
+          rows="4"
+          maxlength="500">
+        </textarea>
+      </div>
+      <div class="template-actions">
+        <button class="btn-secondary" (click)="closeTemplatesModal()">Cancel</button>
+        <button class="btn-primary" (click)="onGenerateWithAI()" [disabled]="!selectedTemplate || !userPrompt.trim()">
+          <span class="material-icons">sparkles</span>
+          Generate with AI
+        </button>
+      </div>
+    </div>
+  </div>
+</ng-template>
+

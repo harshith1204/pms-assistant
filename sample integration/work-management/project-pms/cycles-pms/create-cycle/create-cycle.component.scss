@@ -1,0 +1,90 @@
+.create-cycle-container {
+  max-width: 800px;
+  margin: 0 auto;
+  background: #ffffff;
+  border-radius: 8px;
+
+  .header {
+    .emoji {
+      font-size: 24px;
+    }
+    
+    .title {
+      color: #666;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 500;
+    }
+  }
+
+  .form-control {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 6px;
+    font-size: 13px;
+
+    &:focus {
+      border-color: #4285f4;
+      box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.1);
+    }
+
+    &::placeholder {
+      color: #999;
+    }
+  }
+
+  .form-control-lg {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .date-range-picker {
+    .btn {
+      width: fit-content;
+      text-align: left;
+      padding: 6px;
+      font-size: 13px;
+      color: #666;
+      background: #f8f9fa;
+      border: 1px solid #ddd;
+      white-space: nowrap;
+
+      &:hover {
+        background: #f0f0f0;
+      }
+
+      i {
+        color: #888;
+      }
+    }
+  }
+
+  .actions {
+    .btn {
+      padding: 8px 24px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .btn-primary {
+      background: #4285f4;
+      border-color: #4285f4;
+
+      &:hover {
+        background: #3367d6;
+        border-color: #3367d6;
+      }
+
+      &:disabled {
+        background: #a4c2f4;
+        border-color: #a4c2f4;
+      }
+    }
+  }
+}
+.save-btn{
+  background: #3A0044 !important;
+  color: #ffffff !important;
+}
