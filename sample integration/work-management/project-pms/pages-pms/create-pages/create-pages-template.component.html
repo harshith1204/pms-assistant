@@ -1,0 +1,52 @@
+<div class="work-item-container">
+  <h2 class="title">Generate Page Content</h2>
+
+  <div class="user-tag">
+    <span class="icon">👤</span>
+    <span class="text">{{projectData?.projectName}}</span>
+  </div>
+
+  <!-- Templates Grid -->
+  <div class="templates-grid">
+    <div class="template-card"
+         *ngFor="let template of templates"
+         (click)="selectTemplate(template)"
+         [class.selected]="selectedTemplate?.id === template.id">
+      <div class="template-icon" [style.background-color]="template.color">
+        {{ template.icon }}
+      </div>
+      <div class="template-content">
+        <h4 class="template-name">{{ template.name }}</h4>
+        <p class="template-description">{{ template.description }}</p>
+      </div>
+      <div class="selected-badge" *ngIf="selectedTemplate?.id === template.id">
+        <span class="material-icons">check</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt Section -->
+  <div class="prompt-section">
+    <label class="prompt-label">Describe the business content you want to generate:</label>
+    <textarea
+      [(ngModel)]="userPrompt"
+      placeholder="e.g., Create a project status report with KPIs, milestones, risks, and team performance metrics for our quarterly business review..."
+      class="form-control"
+      rows="8"
+      maxlength="3000">
+    </textarea>
+    <div class="char-counter">
+      <span [class.over-limit]="userPrompt.length > 2700">{{userPrompt.length}}/3000</span>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="template-actions d-flex justify-content-center align-items-center">
+    <button class="createAi_btn mt-2" (click)="generateWithAI()" [disabled]="!selectedTemplate || !userPrompt.trim() || isGenerating">
+      <span *ngIf="isGenerating" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+      <span *ngIf="!isGenerating">Generate with AI</span>
+      <span *ngIf="isGenerating">Generating...</span>
+    </button>
+  </div>
+
+</div>

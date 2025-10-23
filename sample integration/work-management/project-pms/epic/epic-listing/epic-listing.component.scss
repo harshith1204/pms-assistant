@@ -1,0 +1,38 @@
+@import '../../work-item-pms/list-workitem/list-workitem.component.scss';
+
+.right-side{
+    position: absolute;
+    right: 2rem;
+    top: 5rem;
+}
+
+.progress_circle {
+  display: inline-block;
+  vertical-align: middle;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+}
+.circular-chart {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.circular-chart .circle-bg {
+  fill: none;
+  stroke: #eee;
+  stroke-width: 3.8;
+}
+.circular-chart .circle {
+  fill: none;
+  stroke: #2d6df6; 
+  stroke-width: 3.8;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s ease;
+}
+.workitem-stats {
+  display: inline-block;
+  vertical-align: middle;
+  color: #1b1f3b;
+  font-size: 13px;
+}

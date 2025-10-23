@@ -1,0 +1,92 @@
+<div class="create-view-container">
+  <div class="create-view-header">
+    <h2>{{ isEditMode ? 'Edit View' : 'Create View' }}</h2>
+  </div>
+
+  <div class="create-view-content">
+    <div class="form-group icon-group">
+      <div class="view-icon-selector">
+        <i class="fas fa-layer-group"></i>
+      </div>
+      <input type="text" class="form-control title-input" placeholder="Title" [(ngModel)]="title">
+    </div>
+
+    <div class="form-group">
+      <textarea class="form-control description-textarea" placeholder="Description" rows="4" [(ngModel)]="description"></textarea>
+    </div>
+
+    <div class="view-options">
+      <div class="option-group">
+        <!-- <button type="button" class="option-btn list-btn active">
+          <i class="fas fa-list"></i>
+          List
+        </button> -->
+
+        <div (click)="openFilterMenu()" class="option-dropdown">
+          <button type="button" class="option-btn filters-btn">
+            <span class="btn-text">Filters</span>
+            <i class="fas fa-chevron-down"></i>
+          </button>
+        </div>
+
+        <!-- <div (click)="openDisplay()" class="option-dropdown">
+          <button type="button" class="option-btn display-btn">
+            <span class="btn-text">Display</span>
+            <i class="fas fa-chevron-down"></i>
+          </button>
+        </div> -->
+      </div>
+      <div class="filter-group-container">
+  <div class="filter-group" *ngFor="let group of filterGroups">
+    <div class="group-title">{{ group.key }}</div>
+    <div class="chip-wrapper">
+      <div class="chip" *ngFor="let item of group.value">
+        <ng-container [ngSwitch]="group.key">
+
+          <!-- Assignee Avatar -->
+          <ng-container *ngSwitchCase="'Assignees'">
+            <span class="avatar">{{ getInitials(item.name) }}</span>
+            <span class="chip-text">{{ item.name }}</span>
+          </ng-container>
+
+          <!-- Label with color dot -->
+          <ng-container *ngSwitchCase="'Labels'">
+            <span class="dot" [ngStyle]="{ 'background-color': item === 'Documentation' ? '#f9c80e' : '#ff5252' }"></span>
+            <span class="chip-text">{{ item }}</span>
+          </ng-container>
+
+          <!-- Others -->
+          <ng-container *ngSwitchDefault>
+            <span class="chip-text">{{ item }}</span>
+          </ng-container>
+
+        </ng-container>
+
+        <span class="close-btn" (click)="removeFilter(group.key, item)">×</span>
+      </div>
+    </div>
+  </div>
+  <!-- Clear All Chip -->
+<div class="filter-group" *ngIf="filterGroups.length > 0">
+
+  <div class="chip-wrapper">
+    <div class="chip clear-chip" (click)="clearAll()">
+      Clear All
+      <span class="close-btn">×</span>
+    </div>
+  </div>
+</div>
+
+</div>
+
+      
+    </div>
+  </div>
+
+  <div class="create-view-footer">
+    <button type="button" class="btn-cancel" (click)="onCancel()">Cancel</button>
+    <button type="button" class="btn-create" [disabled]="!title" (click)="createView()">
+      {{ isEditMode ? 'Update View' : 'Create View' }}
+    </button>
+  </div>
+</div>

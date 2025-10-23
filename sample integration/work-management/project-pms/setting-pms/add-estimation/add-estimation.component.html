@@ -1,0 +1,353 @@
+<div class="estimation-container" *ngIf="showWizard">
+  <!-- Step 1 -->
+  <div class="step-one" [hidden]="showStepTwo">
+    <div class="header">
+      <div class="title">New estimate system</div>
+      <span class="step-indicator">Step 1 of 2</span>
+    </div>
+
+    <div class="estimate-type-selection">
+      <div class="section-title">Choose an estimate system</div>
+      <div class="radio-group">
+        <label class="radio-option">
+          <input type="radio" name="estimateSystem" value="points" [checked]="estimateType==='POINTS'" (change)="onEstimateTypeChange('POINTS')">
+          <span>Points</span>
+        </label>
+        <label class="radio-option">
+          <input type="radio" name="estimateSystem" value="categories" [checked]="estimateType==='CATEGORY'" (change)="onEstimateTypeChange('CATEGORY')">
+          <span>Categories</span>
+        </label>
+        <label class="radio-option">
+          <input type="radio" name="estimateSystem" value="time" [checked]="estimateType==='TIME'" (change)="onEstimateTypeChange('TIME')">
+          <span>Time</span>
+          <!-- <span class="pro-badge">Pro</span> -->
+        </label>
+      </div>
+    </div>
+
+    <div class="start-scratch-section">
+      <div class="section-title">Start from scratch</div>
+      <div class="custom-option" (click)="onCustomClick()">
+        <div class="option-title">Custom</div>
+        <p *ngIf="estimateType==='POINTS'">Add your own points from scratch.</p>
+        <p *ngIf="estimateType==='TIME'">Add your own time from scratch.</p>
+      </div>
+    </div>
+
+    <div class="templates-section">
+      <div class="section-title">Choose a template</div>
+      <div class="template-options" *ngIf="estimateType==='POINTS'">
+        <div class="template-card" (click)="onFibonacciClick()">
+          <div class="option-title">Fibonacci</div>
+          <p>1, 2, 3, 5, 8, 13</p>
+        </div>
+        <div class="template-card" (click)="onLinearClick()">
+          <div class="option-title">Linear</div>
+          <p>1, 2, 3, 4, 5, 6</p>
+        </div>
+        <div class="template-card" (click)="onSquaresClick()">
+          <div class="option-title">Squares</div>
+          <p>1, 4, 9, 16, 25, 36</p>
+        </div>
+      </div>
+      <div class="template-options" *ngIf="estimateType==='TIME'">
+        <div class="template-card" (click)="onHoursClick()">
+          <div class="option-title">Hours</div>
+          <p>1h, 2h, 3h, 4h, 5h 30m, 6h 30m</p>
+        </div>
+      </div>
+      <div class="template-options" *ngIf="estimateType==='CATEGORY'">
+        <div class="template-card" (click)="onCategoriesClick()">
+          <div class="option-title">Easy to Hard</div>
+          <p>Easy, Medium, Hard, Very Hard</p>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="actions step-one-actions">
+      <button class="cancel-btn common_cancel_btn" (click)="onCancel()">Cancel</button>
+    </div>
+  </div>
+
+
+  <div class="step-two" [hidden]="!showStepTwo">
+    <div class="header">
+      <div class="back-title">
+        <button class="back-button" (click)="mode==='EDIT' ? goBackFromManage() : goBack()">
+          <i class="fas fa-arrow-left"></i>
+        </button>
+        <div class="title">{{ mode==='EDIT' ? 'Edit estimate system' : 'New estimate system' }}</div>
+      </div>
+      <ng-container *ngIf="mode!=='EDIT'; else doneTpl">
+        <span class="step-indicator">Step 2 of 2</span>
+      </ng-container>
+      <ng-template #doneTpl>
+        <button class="done-btn" (click)="onDone()">Done</button>
+      </ng-template>
+    </div>
+
+    <!-- Points flow -->
+    <div class="points-section" *ngIf="estimateType==='POINTS'">
+      <div class="section-title">Points</div>
+      <div class="points-list">
+        <div class="point-item" *ngFor="let p of points">
+          <div class="estimateList w-100 d-flex align-items-center">
+            <ng-container *ngIf="!p.isDeleting; else deletePointTpl">
+              <div class="drag-handle" [hidden]="p.isEditing"><i class="fas fa-grip-lines"></i></div>
+              <ng-container *ngIf="!p.isEditing; else editPointTpl">
+                <input type="text" [value]="p.value" class="point-input" readonly>
+                <div class="action-buttons">
+                  <div class="edit-button" (click)="startEditPoint(p)" title="Edit">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pencil text-custom-text-200"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>
+                  </div>
+                  <div class="delete-button" (click)="startDeletePoint(p)" title="Delete">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 text-custom-text-200"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" x2="10" y1="11" y2="17"></line><line x1="14" x2="14" y1="11" y2="17"></line></svg>
+                    <!-- <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/961041c1758887276409delete-03-stroke-standard.svg" alt=""> -->
+                  </div>
+                </div>
+              </ng-container>
+              <ng-template #editPointTpl>
+                <input type="number" [(ngModel)]="p.editValue" class="point-input" placeholder="Enter estimate" min="0" max="100" step="1">
+                <div class="action-buttons">
+                  <button class="confirm-button comm_style" (click)="confirmPoint(p)" title="Confirm">✓</button>
+                  <button class="cancel-button comm_style" (click)="cancelPoint(p)" title="Cancel">☓</button>
+                </div>
+              </ng-template>
+            </ng-container>
+          </div>
+          <ng-template #deletePointTpl>
+            <div class="delete-inline">
+              <div class="label">{{ p.value }}</div>
+              <div class="reassign">
+                <span>Mark as</span>
+                <select [(ngModel)]="p.reassignToId">
+                  <option [ngValue]="null" disabled selected>Select an estimate point</option>
+                  <option *ngFor="let opt of points" [ngValue]="opt.id" [disabled]="opt.id===p.id">{{ opt.value }}</option>
+                </select>
+              </div>
+              <div class="delete-actions">
+                <div class="cancel-btn" (click)="cancelDeletePoint(p)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x text-custom-text-200"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                </div>
+                <div (click)="confirmDeletePoint(p)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 text-custom-text-200"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" x2="10" y1="11" y2="17"></line><line x1="14" x2="14" y1="11" y2="17"></line></svg>
+                  <!-- <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/961041c1758887276409delete-03-stroke-standard.svg" alt=""> -->
+                </div>
+              </div>
+            </div>
+          </ng-template>
+        </div>
+      </div>
+      <button class="add-points-btn" (click)="addPoint()">
+        <i class="fas fa-plus"></i>
+        Add points
+      </button>
+    </div>
+
+    <!-- Time flow -->
+    <div class="points-section" *ngIf="estimateType==='TIME'">
+      <div class="section-title">Time</div>
+      <div class="points-list">
+        <div class="point-item" *ngFor="let t of times">
+          <ng-container *ngIf="!t.isDeleting; else deleteTimeTpl">
+            <div class="drag-handle" [hidden]="t.isEditing"><i class="fas fa-grip-lines"></i></div>
+            <ng-container *ngIf="!t.isEditing; else editTimeTpl">
+              <input type="text" [value]="formatMinutes(t.minutes)" class="point-input" readonly>
+              <div class="action-buttons">
+                <div class="edit-button" (click)="startEditTime(t)" title="Edit">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pencil text-custom-text-200"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>
+                </div>
+                <div class="delete-button" (click)="startDeleteTime(t)" title="Delete">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 text-custom-text-200"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" x2="10" y1="11" y2="17"></line><line x1="14" x2="14" y1="11" y2="17"></line></svg>
+                  <!-- <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/961041c1758887276409delete-03-stroke-standard.svg" alt=""> -->
+                </div>
+              </div>
+            </ng-container>
+            <ng-template #editTimeTpl>
+              <ng-container [ngSwitch]="t.editMode">
+                <div *ngSwitchCase="'minutes'" class="time-edit-fields w-100 d-flex align-items-center justify-content-between ">
+                  <div class="input_section w-100 d-flex align-items-center gap-3">
+                    <input type="number" [(ngModel)]="t.editHours" min="0" max="100" step="1" placeholder="Hours" class="point-input w-50 commonTime_input">
+                    <input type="number" [(ngModel)]="t.editMinutes" min="0" max="59" step="1" placeholder="Minutes" class="point-input w-50 commonTime_input">
+                  </div>
+                  <div class="action-buttons">
+                    <button class="confirm-button" (click)="confirmTime(t)" title="Confirm">✓</button>
+                    <button class="cancel-button" (click)="cancelTime(t)" title="Cancel">☓</button>
+                  </div>
+                </div>
+                <div *ngSwitchDefault class="time-edit-fields w-100 d-flex align-items-center justify-content-between ">
+                  <div class="input_section w-100 d-flex align-items-center gap-3">
+                    <input type="number" [(ngModel)]="t.editHours" min="0" max="100" step="1" placeholder="Hours" class="point-input w-50 commonTime_input">
+                    <input type="number" [(ngModel)]="t.editMinutes" min="0" max="59" step="1" placeholder="Minutes" class="point-input w-50 commonTime_input">
+                  </div>
+                  <div class="action-buttons">
+                    <button class="confirm-button" (click)="confirmTime(t)" title="Confirm">✓</button>
+                    <button class="cancel-button" (click)="cancelTime(t)" title="Cancel">☓</button>
+                  </div>
+                </div>
+              </ng-container>
+            </ng-template>
+          </ng-container>
+          <ng-template #deleteTimeTpl>
+            <div class="delete-inline">
+              <div class="label">{{ formatMinutes(t.minutes) }}</div>
+              <div class="reassign">
+                <span>Mark as</span>
+                <select [(ngModel)]="t.reassignToId">
+                  <option [ngValue]="null" disabled selected>Select an estimate time</option>
+                  <option *ngFor="let opt of times" [ngValue]="opt.id" [disabled]="opt.id===t.id">{{ formatMinutes(opt.minutes) }}</option>
+                </select>
+              </div>
+              <div class="delete-actions">
+                <div class="cancel-btn" (click)="cancelDeleteTime(t)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x text-custom-text-200"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                </div>
+                <div (click)="confirmDeleteTime(t)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 text-custom-text-200"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" x2="10" y1="11" y2="17"></line><line x1="14" x2="14" y1="11" y2="17"></line></svg>
+                  <!-- <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/961041c1758887276409delete-03-stroke-standard.svg" alt=""> -->
+                </div>
+              </div>
+            </div>
+          </ng-template>
+        </div>
+      </div>
+      <button class="add-points-btn" (click)="addTime()">
+        <i class="fas fa-plus"></i>
+        Add time
+      </button>
+    </div>
+<div class="points-section" *ngIf="estimateType==='CATEGORY'">
+  <div class="section-title">Categories</div>
+  <div class="points-list">
+    <div class="point-item" *ngFor="let c of categories">
+      <div class="estimateList d-flex align-items-center w-100">
+        <ng-container *ngIf="!c.isDeleting; else deleteCategoryTpl">
+          <div class="drag-handle" [hidden]="c.isEditing"><i class="fas fa-grip-lines"></i></div>
+          <ng-container *ngIf="!c.isEditing; else editCategoryTpl">
+            <input type="text" [value]="c.value" class="point-input" readonly>
+            <div class="action-buttons">
+              <div class="edit-button" (click)="startEditCategory(c)" title="Edit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pencil text-custom-text-200"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>
+              </div>
+              <div class="delete-button" (click)="startDeleteCategory(c)" title="Delete">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 text-custom-text-200"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" x2="10" y1="11" y2="17"></line><line x1="14" x2="14" y1="11" y2="17"></line></svg>
+                <!-- <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/961041c1758887276409delete-03-stroke-standard.svg" alt=""> -->
+              </div>
+            </div>
+          </ng-container>
+          <ng-template #editCategoryTpl>
+            <input type="text" [(ngModel)]="c.editValue" class="point-input" placeholder="Enter category">
+            <div class="action-buttons">
+              <button class="confirm-button comm_style" (click)="confirmCategory(c)" title="Confirm">✓</button>
+              <button class="cancel-button comm_style" (click)="cancelCategory(c)" title="Cancel">☓</button>
+            </div>
+          </ng-template>
+        </ng-container>
+      </div>
+      <ng-template #deleteCategoryTpl>
+          <div class="delete-inline">
+            <div class="label">{{ c.value }}</div>
+            <div class="reassign">
+              <span>Mark as</span>
+              <select [(ngModel)]="c.reassignToId">
+                <option [ngValue]="null" disabled selected>Select an estimate point</option>
+                <option *ngFor="let opt of categories" [ngValue]="opt.id" [disabled]="opt.id===c.id">{{ opt.value }}
+                </option>
+              </select>
+            </div>
+            <div class="delete-actions">
+              <div class="cancel-btn" (click)="cancelDeleteCategory(c)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x text-custom-text-200"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+              </div>
+              <div (click)="confirmDeleteCategory(c)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2 text-custom-text-200"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" x2="10" y1="11" y2="17"></line><line x1="14" x2="14" y1="11" y2="17"></line></svg>
+                <!-- <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/961041c1758887276409delete-03-stroke-standard.svg" alt=""> -->
+              </div>
+            </div>
+          </div>
+        </ng-template>
+    </div>
+  </div>
+  <button class="add-points-btn" (click)="addCategory()">
+    <i class="fas fa-plus"></i>
+    Add category
+  </button>
+</div>
+  <div class="actions" *ngIf="mode!=='EDIT'">
+      <button class="cancel-btn common_cancel_btn" (click)="onCancel()">Cancel</button>
+      <button class="create-btn" (click)="onDone()">Create estimate</button>
+    </div>
+</div>
+</div>
+<div class="edit_estimation_container" *ngIf="!showWizard">
+  <div class="estimation_select_section" *ngIf="!showSwitch">
+    <div class="header">
+    <div class="title">Edit estimate system</div>
+  </div>
+  <div class="card-list">
+    <button class="edit-card" (click)="startManageEstimates()">
+      <div class="card-title">Add, update or remove estimates</div>
+      <div class="card-desc">Manage current system either adding, updating or removing the points or categories.</div>
+    </button>
+    <button class="edit-card" (click)="startChangeEstimateType()">
+      <div class="card-title">Change estimate type</div>
+      <div class="card-desc">Convert your points system to categories system and vice versa.</div>
+    </button>
+  </div>
+  <div class="actions step-one-actions">
+    <button class="cancel-btn common_cancel_btn" (click)="onCancel()">Cancel</button>
+  </div>
+  </div>
+
+  <div class="switch_estimation_container" *ngIf="showSwitch">
+  <div class="header">
+    <div class="back-title">
+      <button class="back-button" (click)="goBackFromSwitch()">
+        <i class="fas fa-arrow-left"></i>
+      </button>
+      <div class="title">Switch estimate system</div>
+    </div>
+  </div>
+  <div class="switch-row">
+    <div class="switch-col">
+      <div class="label">Current estimate system</div>
+      <div class="pill">{{ currentEstimateSystemLabel }}</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="switch-col">
+      <div class="label">New estimate system</div>
+      <div class="select-wrap">
+  <select (change)="onNewTypeSelected($any($event.target).value)">
+          <option value="" selected>Select an estimate system</option>
+          <option *ngFor="let t of availableNewTypes" [value]="t">{{ t === 'CATEGORY' ? 'Categories' : (t === 'TIME' ? 'Time' : 'Points') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="switch-list" *ngIf="newEstimateType">
+    <div class="switch-item" *ngFor="let src of switchSourceItems; let i = index">
+      <input class="src-input" type="text" [value]="src" readonly>
+      <div class="arrow">→</div>
+      <ng-container [ngSwitch]="newEstimateType">
+        <div *ngSwitchCase="'TIME'" class="target-time">
+          <input type="number" min="0" placeholder="Hours" [(ngModel)]="switchTargets[i].hours">
+          <input type="number" min="0" max="59" placeholder="Minutes" [(ngModel)]="switchTargets[i].minutes">
+        </div>
+        <div *ngSwitchCase="'CATEGORY'" class="target-category">
+          <input type="text" placeholder="Enter estimate" [(ngModel)]="switchTargets[i].text">
+        </div>
+        <div *ngSwitchCase="'POINTS'" class="target-points">
+          <input type="number" min="0" placeholder="Enter estimate" [(ngModel)]="switchTargets[i].value">
+        </div>
+      </ng-container>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="cancel-btn common_cancel_btn" (click)="onCancel()">Cancel</button>
+    <button class="create-btn common_create_btn" [disabled]="!newEstimateType" (click)="changeEstimation()">Update</button>
+  </div>
+</div>
+</div>
+
+

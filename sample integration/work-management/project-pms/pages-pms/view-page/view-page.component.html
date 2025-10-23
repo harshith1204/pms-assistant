@@ -1,0 +1,302 @@
+
+<div class="loading-overlay" *ngIf="screenLoading">
+    <div class="loading-spinner">Loading...</div>
+</div>
+
+<div class="page-totalsection" *ngIf="screenWidth > 475 && !screenLoading">
+    <div class="white-backgroud-text">
+        
+        <!-- <div class="close-icon">
+            <img class="back-btn" src="https://prod-simpo.s3.ap-south-1.amazonaws.com/prod-images/640565c1743596780578side_arrow.png" alt="close-icon" (click)="back()"   />
+        </div> -->
+        <div class="page-preview">
+            <div class="author-section d-flex">
+                <div class="back_btn d-flex align-items-center me-3" (click)="back()">
+                        <mat-icon class="separator mx-2" style="vertical-align: middle; font-size: 2rem;">chevron_left</mat-icon>
+                </div>
+                <div class="post-contentcontainer w-100 d-flex justify-content-between">
+                    <div class="page_subheading">{{page.pageTitle}}</div>
+                    <div class="page-info">
+                        <!-- <div class="right-section">
+                            <div class="page_dp_section">
+                                <img class="page_dp" src="https://prod-simpo.s3.ap-south-1.amazonaws.com/prod-images/795334c1743592690056DP_Blog.png" alt="page_DP ">
+                                <img class="page_dp" src="https://prod-simpo.s3.ap-south-1.amazonaws.com/prod-images/795334c1743592690056DP_Blog.png" alt="page_DP "> 
+                            </div>
+                            <div class="author-name align-content-center">
+                                <div class="right-author">
+                                    <div class="author-name-heading">
+                                         <ng-container *ngIf="(page.createdBy?.name || '').split(',').length > 1; else singleAuthor">
+                                            {{ (page.createdBy?.name || '').split(',')[0] }}, {{ (page.createdBy?.name || '').split(',')[1] | slice:0:5 }}...
+                                        </ng-container>
+                                        <ng-template #singleAuthor>
+                                            {{ page.createdBy?.name || 'N/A' }}
+                                        </ng-template>
+                                    </div>
+                                </div>
+                                <div class="published-date d-flex">
+                                    <div class="published-section" *ngIf="page.visibility === 'PUBLIC'">
+                                        <div class="info-description">
+                                            {{ page.visibility }}
+                                        </div>
+                                    </div>
+                                    <div class="published-on">
+                                        <div class="published-section" *ngIf="page.visibility === 'PRIVATE' || page.visibility === 'ARCHIVED'">
+                                            <div class="info-description">
+                                                {{ page.visibility }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="read-time">
+                                        •&nbsp;{{ page.readTime ? page.readTime : '0'}} read time
+                                    </div>
+                                </div>
+                            </div>
+                        </div> -->
+                        <div class="left-section w-100 d-flex align-content-center justify-content-end">
+                            <div class="linked_btn d-flex align-items-center text-nowrap gap-1" style="position: relative;">
+                                <!-- Linked Items Custom Dropdown -->
+                                <div *ngIf="hasLinkedItems()" class="linked-dropdown">
+                                    <button 
+                                        class="btn btn-sm linked-items-btn d-flex align-items-center gap-2" 
+                                        (click)="toggleDropdown($event)"
+                                        style="font-size: 12px; padding: 4px 8px; border: 1px solid #ddd; background: #f8f9fa;">
+                                        <mat-icon style="font-size: 16px; width: 16px; height: 16px;">link</mat-icon>
+                                        <span>{{ getLinkedItemsText() }}</span>
+                                        <mat-icon style="font-size: 16px; width: 16px; height: 16px;">
+                                            {{isDropdownOpen ? 'keyboard_arrow_up' : 'keyboard_arrow_down'}}
+                                        </mat-icon>
+                                    </button>
+                                    
+                                    <!-- Custom Dropdown Menu -->
+                                    <div *ngIf="isDropdownOpen" class="linked-items-dropdown" 
+                                         style="position: fixed; min-width: 250px; background: white; border: 1px solid #ddd;
+                                                border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 9999;">
+                                        <!-- Cycles Section -->
+                                        <div *ngIf="getLinkedCyclesCount() > 0" class="dropdown-section">
+                                            <div class="dropdown-header px-3 py-2" style="background: #f8f9fa; color: #666; font-size: 12px;">
+                                                <strong>Cycles ({{ getLinkedCyclesCount() }})</strong>
+                                            </div>
+                                            <div *ngFor="let cycle of getLinkedCycles()" 
+                                                 class="dropdown-item d-flex align-items-center justify-content-between py-2 px-3 hover-bg-light"
+                                                 (click)="viewCycle(cycle)">
+                                                <span style="font-size: 13px;">{{ cycle.name }}</span>
+                                                <mat-icon style="font-size: 16px; width: 16px; height: 16px; color: #666;"
+                                                        title="View cycle">chevron_right</mat-icon>
+                                            </div>
+                                            <hr *ngIf="(getLinkedPagesCount() > 0 || getLinkedModulesCount() > 0)" class="my-0">
+                                        </div>
+
+                                        <!-- Pages Section -->
+                                        <div *ngIf="getLinkedPagesCount() > 0" class="dropdown-section">
+                                            <div class="dropdown-header px-3 py-2" style="background: #f8f9fa; color: #666; font-size: 12px;">
+                                                <strong>Pages ({{ getLinkedPagesCount() }})</strong>
+                                            </div>
+                                            <div *ngFor="let linkedPage of getLinkedPages()" 
+                                                 class="dropdown-item d-flex align-items-center justify-content-between py-2 px-3 hover-bg-light"
+                                                 (click)="viewPage(linkedPage)">
+                                                <span style="font-size: 13px;">{{ linkedPage.name }}</span>
+                                                <mat-icon style="font-size: 16px; width: 16px; height: 16px; color: #666;"
+                                                        title="View page">chevron_right</mat-icon>
+                                            </div>
+                                            <hr *ngIf="getLinkedModulesCount() > 0" class="my-0">
+                                        </div>
+
+                                        <!-- Modules Section -->
+                                        <div *ngIf="getLinkedModulesCount() > 0" class="dropdown-section">
+                                            <div class="dropdown-header px-3 py-2" style="background: #f8f9fa; color: #666; font-size: 12px;">
+                                                <strong>Modules ({{ getLinkedModulesCount() }})</strong>
+                                            </div>
+                                            <div *ngFor="let module of getLinkedModules()" 
+                                                 class="dropdown-item d-flex align-items-center justify-content-between py-2 px-3 hover-bg-light"
+                                                 (click)="viewModule(module)">
+                                                <span style="font-size: 13px;">{{ module.name }}</span>
+                                                <mat-icon style="font-size: 16px; width: 16px; height: 16px; color: #666;"
+                                                        title="View module">chevron_right</mat-icon>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="action-view">
+                                <!-- <div class="delete-icon">
+                                    <img src="./../../../../../../../../assets/images/blogs/delete.svg" alt="delete-icon" (click)="deletePage()"/>
+                                </div> -->
+                                <div class="edit-icon">
+                                    <img src="./../../../../../../../../assets/images/blogs/edit.svg" (click)="editPage()">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="editorjs-section" style="overflow: auto; max-height: calc(110vh - 300px);">
+                <div class="container-section w-100">
+                    <div *ngFor="let item of page.blocks" >
+                        <div *ngIf="item.type=='header'" >
+                        <h1 *ngIf="item.data.level==1" [innerHTML]="item.data.text"></h1>
+                        <h2 *ngIf="item.data.level==2" [innerHTML]="item.data.text"></h2>
+                        <h3 *ngIf="item.data.level==3" [innerHTML]="item.data.text"></h3>
+                        <h4 *ngIf="item.data.level==4" [innerHTML]="item.data.text"></h4>
+                        <h5 *ngIf="item.data.level==5" [innerHTML]="item.data.text"></h5>
+                        <h6 *ngIf="item.data.level==6" [innerHTML]="item.data.text"></h6>
+                        </div>
+                        <div *ngIf="item.type=='paragraph'" >
+                            <div class="inner-text" [innerHTML]="item.data.text"></div>
+                        </div>
+                        <div *ngIf="item.type=='list'" >
+                            <div *ngIf="item.data.style=='unordered'">
+                                <ul>
+                                    <ng-container *ngFor="let list of item.data.items">
+                                        <li [innerHTML]="list"></li>
+                                    </ng-container>
+                                </ul>
+                            </div>
+                            <div *ngIf="item.data.style=='ordered'">
+                                <ol>
+                                    <ng-container *ngFor="let list of item.data.items">
+                                        <li [innerHTML]="list"></li>
+                                    </ng-container>
+                                </ol>
+                            </div>
+                        </div>
+                        <div *ngIf="item.type=='delimiter'" class="ce-delimiter">
+                        </div>
+                        <div *ngIf="item.type=='image'" class="image-container">
+                                <img [src]="item.data.file.url" alt="">
+                        </div>
+                        <div *ngIf="item.type=='table'">
+                            <table>
+                                <ng-container *ngFor="let data of item.data.content">
+                                    <tr>
+                                        <ng-container *ngFor="let item of data">
+                                        <td [innerHTML]="item"></td>
+                                        </ng-container>
+                                    </tr>
+                                </ng-container>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="page-totalsection" *ngIf="screenWidth < 475 && !screenLoading">
+  <div class="white-backgroud-text">
+        <div class="top_header">
+            <div class="header">
+                <span><img src="./../../../../../../../../assets/images/blogs/left-arrow.svg" alt="left-arrow" (click)="back()" class="left-arrowimage"></span> <span (click)="back()" class="back-text">Page Preview</span>
+              </div>
+                <div class="action-view">
+                    <div class="delete-icon">
+                        <img src="./../../../../../../../../assets/images/blogs/delete.svg" alt="delete-icon" (click)="deletePage()"/>
+                    </div>
+                    <div class="edit-icon">
+                        <img src="./../../../../../../../../assets/images/blogs/edit.svg" (click)="editPage()">
+                    </div>
+            </div>
+        </div>
+      <div class="top-pageview-section">
+        <div class="heading-section">
+          <div class="right-pagesection">
+            {{page.pageTitle}}
+          </div>
+          <div class="left-pagesection">
+         
+          </div>
+        </div>
+
+      <div class="page-preview">
+        
+          <div class="right-section">
+                            <div class="page_dp_section">
+                                <img class="page_dp" src="https://prod-simpo.s3.ap-south-1.amazonaws.com/prod-images/795334c1743592690056DP_Blog.png" alt="page_DP ">
+                                <img class="page_dp" src="https://prod-simpo.s3.ap-south-1.amazonaws.com/prod-images/795334c1743592690056DP_Blog.png" alt="page_DP "> 
+                            </div>
+                            <div class="author-name align-content-center">
+                                <div class="right-author">
+                                        <div class="author-name-heading">
+                                            <ng-container *ngIf="(page.createdBy?.name || '').split(',').length > 1; else singleAuthor">
+                                                {{ (page.createdBy?.name || '').split(',')[0] }}, {{ (page.createdBy?.name || '').split(',')[1] | slice:0:5 }}...
+                                            </ng-container>
+                                            <ng-template #singleAuthor>
+                                                {{ page.createdBy?.name || 'N/A' }}
+                                            </ng-template>
+                                        </div>
+                                </div>
+                                <div class="published-date d-flex">
+                                    <div class="published-section" *ngIf="page.visibility === 'PUBLIC'">
+                                        <div class="info-description">
+                                           {{ page.visibility }}
+                                        </div>
+                                    </div>
+                                    <div class="published-on">
+                                        <div class="published-section" *ngIf="page.visibility === 'PRIVATE' || page.visibility === 'ARCHIVED'">
+                                            <div class="info-heading-draft">
+                                                Status :
+                                            </div>
+                                            <div class="info-description-draft">
+                                                {{ page.visibility }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="read-time">
+                                        •&nbsp;{{ page.readTime ? page.readTime : '0'}} read time
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+          <div class="editorjs-section" style="overflow: auto; max-height: calc(100vh - 400px);">
+              <div class="container-section">
+                  <div *ngFor="let item of page.blocks" >
+                      <div *ngIf="item.type=='header'" >
+                      <h1 *ngIf="item.data.level==1" [innerHTML]="item.data.text"></h1>
+                      <h2 *ngIf="item.data.level==2" [innerHTML]="item.data.text"></h2>
+                      <h3 *ngIf="item.data.level==3" [innerHTML]="item.data.text"></h3>
+                      <h4 *ngIf="item.data.level==4" [innerHTML]="item.data.text"></h4>
+                      <h5 *ngIf="item.data.level==5" [innerHTML]="item.data.text"></h5>
+                      <h6 *ngIf="item.data.level==6" [innerHTML]="item.data.text"></h6>
+                      </div>
+                      <div *ngIf="item.type=='paragraph'" >
+                          <div class="inner-text" [innerHTML]="item.data.text"></div>
+                      </div>
+                      <div *ngIf="item.type=='list'" >
+                          <div *ngIf="item.data.style=='unordered'">
+                              <ul>
+                                  <ng-container *ngFor="let list of item.data.items">
+                                      <li [innerHTML]="list"></li>
+                                  </ng-container>
+                              </ul>
+                          </div>
+                          <div *ngIf="item.data.style=='ordered'">
+                            <ol>
+                              <ng-container *ngFor="let list of item.data.items">
+                                <li [innerHTML]="list"></li>
+                              </ng-container>
+                            </ol>
+                          </div>
+                      </div>
+                      <div *ngIf="item.type=='delimiter'" class="ce-delimiter">
+                      </div>
+                      <div *ngIf="item.type=='image'" class="image-container">
+                              <img [src]="item.data.file.url" alt="">
+                      </div>
+                      <div *ngIf="item.type=='table'">
+                          <table>
+                              <ng-container *ngFor="let data of item.data.content">
+                                  <tr>
+                                      <ng-container *ngFor="let item of data">
+                                      <td [innerHTML]="item"></td>
+                                      </ng-container>
+                                  </tr>
+                              </ng-container>
+                          </table>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      </div>
+  </div>
+</div>

@@ -1,0 +1,134 @@
+<div class="views-container" *ngIf=" viewsList?.length > 0 && !pageLoader; else emptyscreen">
+  <!-- Header section -->
+  <div class="views-header">
+    <div class="header-left">
+      <div class="text projectName">{{ data?.projectName }}</div>
+      <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon>
+      <div class="views-title">
+        <span class="views-icon">
+          <i class="fas fa-layer-group"></i>
+        </span>
+        Views
+      </div>
+      <div class="count_section">
+        {{viewsList?.length}} Views
+       </div>
+    </div>
+
+    <div class="header-right">
+      <!-- <div class="search-container">
+        <span class="search-icon">
+          <i class="fas fa-search"></i>
+        </span>
+        <input type="text" class="search-input" placeholder="Search">
+      </div> -->
+
+      <!-- <div class="filter-controls">
+        <button class="filter-button">
+          <i class="fas fa-sort"></i>
+          Updated at
+          <i class="fas fa-chevron-down"></i>
+        </button>
+        
+        <button class="filter-button">
+          <i class="fas fa-filter"></i>
+          Filters
+          <i class="fas fa-chevron-down"></i>
+        </button>
+      </div> -->
+
+      <button class="add-view-button" (click)="createView()">
+        Add view
+      </button>
+    </div>
+  </div>
+
+  <!-- Views list section -->
+  <div class="views-list">
+    <div class="view-item d-flex justify-content-between align-items-center" *ngFor="let view of viewsList; let i = index">
+      <div class="viewList w-100 d-flex align-items-center justify-content-between" (click)="navigateToWorkItems(view)">
+        <div class="left-side d-flex align-items-center justify-content-between">
+          <div class="view-icon">
+            <i class="fas fa-layer-group"></i>
+          </div>
+  
+          <div class="view-name">{{ view.view.title }}</div>
+        </div>
+        <div class="right-side d-flex align-items-center justify-content-between">
+          <div class="view-filters" *ngIf="view.appliedFiltersCount !== undefined && view.appliedFiltersCount>0">
+            {{ view.appliedFiltersCount }} filters
+          </div>
+  
+          <div class="view-actions">
+            <span *ngIf="view?.view.createdBy?.name!=null"
+              class="user-circle">{{view?.view.createdBy?.name[0]?.toUpperCase()}}</span>
+  
+            <button class="action-button star">
+              <div class="icon-btn" style="width: auto;" [matTooltip]="isFavourite(view.view?.id || view.id) ? 'Unmark Favourite' : 'Mark as Favourite'"
+                (click)="changeFav(view); $event.stopPropagation()">
+                <mat-icon class="favorite-icon" [ngClass]="{ 'highlighted': isFavourite(view.view?.id || view.id) }">
+                  {{ isFavourite(view.view?.id || view.id) ? 'star' : 'star_border' }}
+                </mat-icon>
+              </div>
+            </button>
+            <button class="more-btn" (click)="toggleMoreOptions($event, i)" matButton [matMenuTriggerFor]="menu">
+              <i class="fas fa-ellipsis-h"></i>
+            </button>
+            <mat-menu #menu="matMenu">
+              <button mat-menu-item (click)="editView(view)">
+                      <div class="edit d-flex align-items-center gap-2"><i class="material-icons">edit</i> Edit</div>
+                    </button>
+              <button mat-menu-item data-bs-toggle="modal" data-bs-target="#deleteModal" (click)="confirmdelete(view.view.id)">
+                <div class="delete d-flex align-items-center gap-2"><i class="material-icons">delete</i> Delete</div>
+              </button>
+            </mat-menu>
+          </div>
+        </div>
+      </div>
+      <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header border-0">
+              <h5 class="modal-title" id="deleteModalLabel">
+                <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/439988c1752592958469delete.svg" alt="">
+                Confirm Delete
+              </h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+              <div class="mb-3">
+              </div>
+              <h6 class="mb-3">Are you sure you want to delete this item?</h6>
+              <p class="text-muted">This action cannot be undone. The item will be permanently deleted.</p>
+            </div>
+            <div class="modal-footer border-0">
+              <button type="button" class="btn btn-secondary cancel-btn" data-bs-dismiss="modal">
+                Cancel
+              </button>
+              <button type="button" class="btn btn-danger w-20" (click)="deleteViewAPI()" data-bs-dismiss="modal">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<ng-template #emptyscreen>
+  <div *ngIf="viewsList?.length == 0"
+    class="empty h-100 d-flex flex-column align-items-center justify-content-center gap-2">
+    <div class="text d-flex justify-content-center">
+      <h4>No Saved Views Yet</h4>
+    </div>
+    <div class="text d-flex justify-content-center">Create a view to save your filters for frequent use. You can create as many as you need.</div>
+    <button class="add-view-button" (click)="createView()">
+        Create Your First View
+    </button>
+  </div>
+</ng-template>
+<section class="loader_section" *ngIf="pageLoader">
+    <div class="api_loader">
+        <app-anime-loader></app-anime-loader>
+    </div>
+</section>

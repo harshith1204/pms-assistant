@@ -1,0 +1,333 @@
+.create-module-container {
+  padding: 20px;
+  font-size: 13px;
+  
+  .title {
+    font-size: 18px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    color: #333;
+  }
+
+  .user-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    border: 1px solid #80808030;
+    
+    .icon {
+      margin-right: 6px;
+    }
+    
+    .text {
+      color: #333;
+    }
+  }
+
+  .form-group {
+    margin-bottom: 16px;
+    
+    .form-control {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 13px;
+      
+      &:focus {
+        outline: none;
+        border-color: #4285f4;
+      }
+      
+      &.description {
+        min-height: 120px;
+        resize: vertical;
+      }
+    }
+  }
+
+  .actions-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    overflow-x: scroll;
+
+    .action-btn {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 6px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: white;
+      cursor: pointer;
+      font-size: 10px;
+      white-space: nowrap;
+      width: fit-content;
+      
+      &:hover {
+        background: #f8f8f8;
+      }
+      
+      .icon {
+        margin-right: 3px;
+        width: 14px;
+        height: 14px;
+      }
+
+      .date-text,
+      .status-text,
+      .lead-text,
+      .members-text {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+
+        .remove-btn {
+          font-size: 9px;
+          color: #6b7280;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+
+          &:hover {
+            color: #ef4444;
+          }
+        }
+      }
+
+      .selected-members-inline {
+        display: flex;
+        align-items: center;
+        margin-left: 2px;
+        margin-right: 4px;
+
+        .member-avatars {
+          display: flex;
+          align-items: center;
+          margin-left: -2px;
+
+          .member-avatar-inline {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: -2px;
+            border: 1px solid #fff;
+            position: relative;
+
+            &:first-child {
+              margin-left: 0;
+            }
+
+            .member-initials-inline {
+              color: white;
+              font-size: 8px;
+              font-weight: 500;
+              text-transform: uppercase;
+            }
+          }
+        }
+      }
+
+      &.members-action-btn {
+        .remove-btn {
+          margin-left: 4px;
+          font-size: 9px;
+          color: #6b7280;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+
+          &:hover {
+            color: #ef4444;
+          }
+        }
+      }
+    }
+  }
+
+  .selected-members-detail {
+    .members-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      
+      .members-title {
+        font-size: 12px;
+        font-weight: 500;
+        color: #666;
+      }
+      
+      .clear-all-btn {
+        background: none;
+        border: none;
+        color: #666;
+        font-size: 11px;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 3px;
+        
+        &:hover {
+          background: #f0f0f0;
+          color: #333;
+        }
+      }
+    }
+    
+    .members-list {
+      .member-card {
+        display: flex;
+        align-items: center;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        padding: 6px 8px;
+        gap: 6px;
+        transition: all 0.2s ease;
+        
+        &:hover {
+          background: #e9ecef;
+          border-color: #dee2e6;
+        }
+        
+        .member-avatar {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          
+          .member-initials {
+            color: white;
+            font-size: 10px;
+            font-weight: 500;
+          }
+        }
+        
+        .member-info {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          flex: 1;
+          
+          .member-name {
+            font-size: 11px;
+            font-weight: 500;
+            color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          
+          .member-role {
+            font-size: 10px;
+            color: #666;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+        }
+        
+        .remove-member-btn {
+          background: none;
+          border: none;
+          color: #666;
+          cursor: pointer;
+          padding: 2px;
+          border-radius: 3px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          flex-shrink: 0;
+          
+          &:hover {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+          }
+          
+          svg {
+            width: 10px;
+            height: 10px;
+          }
+        }
+      }
+      
+      // Fallback for old member-tag style (if needed)
+      .member-tag {
+        background: #e3f2fd;
+        border: 1px solid #2196f3;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 12px;
+        color: #1976d2;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+
+        .remove-member {
+          cursor: pointer;
+          font-size: 14px;
+          font-weight: bold;
+          margin-left: 4px;
+          
+          &:hover {
+            color: #d32f2f;
+          }
+        }
+      }
+    }
+  }
+
+  .footer {
+    margin-top: 20px;
+    
+    .right {
+      display: flex;
+      gap: 8px;
+      
+      .btn {
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+        
+        &.btn-secondary {
+          background: white;
+          border: 1px solid #ddd;
+          color: #333;
+          
+          &:hover {
+            background: #f8f8f8;
+          }
+        }
+        
+        &.btn-primary {
+          background: #4285f4;
+          border: 1px solid #4285f4;
+          color: white;
+          
+          &:hover {
+            background: #3367d6;
+          }
+        }
+      }
+    }
+  }
+}
+
+.save-btn {
+  background: var(--primary-bg-color);
+  color:#fff ;
+}
+.custom-btn{
+  white-space: nowrap;
+}

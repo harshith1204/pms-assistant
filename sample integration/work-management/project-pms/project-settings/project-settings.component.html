@@ -1,0 +1,144 @@
+<div class="settings-container">
+  <div class="settings-content">
+    <!-- Header section -->
+    <div class="settings-header">
+      <h2>Projects and work items</h2>
+      <p>Toggle these on or off this project.</p>
+    </div>
+    
+    <!-- Settings items -->
+    <div class="settings-item">
+      <div class="setting-info">
+        <div class="icon-container">
+          <mat-icon>schedule</mat-icon>
+        </div>
+        <div class="text-container">
+          <h3>Cycles</h3>
+          <p>Timebox work as you see fit per project and change frequency from one period to the next.</p>
+        </div>
+      </div>
+  
+
+ <div class="widget-toggle">
+  <label class="switch">
+    <input type="checkbox" [checked]="isFeatureEnabled" (change)="onCheckboxChange($event,'CYCLE')">
+    <span class="slider round"></span>
+  </label>
+</div>
+    </div>
+    
+    <div class="settings-item">
+      <div class="setting-info">
+        <div class="icon-container">
+          <mat-icon>apps</mat-icon>
+        </div>
+        <div class="text-container">
+          <h3>Modules</h3>
+          <p>Group work into sub-project-like set-ups with their own leads and assignees.</p>
+        </div>
+      </div>
+ <div class="widget-toggle">
+  <label class="switch">
+    <input type="checkbox" [checked]="isModuleEnabled" (change)="onCheckboxChange($event,'MODULE')">
+    <span class="slider round"></span>
+  </label>
+</div>
+    </div>
+    
+    <div class="settings-item">
+      <div class="setting-info">
+        <div class="icon-container">
+          <mat-icon>layers</mat-icon>
+        </div>
+        <div class="text-container">
+          <h3>Views</h3>
+          <p>Save sorts, filters, and display options for later or share them.</p>
+        </div>
+      </div>
+    
+
+        <div class="widget-toggle">
+  <label class="switch">
+    <input type="checkbox" [checked]="isViewEnabled" (change)="onCheckboxChange($event,'VIEW')">
+    <span class="slider round"></span>
+  </label>
+</div>
+    </div>
+    
+    <div class="settings-item">
+      <div class="setting-info">
+        <div class="icon-container">
+          <mat-icon>description</mat-icon>
+        </div>
+        <div class="text-container">
+          <h3>Pages</h3>
+          <p>Write anything like you write anything.</p>
+        </div>
+      </div>
+     
+
+        <div class="widget-toggle">
+  <label class="switch">
+    <input type="checkbox" [checked]="isPageEnabled" (change)="onCheckboxChange($event,'PAGE')">
+    <span class="slider round"></span>
+  </label>
+</div>
+    </div>
+    
+    <div class="settings-item">
+      <div class="setting-info">
+        <div class="icon-container">
+          <mat-icon>inbox</mat-icon>
+        </div>
+        <div class="text-container">
+          <h3>Intake</h3>
+          <p>Stay in the loop on Work items you are subscribed to. Enable this to get notified.</p>
+        </div>
+      </div>
+       <div class="widget-toggle">
+  <label class="switch">
+    <input type="checkbox" [checked]="isIntakeEnabled" (change)="onCheckboxChange($event,'INTAKE')">
+    <span class="slider round"></span>
+  </label>
+</div>
+    </div>
+
+      
+    
+    <!-- Work management section -->
+    <div class="section-divider"></div>
+    <div class="settings-header">
+      <h2>Work management</h2>
+      <p>Manage your work and projects with ease.</p>
+    </div>
+    
+    <div class="settings-item">
+      <div class="setting-info">
+        <div class="icon-container">
+          <mat-icon>timer</mat-icon>
+        </div>
+        <div class="text-container">
+          <h3>Time Tracking <span class="pro-badge">Pro</span></h3>
+          <p>Track time spent on work items and projects.</p>
+        </div>
+      </div>
+     
+
+        <div class="widget-toggle">
+  <label class="switch">
+    <input type="checkbox" [checked]="isTrackingEnabled" (change)="onCheckboxChange($event,'TRACKING')">
+    <span class="slider round"></span>
+  </label>
+</div>
+    </div>
+  </div>
+  
+  <!-- Success message and buttons -->
+  <div class="success-message">
+    <p>Congrats!! Project 😀 {{projectResponse.name}}  created.</p>
+    <div class="action-buttons">
+      <button class="close" (click)="onClose()">Close</button>
+      <button class="btn-open" (click)="openProject()">Open project</button>
+    </div>
+  </div>
+</div>

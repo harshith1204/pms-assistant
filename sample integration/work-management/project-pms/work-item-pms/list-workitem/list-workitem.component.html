@@ -1,0 +1,1642 @@
+<div class="main_section" *ngIf="!pageLoader">
+  <div class="global_container">
+    <div class="views-header">
+      <!-- <div class="header-left">
+        <div class="projectName">{{projectname}}</div>
+        <div class="separator">&gt;</div>
+        <div class="views-title">
+          <span class="views-icon">
+            <i class="fas fa-layer-group"></i>
+          </span>
+          Work Items
+        </div>
+      </div> -->
+
+      <div class="header-right d-flex align-items-center gap-3 justify-content-between w-100">
+
+        <div class="filter-controls">
+          <div class="tabs_Container">
+            <div *ngIf="feature?.epic == true" (click)="changeTab('EPIC_TAB')" class="tab d-flex justify-content-center align-items-center"
+              [class.active]="selectedTab === 'EPIC_TAB'">
+              <img class="tab_icon" src="https://d2yx15pncgmu63.cloudfront.net/prod-images/545535c1751522811470Icon.png"
+                alt="">Epic
+            </div>
+            <div (click)="changeTab('WORKITEM_TAB')" class="tab d-flex justify-content-center align-items-center"
+              [class.active]="selectedTab === 'WORKITEM_TAB'">
+              <img class="tab_icon" src="https://d2yx15pncgmu63.cloudfront.net/prod-images/545535c1751522811470Icon.png"
+                alt="">Work Items
+            </div>
+            <div *ngIf="feature?.cycles == true" (click)="changeTab('CYCLES_TAB')"
+              class="tab d-flex justify-content-center align-items-center"
+              [class.active]="selectedTab === 'CYCLES_TAB'">
+              <img class="tab_icon"
+                src="https://d2yx15pncgmu63.cloudfront.net/prod-images/387685c1751522862834Icon (1).png" alt="">Cycles
+            </div>
+            <div *ngIf="feature?.modules == true" (click)="changeTab('MODULES_TAB')"
+              class="tab d-flex justify-content-center align-items-center"
+              [class.active]="selectedTab === 'MODULES_TAB'">
+              <img class="tab_icon"
+                src="https://d2yx15pncgmu63.cloudfront.net/prod-images/446806c1751522896324Icon (2).png" alt="">Module
+            </div>
+            <div *ngIf="feature?.view == true" (click)="changeTab('VIEWS_TAB')"
+              class="tab d-flex justify-content-center align-items-center" [class.active]="selectedTab === 'VIEWS_TAB'">
+              <img class="tab_icon"
+                src="https://d2yx15pncgmu63.cloudfront.net/prod-images/747144c1751522928290Icon (3).png" alt="">Views
+            </div>
+            <div *ngIf="feature?.pages == true" (click)="changeTab('PAGES_TAB')"
+              class="tab d-flex justify-content-center align-items-center" [class.active]="selectedTab === 'PAGES_TAB'">
+              <img class="tab_icon"
+                src="https://d2yx15pncgmu63.cloudfront.net/prod-images/543471c1751522959862Icon (4).png" alt="">Pages
+            </div>
+          </div>
+
+          <!-- <button class="filter-button" (click)="openFilterMenu()">
+            Filters
+            <i class="fas fa-chevron-down"></i>
+          </button>
+          <button class="filter-button" (click)="openDisplay()">
+            Display
+            <i class="fas fa-chevron-down"></i>
+          </button>
+          <button class="filter-button">
+            Analytics
+          </button> -->
+        </div>
+        <div class="right-side d-flex align-items-center justify-content-between gap-3"
+          *ngIf="selectedTab == 'WORKITEM_TAB'">
+          <div class="tab-btn tabs_Container">
+            <div (click)="switchTab('TABLE')" class="first_tab tab d-flex justify-content-center align-items-center"
+              [class.active]="selectTab === 'TABLE'">
+              <img class="table_icon"
+                src="https://d2z9497xp8xb12.cloudfront.net/prod-images/810623c1754111883567WhatsApp_Image_2025-08-01_at_4.17.48_PM-removebg-preview.png"
+                alt="">
+            </div>
+            <div (click)="switchTab('LIST')" class="second_tab tab d-flex justify-content-center align-items-center"
+              [class.active]="selectTab === 'LIST'">
+              <img class="table_icon"
+                src="https://d2z9497xp8xb12.cloudfront.net/prod-images/893441c1754110767683List.svg" alt="">
+            </div>
+            <div (click)="switchTab('KANBAN')" class="third_tab tab d-flex justify-content-center align-items-center"
+              [class.active]="selectTab === 'KANBAN'">
+              <!-- <img class="table_icon" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/792115c1754459974645textalign-left 1.svg" alt=""> -->
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                class="lucide lucide-kanban h-3.5 w-3.5 text-custom-text-100">
+                <path d="M6 5v11"></path>
+                <path d="M12 5v6"></path>
+                <path d="M18 5v14"></path>
+              </svg>
+            </div>
+          </div>
+          <div class="action-buttons">
+            <button class="add-view-button" (click)="createWorkItem()">
+              <span class="material-icons">add</span>
+              Work Item
+            </button>
+            <!-- <div [matTooltip]="'Create Work Item With AI'"
+              class="add_templates_button d-flex justify-content-center align-items-center" (click)="openTemplates()">
+              ✨
+            </div> -->
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Delete Zone - appears when dragging -->
+    <!-- <div 
+      *ngIf="isDragging" 
+      class="delete-zone"
+      cdkDropList
+      id="delete-zone"
+      [cdkDropListData]="[]"
+      (cdkDropListDropped)="deleteDroppedItem($event)">
+      <div class="delete-content">
+        <i class="fas fa-trash-alt delete-icon"></i>
+        <span class="delete-text">Drop here to delete the work item</span>
+      </div>
+    </div> -->
+
+    <ng-container>
+      <ng-container *ngIf="selectedTab == 'WORKITEM_TAB'">
+        <div class="workitem_content">
+          <div class="workitemHeader d-flex align-items-center gap-3 p-3 justify-content-between">
+            <div class="left-side d-flex align-items-center gap-3">
+              <div class="search-container">
+                <!-- <div class="search_icon">
+              <img src="https://d2yx15pncgmu63.cloudfront.net/prod-images/619530c1751455755108search.png" alt="">
+            </div> -->
+                <input type="text" placeholder="Search Work Items" class="search-input with-icon"
+                  [(ngModel)]="searchText" (input)="onSearchChange()" />
+              </div>
+              <div (click)="refreshWorkItems()" class="refresh_btn common-icon">
+                <img src="https://d2yx15pncgmu63.cloudfront.net/prod-images/509042c1751455690898fi_13432623.png" alt="">
+              </div>
+              <div (click)="openFilterMenu()" class="filter_btn common-icon">
+                <img src="https://d2yx15pncgmu63.cloudfront.net/prod-images/542223c1751455713485fi_2676824.png" alt="">
+              </div>
+              <div class="count_section">
+                {{response?.length}} Work Items
+              </div>
+              <!-- <div (click)="openDisplay()" class="display_btn common-icon">
+            <img src="../../../../../../../assets/images/work-management/download_icon.png" alt="">
+            <div class="title">Display</div>
+          </div> -->
+            </div>
+
+          </div>
+          <div class="filter-group-container">
+            <div class="filter-group" *ngFor="let group of filterGroups">
+              <div class="group-title">{{ group.key }}</div>
+              <div class="chip-wrapper">
+                <div class="chip" *ngFor="let item of group.value">
+                  <ng-container [ngSwitch]="group.key">
+
+                    <!-- Assignee Avatar -->
+                    <ng-container *ngSwitchCase="'Assignees'">
+                      <span class="avatar">{{ getInitials(item.name) }}</span>
+                      <span class="chip-text">{{ item.name }}</span>
+                    </ng-container>
+
+                    <!-- Label with color dot -->
+                    <ng-container *ngSwitchCase="'Labels'">
+                      <span class="dot"
+                        [ngStyle]="{ 'background-color': item === 'Documentation' ? '#f9c80e' : '#ff5252' }"></span>
+                      <span class="chip-text">{{ item?.name || item?.label }}</span>
+                    </ng-container>
+
+                    <!-- Others -->
+                    <ng-container *ngSwitchDefault>
+                      <span class="chip-text">{{ item.name }}</span>
+                    </ng-container>
+
+                  </ng-container>
+
+                  <span class="close-btn" (click)="removeFilter(group.key, item)">×</span>
+                </div>
+              </div>
+            </div>
+            <!-- Clear All Chip -->
+            <div class="filter-group" *ngIf="filterGroups.length > 0">
+
+              <div class="chip-wrapper">
+                <div class="chip clear-chip" (click)="clearAll()">
+                  Clear All
+                  <span class="close-btn">×</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+          <div class="table-wrapper" *ngIf="response?.length > 0 && !loading && selectTab == 'TABLE'; else emptyscreen"
+            [ngStyle]="{ height: isFilter ? '84%' : '90%' }">
+            <table mat-table [dataSource]="response" class="mat-elevation-z8">
+
+              <!-- Work Items Column (Sticky Left) -->
+              <ng-container matColumnDef="workItem" sticky>
+                <th mat-header-cell *matHeaderCellDef class="headingStyles sticky-column">Work Items</th>
+                <td mat-cell *matCellDef="let issue" class="cursor-pointer">
+                  <div [matTooltip]="issue?.title || '' " class="field_data">
+                    <strong>{{issue.displayBugNo}} </strong> - {{ issue?.title | slice:0:50 }}{{ issue?.title?.length >
+                    50 ? '...' : '' }}
+                  </div>
+                </td>
+              </ng-container>
+
+              <!-- State Column -->
+              <ng-container matColumnDef="state">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15"
+                        fill="none">
+                        <path
+                          d="M7 13.5C6.25 13.5 5.5 13.35 4.8 13.1C2.5 12.2 1 10 1 7.5C1 4.2 3.7 1.5 7 1.5C8.6 1.5 10.1 2.1 11.25 3.25C11.45 3.45 11.45 3.75 11.25 3.95C11.05 4.15 10.75 4.15 10.55 3.95C9.6 3 8.35 2.5 7 2.5C4.25 2.5 2 4.75 2 7.5C2 9.6 3.25 11.4 5.2 12.15C5.8 12.4 6.4 12.5 7 12.5C7.3 12.5 7.5 12.7 7.5 13C7.5 13.3 7.3 13.5 7 13.5ZM9 13.15C8.45 13.15 8.3 12.4 8.8 12.2C10.75 11.45 12 9.6 12 7.55C12 7.25 12.2 7.05 12.5 7.05C12.8 7.05 13 7.25 13 7.55C13 10.05 11.5 12.25 9.2 13.15C9.1 13.1 9.05 13.15 9 13.15ZM7 11C5.05 11 3.5 9.45 3.5 7.5C3.5 5.55 5.05 4 7 4C7.95 4 8.8 4.35 9.5 5.05C9.7 5.25 9.7 5.55 9.5 5.75C9.3 5.95 9 5.95 8.8 5.75C8.3 5.25 7.65 5 7 5C5.6 5 4.5 6.1 4.5 7.5C4.5 8.9 5.6 10 7 10C8.4 10 9.5 8.9 9.5 7.5C9.5 7.2 9.7 7 10 7C10.3 7 10.5 7.2 10.5 7.5C10.5 9.45 8.95 11 7 11Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> State
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="stateData d-flex align-items-center gap-1 cursor-pointer"
+                    (click)="onStateEdit($event, issue); $event.stopPropagation()">
+                    <img [src]="getIconForState(issue?.state?.name)" width="16" height="16"
+                      alt="{{ issue?.state?.name || 'No State' }}" />{{ issue?.state?.name || 'Add State' }}
+                  </div>
+                </td>
+              </ng-container>
+
+              <!-- Priority Column -->
+              <ng-container matColumnDef="priority">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 13 13"
+                        fill="none">
+                        <g clip-path="url(#clip0_2365_52445)">
+                          <path
+                            d="M8.25001 5H6.75001C6.61182 5 6.5 5.11182 6.5 5.25001V10.75C6.5 10.8882 6.61182 11 6.75001 11H8.25001C8.3882 11 8.50002 10.8882 8.50002 10.75V5.25001C8.50002 5.11182 8.3882 5 8.25001 5Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M11.25 3.5H9.75001C9.61182 3.5 9.5 3.61182 9.5 3.75001V10.75C9.5 10.8882 9.61182 11 9.75001 11H11.25C11.3882 11 11.5 10.8882 11.5 10.75V3.75001C11.5 3.61182 11.3882 3.5 11.25 3.5Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M5.25001 6.5H3.75001C3.61182 6.5 3.5 6.61182 3.5 6.75001V10.75C3.5 10.8882 3.61182 11 3.75001 11H5.25001C5.3882 11 5.50002 10.8882 5.50002 10.75V6.75001C5.50002 6.61182 5.3882 6.5 5.25001 6.5Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M2.25001 8H0.750008C0.61182 8 0.5 8.11182 0.5 8.25001V10.75C0.5 10.8882 0.61182 11 0.750008 11H2.25001C2.3882 11 2.50002 10.8882 2.50002 10.75V8.25001C2.49999 8.11182 2.3882 8 2.25001 8Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                        </g>
+                        <defs>
+                          <clipPath id="clip0_2365_52445">
+                            <rect width="12" height="12" fill="white" transform="translate(0.5 0.5)" />
+                          </clipPath>
+                        </defs>
+                      </svg></div> Priority
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="priorityData d-flex align-items-center gap-1 cursor-pointer"
+                    [ngClass]="issue?.priority?.toLowerCase()"
+                    (click)="onPriorityEdit($event, issue); $event.stopPropagation()">
+                    <img [src]="getIconForPriority(issue?.priority)" width="16" height="16"
+                      alt="{{ issue?.priority || 'None' }}" />
+                    {{ issue?.priority || 'None' }}
+                  </div>
+                </td>
+              </ng-container>
+
+              <!-- Assignee Column -->
+              <ng-container matColumnDef="assignee">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="13" viewBox="0 0 12 13"
+                        fill="none">
+                        <path
+                          d="M6 6.875C4.415 6.875 3.125 5.585 3.125 4C3.125 2.415 4.415 1.125 6 1.125C7.585 1.125 8.875 2.415 8.875 4C8.875 5.585 7.585 6.875 6 6.875ZM6 1.875C4.83 1.875 3.875 2.83 3.875 4C3.875 5.17 4.83 6.125 6 6.125C7.17 6.125 8.125 5.17 8.125 4C8.125 2.83 7.17 1.875 6 1.875Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                        <path
+                          d="M10.295 11.875C10.09 11.875 9.92005 11.705 9.92005 11.5C9.92005 9.775 8.1601 8.375 6.0001 8.375C3.84007 8.375 2.08008 9.775 2.08008 11.5C2.08008 11.705 1.91008 11.875 1.70508 11.875C1.50008 11.875 1.33008 11.705 1.33008 11.5C1.33008 9.365 3.42507 7.625 6.0001 7.625C8.5751 7.625 10.67 9.365 10.67 11.5C10.67 11.705 10.5 11.875 10.295 11.875Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> Assignees
+                  </div>
+                </th>
+                <!-- <td mat-cell *matCellDef="let issue">{{ getAssigneeNames(issue?.assignee)}}</td> -->
+                <td mat-cell *matCellDef="let issue">
+                  <div class="cursor-pointer" (click)="onAssigneeEdit($event, issue); $event.stopPropagation()">
+                    <ng-container *ngIf="issue?.assignee?.length === 1">
+                      <div class="assignee-single d-flex align-items-center justify-content-center">
+                        <div class="avatar" matTooltip="{{issue.assignee[0]?.name}}">
+                          {{ getInitial(issue.assignee[0]?.name) }}
+                        </div>
+                      </div>
+                    </ng-container>
+
+                    <ng-container *ngIf="issue?.assignee?.length > 1 && issue?.assignee?.length <= 3">
+                      <div class="assignee-multiple d-flex align-items-center justify-content-center"
+                        [matTooltip]="getAssigneeNames(issue?.assignee)">
+                        <div class="multi_avatar cursor-pointer" *ngFor="let user of issue.assignee">
+                          {{ getInitial(user?.name) }}
+                        </div>
+                      </div>
+                    </ng-container>
+
+                    <ng-container *ngIf="issue?.assignee?.length > 3">
+                      <div class="assignee-multiple d-flex align-items-center justify-content-center"
+                        [matTooltip]="getAssigneeNames(issue?.assignee)">
+                        <div class="multi_avatar cursor-pointer" *ngFor="let user of issue.assignee.slice(0, 3)">
+                          {{ getInitial(user?.name) }}
+                        </div>
+                        <div class="extra-count cursor-pointer">
+                          +{{ issue.assignee.length - 3 }}
+                        </div>
+                      </div>
+                    </ng-container>
+
+                    <ng-container *ngIf="issue?.assignee?.length === 0">
+                      <div class="no-assignee">Add Assignee</div>
+                    </ng-container>
+                  </div>
+                </td>
+
+              </ng-container>
+
+              <ng-container matColumnDef="start_date">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Start Date</th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="cursor-pointer"
+                    (click)="onStartDateEdit($event, issue); $event.stopPropagation()">
+                    {{ (issue?.startDate | date: 'MMM d y') || 'Add Start Date' }}
+                  </div>
+                </td>
+              </ng-container>
+
+              <!-- 🟢 Due Date Column -->
+              <ng-container matColumnDef="due_date">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Due Date</th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="cursor-pointer"
+                    (click)="onEndDateEdit($event, issue); $event.stopPropagation()">
+                    {{ (issue?.endDate | date: 'MMM d y') || 'Add Due Date' }}
+                  </div>
+                </td>
+              </ng-container>
+              <!-- Labels Column -->
+              <ng-container matColumnDef="label">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="13" viewBox="0 0 12 13"
+                        fill="none">
+                        <g clip-path="url(#clip0_2365_52555)">
+                          <path
+                            d="M6.28822 0.902101C6.02189 0.636514 5.65847 0.491386 5.28241 0.500396L1.43591 0.598436C0.704899 0.61667 0.116554 1.20491 0.0983194 1.93602L0.000387022 5.78241C-0.00851593 6.15848 0.136505 6.5219 0.401985 6.78834L5.71179 12.0979C6.24832 12.6333 7.11684 12.6333 7.65338 12.0979L11.5978 8.15349C12.134 7.61739 12.134 6.74801 11.5978 6.21179L6.28822 0.902101ZM11.2095 7.7652L7.26508 11.7095C6.94318 12.0308 6.42198 12.0308 6.10008 11.7095L0.790389 6.39994C0.631101 6.24001 0.544003 6.02204 0.549366 5.79636L0.647298 1.94997C0.658347 1.51136 1.01125 1.15836 1.44985 1.14741L5.29624 1.04937C5.30322 1.04927 5.30997 1.04916 5.31695 1.04916C5.53544 1.04948 5.74493 1.13626 5.89971 1.29051L11.2095 6.6002C11.5307 6.9221 11.5307 7.4433 11.2095 7.7652Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M3.58972 2.76758C2.85957 2.76758 2.26769 3.35946 2.26758 4.08961C2.26758 4.81976 2.85957 5.41164 3.58961 5.41164C4.31976 5.41164 4.91164 4.81976 4.91164 4.08961C4.91079 3.35989 4.31944 2.76844 3.58972 2.76758ZM3.58972 4.86245C3.16281 4.86245 2.81688 4.51642 2.81677 4.08961C2.81677 3.66281 3.16281 3.31677 3.58961 3.31677C4.01642 3.31677 4.36245 3.66281 4.36245 4.08961C4.36202 4.5162 4.01631 4.86191 3.58972 4.86245Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                        </g>
+                        <defs>
+                          <clipPath id="clip0_2365_52555">
+                            <rect width="12" height="12" fill="white" transform="translate(0 0.5)" />
+                          </clipPath>
+                        </defs>
+                      </svg></div> Labels
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="cursor-pointer" (click)="onLabelEdit($event, issue); $event.stopPropagation()">
+                    <ng-container *ngIf="issue?.label && issue?.label?.length > 0; else noLabels">
+                      <ng-container *ngIf="issue?.label?.length === 1">
+                        {{ issue?.label[0]?.name || issue?.label[0]?.label }}
+                      </ng-container>
+                      <ng-container *ngIf="issue?.label?.length > 1">
+                        <span [matTooltip]="getLabelsTooltip(issue?.label)">
+                          {{ issue?.label?.length }} Labels
+                        </span>
+                      </ng-container>
+                    </ng-container>
+                    <ng-template #noLabels>Add Label</ng-template>
+                  </div>
+                </td>
+              </ng-container>
+
+              <!-- Modules Column -->
+              <ng-container *ngIf="feature?.modules" matColumnDef="module">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="13" viewBox="0 0 12 13"
+                        fill="none">
+                        <path fill-rule="evenodd" clip-rule="evenodd"
+                          d="M6.02395 2.76319C5.9888 2.7456 5.94735 2.7456 5.91215 2.76319L1.97792 4.73032C1.88579 4.77639 1.88579 4.90786 1.97792 4.95393L5.91215 6.92105C5.94735 6.93865 5.9888 6.93865 6.02395 6.92105L9.95825 4.95393C10.0504 4.90786 10.0504 4.77639 9.95825 4.73032L6.02395 2.76319ZM5.57675 2.09237C5.8231 1.96921 6.11305 1.96921 6.3594 2.09237L10.2937 4.0595C10.9386 4.38196 10.9386 5.30229 10.2937 5.62475L6.3594 7.5919C6.11305 7.71505 5.8231 7.71505 5.57675 7.5919L1.64251 5.62475C0.997586 5.30229 0.997591 4.38196 1.64251 4.0595L5.57675 2.09237ZM1.03967 6.74125C1.1323 6.556 1.35755 6.48095 1.54279 6.57355L5.91215 8.75825C5.94735 8.77585 5.9888 8.77585 6.02395 8.75825L10.3934 6.57355C10.5786 6.48095 10.8039 6.556 10.8965 6.74125C10.9891 6.9265 10.914 7.15175 10.7288 7.2444L6.3594 9.42905C6.11305 9.55225 5.8231 9.55225 5.57675 9.42905L1.20738 7.2444C1.02214 7.15175 0.947051 6.9265 1.03967 6.74125ZM1.54279 8.41075C1.35755 8.31815 1.1323 8.3932 1.03967 8.57845C0.947051 8.7637 1.02214 8.98895 1.20738 9.0816L5.57675 11.2662C5.8231 11.3894 6.11305 11.3894 6.3594 11.2662L10.7288 9.0816C10.914 8.98895 10.9891 8.7637 10.8965 8.57845C10.8039 8.3932 10.5786 8.31815 10.3934 8.41075L6.02395 10.5954C5.9888 10.613 5.94735 10.613 5.91215 10.5954L1.54279 8.41075Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> Modules
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="moduleIcon d-flex align-items-center gap-1 cursor-pointer"
+                    (click)="onModuleEdit($event, issue); $event.stopPropagation()">
+                    <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/906072c1752554362585fi_17614025 (1).svg"
+                      alt="">
+                    {{ issue?.modules?.name || 'Add Module' }}
+                  </div>
+                </td>
+              </ng-container>
+
+              <ng-container *ngIf="feature?.cycles" matColumnDef="cycle">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"
+                        fill="none">
+                        <circle cx="6" cy="6" r="5.65" stroke="#000D4D" stroke-opacity="0.45" stroke-width="0.7" />
+                        <path
+                          d="M6 10C7.06087 10 8.07828 9.57857 8.82843 8.82843C9.57857 8.07828 10 7.06087 10 6C10 4.93913 9.57857 3.92172 8.82843 3.17157C8.07828 2.42143 7.06087 2 6 2L6 6L6 10Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> Cycles
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="cycleIcon d-flex align-items-center gap-1 cursor-pointer"
+                    (click)="onCycleEdit($event, issue); $event.stopPropagation()">
+                    <img
+                      src="https://d2z9497xp8xb12.cloudfront.net/prod-images/691988c1752554525588Group 1707484831 (1).svg"
+                      alt="">
+                    {{ issue?.cycle?.name || 'Add Cycle' }}
+                  </div>
+                </td>
+              </ng-container>
+
+              <!-- <ng-container matColumnDef="start_date">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Start Date</th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="cursor-pointer"
+                    (click)="onStartDateEdit($event, issue); $event.stopPropagation()">
+                    {{ (issue?.startDate | date: 'MMM d y') || 'Add Start Date' }}
+                  </div>
+                </td>
+              </ng-container> -->
+
+              <!-- 🟢 Due Date Column -->
+              <!-- <ng-container matColumnDef="due_date">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Due Date</th>
+                <td mat-cell *matCellDef="let issue">
+                  <div class="cursor-pointer"
+                    (click)="onEndDateEdit($event, issue); $event.stopPropagation()">
+                    {{ (issue?.endDate | date: 'MMM d y') || 'Add Due Date' }}
+                  </div>
+                </td>
+              </ng-container> -->
+
+              <!-- 🟣 Release Date Column -->
+              <!-- <ng-container matColumnDef="release_date">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Release Date</th>
+                <td mat-cell *matCellDef="let issue">
+                  <div *ngIf="issue.releaseDate" class="cursor-pointer" (click)="$event.stopPropagation()">
+                    {{ issue?.releaseDate | date: 'MMM d y' }}
+                  </div>
+                </td>
+              </ng-container> -->
+
+              <ng-container matColumnDef="created_on">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Created On</th>
+                <td mat-cell *matCellDef="let issue">{{ (issue?.createdTimeStamp | date: 'MMM d y, h:mm a') || 'No
+                  Created Date' }}</td>
+              </ng-container>
+
+              <ng-container matColumnDef="updated_on">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Updated On</th>
+                <td mat-cell *matCellDef="let issue">{{ (issue?.updatedTimeStamp | date: 'MMM d y, h:mm a') || 'No
+                  Updated Date' }}</td>
+              </ng-container>
+
+              <!-- <ng-container matColumnDef="link">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"
+                        fill="none">
+                        <g clip-path="url(#clip0_2259_43993)">
+                          <path
+                            d="M6.63296 12.1951L4.74761 14.0804C3.96598 14.862 2.70019 14.862 1.91921 14.0806C1.13808 13.2994 1.13808 12.0335 1.91906 11.2526L5.69042 7.48119C6.4714 6.70019 7.73731 6.70019 8.51828 7.48119C8.77863 7.74154 9.20076 7.74154 9.4611 7.48119C9.72145 7.22085 9.72145 6.79872 9.4611 6.53837C8.15941 5.23668 6.0493 5.23668 4.74761 6.53837L0.976271 10.3097C-0.325424 11.6114 -0.325424 13.7215 0.976271 15.0232C2.27781 16.3256 4.38807 16.3256 5.69046 15.0232L7.57581 13.1379C7.83615 12.8775 7.83615 12.4554 7.57581 12.195C7.31546 11.9347 6.89331 11.9347 6.63296 12.1951Z"
+                            fill="#2C2C2C" fill-opacity="0.8" />
+                          <path
+                            d="M15.0236 0.976241C13.7219 -0.325454 11.6111 -0.325454 10.3094 0.976241L8.04738 3.23825C7.78703 3.4986 7.78703 3.92073 8.04738 4.18107C8.30772 4.44142 8.72985 4.44142 8.9902 4.18107L11.2522 1.91906C12.0332 1.13805 13.2998 1.13805 14.0808 1.91906C14.8617 2.70003 14.8617 3.96595 14.0808 4.74692L9.93273 8.89497C9.15173 9.67598 7.88585 9.67598 7.10487 8.89497C6.84453 8.63463 6.4224 8.63463 6.16206 8.89497C5.90171 9.15532 5.90171 9.57745 6.16206 9.83779C7.46375 11.1395 9.57386 11.1395 10.8756 9.83779L15.0236 5.68977C16.3253 4.38807 16.3253 2.27794 15.0236 0.976241Z"
+                            fill="#2C2C2C" fill-opacity="0.8" />
+                        </g>
+                        <defs>
+                          <clipPath id="clip0_2259_43993">
+                            <rect width="16" height="16" fill="white" />
+                          </clipPath>
+                        </defs>
+                      </svg></div> Link
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let issue">{{ issue?.link || 'No Link' }}</td>
+              </ng-container> -->
+
+              <ng-container matColumnDef="attachment">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"
+                        fill="none">
+                        <path
+                          d="M4.49297 14.6333C3.7347 14.6336 2.9934 14.4089 2.36287 13.9876C1.73235 13.5664 1.24093 12.9677 0.950808 12.2671C0.660686 11.5665 0.584894 10.7956 0.733025 10.052C0.881155 9.30829 1.24655 8.62528 1.78297 8.08934L7.43964 2.43201C7.53344 2.33821 7.66066 2.28551 7.79331 2.28551C7.92596 2.28551 8.05318 2.33821 8.14697 2.43201C8.24077 2.52581 8.29347 2.65302 8.29347 2.78567C8.29347 2.91833 8.24077 3.04554 8.14697 3.13934L2.48964 8.79601C2.21575 9.05665 1.9968 9.36947 1.84568 9.71605C1.69457 10.0626 1.61434 10.4359 1.60974 10.814C1.60513 11.192 1.67624 11.5672 1.81887 11.9174C1.9615 12.2675 2.17277 12.5856 2.44023 12.8528C2.70768 13.12 3.02592 13.331 3.37619 13.4734C3.72646 13.6157 4.10167 13.6865 4.47973 13.6816C4.85778 13.6767 5.23103 13.5961 5.57747 13.4447C5.92392 13.2933 6.23656 13.0741 6.49697 12.8L13.8036 5.49334C14.1385 5.14759 14.324 4.68406 14.3201 4.20277C14.3162 3.72148 14.1233 3.261 13.783 2.92066C13.4426 2.58033 12.9822 2.38742 12.5009 2.38356C12.0196 2.37969 11.5561 2.56518 11.2103 2.90001L5.31831 8.79601C5.16201 8.95231 5.0742 9.1643 5.0742 9.38534C5.0742 9.60639 5.16201 9.81837 5.31831 9.97468C5.47461 10.131 5.6866 10.2188 5.90764 10.2188C6.12868 10.2188 6.34067 10.131 6.49697 9.97468L10.267 6.20401C10.3131 6.15623 10.3682 6.11812 10.4292 6.09188C10.4902 6.06565 10.5558 6.05183 10.6222 6.05122C10.6886 6.05061 10.7544 6.06323 10.8159 6.08834C10.8774 6.11345 10.9332 6.15055 10.9802 6.19748C11.0271 6.2444 11.0643 6.30021 11.0895 6.36164C11.1146 6.42308 11.1273 6.48891 11.1268 6.5553C11.1262 6.62169 11.1125 6.68731 11.0863 6.74832C11.0601 6.80934 11.022 6.86453 10.9743 6.91068L7.20364 10.682C6.85983 11.0259 6.39349 11.2191 5.90721 11.2192C5.42093 11.2193 4.95454 11.0262 4.61064 10.6823C4.26674 10.3385 4.07351 9.87219 4.07345 9.38591C4.07338 8.89963 4.2665 8.43324 4.61031 8.08934L10.5036 2.20001C11.035 1.6686 11.7556 1.37003 12.5071 1.36996C13.2585 1.3699 13.9792 1.66836 14.5106 2.19967C15.042 2.73099 15.3406 3.45165 15.3407 4.20311C15.3407 4.95456 15.0423 5.67527 14.511 6.20668L7.20431 13.5107C6.84902 13.8677 6.42646 14.1508 5.96106 14.3435C5.49567 14.5362 4.99668 14.6347 4.49297 14.6333Z"
+                          fill="#2C2C2C" fill-opacity="0.8" />
+                      </svg></div> Attachment
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let issue">{{ issue?.attachments?.length || 0 }} Attachment</td>
+              </ng-container>
+
+              <ng-container matColumnDef="sub_work_item">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Sub Work Item</th>
+                <td mat-cell *matCellDef="let issue">{{ issue?.subWorkItems?.length || 0 }} Sub Work Item</td>
+              </ng-container>
+
+              <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+              <tr mat-row *matRowDef="let row; columns: displayedColumns;" (click)="detailWorkitem(row)" [attr.data-workitem-id]="row?.id" [class.selected]="row?.isSelected"></tr>
+            </table>
+          </div>
+          <ng-container *ngIf="selectTab == 'LIST'">
+
+            <div class="main_container" *ngIf="response?.length > 0 && !loading; else emptyscreen">
+
+              <ng-container *ngFor="let state of secondTabResponse;let i = index">
+
+                <div class="state_card" [class.border-bottom]='i != states.length-1'>
+
+                  <div (click)="closeStateCard(state)" class="issue_info">
+                    <div class="left_side custom_style">
+                      <div class="state_label">{{state.name}}</div>
+                      <div class="issue_count">{{state.items?.length}}</div>
+                    </div>
+                    <div class="right_side d-flex align-items-center gap-2">
+                      <div class="downArrow">
+                        <mat-icon>{{ state.isOpened ? 'expand_less' : 'expand_more' }}</mat-icon>
+                      </div>
+                      <span class="plus_icon"
+                        (click)="addworkitemThroughDefaultState(state); $event.stopPropagation()"><mat-icon>add</mat-icon></span>
+                    </div>
+                  </div>
+                  <ng-container *ngIf="state.isOpened">
+                    <div class="workitem_list">
+                      <ng-container *ngFor="let item of state.items; let j = index">
+                        <div class="issue_card d-flex align-items-center justify-content-between"
+                          (click)="detailWorkitem(item)">
+                          <div class="left_side d-flex align-items-center gap-1">
+                            <div class="issue_no">{{item.displayBugNo}}</div>
+                            <div [matTooltip]="item?.title || '' " class="issue_desc">{{item?.title | slice:0:40 }}{{
+                              item?.title?.length > 40 ? '...' : '' }}</div>
+                          </div>
+                          <div class="right_side d-flex align-items-center gap-2">
+                            <div class="issue_state common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onStateEdit($event, item); $event.stopPropagation()">
+                              <img [src]="getIconForState(state.name)" width="16" height="16"
+                                alt="{{ state.name || 'No State' }}" />
+                              <span class="common_text">{{state.name}}</span>
+                            </div>
+                            <div class="priority common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onPriorityEdit($event, item); $event.stopPropagation()">
+                              <img [src]="getIconForPriority(item?.priority)" width="15" height="15"
+                                alt="{{ item?.priority || 'None' }}" />
+                              <!-- <span class="priority-text">{{item?.priority}}</span> -->
+                            </div>
+
+                            <ng-container *ngIf="item.releaseDate!==null && item.releaseDate !== '' ">
+                              <div class="start-date common-style d-flex align-items-center gap-1 cursor-pointer">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                  stroke-linejoin="round" class="lucide lucide-calendar-check2 h-3 w-3 flex-shrink-0">
+                                  <path d="M8 2v4"></path>
+                                  <path d="M16 2v4"></path>
+                                  <path d="M21 14V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8"></path>
+                                  <path d="M3 10h18"></path>
+                                  <path d="m16 20 2 2 4-4"></path>
+                                </svg>
+                                <!-- <img class="icon" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/600095c1752832352947calender.jpg" alt="" width="16" height="16"> -->
+                                <span class="date-text">{{item?.releaseDate | date: 'dd/MM/yyyy'}}</span>
+                              </div>
+                            </ng-container>
+                            <ng-container *ngIf="item.releaseDate === null || item.releaseDate === '' ">
+                              <div class="start-date common-style d-flex align-items-center gap-1 cursor-pointer"
+                                (click)="onStartDateEdit($event, item); $event.stopPropagation()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                  stroke-linejoin="round" class="lucide lucide-calendar-clock h-3 w-3 flex-shrink-0">
+                                  <path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"></path>
+                                  <path d="M16 2v4"></path>
+                                  <path d="M8 2v4"></path>
+                                  <path d="M3 10h5"></path>
+                                  <path d="M17.5 17.5 16 16.3V14"></path>
+                                  <circle cx="16" cy="16" r="6"></circle>
+                                </svg>
+                                <!-- <img class="icon" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/600095c1752832352947calender.jpg" alt="" width="16" height="16"> -->
+                                <span class="date-text">{{item?.startDate | date: 'dd/MM/yyyy'}}</span>
+                              </div>
+                              <div class="end-date common-style d-flex align-items-center gap-1 cursor-pointer"
+                                (click)="onEndDateEdit($event, item); $event.stopPropagation()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                  stroke-linejoin="round" class="lucide lucide-calendar-check2 h-3 w-3 flex-shrink-0">
+                                  <path d="M8 2v4"></path>
+                                  <path d="M16 2v4"></path>
+                                  <path d="M21 14V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8"></path>
+                                  <path d="M3 10h18"></path>
+                                  <path d="m16 20 2 2 4-4"></path>
+                                </svg>
+                                <!-- <img class="icon" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/600095c1752832352947calender.jpg" alt="" width="16" height="16"> -->
+                                <span class="date-text">{{item?.endDate | date: 'dd/MM/yyyy'}}</span>
+                              </div>
+                            </ng-container>
+
+                            <div class="assignee cursor-pointer"
+                              (click)="onAssigneeEdit($event, item); $event.stopPropagation()">
+                              <ng-container *ngIf="item?.assignee?.length === 1">
+                                <div class="assignee-single d-flex align-items-center justify-content-center">
+                                  <div class="avatar" matTooltip="{{item.assignee[0]?.name}}">{{
+                                    getInitial(item.assignee[0]?.name) }}</div>
+                                </div>
+                              </ng-container>
+                              <ng-container *ngIf="item?.assignee?.length > 1 && item?.assignee?.length <= 3">
+                                <div class="assignee-multiple d-flex align-items-center justify-content-center"
+                                  [matTooltip]="getAssigneeNames(item?.assignee)">
+                                  <div class="multi_avatar" *ngFor="let user of item.assignee">
+                                    {{ getInitial(user?.name) }}
+                                  </div>
+                                </div>
+                              </ng-container>
+                              <ng-container *ngIf="item?.assignee?.length > 3">
+                                <div class="assignee-multiple d-flex align-items-center justify-content-center"
+                                  [matTooltip]="getAssigneeNames(item?.assignee)">
+                                  <div class="multi_avatar" *ngFor="let user of item.assignee.slice(0, 3)">
+                                    {{ getInitial(user?.name) }}
+                                  </div>
+                                  <div class="extra-count">
+                                    +{{ item.assignee.length - 3 }}
+                                  </div>
+                                </div>
+                              </ng-container>
+                              <ng-container *ngIf="item?.assignee?.length === 0">
+                                <div class="no_assignee_chip" matTooltip="No Assignee">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="lucide lucide-users h-3 w-3 mx-[4px] flex-shrink-0">
+                                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="9" cy="7" r="4"></circle>
+                                    <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+                                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                  </svg>
+                                </div>
+                              </ng-container>
+                            </div>
+                            <div *ngIf="feature?.modules"
+                              class="module common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onModuleEdit($event, item); $event.stopPropagation()" matTooltip="module">
+                              <svg viewBox="0 0 24 24" class="h-3 w-3 flex-shrink-0 stroke-2" stroke="currentColor"
+                                fill="none" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+                                <path
+                                  d="M19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 21 20.1046 21 19V5C21 3.89543 20.1046 3 19 3Z"
+                                  stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M8.77778 7H7.22222C7.09949 7 7 7.09949 7 7.22222V8.77778C7 8.90051 7.09949 9 7.22222 9H8.77778C8.90051 9 9 8.90051 9 8.77778V7.22222C9 7.09949 8.90051 7 8.77778 7Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M8.77778 15H7.22222C7.09949 15 7 15.0995 7 15.2222V16.7778C7 16.9005 7.09949 17 7.22222 17H8.77778C8.90051 17 9 16.9005 9 16.7778V15.2222C9 15.0995 8.90051 15 8.77778 15Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M16.7778 7H15.2222C15.0995 7 15 7.09949 15 7.22222V8.77778C15 8.90051 15.0995 9 15.2222 9H16.7778C16.9005 9 17 8.90051 17 8.77778V7.22222C17 7.09949 16.9005 7 16.7778 7Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M16.7778 15H15.2222C15.0995 15 15 15.0995 15 15.2222V16.7778C15 16.9005 15.0995 17 15.2222 17H16.7778C16.9005 17 17 16.9005 17 16.7778V15.2222C17 15.0995 16.9005 15 16.7778 15Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                              </svg>
+                              <span class="module-text">{{item.modules?.name}}</span>
+                            </div>
+                            <div *ngIf="feature?.cycles"
+                              class="cycle common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onCycleEdit($event, item); $event.stopPropagation()">
+                              <div class="img">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 12 12"
+                                  fill="none">
+                                  <circle cx="6" cy="6" r="5.65" stroke="#000D4D" stroke-opacity="0.45"
+                                    stroke-width="0.7" />
+                                  <path
+                                    d="M6 10C7.06087 10 8.07828 9.57857 8.82843 8.82843C9.57857 8.07828 10 7.06087 10 6C10 4.93913 9.57857 3.92172 8.82843 3.17157C8.07828 2.42143 7.06087 2 6 2L6 6L6 10Z"
+                                    fill="#000D4D" fill-opacity="0.45" />
+                                </svg>
+                              </div>
+                              <span class="cycle-text">{{item.cycle?.name}}</span>
+                            </div>
+                            <div class="issue_label common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onLabelEdit($event, item); $event.stopPropagation()"
+                              [matTooltip]="item?.label && item?.label?.length > 1 ? getLabelsTooltip(item?.label) : ''">
+                              <div class="dot"
+                                [style.background-color]="item?.label && item?.label?.length > 0 ? (item?.label?.length === 1 ? item?.label[0]?.color : '#ccc') : '#ccc'">
+                              </div>
+                              <div class="label">
+                                <ng-container *ngIf="item?.label && item?.label?.length > 0; else noLabels">
+                                  <ng-container *ngIf="item?.label?.length === 1">
+                                    {{ item?.label[0]?.name || item?.label[0]?.label }}
+                                  </ng-container>
+                                  <ng-container *ngIf="item?.label?.length > 1">
+                                    {{ item?.label?.length }} Labels
+                                  </ng-container>
+                                </ng-container>
+                                <ng-template #noLabels>No Label</ng-template>
+                              </div>
+                            </div>
+                            <div class="more-options-container">
+                              <button class="more-btn" (click)="toggleMoreOptions($event, i)" matButton
+                                [matMenuTriggerFor]="menu">
+                                <i class="fas fa-ellipsis-h"></i>
+                              </button>
+                              <mat-menu #menu="matMenu">
+                                <!-- <button mat-menu-item (click)="editWorkitem(item)">
+                              <div class="edit d-flex align-items-center gap-2"><i class="material-icons">edit</i> Edit</div>
+                            </button> -->
+                                <button mat-menu-item data-bs-toggle="modal" data-bs-target="#deleteModal"
+                                  (click)="openDeleteModal(item)">
+                                  <div class="delete d-flex align-items-center gap-2"><i
+                                      class="material-icons">delete</i> Delete</div>
+                                </button>
+                              </mat-menu>
+                            </div>
+                          </div>
+                        </div>
+                      </ng-container>
+                    </div>
+                  </ng-container>
+
+
+                </div>
+              </ng-container>
+
+
+            </div>
+            <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel"
+              aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                  <div class="modal-header border-0">
+                    <h5 class="modal-title" id="deleteModalLabel">
+                      <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/439988c1752592958469delete.svg"
+                        alt="">
+                      Confirm Delete
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body text-center">
+                    <div class="mb-3">
+                    </div>
+                    <h6 class="mb-3">Are you sure you want to delete this item?</h6>
+                    <p class="text-muted">This action cannot be undone. The item will be permanently deleted.</p>
+                  </div>
+                  <div class="modal-footer border-0">
+                    <button type="button" class="btn btn-secondary cancel-btn" data-bs-dismiss="modal">
+                      Cancel
+                    </button>
+                    <button type="button" class="btn btn-danger w-20" (click)="confirmDelete()" data-bs-dismiss="modal">
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Skeleton Loader for Second Tab -->
+            <div class="main_container skeleton-container" *ngIf="loading">
+              <ng-container *ngFor="let item of [1,2,3]">
+                <div class="state_card skeleton-state-card">
+                  <div class="issue_info">
+                    <div class="left_side custom_style">
+                      <div class="skeleton-state-label"></div>
+                      <div class="skeleton-issue-count"></div>
+                    </div>
+                  </div>
+                  <div class="workitem_list">
+                    <ng-container *ngFor="let skeletonItem of [1,2,3,4]">
+                      <div class="issue_card d-flex align-items-center justify-content-between skeleton-issue-card">
+                        <div class="left_side d-flex align-items-center gap-1">
+                          <div class="skeleton-issue-no"></div>
+                          <div class="skeleton-issue-desc"></div>
+                        </div>
+                        <div class="right_side d-flex align-items-center gap-2">
+                          <div class="skeleton-tag"></div>
+                          <div class="skeleton-tag"></div>
+                          <div class="skeleton-tag"></div>
+                          <div class="skeleton-tag"></div>
+                          <div class="skeleton-tag"></div>
+                          <div class="skeleton-tag"></div>
+                          <div class="skeleton-tag"></div>
+                          <div class="skeleton-tag"></div>
+                        </div>
+                      </div>
+                    </ng-container>
+                  </div>
+                </div>
+              </ng-container>
+            </div>
+          </ng-container>
+          <ng-container *ngIf="selectTab == 'KANBAN'">
+            <div class="main_container_2 gap-2" [class.with-delete-zone]="isDragging"
+              *ngIf="response?.length > 0 && !loading; else emptyscreen" #kanbanContainer
+              style="overflow-x: auto; overflow-y: hidden;"
+              [ngStyle]="{ height: isFilter ? '85%' : '92%' }">
+              <ng-container *ngFor="let state of secondTabResponse; let i = index">
+                <div class="state_container" [class.minimized]="state.isMinimized">
+
+                  <div class="state_column h-100" *ngIf="!state.isMinimized">
+
+                    <!-- Substate Header -->
+                    <div (click)="closeStateCard(state); $event.stopPropagation()" class="issue_info bg-transparent">
+                      <div class="left_side mb-2">
+                        <div class="state_label">{{ state.name }}</div>
+                        <div class="issue_count d-flex justify-content-center align-items-center">{{ state.items?.length
+                          }}</div>
+                      </div>
+                      <div class="right_side">
+                        <div class="minimize_button" (click)="minimizeState(state, $event)">
+                          <span class="minimize_icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="24" viewBox="0 0 24 24"
+                              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                              stroke-linejoin="round" class="lucide lucide-minimize2">
+                              <polyline points="4 14 10 14 10 20"></polyline>
+                              <polyline points="20 10 14 10 14 4"></polyline>
+                              <line x1="14" x2="21" y1="10" y2="3"></line>
+                              <line x1="3" x2="10" y1="21" y2="14"></line>
+                            </svg>
+                          </span>
+                        </div>
+                        <div class="vertical_plus"
+                          (click)="addworkitemThroughDefaultState(state); $event.stopPropagation()">
+                          <span>&plus;</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Work Items -->
+                    <div class="state_issues" cdkDropList [cdkDropListData]="state" [id]="'state-' + i"
+                      [cdkDropListConnectedTo]="getConnectedDropLists()" (cdkDropListDropped)="drop($event, state)"
+                      style="overflow-y: auto;">
+
+                      <ng-container *ngFor="let item of state.items">
+                        <div class="issue_card_2" cdkDrag [cdkDragData]="item" (cdkDragStarted)="onDragStarted()"
+                          (cdkDragEnded)="onDragEnded()" (cdkDragMoved)="onDragMoved($event)"
+                          (click)="onWorkItemClick(item, $event)">
+
+                          <div class="issue_no">{{ item.displayBugNo }}</div>
+                          <div [matTooltip]="item?.title || '' " class="issue_desc">{{ item?.title | slice:0:40 }}{{
+                            item?.title?.length > 40 ? '...' : '' }}</div>
+
+                          <div class="workitem_details d-flex align-items-center gap-1 flex-wrap">
+                            <div class="issue_state common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onStateEdit($event, item); $event.stopPropagation()">
+                              <img [src]="getIconForState(state.name)" width="16" height="16"
+                                alt="{{ state.name || 'No State' }}" />
+                              <span class="common_text">{{state.name}}</span>
+                            </div>
+                            <div class="priority common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onPriorityEdit($event, item); $event.stopPropagation()">
+                              <img [src]="getIconForPriority(item?.priority)" width="15" height="15"
+                                alt="{{ item?.priority || 'None' }}" />
+                            </div>
+                            <ng-container *ngIf="item.releaseDate!==null && item.releaseDate !== '' ">
+                              <div class="start-date common-style d-flex align-items-center gap-1 cursor-pointer">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                  stroke-linejoin="round" class="lucide lucide-calendar-check2 h-3 w-3 flex-shrink-0">
+                                  <path d="M8 2v4"></path>
+                                  <path d="M16 2v4"></path>
+                                  <path d="M21 14V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8"></path>
+                                  <path d="M3 10h18"></path>
+                                  <path d="m16 20 2 2 4-4"></path>
+                                </svg>
+                                <!-- <img class="icon" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/600095c1752832352947calender.jpg" alt="" width="16" height="16"> -->
+                                <span class="date-text">{{item?.releaseDate | date: 'dd/MM/yyyy'}}</span>
+                              </div>
+                            </ng-container>
+                            <ng-container *ngIf="item.releaseDate === null || item.releaseDate === '' ">
+                              <div class="start-date common-style d-flex align-items-center gap-1 cursor-pointer"
+                                (click)="onStartDateEdit($event, item); $event.stopPropagation()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                  stroke-linejoin="round" class="lucide lucide-calendar-clock h-3 w-3 flex-shrink-0">
+                                  <path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"></path>
+                                  <path d="M16 2v4"></path>
+                                  <path d="M8 2v4"></path>
+                                  <path d="M3 10h5"></path>
+                                  <path d="M17.5 17.5 16 16.3V14"></path>
+                                  <circle cx="16" cy="16" r="6"></circle>
+                                </svg>
+                                <!-- <img class="icon" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/600095c1752832352947calender.jpg" alt="" width="16" height="16"> -->
+                                <span class="date-text">{{item?.startDate | date: 'dd/MM/yyyy'}}</span>
+                              </div>
+                              <div class="end-date common-style d-flex align-items-center gap-1 cursor-pointer"
+                                (click)="onEndDateEdit($event, item); $event.stopPropagation()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                  stroke-linejoin="round" class="lucide lucide-calendar-check2 h-3 w-3 flex-shrink-0">
+                                  <path d="M8 2v4"></path>
+                                  <path d="M16 2v4"></path>
+                                  <path d="M21 14V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8"></path>
+                                  <path d="M3 10h18"></path>
+                                  <path d="m16 20 2 2 4-4"></path>
+                                </svg>
+                                <!-- <img class="icon" src="https://d2z9497xp8xb12.cloudfront.net/prod-images/600095c1752832352947calender.jpg" alt="" width="16" height="16"> -->
+                                <span class="date-text">{{item?.endDate | date: 'dd/MM/yyyy'}}</span>
+                              </div>
+                            </ng-container>
+
+                            <div class="assignee cursor-pointer"
+                              (click)="onAssigneeEdit($event, item); $event.stopPropagation()">
+                              <ng-container *ngIf="item?.assignee?.length === 1">
+                                <div class="assignee-single d-flex align-items-center justify-content-center">
+                                  <div class="avatar" matTooltip="{{item.assignee[0]?.name}}">{{
+                                    getInitial(item.assignee[0]?.name) }}</div>
+                                </div>
+                              </ng-container>
+                              <ng-container *ngIf="item?.assignee?.length > 1 && item?.assignee?.length <= 3">
+                                <div class="assignee-multiple d-flex align-items-center justify-content-center"
+                                  [matTooltip]="getAssigneeNames(item?.assignee)">
+                                  <div class="multi_avatar" *ngFor="let user of item.assignee">
+                                    {{ getInitial(user?.name) }}
+                                  </div>
+                                </div>
+                              </ng-container>
+                              <ng-container *ngIf="item?.assignee?.length > 3">
+                                <div class="assignee-multiple d-flex align-items-center justify-content-center"
+                                  [matTooltip]="getAssigneeNames(item?.assignee)">
+                                  <div class="multi_avatar" *ngFor="let user of item.assignee.slice(0, 3)">
+                                    {{ getInitial(user?.name) }}
+                                  </div>
+                                  <div class="extra-count">
+                                    +{{ item.assignee.length - 3 }}
+                                  </div>
+                                </div>
+                              </ng-container>
+                              <ng-container *ngIf="item?.assignee?.length === 0">
+                                <div class="no_assignee_chip" matTooltip="No Assignee">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="lucide lucide-users h-3 w-3 mx-[4px] flex-shrink-0">
+                                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="9" cy="7" r="4"></circle>
+                                    <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+                                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                  </svg>
+                                </div>
+                              </ng-container>
+                            </div>
+                            <div *ngIf="feature?.modules"
+                              class="module common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onModuleEdit($event, item); $event.stopPropagation()" matTooltip="module">
+                              <svg viewBox="0 0 24 24" class="h-3 w-3 flex-shrink-0 stroke-2" stroke="currentColor"
+                                fill="none" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+                                <path
+                                  d="M19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 21 20.1046 21 19V5C21 3.89543 20.1046 3 19 3Z"
+                                  stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M8.77778 7H7.22222C7.09949 7 7 7.09949 7 7.22222V8.77778C7 8.90051 7.09949 9 7.22222 9H8.77778C8.90051 9 9 8.90051 9 8.77778V7.22222C9 7.09949 8.90051 7 8.77778 7Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M8.77778 15H7.22222C7.09949 15 7 15.0995 7 15.2222V16.7778C7 16.9005 7.09949 17 7.22222 17H8.77778C8.90051 17 9 16.9005 9 16.7778V15.2222C9 15.0995 8.90051 15 8.77778 15Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M16.7778 7H15.2222C15.0995 7 15 7.09949 15 7.22222V8.77778C15 8.90051 15.0995 9 15.2222 9H16.7778C16.9005 9 17 8.90051 17 8.77778V7.22222C17 7.09949 16.9005 7 16.7778 7Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                                <path
+                                  d="M16.7778 15H15.2222C15.0995 15 15 15.0995 15 15.2222V16.7778C15 16.9005 15.0995 17 15.2222 17H16.7778C16.9005 17 17 16.9005 17 16.7778V15.2222C17 15.0995 16.9005 15 16.7778 15Z"
+                                  fill="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                              </svg>
+                              <span class="module-text">{{item.modules?.name}}</span>
+                            </div>
+                            <div *ngIf="feature?.cycles"
+                              class="cycle common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onCycleEdit($event, item); $event.stopPropagation()">
+                              <div class="img">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 12 12"
+                                  fill="none">
+                                  <circle cx="6" cy="6" r="5.65" stroke="#000D4D" stroke-opacity="0.45"
+                                    stroke-width="0.7" />
+                                  <path
+                                    d="M6 10C7.06087 10 8.07828 9.57857 8.82843 8.82843C9.57857 8.07828 10 7.06087 10 6C10 4.93913 9.57857 3.92172 8.82843 3.17157C8.07828 2.42143 7.06087 2 6 2L6 6L6 10Z"
+                                    fill="#000D4D" fill-opacity="0.45" />
+                                </svg>
+                              </div>
+                              <span class="cycle-text">{{item.cycle?.name}}</span>
+                            </div>
+                            <div class="issue_label common-style d-flex align-items-center gap-1 cursor-pointer"
+                              (click)="onLabelEdit($event, item); $event.stopPropagation()"
+                              [matTooltip]="item?.label && item?.label?.length > 1 ? getLabelsTooltip(item?.label) : ''">
+                              <div class="dot"
+                                [style.background-color]="item?.label && item?.label?.length > 0 ? (item?.label?.length === 1 ? item?.label[0]?.color : '#ccc') : '#ccc'">
+
+                              </div>
+                              <div class="label">
+                                <ng-container *ngIf="item?.label && item?.label?.length > 0; else noLabels">
+                                  <ng-container *ngIf="item?.label?.length === 1">
+                                    {{ item?.label[0]?.name || item?.label[0]?.label }}
+                                  </ng-container>
+                                  <ng-container *ngIf="item?.label?.length > 1">
+                                    {{ item?.label?.length }} Labels
+                                  </ng-container>
+                                </ng-container>
+                                <ng-template #noLabels>No Label</ng-template>
+                              </div>
+                            </div>
+                          </div>
+
+                        </div>
+                      </ng-container>
+                    </div>
+
+                  </div>
+
+                  <div class="vertical_state" *ngIf="state.isMinimized">
+                    <div class="vertical_header">
+
+                      <div class="vertical_title">{{ state.name }}</div>
+                      <div class="vertical_count">{{ state.items?.length }}</div>
+                      <div class="expand_button" (click)="minimizeState(state, $event)">
+                        <span class="expand_icon">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="lucide lucide-maximize2">
+                            <polyline points="15 3 21 3 21 9"></polyline>
+                            <polyline points="9 21 3 21 3 15"></polyline>
+                            <line x1="21" x2="14" y1="3" y2="10"></line>
+                            <line x1="3" x2="10" y1="21" y2="14"></line>
+                          </svg>
+                        </span>
+                      </div>
+                      <div class="vertical_plus"
+                        (click)="addworkitemThroughDefaultState(state); $event.stopPropagation()">
+                        <span>&plus;</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </ng-container>
+
+            </div>
+          </ng-container>
+
+          <!-- Skeleton Loader Table -->
+          <div class="table-wrapper skeleton-table" *ngIf="loading">
+            <table mat-table [dataSource]="[1,2,3,4,5,6,7,8,9,10]" class="mat-elevation-z8">
+
+              <!-- Skeleton Work Items Column (Sticky Left) -->
+              <ng-container matColumnDef="workItem" sticky>
+                <th mat-header-cell *matHeaderCellDef class="headingStyles sticky-column">Work Items</th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="field_data">
+                    <div class="skeleton-line skeleton-medium"></div>
+                  </div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton State Column -->
+              <ng-container matColumnDef="state">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" viewBox="0 0 14 15"
+                        fill="none">
+                        <path
+                          d="M7 13.5C6.25 13.5 5.5 13.35 4.8 13.1C2.5 12.2 1 10 1 7.5C1 4.2 3.7 1.5 7 1.5C8.6 1.5 10.1 2.1 11.25 3.25C11.45 3.45 11.45 3.75 11.25 3.95C11.05 4.15 10.75 4.15 10.55 3.95C9.6 3 8.35 2.5 7 2.5C4.25 2.5 2 4.75 2 7.5C2 9.6 3.25 11.4 5.2 12.15C5.8 12.4 6.4 12.5 7 12.5C7.3 12.5 7.5 12.7 7.5 13C7.5 13.3 7.3 13.5 7 13.5ZM9 13.15C8.45 13.15 8.3 12.4 8.8 12.2C10.75 11.45 12 9.6 12 7.55C12 7.25 12.2 7.05 12.5 7.05C12.8 7.05 13 7.25 13 7.55C13 10.05 11.5 12.25 9.2 13.15C9.1 13.1 9.05 13.15 9 13.15ZM7 11C5.05 11 3.5 9.45 3.5 7.5C3.5 5.55 5.05 4 7 4C7.95 4 8.8 4.35 9.5 5.05C9.7 5.25 9.7 5.55 9.5 5.75C9.3 5.95 9 5.95 8.8 5.75C8.3 5.25 7.65 5 7 5C5.6 5 4.5 6.1 4.5 7.5C4.5 8.9 5.6 10 7 10C8.4 10 9.5 8.9 9.5 7.5C9.5 7.2 9.7 7 10 7C10.3 7 10.5 7.2 10.5 7.5C10.5 9.45 8.95 11 7 11Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> State
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-badge"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Priority Column -->
+              <ng-container matColumnDef="priority">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 13 13"
+                        fill="none">
+                        <g clip-path="url(#clip0_2365_52445)">
+                          <path
+                            d="M8.25001 5H6.75001C6.61182 5 6.5 5.11182 6.5 5.25001V10.75C6.5 10.8882 6.61182 11 6.75001 11H8.25001C8.3882 11 8.50002 10.8882 8.50002 10.75V5.25001C8.50002 5.11182 8.3882 5 8.25001 5Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M11.25 3.5H9.75001C9.61182 3.5 9.5 3.61182 9.5 3.75001V10.75C9.5 10.8882 9.61182 11 9.75001 11H11.25C11.3882 11 11.5 10.8882 11.5 10.75V3.75001C11.5 3.61182 11.3882 3.5 11.25 3.5Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M5.25001 6.5H3.75001C3.61182 6.5 3.5 6.61182 3.5 6.75001V10.75C3.5 10.8882 3.61182 11 3.75001 11H5.25001C5.3882 11 5.50002 10.8882 5.50002 10.75V6.75001C5.50002 6.61182 5.3882 6.5 5.25001 6.5Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M2.25001 8H0.750008C0.61182 8 0.5 8.11182 0.5 8.25001V10.75C0.5 10.8882 0.61182 11 0.750008 11H2.25001C2.3882 11 2.50002 10.8882 2.50002 10.75V8.25001C2.49999 8.11182 2.3882 8 2.25001 8Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                        </g>
+                        <defs>
+                          <clipPath id="clip0_2365_52445">
+                            <rect width="12" height="12" fill="white" transform="translate(0.5 0.5)" />
+                          </clipPath>
+                        </defs>
+                      </svg></div> Priority
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-badge"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Assignee Column -->
+              <ng-container matColumnDef="assignee">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="13" viewBox="0 0 12 13"
+                        fill="none">
+                        <path
+                          d="M6 6.875C4.415 6.875 3.125 5.585 3.125 4C3.125 2.415 4.415 1.125 6 1.125C7.585 1.125 8.875 2.415 8.875 4C8.875 5.585 7.585 6.875 6 6.875ZM6 1.875C4.83 1.875 3.875 2.83 3.875 4C3.875 5.17 4.83 6.125 6 6.125C7.17 6.125 8.125 5.17 8.125 4C8.125 2.83 7.17 1.875 6 1.875Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                        <path
+                          d="M10.295 11.875C10.09 11.875 9.92005 11.705 9.92005 11.5C9.92005 9.775 8.1601 8.375 6.0001 8.375C3.84007 8.375 2.08008 9.775 2.08008 11.5C2.08008 11.705 1.91008 11.875 1.70508 11.875C1.50008 11.875 1.33008 11.705 1.33008 11.5C1.33008 9.365 3.42507 7.625 6.0001 7.625C8.5751 7.625 10.67 9.365 10.67 11.5C10.67 11.705 10.5 11.875 10.295 11.875Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> Assignees
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-medium"></div>
+                </td>
+              </ng-container>
+              <!-- Skeleton Start Date Column -->
+              <ng-container matColumnDef="start_date">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles"> Start Date</th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-medium"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Due Date Column -->
+              <ng-container matColumnDef="due_date">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles"> Due Date</th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-medium"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Labels Column -->
+              <ng-container matColumnDef="label">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="13" viewBox="0 0 12 13"
+                        fill="none">
+                        <g clip-path="url(#clip0_2365_52555)">
+                          <path
+                            d="M6.28822 0.902101C6.02189 0.636514 5.65847 0.491386 5.28241 0.500396L1.43591 0.598436C0.704899 0.61667 0.116554 1.20491 0.0983194 1.93602L0.000387022 5.78241C-0.00851593 6.15848 0.136505 6.5219 0.401985 6.78834L5.71179 12.0979C6.24832 12.6333 7.11684 12.6333 7.65338 12.0979L11.5978 8.15349C12.134 7.61739 12.134 6.74801 11.5978 6.21179L6.28822 0.902101ZM11.2095 7.7652L7.26508 11.7095C6.94318 12.0308 6.42198 12.0308 6.10008 11.7095L0.790389 6.39994C0.631101 6.24001 0.544003 6.02204 0.549366 5.79636L0.647298 1.94997C0.658347 1.51136 1.01125 1.15836 1.44985 1.14741L5.29624 1.04937C5.30322 1.04927 5.30997 1.04916 5.31695 1.04916C5.53544 1.04948 5.74493 1.13626 5.89971 1.29051L11.2095 6.6002C11.5307 6.9221 11.5307 7.4433 11.2095 7.7652Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                          <path
+                            d="M3.58972 2.76758C2.85957 2.76758 2.26769 3.35946 2.26758 4.08961C2.26758 4.81976 2.85957 5.41164 3.58961 5.41164C4.31976 5.41164 4.91164 4.81976 4.91164 4.08961C4.91079 3.35989 4.31944 2.76844 3.58972 2.76758ZM3.58972 4.86245C3.16281 4.86245 2.81688 4.51642 2.81677 4.08961C2.81677 3.66281 3.16281 3.31677 3.58961 3.31677C4.01642 3.31677 4.36245 3.66281 4.36245 4.08961C4.36202 4.5162 4.01631 4.86191 3.58972 4.86245Z"
+                            fill="#000D4D" fill-opacity="0.45" />
+                        </g>
+                        <defs>
+                          <clipPath id="clip0_2365_52555">
+                            <rect width="12" height="12" fill="white" transform="translate(0 0.5)" />
+                          </clipPath>
+                        </defs>
+                      </svg></div> Labels
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-short"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Modules Column -->
+              <ng-container matColumnDef="module">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="13" viewBox="0 0 12 13"
+                        fill="none">
+                        <path fill-rule="evenodd" clip-rule="evenodd"
+                          d="M6.02395 2.76319C5.9888 2.7456 5.94735 2.7456 5.91215 2.76319L1.97792 4.73032C1.88579 4.77639 1.88579 4.90786 1.97792 4.95393L5.91215 6.92105C5.94735 6.93865 5.9888 6.93865 6.02395 6.92105L9.95825 4.95393C10.0504 4.90786 10.0504 4.77639 9.95825 4.73032L6.02395 2.76319ZM5.57675 2.09237C5.8231 1.96921 6.11305 1.96921 6.3594 2.09237L10.2937 4.0595C10.9386 4.38196 10.9386 5.30229 10.2937 5.62475L6.3594 7.5919C6.11305 7.71505 5.8231 7.71505 5.57675 7.5919L1.64251 5.62475C0.997586 5.30229 0.997591 4.38196 1.64251 4.0595L5.57675 2.09237ZM1.03967 6.74125C1.1323 6.556 1.35755 6.48095 1.54279 6.57355L5.91215 8.75825C5.94735 8.77585 5.9888 8.77585 6.02395 8.75825L10.3934 6.57355C10.5786 6.48095 10.8039 6.556 10.8965 6.74125C10.9891 6.9265 10.914 7.15175 10.7288 7.2444L6.3594 9.42905C6.11305 9.55225 5.8231 9.55225 5.57675 9.42905L1.20738 7.2444C1.02214 7.15175 0.947051 6.9265 1.03967 6.74125ZM1.54279 8.41075C1.35755 8.31815 1.1323 8.3932 1.03967 8.57845C0.947051 8.7637 1.02214 8.98895 1.20738 9.0816L5.57675 11.2662C5.8231 11.3894 6.11305 11.3894 6.3594 11.2662L10.7288 9.0816C10.914 8.98895 10.9891 8.7637 10.8965 8.57845C10.8039 8.3932 10.5786 8.31815 10.3934 8.41075L6.02395 10.5954C5.9888 10.613 5.94735 10.613 5.91215 10.5954L1.54279 8.41075Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> Modules
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-short"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Cycle Column -->
+              <ng-container matColumnDef="cycle">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"
+                        fill="none">
+                        <circle cx="6" cy="6" r="5.65" stroke="#000D4D" stroke-opacity="0.45" stroke-width="0.7" />
+                        <path
+                          d="M6 10C7.06087 10 8.07828 9.57857 8.82843 8.82843C9.57857 8.07828 10 7.06087 10 6C10 4.93913 9.57857 3.92172 8.82843 3.17157C8.07828 2.42143 7.06087 2 6 2L6 6L6 10Z"
+                          fill="#000D4D" fill-opacity="0.45" />
+                      </svg></div> Cycles
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-short"></div>
+                </td>
+              </ng-container>
+
+
+              <!-- Skeleton Created On Column -->
+              <ng-container matColumnDef="created_on">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Created On</th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-medium"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Updated On Column -->
+              <ng-container matColumnDef="updated_on">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Updated On</th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-medium"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Link Column -->
+              <!-- <ng-container matColumnDef="link">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"
+                        fill="none">
+                        <g clip-path="url(#clip0_2259_43993)">
+                          <path
+                            d="M6.63296 12.1951L4.74761 14.0804C3.96598 14.862 2.70019 14.862 1.91921 14.0806C1.13808 13.2994 1.13808 12.0335 1.91906 11.2526L5.69042 7.48119C6.4714 6.70019 7.73731 6.70019 8.51828 7.48119C8.77863 7.74154 9.20076 7.74154 9.4611 7.48119C9.72145 7.22085 9.72145 6.79872 9.4611 6.53837C8.15941 5.23668 6.0493 5.23668 4.74761 6.53837L0.976271 10.3097C-0.325424 11.6114 -0.325424 13.7215 0.976271 15.0232C2.27781 16.3256 4.38807 16.3256 5.69046 15.0232L7.57581 13.1379C7.83615 12.8775 7.83615 12.4554 7.57581 12.195C7.31546 11.9347 6.89331 11.9347 6.63296 12.1951Z"
+                            fill="#2C2C2C" fill-opacity="0.8" />
+                          <path
+                            d="M15.0236 0.976241C13.7219 -0.325454 11.6111 -0.325454 10.3094 0.976241L8.04738 3.23825C7.78703 3.4986 7.78703 3.92073 8.04738 4.18107C8.30772 4.44142 8.72985 4.44142 8.9902 4.18107L11.2522 1.91906C12.0332 1.13805 13.2998 1.13805 14.0808 1.91906C14.8617 2.70003 14.8617 3.96595 14.0808 4.74692L9.93273 8.89497C9.15173 9.67598 7.88585 9.67598 7.10487 8.89497C6.84453 8.63463 6.4224 8.63463 6.16206 8.89497C5.90171 9.15532 5.90171 9.57745 6.16206 9.83779C7.46375 11.1395 9.57386 11.1395 10.8756 9.83779L15.0236 5.68977C16.3253 4.38807 16.3253 2.27794 15.0236 0.976241Z"
+                            fill="#2C2C2C" fill-opacity="0.8" />
+                        </g>
+                        <defs>
+                          <clipPath id="clip0_2259_43993">
+                            <rect width="16" height="16" fill="white" />
+                          </clipPath>
+                        </defs>
+                      </svg></div> Link
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-short"></div>
+                </td>
+              </ng-container> -->
+
+              <!-- Skeleton Attachment Column -->
+              <ng-container matColumnDef="attachment">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">
+                  <div class="header-text d-flex align-items-center gap-2">
+                    <div class="img"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"
+                        fill="none">
+                        <path
+                          d="M4.49297 14.6333C3.7347 14.6336 2.9934 14.4089 2.36287 13.9876C1.73235 13.5664 1.24093 12.9677 0.950808 12.2671C0.660686 11.5665 0.584894 10.7956 0.733025 10.052C0.881155 9.30829 1.24655 8.62528 1.78297 8.08934L7.43964 2.43201C7.53344 2.33821 7.66066 2.28551 7.79331 2.28551C7.92596 2.28551 8.05318 2.33821 8.14697 2.43201C8.24077 2.52581 8.29347 2.65302 8.29347 2.78567C8.29347 2.91833 8.24077 3.04554 8.14697 3.13934L2.48964 8.79601C2.21575 9.05665 1.9968 9.36947 1.84568 9.71605C1.69457 10.0626 1.61434 10.4359 1.60974 10.814C1.60513 11.192 1.67624 11.5672 1.81887 11.9174C1.9615 12.2675 2.17277 12.5856 2.44023 12.8528C2.70768 13.12 3.02592 13.331 3.37619 13.4734C3.72646 13.6157 4.10167 13.6865 4.47973 13.6816C4.85778 13.6767 5.23103 13.5961 5.57747 13.4447C5.92392 13.2933 6.23656 13.0741 6.49697 12.8L13.8036 5.49334C14.1385 5.14759 14.324 4.68406 14.3201 4.20277C14.3162 3.72148 14.1233 3.261 13.783 2.92066C13.4426 2.58033 12.9822 2.38742 12.5009 2.38356C12.0196 2.37969 11.5561 2.56518 11.2103 2.90001L5.31831 8.79601C5.16201 8.95231 5.0742 9.1643 5.0742 9.38534C5.0742 9.60639 5.16201 9.81837 5.31831 9.97468C5.47461 10.131 5.6866 10.2188 5.90764 10.2188C6.12868 10.2188 6.34067 10.131 6.49697 9.97468L10.267 6.20401C10.3131 6.15623 10.3682 6.11812 10.4292 6.09188C10.4902 6.06565 10.5558 6.05183 10.6222 6.05122C10.6886 6.05061 10.7544 6.06323 10.8159 6.08834C10.8774 6.11345 10.9332 6.15055 10.9802 6.19748C11.0271 6.2444 11.0643 6.30021 11.0895 6.36164C11.1146 6.42308 11.1273 6.48891 11.1268 6.5553C11.1262 6.62169 11.1125 6.68731 11.0863 6.74832C11.0601 6.80934 11.022 6.86453 10.9743 6.91068L7.20364 10.682C6.85983 11.0259 6.39349 11.2191 5.90721 11.2192C5.42093 11.2193 4.95454 11.0262 4.61064 10.6823C4.26674 10.3385 4.07351 9.87219 4.07345 9.38591C4.07338 8.89963 4.2665 8.43324 4.61031 8.08934L10.5036 2.20001C11.035 1.6686 11.7556 1.37003 12.5071 1.36996C13.2585 1.3699 13.9792 1.66836 14.5106 2.19967C15.042 2.73099 15.3406 3.45165 15.3407 4.20311C15.3407 4.95456 15.0423 5.67527 14.511 6.20668L7.20431 13.5107C6.84902 13.8677 6.42646 14.1508 5.96106 14.3435C5.49567 14.5362 4.99668 14.6347 4.49297 14.6333Z"
+                          fill="#2C2C2C" fill-opacity="0.8" />
+                      </svg></div> Attachment
+                  </div>
+                </th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-short"></div>
+                </td>
+              </ng-container>
+
+              <!-- Skeleton Sub Work Item Column -->
+              <ng-container matColumnDef="sub_work_item">
+                <th mat-header-cell *matHeaderCellDef class="headingStyles">Sub Work Item</th>
+                <td mat-cell *matCellDef="let item">
+                  <div class="skeleton-line skeleton-short"></div>
+                </td>
+              </ng-container>
+
+              <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+              <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+            </table>
+          </div>
+        </div>
+      </ng-container>
+      <ng-container *ngIf="selectedTab == 'EPIC_TAB'">
+        <div class="epicContent" *ngIf="projectSettingsData ">
+          <app-epic-listing [data]="projectSettingsData" (changeTab)="tabChange($event)"></app-epic-listing>
+        </div>
+      </ng-container>
+      <div class="cycleContent commonHeight" *ngIf="selectedTab == 'CYCLES_TAB' && projectSettingsData ">
+        <app-list-cycles [data]="projectSettingsData" (changeTab)="tabChange($event)"></app-list-cycles>
+      </div>
+      <div class="moduleContent commonHeight" *ngIf="selectedTab == 'MODULES_TAB'&& projectSettingsData ">
+        <app-list-modules [data]="projectSettingsData" (changeTab)="tabChange($event)"></app-list-modules>
+      </div>
+      <div class="viewsContent h-100" *ngIf="selectedTab == 'VIEWS_TAB' && projectSettingsData ">
+        <app-list-projectview [data]="projectSettingsData" (tabChange)="handleTabChange($event)"></app-list-projectview>
+      </div>
+      <div class="pagesContent h-100" *ngIf="selectedTab == 'PAGES_TAB' && projectSettingsData ">
+        <app-list-pages [data]="projectSettingsData"></app-list-pages>
+      </div>
+
+    </ng-container>
+
+    <!-- <ng-container *ngIf="selectTab == 'THIRD_TAB' ">
+      <div class="main_container_2 gap-2" [class.with-delete-zone]="isDragging">
+
+        <ng-container *ngFor="let state of secondTabResponse; let i = index">
+
+          <div class="state_container">
+            <div class="state_column">
+
+              <div (click)="closeStateCard(state); $event.stopPropagation()" class="issue_info">
+                <div class="left_side">
+                  <div class="state_label">{{state?.state?.name}}</div>
+                  <div class="issue_count">{{state?.items?.length}}</div>
+                </div>
+                <div class="right_side">
+                  <span class="plus_icon">&plus;</span>
+                </div>
+              </div>
+              <div 
+                class="state_issues"
+                cdkDropList
+                [cdkDropListData]="state"
+                [id]="'state-' + i"
+                [cdkDropListConnectedTo]="getConnectedDropLists()"
+                (cdkDropListDropped)="drop($event, state)"
+                style="overflow-y: auto; max-height: calc(100vh - 300px);">
+                <ng-container *ngFor="let item of state.items">
+                  <div 
+                    class="issue_card_2"
+                    cdkDrag
+                    [cdkDragData]="item"
+                    (cdkDragStarted)="onDragStarted()"
+                    (cdkDragEnded)="onDragEnded()"
+                    (click)="onWorkItemClick(item, $event)">
+                     <div class="issue_no">{{item.displayBugNo}}</div>
+                    <div class="issue_desc">{{item.title}}</div>
+                    <div class="issue_details">
+                      <div class="issue_state">{{state.state}}</div>
+                      <img class="icons" src="../../../../../../../assets/images/none_icon1.png" alt="">
+                      <img class="icons" src="../../../../../../../assets/images/date_icon.jpg" alt="">
+                      <img class="icons" src="../../../../../../../assets/images/calender.jpg" alt="">
+                      <div class="user_logo">S</div>
+                      <img class="icons" src="../../../../../../../assets/images/mod_icon.png" alt="">
+                      <img class="icons" src="../../../../../../../assets/images/cycle.jpg" alt="">
+                    </div>
+                    <div class="issue_label" 
+                         [matTooltip]="item?.label && item?.label?.length > 1 ? getLabelsTooltip(item?.label) : ''">
+                      <div class="dot" 
+                           [style.background-color]="item?.label && item?.label?.length > 0 ? (item?.label?.length === 1 ? item?.label[0]?.color : '#ccc') : '#ccc'"></div>
+                      <div class="label">
+                        <ng-container *ngIf="item?.label && item?.label?.length > 0; else noLabels">
+                          <ng-container *ngIf="item?.label?.length === 1">
+                            {{ item?.label[0]?.name || item?.label[0]?.label }}
+                          </ng-container>
+                          <ng-container *ngIf="item?.label?.length > 1">
+                            {{ item?.label?.length }} Labels
+                          </ng-container>
+                        </ng-container>
+                        <ng-template #noLabels>No Label</ng-template>
+                      </div>
+                    </div>
+
+                  </div>
+                </ng-container>
+              </div>
+
+            </div>
+          </div>
+
+
+
+        </ng-container>
+
+      </div>
+    </ng-container> -->
+
+    <ng-container *ngIf="selectedTab == 'MODULES_TAB' ">
+      <!-- <div class="calendar-container">
+        <div class="calendar-header">
+          <div class="left_side">
+
+            <mat-icon (click)="prevMonth()">chevron_left</mat-icon>
+            <div class="month-title">{{ monthName }} {{ year }}</div>
+            <mat-icon (click)="nextMonth()">chevron_right</mat-icon>
+          </div>
+          <div class="right_side">
+            <div class="options_btn">Options</div>
+          </div>
+        </div>
+
+        <div class="calendar-table">
+          <div class="calendar-row calendar-weekdays">
+            <div *ngFor="let day of weekdays">{{ day }}</div>
+          </div>
+
+          <div class="calendar-row" *ngFor="let week of calendar">
+            <div *ngFor="let date of week" class="calendar-cell" (mouseenter)="setHoveredDate(date)"
+              (mouseleave)="setHoveredDate(null)">
+              
+              <span *ngIf="date" class="cell-date">{{ date }}</span>
+
+              <div *ngIf="hoveredDate === date && date" class="work-item-card">
+                + Add work item
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div> -->
+
+
+    </ng-container>
+
+    <ng-container *ngIf="selectedTab == 'VIEWS_TAB' ">
+      <!-- <div class="table_container_4">
+
+        <div class="header_row">
+            <div class="work_items ">Work Items</div>
+            <div class="state cell ">State</div>
+            <div class="priority cell ">Priority</div>
+            <div class="assignees cell ">Assignees</div>
+            <div class="labels cell ">Labels</div>
+            <div class="modules cell ">Modules</div>
+            <div class="cycle cell ">Cycle</div>
+            <div class="start_date cell ">Start Date</div>
+            <div class="due_date cell ">Due Date</div>
+            <div class="created_on cell ">Created On</div>
+            <div class="updated_on cell ">Updated On</div>
+            <div class="link cell ">Link</div>
+            <div class="attachment cell ">Attachment</div>
+            <div class="sub_work_item cell ">Sub Work Item</div>
+        </div>
+        <div class="list_row">
+
+        </div>
+        </div> -->
+
+      <!-- <div class="table-wrapper">
+        <table mat-table [dataSource]="listWorkitem" class="mat-elevation-z8">
+
+         
+          <ng-container matColumnDef="workItem" sticky>
+            <th mat-header-cell *matHeaderCellDef class="headingStyles sticky-column">Work Items</th>
+            <td mat-cell *matCellDef="let issue" class="cursor-pointer">
+              <div class="field_data">
+                <strong>ID: </strong> - {{ issue?.title }}
+              </div>
+            </td>
+          </ng-container>
+
+          
+          <ng-container matColumnDef="state">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">State</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.state?.name || 'No State' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="priority">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Priority</th>
+            <td mat-cell *matCellDef="let issue">
+              <span [ngClass]="{ 'urgent': issue.isError, 'none': !issue.isError }">
+                {{ issue?.priority || 'None' }}
+              </span>
+            </td>
+          </ng-container>
+
+          <ng-container matColumnDef="assignee">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Assignees</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.assignee?.name || 'No Assignee' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="label">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Labels</th>
+            <td mat-cell *matCellDef="let issue">
+              <ng-container *ngIf="issue?.labels && issue?.labels?.length > 0; else noLabels">
+                <ng-container *ngIf="issue?.labels?.length === 1">
+                  {{ issue?.labels[0]?.name || issue?.labels[0]?.label }}
+                </ng-container>
+                <ng-container *ngIf="issue?.labels?.length > 1">
+                  <span [matTooltip]="getLabelsTooltip(issue?.labels)">
+                    {{ issue?.labels?.length }} Labels
+                  </span>
+                </ng-container>
+              </ng-container>
+              <ng-template #noLabels>No Label</ng-template>
+            </td>
+          </ng-container>
+
+          <ng-container matColumnDef="module">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Modules</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.modules || 'No Module' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="cycle">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Cycles</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.cycle || 'No Cycle' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="start_date">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Start Date</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.startDate || 'No Start Date' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="due_date">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Due Date</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.endDate || 'No Due Date' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="created_on">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Created On</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.createdTimeStamp || 'No Created Date' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="updated_on">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Updated On</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.updatedTimeStamp || 'No Updated Date' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="link">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Link</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.link || 'No Link' }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="attachment">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Attachment</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.attachments?.length || 0 }} Attachment</td>
+          </ng-container>
+
+          <ng-container matColumnDef="sub_work_item">
+            <th mat-header-cell *matHeaderCellDef class="headingStyles">Sub Work Item</th>
+            <td mat-cell *matCellDef="let issue">{{ issue?.subWorkItems?.length || 0 }} Sub Work Item</td>
+          </ng-container>
+
+          <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+          <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+        </table>
+      </div> -->
+
+    </ng-container>
+    <ng-container *ngIf="selectedTab == 'PAGES_TAB'">
+      <!-- <div class="timeline-container">
+        <div class="timeline-header">
+          <div class="header-top">
+            <div class="left-section">
+              <span>3 Work items</span>
+            </div>
+            <div class="right-section">
+              <button class="time-btn">Week</button>
+              <button class="time-btn">Month</button>
+              <button class="time-btn">Quarter</button>
+              <button class="time-btn" (click)="scrollToToday()">Today</button>
+              <button class="expand-btn"><i class="fas fa-expand"></i></button>
+            </div>
+          </div>
+          <div class="timeline-grid">
+            <div class="left-panel">
+              <div class="work-items-header">
+                <div class="header">Work Items</div>
+                <div class="header">Duration</div>
+              </div>
+              <div class="work-items-list">
+                <div class="work-item d-flex justify-content-between align-items-center"
+                  *ngFor="let item of listWorkitem; let i = index" (mouseenter)="hoveredIndex = i"
+                  (mouseleave)="hoveredIndex = null">
+                  <div class="work-item-details">
+                    <div class="item-id-title">
+                      <span class="item-id">ID: </span>
+                      <span class="item-title">{{item.title}}</span>
+                    </div>
+                  </div>
+                  <div class="duration">{{item?.duration || 'N/A'}}</div>
+                </div>
+
+
+                <div class="add-item-form" *ngIf="showInlineForm">
+                  <div class="form-header">
+                    <input type="text" class="work-item-id-input" [value]="newWorkItem.id" placeholder="HELLO-"
+                      readonly>
+                    <input type="text" class="work-item-title-input" [value]="newWorkItem.title"
+                      (input)="updateWorkItemTitle($event)" placeholder="Work item title"
+                      (keydown)="onInlineKeyPress($event)" #inlineTitle>
+                  </div>
+                  <div class="form-hint">
+                    Press 'Enter' to add another work item
+                  </div>
+                </div>
+
+
+                <div class="add-item" (click)="startInlineForm()" *ngIf="!showInlineForm">
+                  <span class="plus">+</span>
+                  <span>New Work Item</span>
+                </div>
+              </div>
+            </div>
+            <div class="right-panel">
+              <div class="timeline-dates">
+                <div class="horizontal-calendar">
+                  <ng-container *ngFor="let day of calendarDays; let first = first">
+                    <div class="date-column" [class.today]="day.isToday">
+                      <div class="date-header">
+                        <div class="month" *ngIf="first || day.date === 1">{{day.monthYear}}</div>
+                        <div class="date">{{day.date}}</div>
+                        <div class="day">{{day.day}}</div>
+                      </div>
+                      <div class="task-container">
+                        <div class="task-cell" *ngFor="let item of workItems; let i = index"
+                          [class.highlight]="hoveredIndex === i" (mouseenter)="setHoveredCell(i, day)"
+                          (mouseleave)="setHoveredCell(null, null)">
+                          <button class="add-task-button"
+                            *ngIf="hoveredCell.row === i && hoveredCell.date === day">+</button>
+                        </div>
+                      </div>
+                    </div>
+                  </ng-container>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div> -->
+    </ng-container>
+
+  </div>
+  <section class="loader_section" *ngIf="pageLoader">
+    <div class="api_loader">
+      <app-anime-loader></app-anime-loader>
+    </div>
+  </section>
+  <ng-template #emptyscreen>
+    <div *ngIf="response?.length == 0 && selectedTab == 'WORKITEM_TAB'"
+      class="empty d-flex flex-column align-items-center h-100 justify-content-center gap-2">
+      <div class="text d-flex justify-content-center">
+        <h4>Ready to get to work?</h4>
+      </div>
+      <div class="text d-flex justify-content-center">Create tasks, assign them to your team, and start moving your
+        project forward.</div>
+      <div class="img-section d-flex justify-content-center">
+        <img class="w-100"
+          src="https://d2z9497xp8xb12.cloudfront.net/prod-images/368091c1752445143187ChatGPT Image Jul 14, 2025, 03_48_48 AM.png"
+          alt="">
+      </div>
+      <button *ngIf="selectedTab == 'WORKITEM_TAB'" class="add-view-button d-flex justify-content-center"
+        (click)="createWorkItem()">
+        Create your first work item
+      </button>
+
+    </div>
+  </ng-template>
+
+  <!-- Work Item Templates Component -->

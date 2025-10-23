@@ -1,0 +1,603 @@
+<div class="main_section">
+    <div class="Status" *ngIf="data.status === 'STATUS'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="status-list" *ngIf="filteredStatuses.length > 0">
+            <div class="status-item" *ngFor="let states of filteredStatuses" 
+                 (click)="onStateSelect(states)"
+                 [class.selected]="isStateSelected(states)">
+                <div class="status-content">
+                    <div class="stateData common-style d-flex align-items-center gap-1">
+                        <img [src]="getIconForState(states?.stateName)" width="16" height="16"
+                            alt="{{ states?.stateName || 'No State' }}" />
+                    </div>
+                    <span>{{states.name}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isStateSelected(states)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredStatuses.length === 0">
+            <span>No statuses</span>
+        </div>
+    </div>
+    <div class="priority" *ngIf="data.status === 'PRIORITY'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="priority-list">
+            <div class="priority-item" *ngFor="let priority of filteredPriorities" 
+                 (click)="onItemSelect(priority)"
+                 [class.selected]="isPrioritySelected(priority)">
+                <div class="priority-content">
+                    <div class="priority common-style d-flex align-items-center gap-1">
+                        <img [src]="getIconForPriority(priority?.name)" width="16" height="16"
+                            alt="{{ priority?.name || 'None' }}" />
+                    </div>
+                    <span>{{priority.name}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isPrioritySelected(priority)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="priority" *ngIf="data.status === 'ESTIMATE_TIME'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="priority-list">
+            <div class="priority-item" *ngFor="let estimate of filteredEstimatedTimes" 
+                 (click)="onItemSelect(estimate)"
+                 [class.selected]="isEstimatedTimeSelected(estimate)">
+                <div class="priority-content">
+                    <span>{{ formatEstimateDisplay(estimate) }}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isEstimatedTimeSelected(estimate)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="priority" *ngIf="data.status === 'WORK_ITEM_LIST'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="subWorkItemSearch" (input)="onSubWorkItemSearch()">
+        </div>
+        <!-- <div class="selected_workList" *ngIf="selectedExistingWorkItems.length > 0; else noItems">
+                        <div class="selected_list" *ngFor="let item of selectedExistingWorkItems">
+                            <div class="selected_list_item">{{item.name}}</div>
+                            <div  class="cancel"><img (click)="removeFromExistingList(item)" src="../../../../../../assets/images/work-management/close.webp" alt=""></div>
+                        </div>
+                    </div> -->
+
+        <ng-template #noItems>
+            <div class="not_selected">No Work Item Selected</div>
+        </ng-template>
+        <div class="subWorkitemList">
+            <div class="priority-list" *ngFor="let item of subWorkItemsList">
+                <div class="priority-item" (click)="addExistingItem(item.id)">
+                    <input type="checkbox" [checked]="item.checked" (change)="addExistingItem(item)"
+                        (click)="$event.stopPropagation()" />
+                    <span (click)="onExistingWorkItemSelect()">
+                        {{ item.displayBugNo }} &nbsp; {{ item?.title }}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="action_buttons">
+            <div (click)="closeDialog()" class="cancel">Cancel</div>
+            <div (click)="addWorkItem()" class="add">Add selected work items</div>
+        </div>
+    </div>
+    <div class="priority" *ngIf="data.status === 'WORK_ITEM_LIST_2'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="filters_section">
+            <div class="left">
+                <div class="selected_workList" *ngIf="selectedExistingWorkItems.length > 0; else noItems">
+                    <div class="selected_list" *ngFor="let item of responseData">
+                        <div class="selected_list_item">{{item.displayBugNo}}</div>
+                        <div class="cancel"><img (click)="removeFromExistingList(item)"
+                                src="../../../../../../assets/images/work-management/close.webp" alt=""></div>
+                    </div>
+                </div>
+
+                <ng-template #noItems>
+                    <div class="not_selected">No Work Item Selected</div>
+                </ng-template>
+            </div>
+            <div class="right">
+                <label class="switch">
+                    <input type="checkbox">
+                    <span class="slider round"></span>
+                </label>
+                <div class="text">Workspace level</div>
+            </div>
+
+        </div>
+
+        <div class="priority-list">
+            <div class="priority-item" *ngFor="let priority of workItems" (click)="onExistingWorkItemSelect()">
+                <input type="checkbox" />
+
+                <span>{{responseData.data.displayBugNo}} &nbsp; {{responseData?.data.title}}</span>
+            </div>
+        </div>
+        <div class="action_buttons">
+            <div (click)="closeDialog()" class="cancel">Cancel</div>
+            <div (click)="closeDialog()" class="add">Add selected work items</div>
+        </div>
+    </div>
+    <div class="priority" *ngIf="data.status === 'SUB_WORK' || data.status === 'WORK_ITEM_EPIC'">
+        <div class="priority-list">
+            <div class="priority-item" *ngFor="let priority of subWorkItems"
+                (click)="onSubWorkItemSelect(priority.name)">
+                <div class="priority-icon">
+                    <!-- <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <g [innerHTML]="item.icon"></g>
+                    </svg> -->
+                    <img width="16" height="16" viewBox="0 0 16 16" fill="none" [src]="priority.icon" alt="">
+                </div>
+                <span>{{priority.name}}</span>
+
+            </div>
+        </div>
+    </div>
+    <div class="priority" *ngIf="data.status === 'ADD_RELATION'">
+        <div class="priority-list">
+            <div class="priority-item" *ngFor="let priority of relationsList"
+                (click)="onRelationItemSelect(priority.name)">
+                <div class="priority-icon">
+                    <!-- <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <g [innerHTML]="item.icon"></g>
+                    </svg> -->
+                    <img width="16" height="16" viewBox="0 0 16 16" fill="none" [src]="priority.icon" alt="">
+                </div>
+                <span>{{priority.name}}</span>
+
+            </div>
+        </div>
+    </div>
+    <div class="assignee" *ngIf="data.status === 'ASSIGNEE'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="assignee-list" *ngIf="filteredAssignees.length > 0">
+            <div class="assignee-item" *ngFor="let assignee of filteredAssignees" 
+                 (click)="onAssigneeSelect(assignee)"
+                 [class.selected]="isAssigneeSelected(assignee)">
+                <div class="assignee-content">
+                    <div class="assignee-avatar">
+                        <div class="user-circle">{{assignee.name[0]}}</div>
+                    </div>
+                    <span>{{assignee.name}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isAssigneeSelected(assignee)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredAssignees.length === 0">
+            <span>No assignees</span>
+        </div>
+    </div>
+    <div class="member" *ngIf="data.status === 'MEMBER'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="member-list" *ngIf="filteredAssignees.length > 0">
+            <div class="member-item" *ngFor="let member of filteredAssignees" 
+                 (click)="onAssigneeSelect(member)"
+                 [class.selected]="isAssigneeSelected(member)">
+                <div class="member-content">
+                    <div class="member-avatar">
+                        <div class="user-circle">{{member.name[0]}}</div>
+                    </div>
+                    <span>{{member.name}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isAssigneeSelected(member)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredAssignees.length === 0">
+            <span>No members</span>
+        </div>
+    </div>
+    <div class="labels" *ngIf="data.status === 'LABEL'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="labels-list" *ngIf="filteredLabels.length > 0">
+            <div class="label-item" *ngFor="let label of filteredLabels" 
+                 (click)="onLabelSelect(label)"
+                 [class.selected]="isLabelSelected(label)">
+                <div class="label-content">
+                    <div class="label-color" [style.background]="label.color"></div>
+                    <span>{{label.label}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isLabelSelected(label)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredLabels.length === 0">
+            <span>No labels</span>
+        </div>
+    </div>
+    <div class="start_date" *ngIf="data.status === 'START_DATE'">
+        <div class="calendar">
+            <div class="calendar-header">
+                <button (click)="prevMonth()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <path d="M15 18l-6-6 6-6" />
+                    </svg>
+                </button>
+                <span>{{currentMonth}} {{currentYear}}</span>
+                <button (click)="nextMonth()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <path d="M9 18l6-6-6-6" />
+                    </svg>
+                </button>
+            </div>
+            <div class="calendar-weekdays">
+                <div *ngFor="let day of weekDays">{{day}}</div>
+            </div>
+            <div class="calendar-days">
+                <div *ngFor="let day of calendarDays" [class.today]="isToday(day)" [class.selected]="isSelected(day)"
+                    [class.different-month]="!isSameMonth(day)" (click)="selectDate(day)">
+                    {{day.getDate()}}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="due_date" *ngIf="data.status === 'DUE_DATE'">
+        <div class="calendar">
+            <div class="calendar-header">
+                <button (click)="prevMonth()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <path d="M15 18l-6-6 6-6" />
+                    </svg>
+                </button>
+                <span>{{currentMonth}} {{currentYear}}</span>
+                <button (click)="nextMonth()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <path d="M9 18l6-6-6-6" />
+                    </svg>
+                </button>
+            </div>
+            <div class="calendar-weekdays">
+                <div *ngFor="let day of weekDays">{{day}}</div>
+            </div>
+            <div class="calendar-days">
+                <div *ngFor="let day of calendarDays" [class.today]="isToday(day)" [class.selected]="isSelected(day)"
+                    [class.different-month]="!isSameMonth(day)" (click)="selectDate(day)">
+                    {{day.getDate()}}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="cycle" *ngIf="data.status === 'CYCLE'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="cycle-list" *ngIf="filteredCycles.length > 0">
+            <div class="cycle-item" [ngClass]="{'selected': isCycleSelected(cycle)}" *ngFor="let cycle of filteredCycles" (click)="onCycleSelect(cycle)">
+                <div class="cycle-content">
+                    <div class="cycle-icon">
+                        <svg viewBox="0 0 24 24" class="flex-shrink-0 w-100 h-100" fill="none"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path
+                                d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                            <path
+                                d="M12 18C13.5913 18 15.1174 17.3679 16.2426 16.2426C17.3679 15.1174 18 13.5913 18 12C18 10.4087 17.3679 8.88258 16.2426 7.75736C15.1174 6.63214 13.5913 6 12 6V18Z"
+                                fill="currentColor" />
+                        </svg>
+                    </div>
+                    <span>{{cycle.title}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isCycleSelected(cycle)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredCycles.length === 0">
+            <span>No cycles</span>
+        </div>
+    </div>
+    <div class="modules" *ngIf="data.status === 'MODULE' ">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="modules-list" *ngIf="filteredModules.length > 0">
+            <div class="module-item" [ngClass]="{'selected': isModuleSelected(module)}" *ngFor="let module of filteredModules" (click)="onModuleSelect(module)">
+                <div class="module-content">
+                    <div class="module-icon">
+                        <svg viewBox="0 0 24 24" class="flex-shrink-0 w-100 h-100" fill="none"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" />
+                            <path d="M8 8h1v1H8z" fill="currentColor" />
+                            <path d="M8 15h1v1H8z" fill="currentColor" />
+                            <path d="M15 8h1v1h-1z" fill="currentColor" />
+                            <path d="M15 15h1v1h-1z" fill="currentColor" />
+                        </svg>
+                    </div>
+                    <span>{{module.title}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isModuleSelected(module)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredModules.length === 0">
+            <span>No modules</span>
+        </div>
+    </div>
+    <div class="pages modules" *ngIf="data.status === 'PAGE' ">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="modules-list" *ngIf="filteredPages.length > 0">
+            <div class="module-item" [ngClass]="{'selected': isPageSelected(page)}" *ngFor="let page of filteredPages" (click)="onPageSelect(page)">
+                <div class="module-content">
+                    <div class="module-icon">
+                        <svg viewBox="0 0 24 24" class="flex-shrink-0 w-100 h-100" fill="none"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" />
+                            <path d="M8 8h1v1H8z" fill="currentColor" />
+                            <path d="M8 15h1v1H8z" fill="currentColor" />
+                            <path d="M15 8h1v1h-1z" fill="currentColor" />
+                            <path d="M15 15h1v1h-1z" fill="currentColor" />
+                        </svg>
+                    </div>
+                    <span>{{page.title}}</span>
+                </div>
+                <div class="tick-mark" *ngIf="isPageSelected(page)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredPages.length === 0">
+            <span>No Pages</span>
+        </div>
+    </div>
+    <div class="cycle" *ngIf="data.status === 'INBOX_MORE'">
+
+        <div class="cycle-list">
+            <div class="cycle-item" 
+                 (click)="onItemSelect({value: 'SHOW_UNREAD'})"
+                 [class.selected]="isInboxMoreItemSelected({value: 'SHOW_UNREAD'})">
+                <div class="cycle-content">
+                    <div class="cycle-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-check-big flex-shrink-0 h-3 w-3"><path d="M21.801 10A10 10 0 1 1 17 3.335"></path><path d="m9 11 3 3L22 4"></path></svg>
+                    </div>
+                    <span>Show unread</span>
+                </div>
+                <div class="tick-mark" *ngIf="isInboxMoreItemSelected({value: 'SHOW_UNREAD'})">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+            
+            <div class="cycle-item" 
+                 (click)="onItemSelect({value: 'SHOW_ARCHIVED'})"
+                 [class.selected]="isInboxMoreItemSelected({value: 'SHOW_ARCHIVED'})">
+                <div class="cycle-content">
+                    <div class="cycle-icon">
+                        <svg viewBox="0 0 24 24" class="flex-shrink-0 h-3 w-3 stroke-2" stroke="currentColor" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 3H3C2.44772 3 2 3.44772 2 4V7C2 7.55228 2.44772 8 3 8H21C21.5523 8 22 7.55228 22 7V4C22 3.44772 21.5523 3 21 3Z" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4 8V19C4 19.5304 4.21071 20.0391 4.58579 20.4142C4.96086 20.7893 5.46957 21 6 21H8" stroke-linecap="round" stroke-linejoin="round"></path><path d="M20 8V19C20 19.5304 19.7893 20.0391 19.4142 20.4142C19.0391 20.7893 18.5304 21 18 21H16" stroke-linecap="round" stroke-linejoin="round"></path><path d="M15 18L12 21L9 18" stroke-linecap="round" stroke-linejoin="round"></path><path d="M12 21L12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </div>
+                    <span>Show archived</span>
+                </div>
+                <div class="tick-mark" *ngIf="isInboxMoreItemSelected({value: 'SHOW_ARCHIVED'})">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+      <div class="cycle" *ngIf="data.status === 'EPIC_EDIT'">
+
+        <div class="cycle-list">
+            <div class="cycle-item" 
+                 (click)="onItemSelect({value: 'EDIT'})"
+                 [class.selected]="isEpicEditSelected({value: 'EDIT'})">
+                <div class="cycle-content">
+                    <div class="cycle-icon">
+                        <mat-icon style="font-size: 16px; margin-top: 8px;" >edit</mat-icon>
+                    </div>
+                    <span>Edit</span>
+                </div>
+                <div class="tick-mark" *ngIf="isEpicEditSelected({value: 'EDIT'})">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+            
+            <div class="cycle-item" 
+                 (click)="onItemSelect({value: 'DELETE'})"
+                 [class.selected]="isEpicEditSelected({value: 'DELETE'})">
+                <div class="cycle-content">
+                    <div class="cycle-icon">
+                          <mat-icon style="font-size: 16px; margin-top: 8px;" >delete</mat-icon>
+                    </div>
+                    <span>Delete</span>
+                </div>
+                <div class="tick-mark" *ngIf="isEpicEditSelected({value: 'DELETE'})">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modules" *ngIf="data.status === 'INBOX_FILTER' ">
+        <div class="modules-list">
+            <div class="module-item" *ngFor="let filter of inboxFilters" (click)="onItemSelect(filter)">
+                <div class="module-icon">
+                    <svg viewBox="0 0 24 24" class="flex-shrink-0 w-100 h-100" fill="none"
+                        xmlns="http://www.w3.org/2000/svg">
+                        <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" />
+                        <path d="M8 8h1v1H8z" fill="currentColor" />
+                        <path d="M8 15h1v1H8z" fill="currentColor" />
+                        <path d="M15 8h1v1h-1z" fill="currentColor" />
+                        <path d="M15 15h1v1h-1z" fill="currentColor" />
+                    </svg>
+                </div>
+                <span>{{filter.name}}</span>
+            </div>
+        </div>
+    </div>
+    <div class="modules" *ngIf="data.status === 'PROJECT_VIEW' ">
+        <div class="modules-list">
+            <div class="project_view" *ngFor="let item of projectViews"
+                (click)="onProjectViewSelect(item.value,'VIEW')">
+                <span>{{item.name}}</span>
+                <img *ngIf="selectedProjectView === item.value "
+                    src="../../../../../../assets/images/work-management/tick_icon.png" alt="">
+            </div>
+            <div class="grey_line"></div>
+            <div class="project_view" *ngFor="let item of increments" (click)="onProjectViewSelect(item.value,'SORT')">
+                <span>{{item.name}}</span>
+                <img *ngIf="selectedAscending === item.value "
+                    src="../../../../../../assets/images/work-management/tick_icon.png" alt="">
+            </div>
+        </div>
+    </div>
+    <div class="modules" *ngIf="data.status === 'INBOX_SNOOZE' ">
+        <div class="modules-list">
+            <div class="module-item" *ngFor="let item of inboxSnoozeItems" (click)="onItemSelect(item)">
+                <span>{{item.name}}</span>
+
+            </div>
+        </div>
+    </div>
+    <div class="modules" *ngIf="data.status === 'HOME_FILTER' ">
+        <div class="modules-list">
+            <div class="module-item" *ngFor="let item of homeFilters" (click)="onItemSelect(item)">
+                <span>{{item.name}}</span>
+
+            </div>
+        </div>
+    </div>
+    <div class="add_link" *ngIf="data.status === 'ADD_LINK' ">
+        <div class="add-link-container">
+            <div class="add_label">Add link</div>
+
+            <div class="url_field">
+                <div class="label">Url</div>
+                <mat-form-field appearance="outline" class="full-width">
+                    <input matInput placeholder="Type or paste a URL">
+                </mat-form-field>
+            </div>
+
+            <div class="url_field">
+                <div class="label">Display title</div>
+                <div class="label_o">Optional</div>
+                <mat-form-field appearance="outline" class="full-width">
+                    <input matInput placeholder="What you'd like to see this link as">
+
+                </mat-form-field>
+            </div>
+
+
+
+            <div class="action_buttons">
+                <div (click)="closeDialog()" class="cancel">Cancel</div>
+                <div (click)="closeDialog()" class="add">Add selected work items</div>
+            </div>
+        </div>
+
+
+    </div>
+    <div class="parent" *ngIf="data.status === 'PARENT'">
+        <div class="search-box">
+            <input type="text" placeholder="Search" [(ngModel)]="searchTerm" (input)="onSearch()">
+        </div>
+        <div class="parent-list" *ngIf="filteredParents.length > 0">
+            <div class="parent-item" *ngFor="let parent of filteredParents" (click)="onSubWorkItemSelection(parent)">
+                <div class="parent-info">
+                    <div class="parent-icon" [ngClass]="parent.state">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path
+                                d="M2 3C2 2.44772 2.44772 2 3 2H13C13.5523 2 14 2.44772 14 3V13C14 13.5523 13.5523 14 13 14H3C2.44772 14 2 13.5523 2 13V3Z"
+                                stroke="currentColor" stroke-width="1.5" />
+                        </svg>
+                    </div>
+                    <span class="parent-id">{{parent.displayBugNo}}</span>
+                    <span class="parent-title">{{parent.title}}</span>
+                </div>
+                <div class="parent-state" [ngClass]="parent.state">
+                    <div class="state-icon"></div>
+                </div>
+            </div>
+        </div>
+        <div class="no-data" *ngIf="filteredParents.length === 0">
+            <span>No parents</span>
+        </div>
+    </div>
+
+    <div class="parent" *ngIf="data.status === 'NEW_MEMBER'">
+        <div class="">Name</div>
+        <div class="search-box">
+            <input type="text" placeholder="Enter Name" [(ngModel)]="newMemberName">
+        </div>
+        <div class="">Email</div>
+        <div class="search-box">
+            <input type="text" placeholder="Enter Email" [(ngModel)]="newMemberEmail">
+        </div>
+        <div class="action_buttons">
+            <div (click)="closeDialog()" class="cancel">Cancel</div>
+            <div (click)="addNewMember()" class="add">Add Member</div>
+        </div>
+    </div>
+
+
+
+    <div class="date-time" *ngIf="data.status === 'DATE_RANGE'">
+        <div class="dtime" (click)="picker.open()">
+            <img src="assets/images/common/calender-icon.svg" height="20px" width="20px" class="mr-2" alt="" srcset="">
+            <span class="date_select">{{ selectedStartDate | date }}</span>
+            <div class="date-medium" style="margin: 0px 8px">-</div>
+            <span class="date_select">{{ selectedEndDate | date }}</span>
+        </div>
+        <mat-form-field appearance="outline" style="visibility: hidden;">
+            <mat-date-range-input [rangePicker]="picker">
+                <input matStartDate placeholder="Start date" [(ngModel)]="selectedStartDate">
+                <input matEndDate placeholder="End date" [(ngModel)]="selectedEndDate" (ngModelChange)="changeData()">
+            </mat-date-range-input>
+            <mat-datepicker-toggle matIconSuffix [for]="picker"></mat-datepicker-toggle>
+            <mat-date-range-picker #picker></mat-date-range-picker>
+        </mat-form-field>
+    </div>
+</div>

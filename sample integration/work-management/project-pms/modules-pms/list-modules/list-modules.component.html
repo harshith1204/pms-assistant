@@ -1,0 +1,208 @@
+<div class="main_section" *ngIf=" moduleListing?.length > 0 && !pageLoader; else emptyscreen">
+  <div class="main-content h-100" *ngIf="!moduleSelected">
+    <div class="views-header">
+      <div class="header-left">
+        <div class="projectName text">{{data?.projectName}}</div>
+        <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon>
+        <div class="views-title text">
+          <span class="views-icon">
+            <i class="fas fa-layer-group"></i>
+          </span>
+          Module
+        </div>
+        <div class="count_section">
+          {{moduleListing?.length}} Modules
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button class="add-view-button" (click)="createModule()">
+          Add Module
+        </button>
+      </div>
+    </div>
+    <div class="content h-100 p-3">
+      <div class="module-list">
+        <div class="module-item" *ngFor="let module of moduleListing;let i = index">
+          <div class="module-info d-flex align-items-center justify-content-between">
+            <div class="module_name d-flex align-items-center gap-2 cursor-pointer"
+              (click)="navigateToWorkItems(module)">
+              <!-- <span class="progress-circle" [style.--p]="module.completionPercentage">
+  <span class="progress-text">{{ module.completionPercentage }}%</span>
+</span> -->
+
+               <!-- <span class="progress-circle" [style.--p]="module.completionPercentage + '%'"> -->
+                <div class="circular">
+                        <svg class="circle" viewBox="0 0 36 36">
+                            <path class="circle-bg" d="M18 2.0845
+                     a 15.9155 15.9155 0 0 1 0 31.831
+                     a 15.9155 15.9155 0 0 1 0 -31.831" />
+                            <path class="circle-progress" [attr.stroke-dasharray]="module.completionPercentage + ', 100'" d="M18 2.0845
+                     a 15.9155 15.9155 0 0 1 0 31.831
+                     a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        </svg>
+                        <div class="percentage">{{ module.completionPercentage }}%</div>
+                    </div>
+  <!-- <span class="label">{{ module.completionPercentage }}%</span> -->
+<!-- </span> -->
+
+
+
+
+              <span class="module-name">{{module.title}}</span>
+            </div>
+            <div class="d-flex align-items-center gap-3">
+              <div class="date-range">
+                <button class="date-btn d-flex align-items-center">
+                  <i class="fas fa-calendar me-2"></i>
+                  <span class="date-text">
+                    {{getDateRangeText(module)}}
+                  </span>
+                  <!-- <span class="remove-btn ms-2" *ngIf="module.startDate && module.endDate" 
+                        (click)="clearDateRange(module, $event)" title="Clear dates">✕</span> -->
+                </button>
+              </div>
+              <div class="backlog-btn">
+                <button class="btn btn-light" [class.active]="module.hasBacklog"
+                  (click)="openStatePopUp(module, $event)">
+                  {{module?.state?.name || 'Add State'}}
+                </button>
+              </div>
+              <span class="assignee" *ngIf="module.assignee">
+                <!-- <span class="avatar" [title]="module.assignee.name">{{module.assignee?.name || 'no assignee'}}</span> -->
+                <ng-container *ngIf="!module?.lead || module?.lead?.id === null">
+                  <div class="assignee-none d-flex align-items-center justify-content-center" matTooltip="No Lead">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                      class="lucide lucide-square-user h-4 w-4 text-custom-text-300" tabindex="0">
+                      <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+                      <circle cx="12" cy="10" r="3"></circle>
+                      <path d="M7 21v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                  </div>
+                </ng-container>
+                <ng-container *ngIf="module?.lead?.id !== null">
+                  <div class="assignee-single d-flex align-items-center justify-content-center"
+                    [matTooltip]="module.lead?.name">
+                    <div class="avatar">{{ getInitial(module?.lead?.name[0]) }}</div>
+                    <!-- <span class="assignee-name">{{ module.assignee[0]?.name }}</span> -->
+                  </div>
+                </ng-container>
+
+                <ng-container *ngIf="module?.assignee?.length > 1">
+                  <div class="assignee-multiple d-flex align-items-center justify-content-center"
+                    [matTooltip]="getAssigneeNames(module.assignee)">
+                    <div class="multi_avatar" *ngFor="let user of module.assignee">
+                      {{ getInitial(user?.name) }}
+                    </div>
+                  </div>
+                </ng-container>
+              </span>
+              <!-- Favourite Icon -->
+              <div class="icon-btn" style="width: auto;"
+                [matTooltip]="isFavourite(module.id) ? 'Unmark Favourite' : 'Mark as Favourite'"
+                (click)="changeFav(module); $event.stopPropagation()">
+                <mat-icon class="favorite-icon" [ngClass]="{ 'highlighted': isFavourite(module.id) }">
+                  {{ isFavourite(module.id) ? 'star' : 'star_border' }}
+                </mat-icon>
+              </div>
+
+
+              <div class="more-options-container">
+                <button class="more-btn" (click)="toggleMoreOptions($event, i)" matButton [matMenuTriggerFor]="menu">
+                  <i class="fas fa-ellipsis-h"></i>
+                </button>
+                <mat-menu #menu="matMenu">
+                  <button mat-menu-item (click)="editModule(module)">
+                    <div class="edit d-flex align-items-center gap-2"><i class="material-icons">edit</i> Edit</div>
+                  </button>
+                  <button mat-menu-item data-bs-toggle="modal" data-bs-target="#deleteModal"
+                    (click)="setModuleToDelete(module)">
+                    <div class="delete d-flex align-items-center gap-2"><i class="material-icons">delete</i> Delete
+                    </div>
+                  </button>
+                </mat-menu>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        <div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div *ngIf="moduleSelected" class="h-100 p-3">
+  <div class="module-header w-100 d-flex align-items-center">
+    <div class="title_heading d-flex align-items-center">
+      <div class="text cursor-pointer" (click)="closeWorkitemsModule()">
+        <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_left</mat-icon>
+      </div>
+      <!-- <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon> -->
+      <div class="text">{{moduleData?.title}}</div>
+      <!-- <mat-icon class="separator mx-2" style="vertical-align: middle;">chevron_right</mat-icon> -->
+      <!-- <div class="text">All Work Items</div> -->
+    </div>
+  </div>
+  <app-module-workitems [data]="moduleData" [projectData]="projectWholeData"></app-module-workitems>
+</div>
+<ng-template #emptyscreen>
+  <div *ngIf="moduleListing?.length == 0"
+    class="empty d-flex flex-column align-items-center justify-content-center gap-2">
+    <div class="text d-flex justify-content-center">
+      <h4>Track Your Project Milestones</h4>
+    </div>
+    <div class="text d-flex justify-content-center">Group your work into Modules to set deadlines and see how close you
+      are to your goals.</div>
+    <button class="add-view-button" (click)="createModule()">
+      Create Your First Module
+    </button>
+  </div>
+</ng-template>
+<section class="loader_section" *ngIf="pageLoader">
+  <div class="api_loader">
+    <app-anime-loader></app-anime-loader>
+  </div>
+</section>
+
+<!-- Hidden date range picker -->
+<mat-form-field appearance="outline" class="modules-date-picker"
+  style="visibility: hidden; position: absolute; top: -1000px;">
+  <mat-date-range-input [rangePicker]="dateRangePicker">
+    <input matStartDate placeholder="Start date" [(ngModel)]="tempStartDate" (ngModelChange)="onDateChange()">
+    <input matEndDate placeholder="End date" [(ngModel)]="tempEndDate" (ngModelChange)="onDateChange()">
+  </mat-date-range-input>
+  <mat-datepicker-toggle matIconSuffix [for]="dateRangePicker"></mat-datepicker-toggle>
+  <mat-date-range-picker #dateRangePicker></mat-date-range-picker>
+</mat-form-field>
+
+<!-- Delete Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0">
+        <h5 class="modal-title" id="deleteModalLabel">
+          <img src="https://d2z9497xp8xb12.cloudfront.net/prod-images/439988c1752592958469delete.svg" alt="">
+          Confirm Delete
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body text-center">
+        <div class="mb-3">
+        </div>
+        <h6 class="mb-3">Are you sure you want to delete this item?</h6>
+        <p class="text-muted">This action cannot be undone. The item will be permanently deleted.</p>
+      </div>
+      <div class="modal-footer border-0">
+        <button type="button" class="btn btn-secondary cancel-btn" data-bs-dismiss="modal">
+          Cancel
+        </button>
+        <button type="button" class="btn btn-danger w-20" (click)="deleteModule(moduleToDelete.id)"
+          data-bs-dismiss="modal" [disabled]="!moduleToDelete">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

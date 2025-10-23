@@ -1,0 +1,494 @@
+<div class="main_section">
+    <div class="header">
+
+    </div>
+    <div class="main_content">
+        <div class="top_section">
+            <div class="greeting-container">
+                <div class="greeting-left">
+                    <h1 class="greeting-text"><span class="greeting-text">{{greeting}}, </span>
+                        {{ userName | titlecase}}👋</h1>
+                    <div class="datetime">
+                        <i [ngClass]="getTimeIcon()"></i>
+                        {{ currentDate | date: 'EEEE, MMM d HH:mm' }}
+                    </div>
+                </div>
+                <div class="greeting-right">
+                    <button class="manage-widgets-btn" data-toggle="modal" data-target="#manageWidgetsModal">
+                        <i class="fas fa-th-large"></i>
+                        Manage widgets
+                    </button>
+                </div>
+            </div>
+
+            <div class="modal fade" id="manageWidgetsModal" tabindex="-1" role="dialog" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered" role="document">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Manage widgets</h5>
+                        </div>
+                        <div class="modal-body p-0">
+                            <div class="widget-list">
+                                <div class="widget-item" *ngFor="let widget of widgets">
+                                    <div class="widget-info">
+                                        <i class="fas fa-grip-vertical"></i>
+                                        <span class="widget-name">{{widget.name}}</span>
+                                    </div>
+                                    <div class="widget-toggle">
+                                        <label class="switch">
+                                            <input type="checkbox" [(ngModel)]="widget.enabled"
+                                                (change)="WidgetsStatus(widget.name)">
+                                            <span class="slider round"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="quick_link mb-3" *ngIf="getWidgetState('Quicklinks')">
+            <div class="quick-link-container">
+                <div class="quick-link-header">
+                    <h2>Quick links</h2>
+                    <button type="button" class="add-link-btn" (click)="openModal()">
+                        Add quick link
+                    </button>
+
+
+                    <div class="modal fade" id="exampleModalCenter" tabindex="-1" role="dialog"
+                        aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+                            <div class="modal-content">
+                                <div class="modal-header py-2">
+                                    <h5 *ngIf="!quickLinkEdit" class="modal-title" id="exampleModalLongTitle">Add
+                                        Quicklink</h5>
+                                    <h5 *ngIf="quickLinkEdit" class="modal-title" id="exampleModalLongTitle">Edit
+                                        Quicklink</h5>
+
+                                </div>
+                                <div class="modal-body">
+                                    <div class="form-group mb-4">
+                                        <label class="d-flex justify-content-between">
+                                            <span>URL</span>
+                                            <span class="text-muted small">Required</span>
+                                        </label>
+                                        <input type="url" class="form-control" [(ngModel)]="url"
+                                            placeholder="Type or paste a URL">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="d-flex justify-content-between">
+                                            <span>Display title</span>
+                                            <span class="text-muted small">Optional</span>
+                                        </label>
+                                        <input type="text" class="form-control" [(ngModel)]="displayTitle"
+                                            placeholder="What you'd like to see this link as">
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-light" (click)="closeModal()">Cancel</button>
+                                    <button type="button" *ngIf="!quickLinkEdit" class="btn btn-primary"
+                                        (click)="QuicklinkAPI()">Add Quicklink</button>
+                                    <button type="button" *ngIf="quickLinkEdit" class="btn btn-primary"
+                                        (click)="UpdateQuicklinkAPI()">Update Quicklink</button>
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="quick-link-content">
+                    <div class="empty-state p-3" *ngIf="quickLinks?.length === 0">
+                        <div class="link-icon">
+                            <i class="fas fa-link"></i>
+                        </div>
+                        <div class="empty-text">Save links to work things that you'd like handy.</div>
+                    </div>
+                    <div class="quick-links-list" *ngIf="quickLinks?.length > 0">
+                        <div class="quick-link-card" *ngFor="let link of quickLinks; let i = index">
+                            <div class="quick-link-item" (click)="openQuickLink(link.url)">
+                                <!-- Icon -->
+                                <div class="link-icon">
+                                    <i [class]="'fas ' + (link.url.includes('youtube') ? 'fa-youtube' : 'fa-link')"></i>
+                                </div>
+
+                                <!-- Title and Date -->
+                                <div class="link-content">
+                                    <div class="link-title">{{ link.displayTitle }}</div>
+                                    <div class="link-time">{{ link.createdDate | date: 'short' }}</div>
+                                </div>
+
+                                <!-- Action Menu -->
+                                <div class="link-menu" #menuWrapper>
+                                    <button class="menu-btn" (click)="toggleMenu(i)" (click)="$event.stopPropagation()">
+                                        <i class="fas fa-ellipsis-h"></i>
+                                    </button>
+                                    <div class="menu-dropdown" [class.show]="activeMenu === i">
+                                        <a class="menu-item" (click)="openModal(link, true); $event.stopPropagation()">
+                                            <i class="fas fa-pencil-alt"></i> Edit
+                                        </a>
+                                        <a class="menu-item" [href]="formatUrl(link.url)" (click)="$event.stopPropagation()" target="_blank">
+                                            <i class="fas fa-external-link-alt"></i> Open in new tab
+                                        </a>
+                                        <a class="menu-item" (click)="copyLink(link.url); $event.stopPropagation()">
+                                            <i class="fas fa-link"></i> Copy link
+                                        </a>
+                                        <a class="menu-item delete" (click)="deleteLink(link); $event.stopPropagation()">
+                                            <i class="fas fa-trash"></i> Delete
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <div class="recent_activity mb-3" *ngIf="getWidgetState('Recents')">
+            <div class="recent-container">
+                <div class="recent-header">
+                    <h2>Recent activity</h2>
+                    <div (click)="filterDialog($event)" class="dropdown">
+                        <button class="filter-btn">
+                            {{selectedFilter}}
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="recent-list">
+                    <ng-container *ngIf="selectedFilter === 'All'">
+
+                        <div class="recent-item"
+                            *ngFor="let item of (sortedProjectList | slice:0:(showAllItems ? sortedProjectList.length : 3))" (click)="clickFunction(item)">
+                            <div class="item-left">
+                                <div class="item-icon" *ngIf="item.status!== 'ACCEPTED'">
+                                    <i class="fas fa-file-alt"></i>
+                                </div>
+                                <div class="item-icon" *ngIf="item.status === 'ACCEPTED'">
+
+                                    <img src="../../../../../../assets/images/work-management/stack_icon.png"
+                                        alt="Work Item Icon" style="width: 70%;">
+
+                                </div>
+
+                            </div>
+
+                            <div class="item-content"
+                                [class.disabled]="!item.exist">
+                                <div class="item-id" *ngIf="item.status === 'ACCEPTED'">{{item.displayBugNo}}</div>
+
+                                <div class="item-title">{{ item.name ? item.name : item.title }}</div>
+                                <!-- <div class="item-title">{{ item.title }}</div> -->
+                                <div class="item-time">{{getRelativeTime(item.updatedTimeStamp || item.updatedAt)}}</div>
+                            </div>
+                            <div class="item-right">
+                                <div>
+                                    <div class="icon-container">
+                                        <div class="cursor-pointer">
+                                            <ng-container *ngIf="item?.assignee?.length === 1">
+                                                <div class="assignee-single d-flex align-items-center justify-content-center">
+                                                    <div class="avatar" matTooltip="{{item.assignee[0]?.name}}">
+                                                        {{ getInitial(item.assignee[0]?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 1 && item?.assignee?.length <= 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee.slice(0, 3)">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                    <div class="extra-count cursor-pointer">
+                                                        +{{ item.assignee.length - 3 }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </ng-container>
+                    <ng-container *ngIf="selectedFilter === 'Work items'">
+                        <div class="recent-item"
+                            *ngFor="let item of (sortedProjectList | slice:0:(showAllItems ? sortedProjectList.length : 5))" (click)="detailWorkitem(item)">
+                            <div class="item-left">
+                                <div class="item-icon">
+                                    <img src="../../../../../../assets/images/work-management/stack_icon.png"
+                                        alt="Work Item Icon" style="width: 70%;">
+                                </div>
+
+                            </div>
+                            <div class="item-content">
+                                <div class="item-id">{{item.displayBugNo}}</div>
+                                <div class="item-title">{{item.title}}</div>
+                                <div class="item-time">{{getRelativeTime(item.updatedTimeStamp)}}</div>
+                            </div>
+                            <div class="item-right">
+                                <!-- <div class="status-badge" [class]="item.status.toLowerCase()">
+                            <i class="fas" [class]="item.status === 'Active' ? 'fa-check-circle' : 'fa-exclamation-triangle'"></i>
+                            {{item.status}}
+                        </div> -->
+                                <div >
+                                    <!-- <div class="work-item-title">{{ item.name || item.id }}</div> -->
+
+                                    <div class="icon-container">
+                                        <div class="cursor-pointer">
+                                            <ng-container *ngIf="item?.assignee?.length === 1">
+                                                <div class="assignee-single d-flex align-items-center justify-content-center">
+                                                    <div class="avatar" matTooltip="{{item.assignee[0]?.name}}">
+                                                        {{ getInitial(item.assignee[0]?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 1 && item?.assignee?.length <= 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee.slice(0, 3)">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                    <div class="extra-count cursor-pointer">
+                                                        +{{ item.assignee.length - 3 }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </ng-container>
+                    <ng-container *ngIf="selectedFilter === 'Pages'">
+                        <div class="recent-item"
+                            *ngFor="let item of (sortedProjectList | slice:0:(showAllItems ? sortedProjectList.length : 5))">
+                            <div class="item-left">
+                                <div class="item-icon">
+                                    <img src="../../../../../../assets/images/work-management/stack_icon.png"
+                                        alt="Work Item Icon" style="width: 70%;">
+                                </div>
+
+                            </div>
+                            <div class="item-content" (click)="navigateToPage(item)">
+                                <div class="item-id">{{item.displayBugNo}}</div>
+                                <div class="item-title">{{item.title}}</div>
+                                <div class="item-time">{{getRelativeTime(item.updatedAt)}}</div>
+                            </div>
+                            <div class="item-right">
+                                <!-- <div class="status-badge" [class]="item.status.toLowerCase()">
+                            <i class="fas" [class]="item.status === 'Active' ? 'fa-check-circle' : 'fa-exclamation-triangle'"></i>
+                            {{item.status}}
+                        </div> -->
+                                <div >
+                                    <!-- <div class="work-item-title">{{ item.name || item.id }}</div> -->
+
+                                    <div class="icon-container">
+                                        <div class="cursor-pointer">
+                                            <ng-container *ngIf="item?.assignee?.length === 1">
+                                                <div class="assignee-single d-flex align-items-center justify-content-center">
+                                                    <div class="avatar" matTooltip="{{item.assignee[0]?.name}}">
+                                                        {{ getInitial(item.assignee[0]?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 1 && item?.assignee?.length <= 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee.slice(0, 3)">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                    <div class="extra-count cursor-pointer">
+                                                        +{{ item.assignee.length - 3 }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </ng-container>
+                    <ng-container *ngIf="selectedFilter === 'Projects'">
+                        <div class="recent-item"
+                            *ngFor="let item of (sortedProjectList | slice:0:(showAllItems ? sortedProjectList.length : 5))" (click)="goToWorkItem(item)">
+                            <div class="item-left">
+                                <div class="item-icon">
+                                    <img src="../../../../../../assets/images/work-management/stack_icon.png"
+                                        alt="Work Item Icon" style="width: 70%;">
+                                </div>
+
+                            </div>
+                            <div class="item-content">
+                                <div class="item-title">{{item.name}}</div>
+                                <div class="item-time">{{getRelativeTime(item.updatedTimeStamp)}}</div>
+                            </div>
+                            <div class="item-right">
+                                <!-- <div class="status-badge" [class]="item.status.toLowerCase()">
+                            <i class="fas" [class]="item.status === 'Active' ? 'fa-check-circle' : 'fa-exclamation-triangle'"></i>
+                            {{item.status}}
+                        </div> -->
+                                <div >
+                                    <!-- <div class="work-item-title">{{ item.name || item.id }}</div> -->
+
+                                    <div class="icon-container">
+                                        <div class="cursor-pointer">
+                                            <ng-container *ngIf="item?.assignee?.length === 1">
+                                                <div class="assignee-single d-flex align-items-center justify-content-center">
+                                                    <div class="avatar" matTooltip="{{item.assignee[0]?.name}}">
+                                                        {{ getInitial(item.assignee[0]?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 1 && item?.assignee?.length <= 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+
+                                            <ng-container *ngIf="item?.assignee?.length > 3">
+                                                <div class="assignee-multiple d-flex align-items-center justify-content-center" [matTooltip]="getAssigneeNames(item?.assignee)">
+                                                    <div class="multi_avatar cursor-pointer" *ngFor="let user of item.assignee.slice(0, 3)">
+                                                        {{ getInitial(user?.name) }}
+                                                    </div>
+                                                    <div class="extra-count cursor-pointer">
+                                                        +{{ item.assignee.length - 3 }}
+                                                    </div>
+                                                </div>
+                                            </ng-container>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </ng-container>
+                    <!-- <div class="toggle-view" *ngIf="shouldShowToggle "> *ngIf="sortedProjectList.length > 3" -->
+                    <div class="toggle-view" *ngIf="sortedProjectList.length > 3 ">
+                        <button class="toggle-btn" (click)="toggleShowAll()">
+                            {{ showAllItems ? 'See less' : 'Show all' }}
+                            <i class="fas" [class.fa-chevron-up]="showAllItems"
+                                [class.fa-chevron-down]="!showAllItems"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="sticky mb-3" *ngIf="getWidgetState('Your stickies')">
+            <div class="sticky-container">
+                <div class="sticky-header">
+                    <h2>Your stickies</h2>
+                    <button class="add-link-btn" (click)="CreateStickiesAPI()">
+                        <i class="fas fa-plus"></i>
+                        Add sticky
+                    </button>
+                </div>
+                <div class="sticky-content">
+                    <div class="empty-state" *ngIf="stickylists.length === 0">
+                        <div class="sticky-icon">
+                            <i class="far fa-sticky-note"></i>
+                        </div>
+                        <div class="empty-text">Jot down an idea, capture an aha, or record a brainwave. Add a sticky to
+                            get started.</div>
+                    </div>
+                    <div class="stickies-grid" *ngIf="stickylists.length > 0">
+                       <div class="sticky-note" *ngFor="let sticky of stickylists; let i = index" [style.background-color]="sticky.color">
+  
+  <!-- Editable content area -->
+  <div
+    class="sticky-content-area"
+    contenteditable="true"
+    [attr.id]="'sticky-content-' + i"
+    (input)="onStickyInput($event, i)"
+    (focus)="onStickyFocus(i)"
+    (blur)="onStickyBlur(i)"
+    (keydown)="onStickyKeyDown($event, sticky)"
+    #stickyContent>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="sticky-toolbar">
+    <div class="toolbar-left">
+      <i class="fas fa-smile" title="Add emoji"
+   (click)="toggleEmojiPicker(i)"
+   (mousedown)="$event.preventDefault()"></i>
+
+      <i class="fas fa-bold" title="Bold" 
+         (click)="formatText('bold', i)" 
+         (mousedown)="$event.preventDefault()"
+         [class.active]="isFormatActive('bold', i)">
+      </i>
+
+      <i class="fas fa-italic" title="Italic" 
+         (click)="formatText('italic', i)" 
+         (mousedown)="$event.preventDefault()"
+         [class.active]="isFormatActive('italic', i)">
+      </i>
+    </div>
+
+    <div class="toolbar-right">
+      <i class="fas fa-trash" title="Delete" (click)="deleteLink(sticky)" (mousedown)="$event.preventDefault()"></i>
+    </div>
+    
+    <!-- Emoji Picker positioned relative to this sticky -->
+    <div *ngIf="showEmojiPicker && currentFocusedSticky === i" class="emoji-picker-container">
+        <emoji-mart (emojiSelect)="addEmoji($event)"></emoji-mart>
+    </div>
+  </div>
+
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteLinkConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content p-3">
+            <div class="">
+                <div class="mb-3">
+                    <div class="bg-danger bg-opacity-10 rounded-circle d-inline-flex p-3">
+                        <i class="fas fa-exclamation-circle text-danger fs-2"></i>
+                    </div>
+                </div>
+                <h5 class="fw-bold mb-2">Delete {{ linkType }}</h5>
+                <p class="text-secondary mb-4">
+                    Are you sure you want to delete this {{ linkType }}?
+                </p>
+                <div class="d-flex justify-content-center gap-3">
+                    <button class="btn btn-outline-dark" (click)="deleteModalRef?.hide()">Cancel</button>
+                    <button class="btn btn-danger" (click)="handleDelete()">Delete</button>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

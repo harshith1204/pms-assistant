@@ -1,0 +1,300 @@
+<section class="main_section">
+  <div class="header-section">
+    <div class="left-header">
+      <div class="back_btn d-flex align-items-center me-3" (click)="closePage()">
+        <mat-icon class="separator mx-2" style="vertical-align: middle; font-size: 2rem;">chevron_left</mat-icon>
+      </div>
+      <span class="back-text"> {{ pageId ? 'Edit Page' : 'Create Page' }} </span>
+    </div>
+    <div class="right-header">
+      <div class="linked_section text-nowrap d-flex align-items-center gap-1">
+        <!-- Linked Items Custom Dropdown -->
+        <div *ngIf="hasLinkedItems()" class="linked-dropdown position-relative">
+          <button 
+            class="btn btn-sm linked-items-btn d-flex align-items-center gap-2" 
+            (click)="toggleDropdown($event)"
+            style="font-size: 12px; padding: 4px 8px; border: 1px solid #ddd; background: #f8f9fa;">
+            <i class="fas fa-link" style="font-size: 12px;"></i>
+            <span>{{ getLinkedItemsText() }}</span>
+            <i class="fas" [class.fa-chevron-down]="!isDropdownOpen" [class.fa-chevron-up]="isDropdownOpen" style="font-size: 10px;"></i>
+          </button>
+          
+          <!-- Custom Dropdown Menu -->
+          <div *ngIf="isDropdownOpen" class="linked-items-dropdown" 
+               style="position: absolute; top: 100%; right: 0; margin-top: 4px; min-width: 250px; 
+                      background: white; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 1000;">
+            <!-- Cycles Section -->
+            <div *ngIf="selectedCycles.length > 0" class="dropdown-section">
+              <div class="dropdown-header px-3 py-2" style="background: #f8f9fa; color: #666; font-size: 12px;">
+                <strong>Cycles ({{ selectedCycles.length }})</strong>
+              </div>
+              <div *ngFor="let cycle of selectedCycles" 
+                   class="dropdown-item d-flex align-items-center justify-content-between py-2 px-3 hover-bg-light">
+                <span style="font-size: 13px;">{{ cycle.name }}</span>
+                <i class="fas fa-times" 
+                   (click)="removeCycle($event, cycle.id)"
+                   style="cursor: pointer; color: #dc3545; font-size: 12px;"
+                   title="Remove this cycle"></i>
+              </div>
+              <hr *ngIf="selectedPage.length > 0 || selectedModules.length > 0" class="my-0">
+            </div>
+
+            <!-- Pages Section -->
+            <div *ngIf="selectedPage.length > 0" class="dropdown-section">
+              <div class="dropdown-header px-3 py-2" style="background: #f8f9fa; color: #666; font-size: 12px;">
+                <strong>Pages ({{ selectedPage.length }})</strong>
+              </div>
+              <div *ngFor="let page of selectedPage" 
+                   class="dropdown-item d-flex align-items-center justify-content-between py-2 px-3 hover-bg-light">
+                <span style="font-size: 13px;">{{ page.name }}</span>
+                <i class="fas fa-times" 
+                   (click)="removePage($event, page.id)"
+                   style="cursor: pointer; color: #dc3545; font-size: 12px;"
+                   title="Remove this page"></i>
+              </div>
+              <hr *ngIf="selectedModules.length > 0" class="my-0">
+            </div>
+
+            <!-- Modules Section -->
+            <div *ngIf="selectedModules.length > 0" class="dropdown-section">
+              <div class="dropdown-header px-3 py-2" style="background: #f8f9fa; color: #666; font-size: 12px;">
+                <strong>Modules ({{ selectedModules.length }})</strong>
+              </div>
+              <div *ngFor="let module of selectedModules" 
+                   class="dropdown-item d-flex align-items-center justify-content-between py-2 px-3 hover-bg-light">
+                <span style="font-size: 13px;">{{ module.name }}</span>
+                <i class="fas fa-times" 
+                   (click)="removeModule($event, module.id)"
+                   style="cursor: pointer; color: #dc3545; font-size: 12px;"
+                   title="Remove this module"></i>
+              </div>
+              <hr *ngIf="selectedMembers && selectedMembers.length > 0" class="my-0">
+            </div>
+
+            <!-- Members Section -->
+            <div *ngIf="selectedMembers && selectedMembers.length > 0" class="dropdown-section">
+              <div class="dropdown-header px-3 py-2" style="background: #f8f9fa; color: #666; font-size: 12px;">
+                <strong>Members ({{ selectedMembers.length }})</strong>
+              </div>
+              <div *ngFor="let member of selectedMembers" 
+                   class="dropdown-item d-flex align-items-center justify-content-between py-2 px-3 hover-bg-light">
+                <span style="font-size: 13px;">{{ member.name }}</span>
+                <i class="fas fa-times" 
+                   (click)="removeMember($event, member.id)"
+                   style="cursor: pointer; color: #dc3545; font-size: 12px;"
+                   title="Remove this member"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="auto-save-status d-flex align-items-center me-2" style="font-size: 12px; color: #666;">
+        <!-- <span *ngIf="isSaving" class="text-info">
+          <i class="fas fa-spinner fa-spin me-1"></i>Saving...
+        </span> -->
+        <span *ngIf="!isSaving && unsavedChanges" class="text-warning">
+          <i class="fas fa-circle me-1" style="font-size: 8px;"></i>Changes Unsaved 
+        </span>
+        <span *ngIf="!isSaving && !unsavedChanges && lastSaveTime" class="text-success">
+          <i class="fas fa-check me-1"></i>Saved
+        </span>
+      </div>
+      <!-- Add this inside your component HTML -->
+      <button class="border-0 bg-transparent" mat-icon-button [matMenuTriggerFor]="menu">
+        <mat-icon>more_vert</mat-icon> <!-- this is the three-dots icon -->
+      </button>
+  <mat-menu #menu="matMenu">
+    <!-- Linking Options -->
+    <button mat-menu-item (click)="onCycle($event)">
+      <mat-icon>link</mat-icon>
+      <span>Link Cycle</span>
+    </button>
+    <button mat-menu-item (click)="onPage($event)">
+      <mat-icon>link</mat-icon>
+      <span>Link Page</span>
+    </button>
+    <button mat-menu-item (click)="onModule($event)">
+      <mat-icon>link</mat-icon>
+      <span>Link Module</span>
+    </button>
+    
+    <!-- Member Option (Only visible for Private pages) -->
+    <ng-container *ngIf="page.visibility === 'PRIVATE'">
+      <ng-container *ngIf="addMemberAccess?.role === 'ADMIN'">
+        <button mat-menu-item (click)="onMembers($event)">
+        <mat-icon>person_add</mat-icon>
+        <span>Add Member</span>
+      </button>
+      </ng-container>
+    </ng-container>
+    
+    <!-- Visibility Options -->
+    <ng-container [ngSwitch]="page.visibility">
+      <ng-container *ngSwitchCase="'PUBLIC'">
+        <button mat-menu-item (click)="toggleVisibility()">
+          <mat-icon>visibility_off</mat-icon>
+          <span>Make Private</span>
+        </button>
+        <button mat-menu-item (click)="setVisibility('ARCHIVED')">
+          <mat-icon>archive</mat-icon>
+          <span>Archive</span>
+        </button>
+      </ng-container>
+      <ng-container *ngSwitchCase="'PRIVATE'">
+        <button mat-menu-item (click)="toggleVisibility()">
+          <mat-icon>visibility</mat-icon>
+          <span>Make Public</span>
+        </button>
+        <button mat-menu-item (click)="setVisibility('ARCHIVED')">
+          <mat-icon>archive</mat-icon>
+          <span>Archive</span>
+        </button>
+      </ng-container>
+      <ng-container *ngSwitchCase="'ARCHIVED'">
+        <button mat-menu-item (click)="restoreVisibility()">
+          <mat-icon>restore</mat-icon>
+          <span>Restore</span>
+        </button>
+      </ng-container>
+    </ng-container>
+  </mat-menu>
+
+      <!-- <mat-menu #menu="matMenu">
+        <button mat-menu-item (click)="makeCopy()">Make a copy</button>
+        <button mat-menu-item (click)="setVisibility('PRIVATE')">Make private</button>
+        <button mat-menu-item (click)="toggleVisibility()">
+          {{ page.visibility === 'PUBLIC' ? 'Make Private' : 'Make Public' }}
+        </button>
+        <button mat-menu-item (click)="setVisibility('ARCHIVED')">Archive</button>
+        <button mat-menu-item (click)="viewVersionHistory()">Version history</button>
+    <button mat-menu-item (click)="copyMarkdown()">Copy markdown</button>
+    <button mat-menu-item (click)="exportPage()">Export</button>
+      </mat-menu> -->
+  
+  
+      <!-- <button class="publish-btn" style="font-size: 14px; font-weight:500;" (click)="savePage()">
+          <span *ngIf="screenLoading"><i class="fas fa-spinner fa-spin"></i></span>
+          <span *ngIf="!screenLoading">Save</span>
+        </button> -->
+      <span *ngIf="page.locked" class="lock">
+        <i class="fas fa-lock"></i> Locked
+      </span>      
+      <div [matTooltip]="'Create Page With AI'" class="add_templates_button d-flex justify-content-center align-items-center" (click)="openTemplates()">
+        ✨
+      </div>
+      <button class="publish-btn" style="font-size: 14px; font-weight:500;" (click)="savePage()" [disabled]="page.locked">
+        <span *ngIf="screenLoading"><i class="fas fa-spinner fa-spin"></i></span>
+        <span *ngIf="!screenLoading">
+          {{ page.id ? 'Update' : 'Save' }}
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <!-- <h3 style="margin-left:29%; margin-top: 20px; margin-bottom: 10px;">Create Your Page Content</h3> -->
+  <div class=" ms-4 me-4 d-flex align-items-center justify-content-between">
+    <div class="page-title-input">
+    <input 
+      type="text" 
+      [(ngModel)]="page.pageTitle" 
+      (input)="onTitleChange()"
+      placeholder="Untitled" 
+      class="form-control page-title-field" 
+      maxlength="255">
+    <span class="char-count">{{ page.pageTitle.length }}/255</span>
+  </div>
+  </div>
+  
+
+
+  <div #editor id="editorjs" class="editorjs-block create-pages-editor" (keyup)="wordCounter($event)" #text [ngClass]="{'full-width-editor': fullWidth}" style="overflow: auto; max-height: calc(100vh - 200px); min-height: 300px; border: 1px solid #e0e0e0;"></div>
+
+  <span *ngIf="screenLoading"><i class="fas fa-spinner fa-spin"></i>&nbsp;Loading</span>
+
+  <div *ngIf="showAnalytics" style="width: 300px;" class="bg-white shadow p-3 rounded analytics-popup">
+    <h3 class="border-dark" style="font-size: 16px;">Word Counter</h3>
+    <hr>
+    <div class="d-flex justify-content-between align-items-center mt-2" style="font-size: 14px;">
+      <span class="text-secondary">Reading Time</span>
+      <span class="text-dark fw-medium">{{ readTime }}</span>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3" style="font-size: 14px;">
+      <span class="text-secondary">Words</span>
+      <span class="text-dark fw-medium">{{ wordCount }}</span>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3" style="font-size: 14px;">
+      <span class="text-secondary">Characters</span>
+      <span class="text-dark fw-medium">{{ characterCount }}</span>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3" style="font-size: 14px;">
+      <span class="text-secondary">Sentences</span>
+      <span class="text-dark fw-medium">{{ sentenceCount }}</span>
+    </div>
+  </div>
+
+</section>
+
+<section class="position-relative" *ngIf="screenWidth < 475">
+  <div class="header-section">
+    <div class="left-header">
+      <span (click)="closePage()">
+        <i class="fas fa-arrow-left"></i>
+      </span>
+      <span class="back-text" (click)="closePage()">Pages</span>
+    </div>
+  </div>
+  <div class="configuration-tab">
+    <span class="bs-medium cursor-pointer" (click)="openPageSettingsDialog($event)">
+      <i class="fas fa-cog" style="color: #396ae6;"></i>
+    </span>
+    <span class="bs-medium cursor-pointer ml-3">
+      <button class="btn btn-primary" type="button" data-bs-toggle="offcanvas" data-bs-target="#offcanvasBottom" aria-controls="offcanvasBottom">
+        <i class="fas fa-chart-bar" style="color: #396ae6;"></i>
+      </button>
+    </span>
+    <span class="bs-medium cursor-pointer ml-3" (click)="deletePage()" *ngIf="page.id">
+      <i class="fas fa-trash" style="color: #396ae6;"></i>
+    </span>
+  </div>
+
+  <h3 style="margin-left:29%">Create Your Page Content</h3>
+  <div class="page-title-input">
+    <input type="text" [(ngModel)]="page.pageTitle" placeholder="Untitled" class="form-control page-title-field" maxlength="255">
+    <span class="char-count">{{ page.pageTitle.length }}/255</span>
+  </div>
+  <div #editor id="editorjs" class="editorjs-block" (keyup)="wordCounter($event)" #text [ngClass]="{'full-width-editor': fullWidth}" style="overflow: auto; max-height: calc(100vh - 300px); min-height: 300px; border: 1px solid #e0e0e0;"></div>
+
+  <span *ngIf="screenLoading"><i class="fas fa-spinner fa-spin"></i>&nbsp;Loading</span>
+  <div class="right-header">
+    <button class="flat-blue-button" style="font-size: 14px; font-weight:500;" (click)="savePage()">
+      <span *ngIf="screenLoading"><i class="fas fa-spinner fa-spin"></i></span>
+      <span *ngIf="!screenLoading">Save</span>
+    </button>
+  </div>
+
+  <div class="offcanvas offcanvas-bottom" tabindex="-1" id="offcanvasBottom" aria-labelledby="offcanvasBottomLabel" *ngIf="screenWidth < 475" data-bs-backdrop="false">
+    <div class="offcanvas-body small">
+      <div class="head d-flex justify-content-between align-items-center">
+        <h3 class="border-dark" style="font-size: 16px;">Word Counter</h3>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+      </div>
+      <hr>
+      <div class="d-flex justify-content-between align-items-center mt-2" style="font-size: 14px;">
+        <span class="text-secondary">Reading Time</span>
+        <span class="text-dark fw-medium">{{ readTime }}</span>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-3" style="font-size: 14px;">
+        <span class="text-secondary">Words</span>
+        <span class="text-dark fw-medium">{{ wordCount }}</span>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-3" style="font-size: 14px;">
+        <span class="text-secondary">Characters</span>
+        <span class="text-dark fw-medium">{{ characterCount }}</span>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-3" style="font-size: 14px;">
+        <span class="text-secondary">Sentences</span>
+        <span class="text-dark fw-medium">{{ sentenceCount }}</span>
+      </div>
+    </div>
+  </div>
+</section>

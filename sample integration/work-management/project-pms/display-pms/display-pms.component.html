@@ -1,0 +1,54 @@
+<div class="main_section">
+    <div class="display_options">
+        <mat-accordion>
+            <mat-expansion-panel>
+                <mat-expansion-panel-header>
+                    <mat-panel-title>Display Properties</mat-panel-title>
+                </mat-expansion-panel-header>
+                <div class="property-options">
+                    <div class="property-buttons">
+                        <button mat-button *ngFor="let prop of displayProperties" 
+                                [class.active]="prop.selected"
+                                (click)="toggleProperty(prop)">
+                            {{prop.name}}
+                        </button>
+                    </div>
+                </div>
+            </mat-expansion-panel>
+            <mat-expansion-panel>
+                <mat-expansion-panel-header>
+                    <mat-panel-title>Group by</mat-panel-title>
+                </mat-expansion-panel-header>
+                <div class="group-by-options">
+                    <mat-radio-group>
+                        <mat-radio-button *ngFor="let option of groupByOptions"
+                                       [checked]="option.checked"
+                                       (change)="onGroupByChange(option)">
+                            {{option.name}}
+                        </mat-radio-button>
+                    </mat-radio-group>
+                </div>
+            </mat-expansion-panel>
+
+            <mat-expansion-panel>
+                <mat-expansion-panel-header>
+                    <mat-panel-title>Order by</mat-panel-title>
+                </mat-expansion-panel-header>
+                <div class="order-by-options">
+                    <mat-radio-group>
+                        <mat-radio-button *ngFor="let option of orderByOptions"
+                                        [checked]="option.checked"
+                                        (change)="onOrderByChange(option)">
+                            {{option.name}}
+                        </mat-radio-button>
+                    </mat-radio-group>
+                </div>
+            </mat-expansion-panel>
+
+            <div class="checkbox-options">
+                <mat-checkbox [(ngModel)]="showSubWorkItems">Show sub-work items</mat-checkbox>
+                <mat-checkbox [(ngModel)]="showEmptyGroups">Show empty groups</mat-checkbox>
+            </div>
+        </mat-accordion>
+    </div>
+</div>

@@ -1,0 +1,126 @@
+.main_section {
+    padding: 8px;
+    
+    .header {
+        padding: 8px 16px;
+        font-weight: 500;
+        color: #333;
+        font-size: 12px;
+        margin-bottom: 8px;
+    }
+
+    .display_options {
+        ::ng-deep {
+            .mat-expansion-panel {
+                box-shadow: none;
+                background: transparent;
+                
+                &:not(:last-child) {
+                    border-bottom: 1px solid #eee;
+                }
+            }
+
+            .mat-expansion-panel-header {
+                padding: 0 16px;
+                height: 38px;
+                font-size: 12px;
+            }
+
+            .mat-expansion-panel-header-title {
+                color: #333;
+                font-weight: normal;
+                font-size: 12px;
+            }
+
+            .mat-expansion-panel-body {
+                padding: 0 4px 16px;
+            }
+        }
+
+        .group-options, .order-options, .group-by-options, .order-by-options {
+            display: flex;
+            flex-direction: column;
+
+            ::ng-deep {
+                mat-radio-group {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+
+                .mat-radio-button {
+                    font-size: 12px;
+                    color: #1e1e1e;
+                }
+            }
+        }
+
+        .checkbox-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+
+            ::ng-deep .mat-checkbox {
+                font-size: 12px;
+                color: #1e1e1e;
+            }
+        }
+    }
+
+    .property-options {
+        // padding: 16px;
+
+        .property-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+
+            button {
+                font-size: 12px;
+                color: #ffffff;
+                border-radius: 4px;
+                padding: 0px 10px;
+                background-color: #0496ff;
+                border: none;
+                width: fit-content;
+
+                &.active {
+                    background: #e6f0ff;
+                    color: #0066cc;
+                }
+
+                &:hover {
+                    background: #ebebeb;
+                }
+            }
+        }
+    }
+}
+    .property-options {
+        padding: 16px;
+
+        .property-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+
+            button {
+                font-size: 13px;
+                color: #666;
+                background: #f5f5f5;
+                border-radius: 4px;
+                padding: 4px 12px;
+                min-height: 28px;
+                line-height: 20px;
+
+                &.active {
+                    background: #e6f0ff;
+                    color: #0066cc;
+                }
+
+                &:hover {
+                    background: #ebebeb;
+                }
+            }
+        }
+    }

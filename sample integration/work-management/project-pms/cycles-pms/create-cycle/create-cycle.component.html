@@ -1,0 +1,54 @@
+<div class="create-cycle-container p-4">
+  <div class="header mb-4 d-flex gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <span class="title mb-0">{{data?.data?.projectName}}</span>
+    </div>
+    <div class="create">{{ data?.edit ? 'Edit cycle' : 'Create cycle' }}</div>
+  </div>
+
+  <form [formGroup]="cycleForm" (ngSubmit)="onSubmit()">
+    <div class="form-group mb-4">
+      <input type="text" 
+             class="form-control form-control-lg" 
+             placeholder="Title"
+             formControlName="title">
+    </div>
+
+    <div class="form-group mb-4">
+      <textarea class="form-control" 
+                rows="5" 
+                placeholder="Description"
+                formControlName="description"></textarea>
+    </div>
+
+    <div class="form-group mb-4">
+      <div class="date-range-picker">
+        <button type="button" class="btn btn-outline-secondary" (click)="picker.open()">
+          <i class="fas fa-calendar me-2"></i>
+          <span class="date-text">
+          <span>{{getDateRangeText()}}</span>
+          <span class="remove-btn" *ngIf="startDate && endDate" (click)="clearDateRange($event)">✕</span>
+        </span>
+        </button>
+      </div>
+    </div>
+
+    <div class="actions d-flex justify-content-end gap-2">
+      <button type="button" class="btn btn-light" (click)="onCancel()" [disabled]="isLoading">Cancel</button>
+      <button type="submit" class="btn save-btn" [disabled]="!cycleForm.valid || isLoading" (click)="createCycle()">
+        <span *ngIf="isLoading" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+        <span *ngIf="isLoading">Loading...</span>
+        <span *ngIf="!isLoading">{{ data?.edit ? 'Edit cycle' : 'Create cycle' }}</span>
+      </button>
+    </div>
+  </form>
+
+  <mat-form-field appearance="outline" style="visibility: hidden; position: absolute; top: -1000px;">
+    <mat-date-range-input [rangePicker]="picker">
+      <input matStartDate placeholder="Start date" [(ngModel)]="startDate" (ngModelChange)="changeData()">
+      <input matEndDate placeholder="End date" [(ngModel)]="endDate" (ngModelChange)="changeData()">
+    </mat-date-range-input>
+    <mat-datepicker-toggle matIconSuffix [for]="picker"></mat-datepicker-toggle>
+    <mat-date-range-picker #picker></mat-date-range-picker>
+  </mat-form-field>
+</div>

@@ -1,0 +1,167 @@
+.work-item-container {
+  padding: 20px;
+  font-size: 13px;
+
+  .title {
+    font-size: 18px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    color: #333;
+  }
+
+  .user-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    border: 1px solid #80808030;
+    .icon {
+      margin-right: 6px;
+    }
+
+    .text {
+      color: #333;
+    }
+  }
+}
+
+.templates-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.template-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 6px;
+  background: #fff;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  position: relative;
+
+  &:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    transform: translateY(-1px);
+  }
+
+  &.selected {
+    border-color: var(--primary-bg-color);
+    box-shadow: 0 0 0 3px rgba(58, 0, 68, 0.08);
+  }
+
+  .template-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  .template-content {
+    .template-name {
+      margin: 0 0 4px 0;
+      font-weight: 600;
+      color: #1f2937;
+    }
+    .template-description {
+      margin: 0 0 8px 0;
+      color: #6b7280;
+      font-size: 12px;
+    }
+  }
+
+  .selected-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary-bg-color);
+    color: white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+}
+
+.prompt-section {
+  .prompt-label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    font-size: 13px;
+    padding: 6px;
+  }
+
+  .form-control {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 15px;
+
+    &:focus {
+      outline: none;
+      border-color: #4285f4;
+    }
+  }
+}
+
+.template-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  .createAi_btn {
+    color: white;
+    background: var(--primary-bg-color);
+    border-radius: 6px;
+    width: fit-content;
+    border: none;
+    font-size: 14px;
+    padding: 6px;
+  }
+}
+
+
+// Loading spinner
+.spinner-border-sm {
+  width: 1rem;
+  height: 1rem;
+}
+
+// Responsive Design
+@media (max-width: 768px) {
+  .templates-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .template-card {
+    padding: 4px;
+
+    .template-icon {
+      width: 32px;
+      height: 32px;
+      margin-bottom: 6px;
+    }
+
+    .template-content {
+      .template-name {
+        font-size: 12px;
+      }
+      .template-description {
+        font-size: 10px;
+      }
+    }
+  }
+
+}
