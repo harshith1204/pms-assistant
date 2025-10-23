@@ -858,6 +858,11 @@ class MongoDBAgent:
                             "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); generate_content needs content_type + prompt."
                         ))
                         invoke_messages = messages + [routing_instructions]
+                        # Determine if we should stream this response
+                        # Only stream for finalization (after tools complete)
+                        # Don't stream intermediate responses that will call tools
+                        should_stream_response = need_finalization
+                        
                         if need_finalization:
                             finalization_instructions = SystemMessage(content=(
                                 "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
@@ -877,10 +882,16 @@ class MongoDBAgent:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
-                        response = await llm_with_tools.ainvoke(
-                            invoke_messages,
-                            config={"callbacks": [callback_handler]},
-                        )
+                        
+                        # Stream only when should_stream_response is True (finalization or direct answer)
+                        if should_stream_response and callback_handler:
+                            response = await llm_with_tools.ainvoke(
+                                invoke_messages,
+                                config={"callbacks": [callback_handler]},
+                            )
+                        else:
+                            # No streaming for intermediate responses that will call tools
+                            response = await llm_with_tools.ainvoke(invoke_messages)
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
@@ -898,6 +909,19 @@ class MongoDBAgent:
                         print(f"Warning: failed to save assistant message: {e}")
 
                     if not getattr(response, "tool_calls", None):
+                        # This is the final response (no tool calls)
+                        # If we didn't stream it yet, manually send tokens now
+                        if not should_stream_response and callback_handler:
+                            # This was a direct answer (no tools needed), stream it now
+                            try:
+                                await callback_handler.on_llm_start()
+                                content = response.content or ""
+                                # Send tokens character by character for streaming effect
+                                for token in content:
+                                    await callback_handler.on_llm_new_token(token)
+                                await callback_handler.on_llm_end()
+                            except Exception:
+                                pass
                         yield response.content
                         return
 
