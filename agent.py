@@ -523,10 +523,7 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Ensure conversation is cached in Redis (loads from MongoDB if needed)
-                await conversation_memory.ensure_conversation_cached(conversation_id)
-
-                # Get conversation history
+                # Get conversation history (automatically loads from MongoDB if cache empty)
                 conversation_context = await conversation_memory.get_recent_context(conversation_id)
 
                 # Build messages with optional system instruction
@@ -749,10 +746,7 @@ class MongoDBAgent:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Ensure conversation is cached in Redis (loads from MongoDB if needed)
-                await conversation_memory.ensure_conversation_cached(conversation_id)
-
-                # Get conversation history
+                # Get conversation history (automatically loads from MongoDB if cache empty)
                 conversation_context = await conversation_memory.get_recent_context(conversation_id)
 
                 # Build messages with optional system instruction

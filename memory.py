@@ -160,7 +160,11 @@ class RedisConversationMemory:
             self.fallback_conversations[conversation_id].append(message)
 
     async def get_conversation_history(self, conversation_id: str) -> List[BaseMessage]:
-        """Get the conversation history for a given conversation ID from Redis"""
+        """Get the conversation history for a given conversation ID from Redis
+        
+        If not in cache, returns empty list (will be populated as new messages are added).
+        Use get_recent_context() instead to get context from MongoDB when cache is empty.
+        """
         await self._ensure_connected()
         
         if self.use_fallback:
@@ -212,8 +216,23 @@ class RedisConversationMemory:
                 self.fallback_conversations[conversation_id].clear()
 
     async def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
-        """Get recent conversation context with a token budget and rolling summary."""
+        """Get recent conversation context with a token budget and rolling summary.
+        
+        Smart loading: 
+        1. First checks Redis cache for fast access
+        2. If cache is empty/expired, loads ONLY recent messages from MongoDB (within token budget)
+        3. Optionally caches loaded messages in background for next access
+        """
+        # Try to get from Redis cache first (fast path)
         messages = await self.get_conversation_history(conversation_id)
+        
+        # If cache is empty, load recent messages from MongoDB (non-blocking approach)
+        if not messages:
+            try:
+                messages = await self._load_recent_from_mongodb(conversation_id, max_tokens)
+            except Exception as e:
+                print(f"⚠️ Could not load recent messages from MongoDB: {e}")
+                messages = []
 
         # Approximate token counting (≈4 chars/token)
         def approx_tokens(text: str) -> int:
@@ -338,6 +357,92 @@ class RedisConversationMemory:
         except Exception as e:
             # Best-effort; log but don't fail
             print(f"⚠️ Failed to update summary: {e}")
+
+    async def _load_recent_from_mongodb(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
+        """Load ONLY recent messages from MongoDB (limited by token budget).
+        
+        This is much more efficient than loading entire conversation history.
+        Only loads what's actually needed for context.
+        
+        Returns:
+            List of recent messages (already within token budget)
+        """
+        try:
+            # Import here to avoid circular dependency
+            from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
+            
+            # Fetch conversation from MongoDB
+            coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
+            doc = await coll.find_one({"conversationId": conversation_id})
+            
+            if not doc:
+                return []
+            
+            messages = doc.get("messages") or []
+            if not messages:
+                return []
+            
+            # Approximate token counting
+            def approx_tokens(text: str) -> int:
+                try:
+                    return max(1, math.ceil(len(text) / 4))
+                except Exception:
+                    return len(text) // 4
+            
+            # Load recent messages within token budget (work backwards)
+            budget = max(500, max_tokens)
+            used = 0
+            recent_messages: List[BaseMessage] = []
+            
+            # Start from end (most recent) and work backwards
+            for msg in reversed(messages):
+                if not isinstance(msg, dict):
+                    continue
+                
+                msg_type = msg.get("type", "assistant")
+                content = msg.get("content", "")
+                
+                # Check token budget
+                msg_tokens = approx_tokens(str(content)) + 8
+                if used + msg_tokens > budget and recent_messages:
+                    # Budget exceeded, stop loading
+                    break
+                
+                # Convert to appropriate LangChain message type
+                if msg_type == "user":
+                    lc_message = HumanMessage(content=content)
+                elif msg_type == "assistant":
+                    lc_message = AIMessage(content=content)
+                elif msg_type == "system":
+                    lc_message = SystemMessage(content=content)
+                else:
+                    # Skip action/tool/work_item/page messages
+                    continue
+                
+                recent_messages.append(lc_message)
+                used += msg_tokens
+            
+            # Reverse to get chronological order
+            recent_messages.reverse()
+            
+            # Optionally cache in Redis for next access (background task, non-blocking)
+            if recent_messages:
+                asyncio.create_task(self._cache_messages_background(conversation_id, recent_messages))
+            
+            print(f"✅ Loaded {len(recent_messages)} recent messages from MongoDB (within {used} tokens)")
+            return recent_messages
+            
+        except Exception as e:
+            print(f"⚠️ Failed to load recent messages from MongoDB: {e}")
+            return []
+
+    async def _cache_messages_background(self, conversation_id: str, messages: List[BaseMessage]) -> None:
+        """Cache messages in Redis as a background task (non-blocking)"""
+        try:
+            for msg in messages:
+                await self.add_message(conversation_id, msg)
+        except Exception as e:
+            print(f"⚠️ Background cache failed: {e}")
 
     async def load_conversation_from_mongodb(self, conversation_id: str) -> bool:
         """Load an existing conversation from MongoDB into Redis cache
