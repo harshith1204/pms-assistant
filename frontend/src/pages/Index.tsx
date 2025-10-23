@@ -684,7 +684,11 @@ const Index = () => {
   // Auto-scroll to bottom on message updates
   useEffect(() => {
     if (showGettingStarted || showPersonalization) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Delay to ensure DOM has updated with new content before scrolling
+    const timer = setTimeout(() => {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, 100);
+    return () => clearTimeout(timer);
   }, [messages, isLoading, showGettingStarted, showPersonalization]);
 
   return (
@@ -757,7 +761,7 @@ const Index = () => {
           </div>
         ) : (
           <ScrollArea className="flex-1 scrollbar-thin">
-            <div className="mx-auto max-w-4xl">
+            <div className="mx-auto max-w-4xl pb-8">
               {messages.map((message) => (
                 <ChatMessage
                   key={message.id}
@@ -773,7 +777,7 @@ const Index = () => {
                   onDislike={handleDislike}
                 />
               ))}
-              <div ref={endRef} />
+              <div ref={endRef} className="h-4" />
             </div>
           </ScrollArea>
         )}
