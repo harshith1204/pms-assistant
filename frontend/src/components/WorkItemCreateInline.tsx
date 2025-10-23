@@ -5,14 +5,16 @@ import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2 } from "lucide-react";
+import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2, FolderKanban } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { fetchProjects, Project } from "@/api/projects";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
   description?: string;
-  onSave?: (values: { title: string; description: string }) => void;
+  onSave?: (values: { title: string; description: string; projectId?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -28,9 +30,19 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string>("");
+  const [projects, setProjects] = React.useState<Project[]>([]);
+
+  React.useEffect(() => {
+    const loadProjects = async () => {
+      const projectsList = await fetchProjects();
+      setProjects(projectsList);
+    };
+    loadProjects();
+  }, []);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc });
+    onSave?.({ title: name.trim(), description: desc, projectId: selectedProjectId || undefined });
   };
 
   return (
@@ -69,6 +81,21 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
 
         <div className="px-5 pb-4 pt-3">
           <div className="flex flex-wrap gap-2">
+            <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs bg-background min-w-[180px]">
+              <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
+              <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                <SelectTrigger className="h-6 border-0 p-0 text-xs focus:ring-0 focus:ring-offset-0">
+                  <SelectValue placeholder="Select project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((project) => (
+                    <SelectItem key={project._id} value={project._id}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>Backlog</FieldChip>
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>None</FieldChip>
             <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
