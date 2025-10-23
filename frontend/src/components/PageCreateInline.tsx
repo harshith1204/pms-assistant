@@ -410,7 +410,6 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
         </div>
 
         <div className="px-8 py-6 border-t-2 flex items-center justify-end gap-3 bg-muted/20">
-          <Button type="button" variant="outline" size="lg" onClick={onDiscard} className="px-6">Discard</Button>
           <Button onClick={handleSave} size="lg" className="px-8">Save Page</Button>
         </div>
       </CardContent>
