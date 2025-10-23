@@ -221,19 +221,9 @@ class RedisConversationMemory:
         Smart loading: 
         1. First checks Redis cache for fast access
         2. If cache is empty/expired, loads ONLY recent messages from MongoDB (within token budget)
-        3. Optionally caches loaded messages in background for next access
+        3. Applies consistent token budget selection (handles both cache hit and miss)
+        4. Adds summary if it fits within budget
         """
-        # Try to get from Redis cache first (fast path)
-        messages = await self.get_conversation_history(conversation_id)
-        
-        # If cache is empty, load recent messages from MongoDB (non-blocking approach)
-        if not messages:
-            try:
-                messages = await self._load_recent_from_mongodb(conversation_id, max_tokens)
-            except Exception as e:
-                print(f"⚠️ Could not load recent messages from MongoDB: {e}")
-                messages = []
-
         # Approximate token counting (≈4 chars/token)
         def approx_tokens(text: str) -> int:
             try:
@@ -242,25 +232,49 @@ class RedisConversationMemory:
                 return len(text) // 4
 
         budget = max(500, max_tokens)
+        
+        # Reserve space for summary (if present)
+        summary = await self._get_summary(conversation_id)
+        summary_tokens = 0
+        if summary:
+            summary_tokens = approx_tokens(summary) + 50  # +50 for formatting
+        
+        # Adjust budget for messages to leave room for summary
+        message_budget = budget - summary_tokens
+        
+        # Try to get from Redis cache first (fast path)
+        messages = await self.get_conversation_history(conversation_id)
+        
+        # If cache is empty, load recent messages from MongoDB
+        if not messages:
+            try:
+                # Load with adjusted budget (accounting for summary)
+                messages = await self._load_recent_from_mongodb(conversation_id, message_budget)
+            except Exception as e:
+                print(f"⚠️ Could not load recent messages from MongoDB: {e}")
+                messages = []
+        
+        # Apply token budget selection (needed for Redis cache path)
+        # For MongoDB path, this is mostly redundant but ensures consistency
         used = 0
         selected: List[BaseMessage] = []
 
         # Walk backwards to select most recent turns under budget
         for msg in reversed(messages):
             content = getattr(msg, "content", "")
-            used += approx_tokens(str(content)) + 8
-            if used > budget:
+            msg_tokens = approx_tokens(str(content)) + 8
+            if used + msg_tokens > message_budget and selected:
+                # Budget exceeded, stop
                 break
             selected.append(msg)
+            used += msg_tokens
 
         selected.reverse()
 
-        # Prepend rolling summary if present and within budget
-        summary = await self._get_summary(conversation_id)
-        if summary:
-            stoks = approx_tokens(summary)
-            if used + stoks <= budget:
-                selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
+        # Prepend rolling summary if present
+        if summary and summary_tokens <= budget - used:
+            selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
+            used += summary_tokens
 
         return selected
 
