@@ -196,7 +196,7 @@ class TTLCache:
 
 
 # Lightweight helper to create natural, user-facing action statements
-async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
+async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]], callback_handler: Optional[AsyncCallbackHandler] = None) -> str:
     """Generate a concise, user-facing action sentence based on planned tool calls.
 
     The sentence avoids exposing internal tooling and focuses on intent/benefit.
@@ -255,8 +255,11 @@ async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, 
             verbose=False,
             top_p=0.8,
         )
-        # Use the existing model; rely on instruction for brevity
-        resp = await llm.ainvoke(action_prompt)
+        # Use the existing model with proper callback handler integration
+        if callback_handler:
+            resp = await llm.ainvoke(action_prompt, config={"callbacks": [callback_handler]})
+        else:
+            resp = await llm.ainvoke(action_prompt)
         action_text = str(getattr(resp, "content", "")).strip().strip("\".")
         if not action_text or len(action_text) > 100:
             return "Gathering relevant information for you..."
@@ -655,7 +658,7 @@ class MongoDBAgent:
                 # - Sequential needs are handled by the LLM making separate calls
                 # Emit a dynamic, user-facing action line before running any tools
                 try:
-                    action_text = await generate_action_statement(query, response.tool_calls)
+                    action_text = await generate_action_statement(query, response.tool_calls, callback_handler=None)
                     try:
                         await save_action_event(conversation_id, "action", action_text)
                     except Exception:
@@ -866,6 +869,7 @@ class MongoDBAgent:
                                 synth_action = await generate_action_statement(
                                     query,
                                     [{"name": "synthesize", "args": {"query": "finalize answer from gathered findings"}}],
+                                    callback_handler=callback_handler,
                                 )
                                 if callback_handler:
                                     await callback_handler.emit_dynamic_action(synth_action)
@@ -901,7 +905,7 @@ class MongoDBAgent:
                     # The LLM decides execution order by how it calls tools
                     # Emit a dynamic, user-facing action line before running any tools
                     try:
-                        action_text = await generate_action_statement(query, response.tool_calls)
+                        action_text = await generate_action_statement(query, response.tool_calls, callback_handler=callback_handler)
                         if callback_handler:
                             await callback_handler.emit_dynamic_action(action_text)
                     except Exception:
