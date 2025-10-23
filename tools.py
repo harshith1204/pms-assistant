@@ -1092,7 +1092,7 @@ async def generate_content(
     template_content: str = "",
     context: Optional[Dict[str, Any]] = None
 ) -> str:
-    """Generate work items or pages - sends content DIRECTLY to frontend, returns minimal confirmation.
+    """Generate work items, pages, cycles, or modules - sends content DIRECTLY to frontend, returns minimal confirmation.
     
     **CRITICAL TOKEN OPTIMIZATION**: 
     - Full generated content is sent directly to the frontend via WebSocket
@@ -1102,9 +1102,11 @@ async def generate_content(
     Use this to create new content:
     - Work items: bugs, tasks, features  
     - Pages: documentation, meeting notes, project plans
+    - Cycles: sprints, iterations, development cycles
+    - Modules: feature modules, components, subsystems
     
     Args:
-        content_type: Type of content - 'work_item' or 'page'
+        content_type: Type of content - 'work_item', 'page', 'cycle', or 'module'
         prompt: User's instruction for what to generate
         template_title: Optional template title to base generation on
         template_content: Optional template content to use as structure
@@ -1116,11 +1118,13 @@ async def generate_content(
     Examples:
         generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
         generate_content(content_type="page", prompt="Create API documentation", context={...})
+        generate_content(content_type="cycle", prompt="Q4 2024 Sprint")
+        generate_content(content_type="module", prompt="Authentication Module")
     """
     import httpx
     
     try:
-        if content_type not in ["work_item", "page"]:
+        if content_type not in ["work_item", "page", "cycle", "module"]:
             return "❌ Invalid content type"
         
         # Get API base URL from environment or use default
@@ -1173,6 +1177,100 @@ async def generate_content(
             except Exception as e:
                 # Non-fatal
                 print(f"Warning: failed to persist generated work item to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+        elif content_type == "cycle":
+            # Call cycle generation endpoint
+            url = f"{api_base}/generate-cycle"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Cycle",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "cycle",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated artifact as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_cycle
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    description = (result or {}).get("description") if isinstance(result, dict) else None
+                    await save_generated_cycle(conv_id, {
+                        "title": (title or "Cycle").strip(),
+                        "description": (description or "").strip(),
+                    })
+            except Exception as e:
+                # Non-fatal
+                print(f"Warning: failed to persist generated cycle to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+        elif content_type == "module":
+            # Call module generation endpoint
+            url = f"{api_base}/generate-module"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Module",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "module",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated artifact as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_module
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    description = (result or {}).get("description") if isinstance(result, dict) else None
+                    await save_generated_module(conv_id, {
+                        "title": (title or "Module").strip(),
+                        "description": (description or "").strip(),
+                    })
+            except Exception as e:
+                # Non-fatal
+                print(f"Warning: failed to persist generated module to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"

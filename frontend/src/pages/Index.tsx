@@ -37,6 +37,17 @@ interface Message {
     title: string;
     blocks: { blocks: any[] };
   };
+  cycle?: {
+    title: string;
+    description?: string;
+    startDate?: string;
+    endDate?: string;
+  };
+  module?: {
+    title: string;
+    description?: string;
+    projectName?: string;
+  };
 }
 
 interface Conversation {
@@ -133,7 +144,7 @@ const Index = () => {
   };
 
   // Helper: transform backend messages to UI messages with internal actions grouped
-  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any }>): Message[] => {
+  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any; cycle?: any; module?: any }>): Message[] => {
     const result: Message[] = [];
     let pendingActionBullets: string[] = [];
 
@@ -207,6 +218,14 @@ const Index = () => {
       }
       if (type === "page" && (m as any).page) {
         result.push({ id: m.id, role: "assistant", content: "", page: (m as any).page });
+        continue;
+      }
+      if (type === "cycle" && (m as any).cycle) {
+        result.push({ id: m.id, role: "assistant", content: "", cycle: (m as any).cycle });
+        continue;
+      }
+      if (type === "module" && (m as any).module) {
+        result.push({ id: m.id, role: "assistant", content: "", module: (m as any).module });
         continue;
       }
       // Fallback: treat unknown types as assistant text
@@ -316,6 +335,55 @@ const Index = () => {
           ].join('|');
           const candidateHash = hash(candidate.page!);
           const exists = prev.slice(-10).some((m) => m.page && hash(m.page) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
+      } else if (evt.content_type === "cycle" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `cycle-${Date.now()}`;
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          cycle: {
+            title: (data.title as string) || "Cycle",
+            description: (data.description as string) || "",
+            startDate: (data.startDate as string) || undefined,
+            endDate: (data.endDate as string) || undefined,
+          },
+        };
+
+        setMessages((prev) => {
+          const hash = (cy: NonNullable<Message['cycle']>) => [
+            (cy.title || '').trim(),
+            (cy.description || '').trim()
+          ].join('|');
+          const candidateHash = hash(candidate.cycle);
+          const exists = prev.slice(-10).some((m) => m.cycle && hash(m.cycle) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
+      } else if (evt.content_type === "module" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `module-${Date.now()}`;
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          module: {
+            title: (data.title as string) || "Module",
+            description: (data.description as string) || "",
+            projectName: (data.projectName as string) || undefined,
+          },
+        };
+
+        setMessages((prev) => {
+          const hash = (md: NonNullable<Message['module']>) => [
+            (md.title || '').trim(),
+            (md.description || '').trim()
+          ].join('|');
+          const candidateHash = hash(candidate.module);
+          const exists = prev.slice(-10).some((m) => m.module && hash(m.module) === candidateHash);
           if (exists) return prev;
           return [...prev, candidate];
         });

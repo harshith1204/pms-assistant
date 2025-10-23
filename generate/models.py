@@ -39,3 +39,13 @@ class WorkItemSurpriseMeRequest(BaseModel):
     title: str
     description: Optional[str] = None
 
+
+class CycleSurpriseMeRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+
+
+class ModuleSurpriseMeRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+

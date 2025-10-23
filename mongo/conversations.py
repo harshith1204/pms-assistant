@@ -254,6 +254,42 @@ async def save_generated_page(conversation_id: str, page: Dict[str, Any]) -> Non
     )
 
 
+async def save_generated_cycle(conversation_id: str, cycle: Dict[str, Any]) -> None:
+    """Persist a generated cycle (sprint) as a conversation message.
+
+    Expects a minimal payload: {title, description?}
+    """
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "cycle",
+            "content": "",  # keep content empty; UI renders from structured field
+            "cycle": {
+                "title": (cycle.get("title") or "Cycle"),
+                "description": (cycle.get("description") or ""),
+            },
+        })
+    )
+
+
+async def save_generated_module(conversation_id: str, module: Dict[str, Any]) -> None:
+    """Persist a generated module as a conversation message.
+
+    Expects a minimal payload: {title, description?}
+    """
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "module",
+            "content": "",  # keep content empty; UI renders from structured field
+            "module": {
+                "title": (module.get("title") or "Module"),
+                "description": (module.get("description") or ""),
+            },
+        })
+    )
+
+
 async def update_message_reaction(
     conversation_id: str,
     message_id: str,
