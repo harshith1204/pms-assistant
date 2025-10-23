@@ -5,9 +5,6 @@ langchain-core
 langchain-groq
 langchain-community
 
-# MCP (Model Context Protocol) dependencies
-mcp
-langchain-mcp-adapters
 
 python-dotenv
 pydantic
@@ -39,5 +36,9 @@ numpy
 # SPLADE (sparse) dependencies
 transformers
 torch
+
+# Redis for conversation memory cache
+redis
+redis[hiredis]
 
 # (Phoenix and OpenTelemetry removed; using internal no-op shims)
