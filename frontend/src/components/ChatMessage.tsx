@@ -180,7 +180,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
           ) : (
             <SafeMarkdown
               content={displayedContent}
-              className="prose prose-sm max-w-none dark:prose-invert"
+              className="prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground prose-strong:text-foreground prose-li:text-foreground"
             />
           )}
           {isStreaming && currentIndex < content.length && (

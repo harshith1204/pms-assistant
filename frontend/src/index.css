@@ -68,6 +68,67 @@ All colors MUST be HSL.
     @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
   }
 
+  /* Enhanced prose styling for markdown content */
+  .prose {
+    max-width: none;
+  }
+
+  .prose code {
+    @apply text-sm;
+  }
+
+  .prose pre {
+    @apply my-3 rounded-lg;
+  }
+
+  .prose table {
+    @apply w-full border-collapse;
+  }
+
+  .prose thead {
+    @apply bg-muted/50;
+  }
+
+  .prose th {
+    @apply px-4 py-2 text-left font-semibold border-b border-border;
+  }
+
+  .prose td {
+    @apply px-4 py-2 border-b border-border;
+  }
+
+  .prose blockquote {
+    @apply border-l-4 border-primary/50 bg-primary/5 pl-4 pr-4 py-2 rounded-r-lg;
+  }
+
+  .prose strong {
+    @apply font-bold;
+  }
+
+  .prose em {
+    @apply italic;
+  }
+
+  .prose h2 {
+    @apply border-b border-border/50 pb-2;
+  }
+
+  .prose ul {
+    @apply space-y-1.5;
+  }
+
+  .prose ol {
+    @apply space-y-1.5;
+  }
+
+  .prose hr {
+    @apply my-6 border-border;
+  }
+
+  .prose a {
+    @apply font-medium;
+  }
+
   /* Editor.js specific styles */
   .editor-container .ce-block__content,
   .editor-container .ce-toolbar__content {
