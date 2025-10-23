@@ -1,9 +1,11 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import MDEditor from "@uiw/react-md-editor";
+import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
-import { Calendar } from "lucide-react";
+import { Calendar, Wand2 } from "lucide-react";
+import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 
 export type CycleCreateInlineProps = {
@@ -14,14 +16,11 @@ export type CycleCreateInlineProps = {
   className?: string;
 };
 
-const FieldButton: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void }>> = ({ icon, children, onClick }) => (
-  <button 
-    onClick={onClick}
-    className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm text-muted-foreground bg-background hover:bg-muted/50 transition-colors"
-  >
+const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode }>> = ({ icon, children }) => (
+  <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background">
     {icon}
     <span className="whitespace-nowrap">{children}</span>
-  </button>
+  </div>
 );
 
 export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({ 
@@ -31,58 +30,59 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
   onDiscard, 
   className 
 }) => {
-  const [cycleTitle, setCycleTitle] = React.useState<string>(title);
-  const [cycleDescription, setCycleDescription] = React.useState<string>(description);
+  const [name, setName] = React.useState<string>(title);
+  const [desc, setDesc] = React.useState<string>(description);
+  const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: cycleTitle.trim(), description: cycleDescription.trim() });
-  };
-
-  const handleCancel = () => {
-    onDiscard?.();
+    onSave?.({ title: name.trim(), description: desc });
   };
 
   return (
-    <Card className={cn("border-muted/70 shadow-sm", className)}>
-      <CardContent className="p-6">
-        <h2 className="text-2xl font-semibold mb-6">Create cycle</h2>
-        
-        <div className="space-y-4">
+    <Card className={cn("border-muted/70", className)}>
+      <CardContent className="p-0">
+        <div className="px-5 pt-4">
           <Input
-            value={cycleTitle}
-            onChange={(e) => setCycleTitle(e.target.value)}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             placeholder="Title"
-            className="h-12 text-base border-2 focus-visible:ring-2"
+            className="h-11 text-base"
           />
+        </div>
 
-          <Textarea
-            value={cycleDescription}
-            onChange={(e) => setCycleDescription(e.target.value)}
-            placeholder="Description"
-            className="min-h-[120px] text-base border-2 focus-visible:ring-2 resize-none"
-          />
+        <div className="px-5 pt-4">
+          <div className="relative" data-color-mode="light">
+          <MDEditor value={desc} onChange={(v) => setDesc(v || "")} height={260} preview={isEditingDesc ? "edit" : "preview"} hideToolbar={true} />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="absolute bottom-3 right-3 h-7 gap-1"
+              onClick={() => setIsEditingDesc((s) => !s)}
+              title={isEditingDesc ? "Preview" : "Edit"}
+            >
+              <Wand2 className="h-4 w-4" />
+              {isEditingDesc ? "Preview" : "Edit"}
+            </Button>
+          </div>
+          {!isEditingDesc && (
+            <div className="sr-only">
+              <SafeMarkdown content={desc} />
+            </div>
+          )}
+        </div>
 
-          <div className="flex gap-2 pt-2">
-            <FieldButton icon={<Calendar className="h-4 w-4" />}>
-              Start date → End date
-            </FieldButton>
+        <div className="px-5 pb-4 pt-3">
+          <div className="flex flex-wrap gap-2">
+            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
+            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>End date</FieldChip>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 mt-8">
-          <Button 
-            variant="ghost" 
-            onClick={handleCancel}
-            className="px-6"
-          >
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleSave}
-            className="px-6 bg-purple-600 hover:bg-purple-700"
-          >
-            Create cycle
-          </Button>
+        <div className="px-5 py-4 border-t flex items-center justify-end">
+          <div className="flex items-center gap-2">
+            <Button onClick={handleSave}>Save</Button>
+          </div>
         </div>
       </CardContent>
     </Card>

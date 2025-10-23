@@ -1,7 +1,7 @@
 import React from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Copy, Box } from "lucide-react";
+import { Copy } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 
@@ -39,18 +39,16 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
     <Card className={className}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-              <Box className="h-3.5 w-3.5" />
-              <span className="font-medium">Module</span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-muted-foreground">Module</span>
               {projectName && (
-                <>
-                  <span>•</span>
-                  <span>{projectName}</span>
-                </>
+                <span className="text-xs text-muted-foreground">
+                  • {projectName}
+                </span>
               )}
             </div>
-            <div className="text-base font-semibold leading-snug break-words">{title}</div>
+            <div className="mt-0.5 text-base font-semibold leading-snug break-words">{title}</div>
           </div>
           <div className="flex items-center gap-1 text-xs">
             {link && (
