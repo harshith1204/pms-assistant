@@ -194,12 +194,14 @@ class TTLCache:
 
 
 
-
 # Lightweight helper to create natural, user-facing action statements
 async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
     """Generate a concise, user-facing action sentence based on planned tool calls.
 
     The sentence avoids exposing internal tooling and focuses on intent/benefit.
+    
+    NOTE: This internal LLM call does NOT use streaming callbacks to avoid exposing
+    the action generation process to the frontend. Only the final action result is emitted.
     """
     try:
         if not tool_calls:
@@ -251,11 +253,12 @@ async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, 
             model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
             temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
             max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
-            streaming=True,
+            streaming=False,  # Disable streaming for internal action generation
             verbose=False,
             top_p=0.8,
         )
-        # Use the existing model; rely on instruction for brevity
+        # Call WITHOUT callback handler - this is an internal utility LLM call
+        # The result will be emitted via emit_dynamic_action, not as raw tokens
         resp = await llm.ainvoke(action_prompt)
         action_text = str(getattr(resp, "content", "")).strip().strip("\".")
         if not action_text or len(action_text) > 100:
@@ -653,7 +656,7 @@ class MongoDBAgent:
                 # The LLM decides execution order by how it calls tools:
                 # - Multiple tools in one response = parallel execution
                 # - Sequential needs are handled by the LLM making separate calls
-                # Emit a dynamic, user-facing action line before running any tools
+                # Generate user-friendly action from tool calls (don't save intermediate response to DB)
                 try:
                     action_text = await generate_action_statement(query, response.tool_calls)
                     try:
@@ -854,6 +857,11 @@ class MongoDBAgent:
                             "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); generate_content needs content_type + prompt."
                         ))
                         invoke_messages = messages + [routing_instructions]
+                        # Determine if we should stream this response
+                        # Only stream for finalization (after tools complete)
+                        # Don't stream intermediate responses that will call tools
+                        should_stream_response = need_finalization
+                        
                         if need_finalization:
                             finalization_instructions = SystemMessage(content=(
                                 "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
@@ -873,10 +881,16 @@ class MongoDBAgent:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
-                        response = await llm_with_tools.ainvoke(
-                            invoke_messages,
-                            config={"callbacks": [callback_handler]},
-                        )
+                        
+                        # Stream only when should_stream_response is True (finalization or direct answer)
+                        if should_stream_response and callback_handler:
+                            response = await llm_with_tools.ainvoke(
+                                invoke_messages,
+                                config={"callbacks": [callback_handler]},
+                            )
+                        else:
+                            # No streaming for intermediate responses that will call tools
+                            response = await llm_with_tools.ainvoke(invoke_messages)
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
@@ -886,26 +900,38 @@ class MongoDBAgent:
                                 pass
                     last_response = response
 
-                    # Persist assistant message
-                    await conversation_memory.add_message(conversation_id, response)
-                    try:
-                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                    except Exception as e:
-                        print(f"Warning: failed to save assistant message: {e}")
-
                     if not getattr(response, "tool_calls", None):
+                        # This is the final response (no tool calls) - save and stream it
+                        await conversation_memory.add_message(conversation_id, response)
+                        try:
+                            await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                        except Exception as e:
+                            print(f"Warning: failed to save assistant message: {e}")
+                        
+                        # If we didn't stream it yet, manually send tokens now
+                        if not should_stream_response and callback_handler:
+                            # This was a direct answer (no tools needed), stream it now
+                            try:
+                                await callback_handler.on_llm_start()
+                                content = response.content or ""
+                                # Send tokens character by character for streaming effect
+                                for token in content:
+                                    await callback_handler.on_llm_new_token(token)
+                                await callback_handler.on_llm_end()
+                            except Exception:
+                                pass
                         yield response.content
                         return
 
                     # Execute requested tools with streaming callbacks
                     # The LLM decides execution order by how it calls tools
-                    # Emit a dynamic, user-facing action line before running any tools
-                    try:
-                        action_text = await generate_action_statement(query, response.tool_calls)
-                        if callback_handler:
-                            await callback_handler.emit_dynamic_action(action_text)
-                    except Exception:
-                        pass
+                    # Send intermediate response content as action (not saved to conversation)
+                    if callback_handler and response.content:
+                        try:
+                            # Send the intermediate LLM response as an action
+                            await callback_handler.emit_dynamic_action(response.content)
+                        except Exception:
+                            pass
                     messages.append(response)
                     did_any_tool = False
                     
