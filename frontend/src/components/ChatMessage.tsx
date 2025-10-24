@@ -5,6 +5,7 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { Button } from "@/components/ui/button";
 import { AgentActivity } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
+import { type Project } from "@/api/projects";
 
 interface ChatMessageProps {
   id: string;
@@ -69,6 +70,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [savedPage, setSavedPage] = useState<null | { id: string; title: string; content: string; link?: string }>(null);
   const [savedCycle, setSavedCycle] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
   const [savedModule, setSavedModule] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
+
+  // Project selection state
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -151,11 +155,18 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
               <WorkItemCreateInline
                 title={workItem.title}
                 description={workItem.description}
-                onSave={async ({ title, description }) => {
+                selectedProject={selectedProject}
+                onProjectSelect={setSelectedProject}
+                onSave={async ({ title, description, project }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
-                    const created = await createWorkItem({ title, description, projectId: projectId || undefined, projectIdentifier: workItem.projectIdentifier });
+                    const created = await createWorkItem({
+                      title,
+                      description,
+                      projectId: project?.projectId,
+                      projectIdentifier: workItem.projectIdentifier
+                    });
                     setSavedWorkItem(created);
                     toast({ title: "Work item saved", description: "Your work item has been created." });
                   } catch (e: any) {
@@ -179,11 +190,13 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
             ) : (
               <PageCreateInline
                 initialEditorJs={page.blocks}
-                onSave={async ({ title, editorJs }) => {
+                selectedProject={selectedProject}
+                onProjectSelect={setSelectedProject}
+                onSave={async ({ title, editorJs, project }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
-                    const created = await createPage({ title, content: editorJs, projectId });
+                    const created = await createPage({ title, content: editorJs, projectId: project?.projectId });
                     setSavedPage(created);
                     toast({ title: "Page saved", description: "Your page has been created." });
                   } catch (e: any) {
@@ -208,11 +221,19 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
               <CycleCreateInline
                 title={cycle.title}
                 description={cycle.description}
-                onSave={async ({ title, description }) => {
+                selectedProject={selectedProject}
+                onProjectSelect={setSelectedProject}
+                onSave={async ({ title, description, project }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
-                    const created = await createCycle({ title, description, projectId, startDate: cycle.startDate, endDate: cycle.endDate });
+                    const created = await createCycle({
+                      title,
+                      description,
+                      projectId: project?.projectId,
+                      startDate: cycle.startDate,
+                      endDate: cycle.endDate
+                    });
                     setSavedCycle(created);
                     toast({ title: "Cycle saved", description: "Your cycle has been created." });
                   } catch (e: any) {
@@ -237,11 +258,13 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
               <ModuleCreateInline
                 title={module.title}
                 description={module.description}
-                onSave={async ({ title, description }) => {
+                selectedProject={selectedProject}
+                onProjectSelect={setSelectedProject}
+                onSave={async ({ title, description, project }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
-                    const created = await createModule({ title, description, projectId });
+                    const created = await createModule({ title, description, projectId: project?.projectId });
                     setSavedModule(created);
                     toast({ title: "Module saved", description: "Your module has been created." });
                   } catch (e: any) {
