@@ -568,7 +568,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 filtered = parsed
 
 
-            def format_llm_friendly(data, max_items=50, primary_entity: Optional[str] = None):
+            
             def format_llm_friendly(data, max_items=50, primary_entity: Optional[str] = None):
                 """Format data in a more LLM-friendly way to avoid hallucinations."""
                 def get_nested(d: Dict[str, Any], key: str) -> Any:
