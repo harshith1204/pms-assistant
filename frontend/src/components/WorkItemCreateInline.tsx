@@ -9,14 +9,18 @@ import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
+import MemberSelector from "@/components/MemberSelector";
 import { type Project } from "@/api/projects";
+import { type ProjectMember } from "@/api/members";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
   description?: string;
   selectedProject?: Project | null;
+  selectedAssignees?: ProjectMember[];
   onProjectSelect?: (project: Project | null) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null }) => void;
+  onAssigneesSelect?: (assignees: ProjectMember[]) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[] }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -39,7 +43,9 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   title = "",
   description = "",
   selectedProject = null,
+  selectedAssignees = [],
   onProjectSelect,
+  onAssigneesSelect,
   onSave,
   onDiscard,
   className
@@ -49,7 +55,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees });
   };
 
   return (
@@ -102,7 +108,30 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
             />
             <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>Backlog</FieldChip>
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>None</FieldChip>
-            <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
+            {selectedProject && (
+              <MemberSelector
+                projectId={selectedProject.projectId}
+                selectedMembers={selectedAssignees}
+                onMembersSelect={onAssigneesSelect || (() => {})}
+                mode="multiple"
+                title="Select Assignees"
+                placeholder="Assignees"
+                trigger={
+                  <FieldChip
+                    icon={<Users className="h-3.5 w-3.5" />}
+                    className={selectedAssignees.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedAssignees.length > 0
+                      ? `${selectedAssignees.length} assignee${selectedAssignees.length > 1 ? 's' : ''}`
+                      : "Assignees"
+                    }
+                  </FieldChip>
+                }
+              />
+            )}
+            {!selectedProject && (
+              <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
+            )}
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>Labels</FieldChip>
             <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
             <FieldChip icon={<CalendarDays className="h-3.5 w-3.5" />}>Due date</FieldChip>

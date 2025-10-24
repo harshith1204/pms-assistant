@@ -4,18 +4,24 @@ import { Input } from "@/components/ui/input";
 import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
-import { Calendar, Users, UserCircle, Layers, Wand2, Briefcase } from "lucide-react";
+import { Calendar, Users, UserCircle, Layers, Wand2, Briefcase, Crown } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
+import MemberSelector from "@/components/MemberSelector";
 import { type Project } from "@/api/projects";
+import { type ProjectMember } from "@/api/members";
 
 export type ModuleCreateInlineProps = {
   title?: string;
   description?: string;
   selectedProject?: Project | null;
+  selectedLead?: ProjectMember | null;
+  selectedMembers?: ProjectMember[];
   onProjectSelect?: (project: Project | null) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null }) => void;
+  onLeadSelect?: (lead: ProjectMember | null) => void;
+  onMembersSelect?: (members: ProjectMember[]) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; lead?: ProjectMember | null; members?: ProjectMember[] }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -38,7 +44,11 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
   title = "",
   description = "",
   selectedProject = null,
+  selectedLead = null,
+  selectedMembers = [],
   onProjectSelect,
+  onLeadSelect,
+  onMembersSelect,
   onSave,
   onDiscard,
   className
@@ -48,7 +58,7 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, lead: selectedLead, members: selectedMembers });
   };
 
   return (
@@ -102,8 +112,52 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
             <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
             <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>End date</FieldChip>
             <FieldChip icon={<Layers className="h-3.5 w-3.5" />}>Backlog</FieldChip>
-            <FieldChip icon={<UserCircle className="h-3.5 w-3.5" />}>Lead</FieldChip>
-            <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Members</FieldChip>
+            {selectedProject && (
+              <MemberSelector
+                projectId={selectedProject.projectId}
+                selectedMembers={selectedLead ? [selectedLead] : []}
+                onMembersSelect={(members) => onLeadSelect?.(members.length > 0 ? members[0] : null)}
+                mode="single"
+                title="Select Lead"
+                placeholder="Lead"
+                trigger={
+                  <FieldChip
+                    icon={<Crown className="h-3.5 w-3.5" />}
+                    className={selectedLead ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedLead ? selectedLead.displayName || selectedLead.name : "Lead"}
+                  </FieldChip>
+                }
+              />
+            )}
+            {!selectedProject && (
+              <FieldChip icon={<UserCircle className="h-3.5 w-3.5" />}>Lead</FieldChip>
+            )}
+
+            {selectedProject && (
+              <MemberSelector
+                projectId={selectedProject.projectId}
+                selectedMembers={selectedMembers}
+                onMembersSelect={onMembersSelect || (() => {})}
+                mode="multiple"
+                title="Select Members"
+                placeholder="Members"
+                trigger={
+                  <FieldChip
+                    icon={<Users className="h-3.5 w-3.5" />}
+                    className={selectedMembers.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedMembers.length > 0
+                      ? `${selectedMembers.length} member${selectedMembers.length > 1 ? 's' : ''}`
+                      : "Members"
+                    }
+                  </FieldChip>
+                }
+              />
+            )}
+            {!selectedProject && (
+              <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Members</FieldChip>
+            )}
           </div>
         </div>
 
