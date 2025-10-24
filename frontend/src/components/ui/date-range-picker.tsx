@@ -59,7 +59,7 @@ export function DateRangePicker({
           <span className="whitespace-nowrap">{formatDateRange(date)}</span>
         </div>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
+      <PopoverContent className="w-auto min-w-[280px] max-w-[600px] p-0 border border-border bg-popover shadow-lg" align="start">
         <Calendar
           initialFocus
           mode="range"
