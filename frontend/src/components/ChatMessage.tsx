@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { AgentActivity } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
 import { type Project } from "@/api/projects";
+import { DateRange } from "react-day-picker";
 
 interface ChatMessageProps {
   id: string;
@@ -79,6 +80,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [selectedAssignees, setSelectedAssignees] = useState<ProjectMember[]>([]);
   const [selectedLead, setSelectedLead] = useState<ProjectMember | null>(null);
   const [selectedMembers, setSelectedMembers] = useState<ProjectMember[]>([]);
+
+  // Date range selection state
+  const [selectedDateRange, setSelectedDateRange] = useState<DateRange | undefined>();
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -163,9 +167,11 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 description={workItem.description}
                 selectedProject={selectedProject}
                 selectedAssignees={selectedAssignees}
+                selectedDateRange={selectedDateRange}
                 onProjectSelect={setSelectedProject}
                 onAssigneesSelect={setSelectedAssignees}
-                onSave={async ({ title, description, project, assignees }) => {
+                onDateSelect={setSelectedDateRange}
+                onSave={async ({ title, description, project, assignees, startDate, endDate }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
@@ -174,7 +180,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       description,
                       projectId: project?.projectId,
                       projectIdentifier: workItem.projectIdentifier,
-                      assignees: assignees
+                      assignees: assignees,
+                      startDate,
+                      endDate
                     });
                     setSavedWorkItem(created);
                     toast({ title: "Work item saved", description: "Your work item has been created." });
@@ -231,8 +239,10 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 title={cycle.title}
                 description={cycle.description}
                 selectedProject={selectedProject}
+                selectedDateRange={selectedDateRange}
                 onProjectSelect={setSelectedProject}
-                onSave={async ({ title, description, project }) => {
+                onDateSelect={setSelectedDateRange}
+                onSave={async ({ title, description, project, startDate, endDate }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
@@ -240,8 +250,8 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       title,
                       description,
                       projectId: project?.projectId,
-                      startDate: cycle.startDate,
-                      endDate: cycle.endDate
+                      startDate: startDate || cycle.startDate,
+                      endDate: endDate || cycle.endDate
                     });
                     setSavedCycle(created);
                     toast({ title: "Cycle saved", description: "Your cycle has been created." });
@@ -270,10 +280,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 selectedProject={selectedProject}
                 selectedLead={selectedLead}
                 selectedMembers={selectedMembers}
+                selectedDateRange={selectedDateRange}
                 onProjectSelect={setSelectedProject}
                 onLeadSelect={setSelectedLead}
                 onMembersSelect={setSelectedMembers}
-                onSave={async ({ title, description, project, lead, members }) => {
+                onDateSelect={setSelectedDateRange}
+                onSave={async ({ title, description, project, lead, members, startDate, endDate }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
@@ -282,7 +294,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       description,
                       projectId: project?.projectId,
                       lead,
-                      members
+                      members,
+                      startDate,
+                      endDate
                     });
                     setSavedModule(created);
                     toast({ title: "Module saved", description: "Your module has been created." });

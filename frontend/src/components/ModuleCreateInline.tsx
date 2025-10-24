@@ -9,8 +9,10 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
 import MemberSelector from "@/components/MemberSelector";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
+import { DateRange } from "react-day-picker";
 
 export type ModuleCreateInlineProps = {
   title?: string;
@@ -18,10 +20,12 @@ export type ModuleCreateInlineProps = {
   selectedProject?: Project | null;
   selectedLead?: ProjectMember | null;
   selectedMembers?: ProjectMember[];
+  selectedDateRange?: DateRange;
   onProjectSelect?: (project: Project | null) => void;
   onLeadSelect?: (lead: ProjectMember | null) => void;
   onMembersSelect?: (members: ProjectMember[]) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; lead?: ProjectMember | null; members?: ProjectMember[] }) => void;
+  onDateSelect?: (dateRange: DateRange | undefined) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; lead?: ProjectMember | null; members?: ProjectMember[]; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -46,9 +50,11 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
   selectedProject = null,
   selectedLead = null,
   selectedMembers = [],
+  selectedDateRange,
   onProjectSelect,
   onLeadSelect,
   onMembersSelect,
+  onDateSelect,
   onSave,
   onDiscard,
   className
@@ -58,7 +64,17 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject, lead: selectedLead, members: selectedMembers });
+    const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
+    const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
+    onSave?.({
+      title: name.trim(),
+      description: desc,
+      project: selectedProject,
+      lead: selectedLead,
+      members: selectedMembers,
+      startDate,
+      endDate
+    });
   };
 
   return (
@@ -109,8 +125,12 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
                 </FieldChip>
               )}
             />
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>End date</FieldChip>
+            <DateRangePicker
+              date={selectedDateRange}
+              onDateChange={onDateSelect}
+              placeholder="Duration"
+              icon={<Calendar className="h-3.5 w-3.5" />}
+            />
             <FieldChip icon={<Layers className="h-3.5 w-3.5" />}>Backlog</FieldChip>
             {selectedProject && (
               <MemberSelector

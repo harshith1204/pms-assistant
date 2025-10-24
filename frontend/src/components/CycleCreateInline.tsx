@@ -8,14 +8,18 @@ import { Calendar, Wand2, Briefcase } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
+import { DateRange } from "react-day-picker";
 
 export type CycleCreateInlineProps = {
   title?: string;
   description?: string;
   selectedProject?: Project | null;
+  selectedDateRange?: DateRange;
   onProjectSelect?: (project: Project | null) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null }) => void;
+  onDateSelect?: (dateRange: DateRange | undefined) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -38,7 +42,9 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
   title = "",
   description = "",
   selectedProject = null,
+  selectedDateRange,
   onProjectSelect,
+  onDateSelect,
   onSave,
   onDiscard,
   className
@@ -48,7 +54,9 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject });
+    const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
+    const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, startDate, endDate });
   };
 
   return (
@@ -99,8 +107,12 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
                 </FieldChip>
               )}
             />
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>End date</FieldChip>
+            <DateRangePicker
+              date={selectedDateRange}
+              onDateChange={onDateSelect}
+              placeholder="Duration"
+              icon={<Calendar className="h-3.5 w-3.5" />}
+            />
           </div>
         </div>
 
