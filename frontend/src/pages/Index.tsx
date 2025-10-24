@@ -64,11 +64,11 @@ const VIEW_GETTING_STARTED = "getting-started";
 
 // Hardcoded values for now - will be replaced with dynamic loading from parent website later
 const getMemberId = () => {
-  return '646ea0b7-72b5-011f-6e6e-932d102d90b8'; // MEMBER_UUID from .env
+  return '1f01b572-b7a0-6e64-b890-2d102d936e6e'; // MEMBER_UUID from .env
 };
 
 const getBusinessId = () => {
-  return '8a683ad2-26cb-ed1e-29b2-da199d5763bd'; // BUSINESS_UUID from .env
+  return '1f067040-82d8-6384-a1fc-996e5f7d7335'; // BUSINESS_UUID from .env
 };
 
 /*

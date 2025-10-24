@@ -4,38 +4,77 @@ import { Input } from "@/components/ui/input";
 import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
-import { Calendar, Users, UserCircle, Layers, Wand2, Briefcase } from "lucide-react";
+import { Calendar, Users, UserCircle, Layers, Wand2, Briefcase, Crown } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
+import ProjectSelector from "@/components/ProjectSelector";
+import MemberSelector from "@/components/MemberSelector";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { type Project } from "@/api/projects";
+import { type ProjectMember } from "@/api/members";
+import { DateRange } from "react-day-picker";
 
 export type ModuleCreateInlineProps = {
   title?: string;
   description?: string;
-  onSave?: (values: { title: string; description: string }) => void;
+  selectedProject?: Project | null;
+  selectedLead?: ProjectMember | null;
+  selectedMembers?: ProjectMember[];
+  selectedDateRange?: DateRange;
+  onProjectSelect?: (project: Project | null) => void;
+  onLeadSelect?: (lead: ProjectMember | null) => void;
+  onMembersSelect?: (members: ProjectMember[]) => void;
+  onDateSelect?: (dateRange: DateRange | undefined) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; lead?: ProjectMember | null; members?: ProjectMember[]; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
 
-const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode }>> = ({ icon, children }) => (
-  <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background">
+const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
+  <div
+    className={cn(
+      "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background",
+      onClick && "cursor-pointer hover:bg-muted/50 hover:border-primary/20 transition-colors",
+      className
+    )}
+    onClick={onClick}
+  >
     {icon}
     <span className="whitespace-nowrap">{children}</span>
   </div>
 );
 
-export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({ 
-  title = "", 
-  description = "", 
-  onSave, 
-  onDiscard, 
-  className 
+export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
+  title = "",
+  description = "",
+  selectedProject = null,
+  selectedLead = null,
+  selectedMembers = [],
+  selectedDateRange,
+  onProjectSelect,
+  onLeadSelect,
+  onMembersSelect,
+  onDateSelect,
+  onSave,
+  onDiscard,
+  className
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc });
+    const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
+    const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
+    onSave?.({
+      title: name.trim(),
+      description: desc,
+      project: selectedProject,
+      lead: selectedLead,
+      members: selectedMembers,
+      startDate,
+      endDate
+    });
   };
 
   return (
@@ -74,12 +113,71 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
 
         <div className="px-5 pb-4 pt-3">
           <div className="flex flex-wrap gap-2">
-            <FieldChip icon={<Briefcase className="h-3.5 w-3.5" />}>Project</FieldChip>
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>End date</FieldChip>
+            <ProjectSelector
+              selectedProject={selectedProject}
+              onProjectSelect={onProjectSelect}
+              trigger={(
+                <FieldChip
+                  icon={<Briefcase className="h-3.5 w-3.5" />}
+                  className={selectedProject ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                >
+                  {selectedProject ? `${selectedProject.projectName} (${selectedProject.projectDisplayId})` : "Project"}
+                </FieldChip>
+              )}
+            />
+            <DateRangePicker
+              date={selectedDateRange}
+              onDateChange={onDateSelect}
+              placeholder="Duration"
+              icon={<Calendar className="h-3.5 w-3.5" />}
+            />
             <FieldChip icon={<Layers className="h-3.5 w-3.5" />}>Backlog</FieldChip>
-            <FieldChip icon={<UserCircle className="h-3.5 w-3.5" />}>Lead</FieldChip>
-            <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Members</FieldChip>
+            {selectedProject && (
+              <MemberSelector
+                projectId={selectedProject.projectId}
+                selectedMembers={selectedLead ? [selectedLead] : []}
+                onMembersSelect={(members) => onLeadSelect?.(members.length > 0 ? members[0] : null)}
+                mode="single"
+                title="Select Lead"
+                placeholder="Lead"
+                trigger={
+                  <FieldChip
+                    icon={<Crown className="h-3.5 w-3.5" />}
+                    className={selectedLead ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedLead ? selectedLead.displayName || selectedLead.name : "Lead"}
+                  </FieldChip>
+                }
+              />
+            )}
+            {!selectedProject && (
+              <FieldChip icon={<UserCircle className="h-3.5 w-3.5" />}>Lead</FieldChip>
+            )}
+
+            {selectedProject && (
+              <MemberSelector
+                projectId={selectedProject.projectId}
+                selectedMembers={selectedMembers}
+                onMembersSelect={onMembersSelect || (() => {})}
+                mode="multiple"
+                title="Select Members"
+                placeholder="Members"
+                trigger={
+                  <FieldChip
+                    icon={<Users className="h-3.5 w-3.5" />}
+                    className={selectedMembers.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedMembers.length > 0
+                      ? `${selectedMembers.length} member${selectedMembers.length > 1 ? 's' : ''}`
+                      : "Members"
+                    }
+                  </FieldChip>
+                }
+              />
+            )}
+            {!selectedProject && (
+              <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Members</FieldChip>
+            )}
           </div>
         </div>
 
