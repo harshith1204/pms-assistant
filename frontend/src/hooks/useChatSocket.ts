@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_WS_URL } from "@/config";
 
 export type ChatEvent =
-  | { type: "connected"; client_id: string; timestamp: string }
+  | { type: "connected"; user_id: string; business_id?: string; timestamp: string }
+  | { type: "handshake_ack"; user_id: string; business_id: string; timestamp: string }
   | { type: "user_message"; content: string; conversation_id: string; timestamp: string }
   | { type: "llm_start"; timestamp: string }
   | { type: "token"; content: string; timestamp: string }
@@ -21,16 +22,20 @@ export type SendMessagePayload = {
   message: string;
   conversation_id?: string | null;
   planner?: boolean;
+  member_id?: string;
+  business_id?: string;
 };
 
 type UseChatSocketOptions = {
   url?: string;
   onEvent?: (event: ChatEvent) => void;
   autoReconnect?: boolean;
+  member_id?: string;
+  business_id?: string;
 };
 
 export function useChatSocket(options: UseChatSocketOptions = {}) {
-  const { url = API_WS_URL, onEvent, autoReconnect = true } = options;
+  const { url = API_WS_URL, onEvent, autoReconnect = true, member_id, business_id } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
@@ -58,13 +63,29 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
 
       ws.onopen = () => {
         setConnected(true);
+        // Send initial handshake with member_id and business_id
+        if (member_id || business_id) {
+          try {
+            ws.send(JSON.stringify({
+              type: "handshake",
+              member_id,
+              business_id,
+              timestamp: new Date().toISOString()
+            }));
+          } catch (e) {
+            console.warn("Failed to send handshake:", e);
+          }
+        }
       };
 
       ws.onmessage = (event: MessageEvent) => {
         try {
           const data: ChatEvent = JSON.parse(event.data);
-          if (data.type === "connected" && (data as any).client_id) {
-            setClientId((data as any).client_id);
+          if (data.type === "connected" && (data as any).user_id) {
+            setClientId((data as any).user_id);
+          }
+          if (data.type === "handshake_ack" && data.user_id) {
+            setClientId(data.user_id);
           }
           onEvent?.(data);
         } catch (e) {
@@ -112,6 +133,8 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
       message: payload.message,
       conversation_id: payload.conversation_id || undefined,
       planner: !!payload.planner,
+      member_id: payload.member_id,
+      business_id: payload.business_id,
     };
     try {
       wsRef.current.send(JSON.stringify(body));

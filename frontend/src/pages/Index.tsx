@@ -62,6 +62,35 @@ const VIEW_QUERY_PARAM = "view";
 const VIEW_SETTINGS = "settings";
 const VIEW_GETTING_STARTED = "getting-started";
 
+// Hardcoded values for now - will be replaced with dynamic loading from parent website later
+const getMemberId = () => {
+  return '646ea0b7-72b5-011f-6e6e-932d102d90b8'; // MEMBER_UUID from .env
+};
+
+const getBusinessId = () => {
+  return '8a683ad2-26cb-ed1e-29b2-da199d5763bd'; // BUSINESS_UUID from .env
+};
+
+/*
+// Older localStorage approach - commented out but preserved for future implementation
+const getMemberIdFromStorage = () => {
+  return localStorage.getItem('staffId') || undefined;
+};
+
+const getBusinessIdFromStorage = () => {
+  const bDetails = localStorage.getItem('bDetails');
+  if (bDetails) {
+    try {
+      const businessData = JSON.parse(bDetails);
+      return businessData.id || businessData.uuid || businessData._id || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+*/
+
 const Index = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   
@@ -482,7 +511,11 @@ const Index = () => {
     }
   }, []);
 
-  const { connected, send } = useChatSocket({ onEvent: handleSocketEvent });
+  const { connected, send } = useChatSocket({
+    onEvent: handleSocketEvent,
+    member_id: getMemberId(),
+    business_id: getBusinessId()
+  });
 
   // Load conversations on mount
   useEffect(() => {
@@ -666,7 +699,12 @@ const Index = () => {
     }
 
     // Send to backend via WebSocket
-    const ok = send({ message: content, conversation_id: convId });
+    const ok = send({
+      message: content,
+      conversation_id: convId,
+      member_id: getMemberId(),
+      business_id: getBusinessId()
+    });
     if (!ok) {
       // Fallback: show error and stop loading
       setMessages((prev) => [

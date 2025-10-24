@@ -99,6 +99,10 @@ class WebSocketManager:
             del self.active_connections[user_id]
             print(f"Client {user_id} disconnected. Total connections: {len(self.active_connections)}")
 
+    def get_connection(self, user_id: str) -> WebSocket | None:
+        """Get a WebSocket connection by user_id"""
+        return self.active_connections.get(user_id)
+
     async def send_message(self, user_id: str, message: dict):
         """Send a message to a specific client"""
         if user_id in self.active_connections:
@@ -125,40 +129,47 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
     try:
         await websocket.accept()
 
-        # Set default user context for development
-        # Commented out hardcoded business ID to use OS environment variable
-        # user_context = {
-        #     "user_id": "default_user",
-        #     "businessId": "default_business",
-        # }
-
-        # Load business ID from OS environment variable
-        # Use BUSINESS_UUID to match mongo/client.py expectations
-        business_id_from_env = os.getenv("BUSINESS_UUID", os.getenv("BUSINESS_ID", ""))
-        user_id_from_env = os.getenv("MEMBER_UUID", os.getenv("STAFF_ID", "default_user"))
+        # Initialize context variables
         user_context = {
-            "user_id": user_id_from_env,
-            "businessId": business_id_from_env,
+            "user_id": None,
+            "businessId": None,
         }
 
-        # Set globals for access in other files
-        user_id_global = user_context["user_id"]
-        business_id_global = user_context["businessId"]
-
-        await ws_manager.connect(websocket, user_context["user_id"])
+        await ws_manager.connect(websocket, "connecting")
         authenticated = True
+
+        # Set a timeout for handshake completion (30 seconds)
+        import asyncio
+        handshake_timeout = 30
+        handshake_timer = None
+
+        async def check_handshake_timeout():
+            nonlocal authenticated
+            await asyncio.sleep(handshake_timeout)
+            if not user_context["user_id"] or not user_context["businessId"]:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Handshake timeout. Please send member_id and business_id within 30 seconds.",
+                    "timestamp": datetime.now().isoformat()
+                })
+                authenticated = False
+
+        handshake_timer = asyncio.create_task(check_handshake_timeout())
 
         # === MAIN MESSAGE LOOP ===
         while authenticated:
-            await websocket.send_json({
-                "type": "connected",
-                "user_id": user_context["user_id"],
-                "timestamp": datetime.now().isoformat()
-            })
+            # Send connected message only after handshake is received
+            if user_context["user_id"] and user_context["businessId"]:
+                await websocket.send_json({
+                    "type": "connected",
+                    "user_id": user_context["user_id"],
+                    "business_id": user_context["businessId"],
+                    "timestamp": datetime.now().isoformat()
+                })
 
             data_str = await websocket.receive_text()
             data = json.loads(data_str)
-            
+
             if data.get("type") == "ping":
                 await websocket.send_json({
                     "type": "pong",
@@ -166,14 +177,61 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 })
                 continue
 
+            # Handle handshake message to set user context
+            if data.get("type") == "handshake":
+                user_context["user_id"] = data.get("member_id")
+                user_context["businessId"] = data.get("business_id")
+
+                # Cancel handshake timeout since we received the handshake
+                if handshake_timer:
+                    handshake_timer.cancel()
+
+                # Set globals for access in other files
+                user_id_global = user_context["user_id"]
+                business_id_global = user_context["businessId"]
+
+                # Update WebSocket manager with the actual user_id
+                ws_manager.disconnect("connecting")
+                await ws_manager.connect(websocket, user_context["user_id"])
+
+                await websocket.send_json({
+                    "type": "handshake_ack",
+                    "user_id": user_context["user_id"],
+                    "business_id": user_context["businessId"],
+                    "timestamp": datetime.now().isoformat()
+                })
+                continue
+
+            # Check if handshake has been completed
+            if not user_context["user_id"] or not user_context["businessId"]:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Handshake required. Please send member_id and business_id.",
+                    "timestamp": datetime.now().isoformat()
+                })
+                continue
+
             # Use the trusted context for all operations
-            user_id = user_context["user_id"]
-            business_id = user_context["businessId"]
+            user_id = data.get("member_id") or user_context["user_id"]
+            business_id = data.get("business_id") or user_context["businessId"]
+
+            # Update global context if new values are provided
+            if data.get("member_id") and user_id != user_context["user_id"]:
+                user_context["user_id"] = user_id
+                user_id_global = user_id
+
+            if data.get("business_id") and business_id != user_context["businessId"]:
+                user_context["businessId"] = business_id
+                business_id_global = business_id
 
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{user_id}"
             print(f"conversation_id: {conversation_id}")
             force_planner = data.get("planner", False)
+
+            # Proactively cache older conversations to reduce Redis latency
+            from memory import conversation_memory
+            await conversation_memory.ensure_conversation_cached(conversation_id)
 
 
             await websocket.send_json({
@@ -264,10 +322,16 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             })
 
     except WebSocketDisconnect:
+        # Cancel handshake timer if it exists
+        if handshake_timer:
+            handshake_timer.cancel()
         if user_id:
             ws_manager.disconnect(user_id)
         print(f"Client {user_id} disconnected")
     except Exception as e:
+        # Cancel handshake timer if it exists
+        if handshake_timer:
+            handshake_timer.cancel()
         if not websocket.client_state.name == 'DISCONNECTED':
             await websocket.send_json({
                 "type": "error",

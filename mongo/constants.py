@@ -35,8 +35,31 @@ class _LazyMongoDBTools:
 mongodb_tools = _LazyMongoDBTools()
 
 # --- Global business scoping ---
-# Business UUID to scope all queries/searches. Set via env 
+# Business UUID to scope all queries/searches. Set via env or websocket context
 COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page"}
+
+def _get_business_uuid():
+    """Get business UUID from websocket context or environment variables."""
+    # Try websocket context first (dynamic)
+    try:
+        import websocket_handler as _ws_ctx
+        ws_business = getattr(_ws_ctx, "business_id_global", None)
+        if isinstance(ws_business, str) and ws_business:
+            return ws_business
+    except Exception:
+        pass
+
+    # Fall back to environment variables
+    return os.getenv("BUSINESS_UUID") or os.getenv("BUSINESS_ID") or ""
+
+# BUSINESS_UUID function that returns current value from websocket context or environment
+def BUSINESS_UUID():
+    """Get current business UUID from websocket context or environment variables.
+
+    Returns:
+        str: Current business UUID or empty string if not available
+    """
+    return _get_business_uuid()
 
 def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
     """Convert canonical UUID string to Mongo Binary subtype 3 (legacy UUID).
