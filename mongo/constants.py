@@ -52,6 +52,27 @@ def _get_business_uuid():
     # Fall back to environment variables
     return os.getenv("BUSINESS_UUID") or os.getenv("BUSINESS_ID") or ""
 
+def _get_member_uuid():
+    """Get member UUID from websocket context or environment variables."""
+    # Try websocket context first (dynamic)
+    try:
+        import websocket_handler as _ws_ctx
+        ws_member = getattr(_ws_ctx, "user_id_global", None)
+        if isinstance(ws_member, str) and ws_member:
+            return ws_member
+    except Exception:
+        pass
+
+    # Fall back to environment variables
+    return os.getenv("MEMBER_UUID") or os.getenv("STAFF_ID") or os.getenv("USER_ID") or ""
+
+def _get_current_context():
+    """Get current business and member context."""
+    return {
+        "business_uuid": _get_business_uuid(),
+        "member_uuid": _get_member_uuid()
+    }
+
 # BUSINESS_UUID function that returns current value from websocket context or environment
 def BUSINESS_UUID():
     """Get current business UUID from websocket context or environment variables.
@@ -60,6 +81,15 @@ def BUSINESS_UUID():
         str: Current business UUID or empty string if not available
     """
     return _get_business_uuid()
+
+# MEMBER_UUID function that returns current value from websocket context or environment
+def MEMBER_UUID():
+    """Get current member UUID from websocket context or environment variables.
+
+    Returns:
+        str: Current member UUID or empty string if not available
+    """
+    return _get_member_uuid()
 
 def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
     """Convert canonical UUID string to Mongo Binary subtype 3 (legacy UUID).

@@ -10,12 +10,14 @@ Improves context quality by:
 
 from typing import List, Dict, Any, Optional, Set, Tuple
 import re
-from mongo.constants import BUSINESS_UUID
+import uuid
+from bson import ObjectId, Binary
+from mongo.constants import BUSINESS_UUID, MEMBER_UUID
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
 
 @dataclass
@@ -113,9 +115,32 @@ class ChunkAwareRetriever:
         must_conditions = []
         if content_type:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
+
+        # Business-level scoping
         business_uuid = BUSINESS_UUID()
         if business_uuid:
             must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
+
+        # Member-level project RBAC scoping
+        member_uuid = MEMBER_UUID()
+        if member_uuid:
+            try:
+                # Get list of project IDs this member has access to
+                member_projects = await self._get_member_projects(member_uuid, business_uuid)
+                if member_projects:
+                    # Only apply member filtering for content types that belong to projects
+                    project_content_types = {"page", "work_item", "cycle", "module"}
+                    if content_type is None or content_type in project_content_types:
+                        # Filter by accessible project IDs
+                        must_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
+                    elif content_type == "project":
+                        # For project searches, only show projects the member has access to
+                        must_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
+            except Exception as e:
+                # Error getting member projects - log and skip member filter
+                print(f"⚠️  Error getting member projects for '{member_uuid}': {e}")
+                print(f"   Skipping member filter for search")
+
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
         # Fetch more chunks initially to ensure we have multiple per document
@@ -337,11 +362,32 @@ class ChunkAwareRetriever:
                         filter_conditions.append(
                             FieldCondition(key="content_type", match=MatchValue(value=content_type))
                         )
+                    # Business-level scoping
                     business_uuid = BUSINESS_UUID()
                     if business_uuid:
                         filter_conditions.append(
                             FieldCondition(key="business_id", match=MatchValue(value=business_uuid))
                         )
+
+                    # Member-level project RBAC scoping for adjacent chunks
+                    member_uuid = MEMBER_UUID()
+                    if member_uuid:
+                        try:
+                            # Get list of project IDs this member has access to
+                            member_projects = await self._get_member_projects(member_uuid, business_uuid)
+                            if member_projects:
+                                # Only apply member filtering for content types that belong to projects
+                                project_content_types = {"page", "work_item", "cycle", "module"}
+                                if content_type is None or content_type in project_content_types:
+                                    # Filter by accessible project IDs
+                                    filter_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
+                                elif content_type == "project":
+                                    # For project searches, only show projects the member has access to
+                                    filter_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
+                        except Exception as e:
+                            # Error getting member projects - log and skip member filter
+                            print(f"⚠️  Error getting member projects for adjacent chunks '{member_uuid}': {e}")
+                            print(f"   Skipping member filter for adjacent chunks")
                     
                     # Use scroll to find specific chunk (more efficient than search for exact match)
                     scroll_result = self.qdrant_client.scroll(
@@ -597,6 +643,62 @@ class ChunkAwareRetriever:
                 break
 
         return packed
+
+    def _normalize_mongo_id(self, mongo_id) -> str:
+        """Convert Mongo _id (ObjectId or Binary UUID) into a safe string like Qdrant expects."""
+        if isinstance(mongo_id, ObjectId):
+            return str(mongo_id)
+        elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
+            return str(uuid.UUID(bytes=mongo_id))
+        return str(mongo_id)
+
+    async def _get_member_projects(self, member_uuid: str, business_uuid: str) -> List[str]:
+        """
+        Get list of project IDs that the member has access to.
+
+        Args:
+            member_uuid: The member's UUID
+            business_uuid: The business UUID for additional scoping
+
+        Returns:
+            List of project IDs the member can access (normalized like Qdrant expects)
+        """
+        try:
+            # Import here to avoid circular imports
+            from mongo.client import direct_mongo_client
+            from mongo.constants import uuid_str_to_mongo_binary
+
+            # Query MongoDB to get projects the member is associated with
+            pipeline = [
+                {
+                    "$match": {
+                        "staff._id": uuid_str_to_mongo_binary(member_uuid)
+                    }
+                },
+                {
+                    "$project": {
+                        "project_id": "$project._id"
+                    }
+                }
+            ]
+
+            # Add business scoping if available
+            if business_uuid:
+                pipeline[0]["$match"]["project.business._id"] = uuid_str_to_mongo_binary(business_uuid)
+
+            results = await direct_mongo_client.aggregate("ProjectManagement", "members", pipeline)
+
+            # Extract project IDs and convert back to string format using same normalization as Qdrant
+            project_ids = []
+            for result in results:
+                if result.get("project_id"):
+                    project_ids.append(self._normalize_mongo_id(result["project_id"]))
+
+            return project_ids
+
+        except Exception as e:
+            print(f"Error querying member projects: {e}")
+            return []
 
 
 def format_reconstructed_results(
