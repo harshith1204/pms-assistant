@@ -381,9 +381,9 @@ class LLMIntentParser:
             "- 'top N' / 'first N' / 'N items' → limit: N (e.g., 'top 5' → limit: 5)\n"
             "- 'all' / 'every' / 'list all' → limit: 1000 (high limit to get all results)\n"
             "- 'a few' / 'some' → limit: 5\n"
-            "- 'several' → limit: 10\n"
+            "- 'several' → limit: 50\n"
             "- 'one' / 'single' / 'find X' (singular) → limit: 1, fetch_one: true\n"
-            "- No specific mention → limit: 20 (reasonable default)\n"
+            "- No specific mention → limit: 50 (reasonable default)\n"
             "- For count/aggregation queries → limit: null (no limit needed)\n"
             "IMPORTANT: When 'top N' is used, also infer appropriate sorting:\n"
             "  - 'top N' with priority context → sort_order: {\"priority\": -1}\n"
@@ -441,7 +441,7 @@ class LLMIntentParser:
             '  "group_by": [],\n'
             '  "projections": [],\n'
             '  "sort_order": null,\n'
-            '  "limit": 20,\n'
+            '  "limit": 50,\n'
             '  "skip": 0,\n'
             '  "wants_details": true,\n'
             '  "wants_count": false,\n'
@@ -805,18 +805,18 @@ class LLMIntentParser:
             # For count/aggregation-only queries, no limit needed unless specifically requested
             if aggregations and not wants_details and limit_val is None:
                 limit = None
-            elif limit_val is None or limit_val == 20:
+            elif limit_val is None or limit_val == 50:
                 # Use default limit when LLM doesn't provide a specific limit
-                limit = 20
+                limit = 50
             else:
                 limit = int(limit_val)
                 if limit <= 0:
-                    limit = 20
+                    limit = 50
                 # Cap at 1000 to prevent runaway queries (instead of 100)
                 limit = min(limit, 1000)
         except Exception:
             # Last resort fallback: use default limit
-            limit = 20
+            limit = 50
 
         # Skip (offset)
         skip_val = data.get("skip")
