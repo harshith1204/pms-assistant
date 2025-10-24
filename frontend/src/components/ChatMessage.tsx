@@ -53,10 +53,11 @@ import CycleCreateInline from "@/components/CycleCreateInline";
 import CycleCard from "@/components/CycleCard";
 import ModuleCreateInline from "@/components/ModuleCreateInline";
 import ModuleCard from "@/components/ModuleCard";
-import { createWorkItem } from "@/api/workitems";
+import { createWorkItem, createWorkItemWithMembers } from "@/api/workitems";
 import { createPage } from "@/api/pages";
 import { createCycle } from "@/api/cycles";
-import { createModule } from "@/api/modules";
+import { createModule, createModuleWithMembers } from "@/api/modules";
+import { type ProjectMember } from "@/api/members";
 import { toast } from "@/components/ui/use-toast";
 
 export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module }: ChatMessageProps) => {
@@ -73,6 +74,11 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
 
   // Project selection state
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+
+  // Member selection state
+  const [selectedAssignees, setSelectedAssignees] = useState<ProjectMember[]>([]);
+  const [selectedLead, setSelectedLead] = useState<ProjectMember | null>(null);
+  const [selectedMembers, setSelectedMembers] = useState<ProjectMember[]>([]);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -156,16 +162,19 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 title={workItem.title}
                 description={workItem.description}
                 selectedProject={selectedProject}
+                selectedAssignees={selectedAssignees}
                 onProjectSelect={setSelectedProject}
-                onSave={async ({ title, description, project }) => {
+                onAssigneesSelect={setSelectedAssignees}
+                onSave={async ({ title, description, project, assignees }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
-                    const created = await createWorkItem({
+                    const created = await createWorkItemWithMembers({
                       title,
                       description,
                       projectId: project?.projectId,
-                      projectIdentifier: workItem.projectIdentifier
+                      projectIdentifier: workItem.projectIdentifier,
+                      assignees: assignees
                     });
                     setSavedWorkItem(created);
                     toast({ title: "Work item saved", description: "Your work item has been created." });
@@ -259,12 +268,22 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 title={module.title}
                 description={module.description}
                 selectedProject={selectedProject}
+                selectedLead={selectedLead}
+                selectedMembers={selectedMembers}
                 onProjectSelect={setSelectedProject}
-                onSave={async ({ title, description, project }) => {
+                onLeadSelect={setSelectedLead}
+                onMembersSelect={setSelectedMembers}
+                onSave={async ({ title, description, project, lead, members }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
-                    const created = await createModule({ title, description, projectId: project?.projectId });
+                    const created = await createModuleWithMembers({
+                      title,
+                      description,
+                      projectId: project?.projectId,
+                      lead,
+                      members
+                    });
                     setSavedModule(created);
                     toast({ title: "Module saved", description: "Your module has been created." });
                   } catch (e: any) {
