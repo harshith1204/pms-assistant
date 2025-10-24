@@ -10,17 +10,21 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
 import MemberSelector from "@/components/MemberSelector";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
+import { DateRange } from "react-day-picker";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
   description?: string;
   selectedProject?: Project | null;
   selectedAssignees?: ProjectMember[];
+  selectedDateRange?: DateRange;
   onProjectSelect?: (project: Project | null) => void;
   onAssigneesSelect?: (assignees: ProjectMember[]) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[] }) => void;
+  onDateSelect?: (dateRange: DateRange | undefined) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -44,8 +48,10 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   description = "",
   selectedProject = null,
   selectedAssignees = [],
+  selectedDateRange,
   onProjectSelect,
   onAssigneesSelect,
+  onDateSelect,
   onSave,
   onDiscard,
   className
@@ -55,7 +61,9 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees });
+    const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
+    const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, startDate, endDate });
   };
 
   return (
@@ -133,8 +141,12 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
               <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
             )}
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>Labels</FieldChip>
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
-            <FieldChip icon={<CalendarDays className="h-3.5 w-3.5" />}>Due date</FieldChip>
+            <DateRangePicker
+              date={selectedDateRange}
+              onDateChange={onDateSelect}
+              placeholder="Duration"
+              icon={<Calendar className="h-3.5 w-3.5" />}
+            />
             <FieldChip icon={<CalendarClock className="h-3.5 w-3.5" />}>Cycle</FieldChip>
             <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Modules</FieldChip>
             <FieldChip icon={<Plus className="h-3.5 w-3.5" />}>Add parent</FieldChip>
