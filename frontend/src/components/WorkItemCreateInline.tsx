@@ -8,29 +8,62 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2, Briefcase } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
+import ProjectSelector from "@/components/ProjectSelector";
+import MemberSelector from "@/components/MemberSelector";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { type Project } from "@/api/projects";
+import { type ProjectMember } from "@/api/members";
+import { DateRange } from "react-day-picker";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
   description?: string;
-  onSave?: (values: { title: string; description: string }) => void;
+  selectedProject?: Project | null;
+  selectedAssignees?: ProjectMember[];
+  selectedDateRange?: DateRange;
+  onProjectSelect?: (project: Project | null) => void;
+  onAssigneesSelect?: (assignees: ProjectMember[]) => void;
+  onDateSelect?: (dateRange: DateRange | undefined) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
 
-const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode }>> = ({ icon, children }) => (
-  <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background">
+const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
+  <div
+    className={cn(
+      "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background",
+      onClick && "cursor-pointer hover:bg-muted/50 hover:border-primary/20 transition-colors",
+      className
+    )}
+    onClick={onClick}
+  >
     {icon}
     <span className="whitespace-nowrap">{children}</span>
   </div>
 );
 
-export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ title = "", description = "", onSave, onDiscard, className }) => {
+export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
+  title = "",
+  description = "",
+  selectedProject = null,
+  selectedAssignees = [],
+  selectedDateRange,
+  onProjectSelect,
+  onAssigneesSelect,
+  onDateSelect,
+  onSave,
+  onDiscard,
+  className
+}) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc });
+    const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
+    const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, startDate, endDate });
   };
 
   return (
@@ -69,13 +102,51 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({ titl
 
         <div className="px-5 pb-4 pt-3">
           <div className="flex flex-wrap gap-2">
-            <FieldChip icon={<Briefcase className="h-3.5 w-3.5" />}>Project</FieldChip>
+            <ProjectSelector
+              selectedProject={selectedProject}
+              onProjectSelect={onProjectSelect}
+              trigger={(
+                <FieldChip
+                  icon={<Briefcase className="h-3.5 w-3.5" />}
+                  className={selectedProject ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                >
+                  {selectedProject ? `${selectedProject.projectName} (${selectedProject.projectDisplayId})` : "Project"}
+                </FieldChip>
+              )}
+            />
             <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>Backlog</FieldChip>
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>None</FieldChip>
-            <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
+            {selectedProject && (
+              <MemberSelector
+                projectId={selectedProject.projectId}
+                selectedMembers={selectedAssignees}
+                onMembersSelect={onAssigneesSelect || (() => {})}
+                mode="multiple"
+                title="Select Assignees"
+                placeholder="Assignees"
+                trigger={
+                  <FieldChip
+                    icon={<Users className="h-3.5 w-3.5" />}
+                    className={selectedAssignees.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedAssignees.length > 0
+                      ? `${selectedAssignees.length} assignee${selectedAssignees.length > 1 ? 's' : ''}`
+                      : "Assignees"
+                    }
+                  </FieldChip>
+                }
+              />
+            )}
+            {!selectedProject && (
+              <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
+            )}
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>Labels</FieldChip>
-            <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
-            <FieldChip icon={<CalendarDays className="h-3.5 w-3.5" />}>Due date</FieldChip>
+            <DateRangePicker
+              date={selectedDateRange}
+              onDateChange={onDateSelect}
+              placeholder="Duration"
+              icon={<Calendar className="h-3.5 w-3.5" />}
+            />
             <FieldChip icon={<CalendarClock className="h-3.5 w-3.5" />}>Cycle</FieldChip>
             <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Modules</FieldChip>
             <FieldChip icon={<Plus className="h-3.5 w-3.5" />}>Add parent</FieldChip>

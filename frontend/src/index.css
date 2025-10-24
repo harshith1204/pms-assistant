@@ -121,8 +121,6 @@ All colors MUST be HSL.
     @apply space-y-1.5;
   }
 
-<<<<<<< Current (Your changes)
-=======
   /* Enhanced unordered list styling with custom bullets */
   .markdown-ul {
     list-style: none;
@@ -202,8 +200,6 @@ All colors MUST be HSL.
     font-size: 0.7rem;
     background: hsl(var(--primary) / 0.08);
   }
-
->>>>>>> Incoming (Background Agent changes)
   .prose hr {
     @apply my-6 border-border;
   }
