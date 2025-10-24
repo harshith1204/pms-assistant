@@ -17,10 +17,14 @@ import Delimiter from '@editorjs/delimiter';
 import Embed from '@editorjs/embed';
 import ImageTool from '@editorjs/image';
 import { Briefcase } from 'lucide-react';
+import ProjectSelector from "@/components/ProjectSelector";
+import { type Project } from "@/api/projects";
 
 export type PageCreateInlineProps = {
   initialEditorJs?: { blocks: Block[] };
-  onSave?: (values: { title: string; editorJs: { blocks: Block[] } }) => void;
+  selectedProject?: Project | null;
+  onProjectSelect?: (project: Project | null) => void;
+  onSave?: (values: { title: string; editorJs: { blocks: Block[] }; project?: Project | null }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -33,8 +37,15 @@ interface Block {
 
 // Editor.js data format is already compatible, no conversion needed
 
-const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode }>> = ({ icon, children }) => (
-  <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background">
+const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
+  <div
+    className={cn(
+      "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background",
+      onClick && "cursor-pointer hover:bg-muted/50 hover:border-primary/20 transition-colors",
+      className
+    )}
+    onClick={onClick}
+  >
     {icon}
     <span className="whitespace-nowrap">{children}</span>
   </div>
@@ -44,7 +55,14 @@ const Placeholder: React.FC = () => (
   <div className="absolute pointer-events-none text-muted-foreground/70">Write page content…</div>
 );
 
-export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEditorJs, onSave, onDiscard, className }) => {
+export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
+  initialEditorJs,
+  selectedProject = null,
+  onProjectSelect,
+  onSave,
+  onDiscard,
+  className
+}) => {
   const editorRef = useRef<EditorJS | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [isPreview, setIsPreview] = useState<boolean>(false);
@@ -375,7 +393,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
         const outputData = await editorRef.current.save();
         console.log('Editor.js save data:', outputData);
         setEditorData(outputData);
-        onSave?.({ title: "Untitled Page", editorJs: outputData });
+        onSave?.({ title: "Untitled Page", editorJs: outputData, project: selectedProject });
       } catch (error) {
         console.error('Saving failed: ', error);
       }
@@ -419,7 +437,18 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({ initialEdito
 
         <div className="px-8 pb-4 pt-3">
           <div className="flex flex-wrap gap-2">
-            <FieldChip icon={<Briefcase className="h-3.5 w-3.5" />}>Project</FieldChip>
+            <ProjectSelector
+              selectedProject={selectedProject}
+              onProjectSelect={onProjectSelect}
+              trigger={(
+                <FieldChip
+                  icon={<Briefcase className="h-3.5 w-3.5" />}
+                  className={selectedProject ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                >
+                  {selectedProject ? `${selectedProject.projectName} (${selectedProject.projectDisplayId})` : "Project"}
+                </FieldChip>
+              )}
+            />
           </div>
         </div>
 

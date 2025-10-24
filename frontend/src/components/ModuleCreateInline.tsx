@@ -7,35 +7,48 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Calendar, Users, UserCircle, Layers, Wand2, Briefcase } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
+import ProjectSelector from "@/components/ProjectSelector";
+import { type Project } from "@/api/projects";
 
 export type ModuleCreateInlineProps = {
   title?: string;
   description?: string;
-  onSave?: (values: { title: string; description: string }) => void;
+  selectedProject?: Project | null;
+  onProjectSelect?: (project: Project | null) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null }) => void;
   onDiscard?: () => void;
   className?: string;
 };
 
-const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode }>> = ({ icon, children }) => (
-  <div className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background">
+const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
+  <div
+    className={cn(
+      "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background",
+      onClick && "cursor-pointer hover:bg-muted/50 hover:border-primary/20 transition-colors",
+      className
+    )}
+    onClick={onClick}
+  >
     {icon}
     <span className="whitespace-nowrap">{children}</span>
   </div>
 );
 
-export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({ 
-  title = "", 
-  description = "", 
-  onSave, 
-  onDiscard, 
-  className 
+export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
+  title = "",
+  description = "",
+  selectedProject = null,
+  onProjectSelect,
+  onSave,
+  onDiscard,
+  className
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
 
   const handleSave = () => {
-    onSave?.({ title: name.trim(), description: desc });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject });
   };
 
   return (
@@ -74,7 +87,18 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
 
         <div className="px-5 pb-4 pt-3">
           <div className="flex flex-wrap gap-2">
-            <FieldChip icon={<Briefcase className="h-3.5 w-3.5" />}>Project</FieldChip>
+            <ProjectSelector
+              selectedProject={selectedProject}
+              onProjectSelect={onProjectSelect}
+              trigger={(
+                <FieldChip
+                  icon={<Briefcase className="h-3.5 w-3.5" />}
+                  className={selectedProject ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                >
+                  {selectedProject ? `${selectedProject.projectName} (${selectedProject.projectDisplayId})` : "Project"}
+                </FieldChip>
+              )}
+            />
             <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>Start date</FieldChip>
             <FieldChip icon={<Calendar className="h-3.5 w-3.5" />}>End date</FieldChip>
             <FieldChip icon={<Layers className="h-3.5 w-3.5" />}>Backlog</FieldChip>
