@@ -13,7 +13,7 @@ qdrant_url = os.getenv("QDRANT_URL")
 # --- Connect to MongoDB ---
 try:
     mongo_client = MongoClient(
-        "mongodb://backendInterns:mUXe57JwdugphnEn@4.213.88.219:27017/?authSource=admin",
+        "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin",
         directConnection=True,
         serverSelectionTimeoutMS=5000
     )
