@@ -94,11 +94,12 @@ class RAGTool:
                         match=MatchValue(value=content_type)
                     )
                 )
-            if BUSINESS_UUID:
+            business_uuid = BUSINESS_UUID()
+            if business_uuid:
                 must_conditions.append(
                     FieldCondition(
                         key="business_id",
-                        match=MatchValue(value=BUSINESS_UUID)
+                        match=MatchValue(value=business_uuid)
                     )
                 )
             search_filter = Filter(must=must_conditions) if must_conditions else None
