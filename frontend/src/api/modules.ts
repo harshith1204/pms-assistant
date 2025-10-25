@@ -1,5 +1,5 @@
 import { MODULE_ENDPOINTS } from "@/api/endpoints";
-import { getBusinessId } from "@/config";
+import { getBusinessId, getMemberId } from "@/config";
 
 export type Module = {
   id: string;
@@ -39,7 +39,7 @@ export type CreateModuleRequest = {
   endDate?: string;
   lead?: string;
   members?: string[];
-  createdBy?: string;
+  createdBy?: { id: string; name: string };
 };
 
 export type CreateModuleWithMembersRequest = {
@@ -51,7 +51,7 @@ export type CreateModuleWithMembersRequest = {
   endDate?: string;
   lead?: { id: string; name: string };
   members?: { id: string; name: string }[];
-  createdBy?: string;
+  createdBy?: { id: string; name: string };
 };
 
 export type CreateModuleResponse = {
@@ -71,13 +71,29 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_id: payload.projectId,
-      sub_state_id: payload.subStateId,
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : undefined,
+      lead: payload.lead ? {
+        id: payload.lead,
+        name: "" // Will be populated by backend
+      } : undefined,
+      assignee: payload.members ? payload.members.map(member => ({
+        id: member,
+        name: "" // Will be populated by backend
+      })) : [],
       start_date: payload.startDate,
       end_date: payload.endDate,
-      lead: payload.lead,
-      members: payload.members,
-      created_by: payload.createdBy,
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      },
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      created_by: payload.createdBy || { id: getMemberId(), name: "" },
     }),
   });
   if (!res.ok) {
@@ -127,18 +143,45 @@ export async function createModuleWithMembers(payload: CreateModuleWithMembersRe
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_id: payload.projectId,
-      sub_state_id: payload.subStateId,
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : undefined,
+      lead: payload.lead,
+      assignee: payload.members?.map(member => ({
+        id: member.id,
+        name: member.name
+      })) || [],
       start_date: payload.startDate,
       end_date: payload.endDate,
-      lead: payload.lead?.id,
-      members: payload.members?.map(m => m.id),
-      created_by: payload.createdBy,
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      },
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      created_by: payload.createdBy || { id: getMemberId(), name: "" },
     }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Failed to create module (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getWorkItemsByModule(moduleId: string): Promise<any> {
+  const endpoint = MODULE_ENDPOINTS.GET_WORKITEMS(moduleId);
+
+  const res = await fetch(endpoint, {
+    method: "GET",
+    headers: { "accept": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get work items by module (${res.status})`);
   }
   return res.json();
 }
