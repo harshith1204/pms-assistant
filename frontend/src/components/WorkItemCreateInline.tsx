@@ -13,7 +13,9 @@ import MemberSelector from "@/components/MemberSelector";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
+import { type Cycle } from "@/api/cycles";
 import { DateRange } from "react-day-picker";
+import CycleSelector from "@/components/CycleSelector";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
@@ -21,10 +23,12 @@ export type WorkItemCreateInlineProps = {
   selectedProject?: Project | null;
   selectedAssignees?: ProjectMember[];
   selectedDateRange?: DateRange;
+  selectedCycle?: Cycle | null;
   onProjectSelect?: (project: Project | null) => void;
   onAssigneesSelect?: (assignees: ProjectMember[]) => void;
   onDateSelect?: (dateRange: DateRange | undefined) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; startDate?: string; endDate?: string }) => void;
+  onCycleSelect?: (cycle: Cycle | null) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; cycle?: Cycle | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -49,9 +53,11 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   selectedProject = null,
   selectedAssignees = [],
   selectedDateRange,
+  selectedCycle = null,
   onProjectSelect,
   onAssigneesSelect,
   onDateSelect,
+  onCycleSelect,
   onSave,
   onDiscard,
   className
@@ -63,7 +69,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const handleSave = () => {
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
     const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, startDate, endDate });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, cycle: selectedCycle, startDate, endDate });
   };
 
   return (
@@ -147,7 +153,23 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
               placeholder="Duration"
               icon={<Calendar className="h-3.5 w-3.5" />}
             />
-            <FieldChip icon={<CalendarClock className="h-3.5 w-3.5" />}>Cycle</FieldChip>
+            {selectedProject ? (
+              <CycleSelector
+                projectId={selectedProject.projectId}
+                selectedCycle={selectedCycle}
+                onCycleSelect={onCycleSelect || (() => {})}
+                trigger={
+                  <FieldChip
+                    icon={<CalendarClock className="h-3.5 w-3.5" />}
+                    className={selectedCycle ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedCycle ? selectedCycle.title : "Cycle"}
+                  </FieldChip>
+                }
+              />
+            ) : (
+              <FieldChip icon={<CalendarClock className="h-3.5 w-3.5" />}>Cycle</FieldChip>
+            )}
             <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Modules</FieldChip>
             <FieldChip icon={<Plus className="h-3.5 w-3.5" />}>Add parent</FieldChip>
           </div>
