@@ -101,21 +101,52 @@ export function getAllCyclesAsArray(cyclesResponse: GetAllCyclesResponse): Cycle
 }
 
 export async function createCycle(payload: CreateCycleRequest): Promise<CreateCycleResponse> {
-  const res = await fetch(`${API_HTTP_URL}/cycles`, {
+  const endpoint = CYCLE_ENDPOINTS.CREATE_CYCLE();
+
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      projectId: payload.projectId,
+      businessId: localStorage.getItem("businessId") || "",
       title: payload.title,
       description: payload.description || "",
-      project_id: payload.projectId,
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      created_by: payload.createdBy,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      created_by: payload.createdBy || localStorage.getItem("memberId") || "",
     }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Failed to create cycle (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getWorkItemsByCycle(cycleId: string): Promise<any> {
+  const endpoint = CYCLE_ENDPOINTS.GET_WORKITEMS(cycleId);
+
+  const res = await fetch(endpoint, {
+    method: "GET",
+    headers: { "accept": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get work items by cycle (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getCycleAnalytics(projectId: string): Promise<any> {
+  const endpoint = CYCLE_ENDPOINTS.GET_ANALYTICS(projectId);
+
+  const res = await fetch(endpoint, {
+    method: "GET",
+    headers: { "accept": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get cycle analytics (${res.status})`);
   }
   return res.json();
 }
