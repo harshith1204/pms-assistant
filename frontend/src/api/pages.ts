@@ -6,6 +6,10 @@ export type CreatePageRequest = {
   content: { blocks: any[] };
   projectId?: string;
   createdBy?: { id: string; name: string };
+  linkedCycle?: Array<{ id: string; name: string }>;
+  linkedModule?: Array<{ id: string; name: string }>;
+  linkedMembers?: Array<{ id: string; name: string }>;
+  linkedPages?: Array<{ id: string; name: string }>;
 };
 
 export type CreatePageResponse = {
@@ -54,7 +58,7 @@ export async function createPage(payload: CreatePageRequest): Promise<CreatePage
   // Calculate word count and read time
   const contentText = JSON.stringify(payload.content);
   const wordCount = contentText.split(/\s+/).filter(word => word.length > 0).length;
-  const readTime = `${Math.ceil(wordCount / 200)} min read`; // Assuming 200 words per minute
+  const readTime = `${Math.ceil(wordCount / 200)}`;
 
   const res = await fetch(endpoint, {
     method: "POST",
@@ -79,6 +83,10 @@ export async function createPage(payload: CreatePageRequest): Promise<CreatePage
       favourite: false,
       readTime,
       wordCount,
+      linkedCycle: payload.linkedCycle || [],
+      linkedModule: payload.linkedModule || [],
+      linkedMembers: payload.linkedMembers || [],
+      linkedPages: payload.linkedPages || [],
     }),
   });
   if (!res.ok) {

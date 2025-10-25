@@ -9,11 +9,15 @@ export type CreateWorkItemRequest = {
   cycleId?: string;
   subStateId?: string;
   moduleId?: string;
-  assignees?: string[];
+  assignees?: { id: string; name: string }[];
   labels?: { id: string; name: string; color: string }[];
   startDate?: string;
   endDate?: string;
   createdBy?: { id: string; name: string };
+  priority?: string;
+  estimate?: number;
+  estimateSystem?: string;
+  status?: string;
 };
 
 export type CreateWorkItemWithMembersRequest = {
@@ -29,6 +33,10 @@ export type CreateWorkItemWithMembersRequest = {
   startDate?: string;
   endDate?: string;
   createdBy?: { id: string; name: string };
+  priority?: string;
+  estimate?: number;
+  estimateSystem?: string;
+  status?: string;
 };
 
 export type CreateWorkItemResponse = {
@@ -49,29 +57,39 @@ export async function createWorkItem(payload: CreateWorkItemRequest): Promise<Cr
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_identifier: payload.projectIdentifier,
-      project_id: payload.projectId,
-      cycle_id: payload.cycleId,
-      sub_state_id: payload.subStateId,
-      module_id: payload.moduleId,
-      assignees: payload.assignees,
-      labels: payload.labels,
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      created_by: payload.createdBy || { id: getMemberId(), name: "" },
-      // Add business and project objects as per documentation
-      business: {
-        id: getBusinessId(),
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      label: payload.labels || [],
+      state: payload.subStateId ? {
+        id: payload.subStateId,
         name: "" // Will be populated by backend
-      },
+      } : null,
+      createdBy: payload.createdBy || { id: getMemberId(), name: "" },
+      priority: payload.priority || "NONE",
+      estimate: payload.estimate,
+      estimateSystem: payload.estimateSystem || "TIME",
+      status: payload.status || "ACCEPTED",
+      assignee: payload.assignees ? payload.assignees.map(a => ({
+        id: a.id,
+        name: a.name
+      })) : [],
+      modules: payload.moduleId ? {
+        id: payload.moduleId,
+        name: "" // Will be populated by backend
+      } : null,
+      cycle: payload.cycleId ? {
+        id: payload.cycleId,
+        name: "" // Will be populated by backend
+      } : null,
+      parent: null,
       project: {
         id: payload.projectId || "",
         name: "" // Will be populated by backend
       },
-      priority: "MEDIUM", // Default priority
-      estimate: 0,
-      estimate_system: "POINTS",
-      status: "ACCEPTED"
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      }
     }),
   });
   if (!res.ok) {
@@ -90,29 +108,39 @@ export async function createWorkItemWithMembers(payload: CreateWorkItemWithMembe
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_identifier: payload.projectIdentifier,
-      project_id: payload.projectId,
-      cycle_id: payload.cycleId,
-      sub_state_id: payload.subStateId,
-      module_id: payload.moduleId,
-      assignees: payload.assignees?.map(a => ({ id: a.id, name: a.name })),
-      labels: payload.labels,
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      created_by: payload.createdBy || { id: getMemberId(), name: "" },
-      // Add business and project objects as per documentation
-      business: {
-        id: getBusinessId(),
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      label: payload.labels || [],
+      state: payload.subStateId ? {
+        id: payload.subStateId,
         name: "" // Will be populated by backend
-      },
+      } : null,
+      createdBy: payload.createdBy || { id: getMemberId(), name: "" },
+      priority: payload.priority || "NONE",
+      estimate: payload.estimate,
+      estimateSystem: payload.estimateSystem || "TIME",
+      status: payload.status || "ACCEPTED",
+      assignee: payload.assignees ? payload.assignees.map(a => ({
+        id: a.id,
+        name: a.name
+      })) : [],
+      modules: payload.moduleId ? {
+        id: payload.moduleId,
+        name: "" // Will be populated by backend
+      } : null,
+      cycle: payload.cycleId ? {
+        id: payload.cycleId,
+        name: "" // Will be populated by backend
+      } : null,
+      parent: null,
       project: {
         id: payload.projectId || "",
         name: "" // Will be populated by backend
       },
-      priority: "MEDIUM", // Default priority
-      estimate: 0,
-      estimate_system: "POINTS",
-      status: "ACCEPTED"
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      }
     }),
   });
   if (!res.ok) {
