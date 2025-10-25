@@ -1,4 +1,5 @@
 import { WORKITEM_ENDPOINTS } from "@/api/endpoints";
+import { getBusinessId, getMemberId } from "@/config";
 
 export type CreateWorkItemRequest = {
   title: string;
@@ -12,7 +13,7 @@ export type CreateWorkItemRequest = {
   labels?: { id: string; name: string; color: string }[];
   startDate?: string;
   endDate?: string;
-  createdBy?: string;
+  createdBy?: { id: string; name: string };
 };
 
 export type CreateWorkItemWithMembersRequest = {
@@ -27,7 +28,7 @@ export type CreateWorkItemWithMembersRequest = {
   labels?: { id: string; name: string; color: string }[];
   startDate?: string;
   endDate?: string;
-  createdBy?: string;
+  createdBy?: { id: string; name: string };
 };
 
 export type CreateWorkItemResponse = {
@@ -57,7 +58,20 @@ export async function createWorkItem(payload: CreateWorkItemRequest): Promise<Cr
       labels: payload.labels,
       start_date: payload.startDate,
       end_date: payload.endDate,
-      created_by: payload.createdBy,
+      created_by: payload.createdBy || { id: getMemberId(), name: "" },
+      // Add business and project objects as per documentation
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      },
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      priority: "MEDIUM", // Default priority
+      estimate: 0,
+      estimate_system: "POINTS",
+      status: "ACCEPTED"
     }),
   });
   if (!res.ok) {
@@ -81,16 +95,63 @@ export async function createWorkItemWithMembers(payload: CreateWorkItemWithMembe
       cycle_id: payload.cycleId,
       sub_state_id: payload.subStateId,
       module_id: payload.moduleId,
-      assignees: payload.assignees?.map(a => a.id),
+      assignees: payload.assignees?.map(a => ({ id: a.id, name: a.name })),
       labels: payload.labels,
       start_date: payload.startDate,
       end_date: payload.endDate,
-      created_by: payload.createdBy,
+      created_by: payload.createdBy || { id: getMemberId(), name: "" },
+      // Add business and project objects as per documentation
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      },
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      priority: "MEDIUM", // Default priority
+      estimate: 0,
+      estimate_system: "POINTS",
+      status: "ACCEPTED"
     }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Failed to create work item (${res.status})`);
+  }
+  return res.json();
+}
+
+export type GetWorkItemsRequest = {
+  projectId: string;
+  businessId: string;
+  moduleId?: string;
+  cycleId?: string;
+  stateId?: string;
+  assigneeId?: string;
+  labelId?: string;
+  priority?: string;
+  searchText?: string;
+  sortField?: string;
+  sortDirection?: string;
+};
+
+export type GetWorkItemsResponse = {
+  success: boolean;
+  data: CreateWorkItemResponse[];
+};
+
+export async function getWorkItems(payload: GetWorkItemsRequest): Promise<GetWorkItemsResponse> {
+  const endpoint = WORKITEM_ENDPOINTS.GET_WORKITEMS();
+
+  const res = await fetch(endpoint, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get work items (${res.status})`);
   }
   return res.json();
 }
