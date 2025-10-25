@@ -2,10 +2,11 @@ import React from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Copy, CalendarClock } from "lucide-react";
+import { Copy, CalendarClock, Tag } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import { type Cycle } from "@/api/cycles";
+import { type SubState } from "@/api/substates";
 
 export type WorkItemCardProps = {
   title: string;
@@ -13,12 +14,13 @@ export type WorkItemCardProps = {
   projectIdentifier?: string;
   sequenceId?: string | number;
   cycle?: Cycle | null;
+  subState?: SubState | null;
   link?: string;
   onCopy?: (field: "title" | "description" | "link") => void;
   className?: string;
 };
 
-export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description = "", projectIdentifier, sequenceId, cycle, link, onCopy, className }) => {
+export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description = "", projectIdentifier, sequenceId, cycle, subState, link, onCopy, className }) => {
   const [copied, setCopied] = React.useState<null | "title" | "description" | "link">(null);
 
   const handleCopy = async (field: "title" | "description" | "link") => {
@@ -45,14 +47,20 @@ export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description =
               )}
             </div>
             <div className="mt-0.5 text-base font-semibold leading-snug break-words">{title}</div>
-            {cycle && (
-              <div className="mt-2">
+            <div className="mt-2 flex flex-wrap gap-2">
+              {cycle && (
                 <Badge variant="outline" className="text-xs gap-1">
                   <CalendarClock className="h-3 w-3" />
                   {cycle.title}
                 </Badge>
-              </div>
-            )}
+              )}
+              {subState && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  <Tag className="h-3 w-3" />
+                  {subState.name}
+                </Badge>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-1 text-xs">
             {link && (

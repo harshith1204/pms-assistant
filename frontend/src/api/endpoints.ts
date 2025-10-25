@@ -106,3 +106,9 @@ export const PAGE_ENDPOINTS = {
   DELETE_PAGE: (projectId: string, pageId: string) =>
     `${STAGE_API_BASE_URL}/project/${projectId}/pages/${pageId}`,
 };
+
+export const SUBSTATE_ENDPOINTS = {
+  // Get sub-states for a project
+  GET_SUBSTATES: (projectId: string) =>
+    `${STAGE_API_BASE_URL}/project/states/${projectId}/sub-states`,
+};
