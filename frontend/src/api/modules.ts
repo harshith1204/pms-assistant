@@ -39,7 +39,6 @@ export type CreateModuleRequest = {
   endDate?: string;
   lead?: string;
   members?: string[];
-  createdBy?: { id: string; name: string };
 };
 
 export type CreateModuleWithMembersRequest = {
@@ -51,7 +50,6 @@ export type CreateModuleWithMembersRequest = {
   endDate?: string;
   lead?: { id: string; name: string };
   members?: { id: string; name: string }[];
-  createdBy?: { id: string; name: string };
 };
 
 export type CreateModuleResponse = {
@@ -74,26 +72,23 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
       state: payload.subStateId ? {
         id: payload.subStateId,
         name: "" // Will be populated by backend
-      } : undefined,
+      } : null,
       lead: payload.lead ? {
         id: payload.lead,
         name: "" // Will be populated by backend
-      } : undefined,
+      } : null,
       assignee: payload.members ? payload.members.map(member => ({
         id: member,
         name: "" // Will be populated by backend
       })) : [],
-      start_date: payload.startDate,
-      end_date: payload.endDate,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
       business: {
-        id: getBusinessId(),
-        name: "" // Will be populated by backend
+        id: getBusinessId()
       },
       project: {
-        id: payload.projectId || "",
-        name: "" // Will be populated by backend
+        id: payload.projectId || ""
       },
-      created_by: payload.createdBy || { id: getMemberId(), name: "" },
     }),
   });
   if (!res.ok) {
@@ -146,23 +141,20 @@ export async function createModuleWithMembers(payload: CreateModuleWithMembersRe
       state: payload.subStateId ? {
         id: payload.subStateId,
         name: "" // Will be populated by backend
-      } : undefined,
+      } : null,
       lead: payload.lead,
       assignee: payload.members?.map(member => ({
         id: member.id,
         name: member.name
       })) || [],
-      start_date: payload.startDate,
-      end_date: payload.endDate,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
       business: {
-        id: getBusinessId(),
-        name: "" // Will be populated by backend
+        id: getBusinessId()
       },
       project: {
-        id: payload.projectId || "",
-        name: "" // Will be populated by backend
+        id: payload.projectId || ""
       },
-      created_by: payload.createdBy || { id: getMemberId(), name: "" },
     }),
   });
   if (!res.ok) {
