@@ -70,9 +70,15 @@ export const WORKITEM_ENDPOINTS = {
 };
 
 export const MODULE_ENDPOINTS = {
-  // Get modules (if needed in future)
-  GET_MODULES: (projectId: string) =>
-    `${STAGE_API_BASE_URL}/project/${projectId}/modules`,
+  // Get all modules
+  GET_ALL_MODULES: (businessId: string, projectId?: string) => {
+    const url = new URL(`${STAGE_API_BASE_URL}/project/module/get-all`);
+    url.searchParams.set('businessId', businessId);
+    if (projectId) {
+      url.searchParams.set('projectId', projectId);
+    }
+    return url.toString();
+  },
 
   // Create module (if needed in future)
   CREATE_MODULE: (projectId: string) =>
