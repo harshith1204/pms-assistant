@@ -560,6 +560,8 @@ class LLMIntentParser:
             if primary == "cycle" and "cycle_status" not in raw_filters:
                 raw_filters["cycle_status"] = raw_filters["status"]
 
+        if primary in ("workItem","epic") and "label" in raw_filters:
+            raw_filters["label_name"] = raw_filters["label"]
         # Normalize date filter key synonyms BEFORE validation so they are preserved
         # Examples the LLM might emit: createdAt_from, created_from, date_to, updated_since, etc.
         def _normalize_date_filter_keys(primary_entity: str, rf: Dict[str, Any]) -> Dict[str, Any]:
@@ -621,7 +623,7 @@ class LLMIntentParser:
             "status", "access", "isActive", "isArchived", "isDefault", "isFavourite",
             "visibility", "locked",
             # name/title/id style queries
-            "label", "title", "name", "displayBugNo", "projectDisplayId", "email",
+            "label_name", "title", "name", "displayBugNo", "projectDisplayId", "email",
             # entity name filters (secondary lookups)
             "project_name", "cycle_name", "assignee_name", "module_name", "member_role",
             # actor/name filters
@@ -663,7 +665,7 @@ class LLMIntentParser:
                 normalized_bool = self._normalize_boolean_value_from_any(v)
                 if normalized_bool is not None:
                     filters[k] = normalized_bool
-            elif k in ["project_name", "cycle_name", "module_name", "assignee_name", "createdBy_name", "lead_name", "business_name"] and isinstance(v, str):
+            elif k in ["project_name", "cycle_name", "module_name", "assignee_name", "createdBy_name", "lead_name", "business_name","label_name"] and isinstance(v, str):
                 filters[k] = v.strip()
             elif isinstance(v, str) and k in {"title", "name", "displayBugNo", "projectDisplayId", "email"}:
                 filters[k] = v.strip()
@@ -1643,8 +1645,8 @@ class PipelineGenerator:
                     primary_filters['state.name'] = {"$in": [primary_filters['state.name']]}
                 # Merge not-in
                 primary_filters['state.name']["$nin"] = filters['state_not']
-            if 'label' in filters and isinstance(filters['label'], str):
-                primary_filters['label'] = {'$regex': filters['label'], '$options': 'i'}
+            if 'label_name' in filters and isinstance(filters['label_name'], str):
+                primary_filters['label.name'] = {'$regex': filters['label_name'], '$options': 'i'}
             if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
                 primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
             if 'title' in filters and isinstance(filters['title'], str):
@@ -1803,6 +1805,8 @@ class PipelineGenerator:
                 primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
             if 'title' in filters and isinstance(filters['title'], str):
                 primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'label_name' in filters and isinstance(filters['label_name'], str):
+                primary_filters['label.name'] = {'$regex': filters['label_name'], '$options': 'i'}
             if 'project_name' in filters and isinstance(filters['project_name'], str):
                 primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
             if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
@@ -1939,7 +1943,7 @@ class PipelineGenerator:
         defaults_map: Dict[str, List[str]] = {
             "workItem": [
                 "displayBugNo", "title", "priority",
-                "state.name", "assignee",
+                "state.name", "assignee","label.name",
                 "project.name", "cycle.name", "modules.name",
                 "createdTimeStamp", "estimateSystem", "estimate", "workLogs"
             ],
@@ -1963,7 +1967,7 @@ class PipelineGenerator:
                 "name", "subStates.name", "subStates.order"
             ],
             "epic": [
-                "title", "priority", "state.name", "createdTimeStamp", "project.name","description","assignee.name","bugNo"
+                "title", "priority", "state.name", "createdTimeStamp", "project.name","description","assignee.name","bugNo","label.name"
             ],
         }
 
@@ -2017,6 +2021,7 @@ class PipelineGenerator:
                 'cycle': 'cycle.name',
                 'module': 'modules.name',
                 'state': 'state.name',
+                'label': 'label.name',
                 'status': 'state.name',  # accept 'status' as synonym for state
                 'priority': 'priority',
                 'business': 'projectDoc.business.name',  # ensure join if needed
