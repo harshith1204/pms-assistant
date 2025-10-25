@@ -14,8 +14,10 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
 import { type Cycle } from "@/api/cycles";
+import { type SubState } from "@/api/substates";
 import { DateRange } from "react-day-picker";
 import CycleSelector from "@/components/CycleSelector";
+import SubStateSelector from "@/components/SubStateSelector";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
@@ -24,11 +26,13 @@ export type WorkItemCreateInlineProps = {
   selectedAssignees?: ProjectMember[];
   selectedDateRange?: DateRange;
   selectedCycle?: Cycle | null;
+  selectedSubState?: SubState | null;
   onProjectSelect?: (project: Project | null) => void;
   onAssigneesSelect?: (assignees: ProjectMember[]) => void;
   onDateSelect?: (dateRange: DateRange | undefined) => void;
   onCycleSelect?: (cycle: Cycle | null) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; cycle?: Cycle | null; startDate?: string; endDate?: string }) => void;
+  onSubStateSelect?: (subState: SubState | null) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; cycle?: Cycle | null; subState?: SubState | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -54,10 +58,12 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   selectedAssignees = [],
   selectedDateRange,
   selectedCycle = null,
+  selectedSubState = null,
   onProjectSelect,
   onAssigneesSelect,
   onDateSelect,
   onCycleSelect,
+  onSubStateSelect,
   onSave,
   onDiscard,
   className
@@ -69,7 +75,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const handleSave = () => {
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
     const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, cycle: selectedCycle, startDate, endDate });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, cycle: selectedCycle, subState: selectedSubState, startDate, endDate });
   };
 
   return (
@@ -120,7 +126,24 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
                 </FieldChip>
               )}
             />
-            <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>Backlog</FieldChip>
+            {selectedProject ? (
+              <SubStateSelector
+                projectId={selectedProject.projectId}
+                selectedSubState={selectedSubState}
+                onSubStateSelect={onSubStateSelect || (() => {})}
+                stateName="Backlog"
+                trigger={
+                  <FieldChip
+                    icon={<Shuffle className="h-3.5 w-3.5" />}
+                    className={selectedSubState ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedSubState ? selectedSubState.name : "Backlog"}
+                  </FieldChip>
+                }
+              />
+            ) : (
+              <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>Backlog</FieldChip>
+            )}
             <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>None</FieldChip>
             {selectedProject && (
               <MemberSelector
