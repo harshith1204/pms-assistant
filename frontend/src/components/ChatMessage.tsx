@@ -59,6 +59,7 @@ import { createPage } from "@/api/pages";
 import { createCycle } from "@/api/cycles";
 import { createModule, createModuleWithMembers } from "@/api/modules";
 import { type ProjectMember } from "@/api/members";
+import { type Cycle } from "@/api/cycles";
 import { toast } from "@/components/ui/use-toast";
 
 export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module }: ChatMessageProps) => {
@@ -67,11 +68,14 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [currentIndex, setCurrentIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const canShowActions = role === "assistant" && !isStreaming && (displayedContent?.trim()?.length ?? 0) > 0;
-  const [savedWorkItem, setSavedWorkItem] = useState<null | { id: string; title: string; description: string; projectIdentifier?: string; sequenceId?: string | number; link?: string }>(null);
+  const [savedWorkItem, setSavedWorkItem] = useState<null | { id: string; title: string; description: string; projectIdentifier?: string; sequenceId?: string | number; link?: string; cycle?: any }>(null);
   const [saving, setSaving] = useState(false);
   const [savedPage, setSavedPage] = useState<null | { id: string; title: string; content: string; link?: string }>(null);
   const [savedCycle, setSavedCycle] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
   const [savedModule, setSavedModule] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
+
+  // Cycle selection state
+  const [selectedCycle, setSelectedCycle] = useState<any>(null);
 
   // Project selection state
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -158,6 +162,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 description={savedWorkItem.description}
                 projectIdentifier={savedWorkItem.projectIdentifier}
                 sequenceId={savedWorkItem.sequenceId}
+                cycle={selectedCycle}
                 link={savedWorkItem.link}
                 className="mt-1"
               />
@@ -168,10 +173,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 selectedProject={selectedProject}
                 selectedAssignees={selectedAssignees}
                 selectedDateRange={selectedDateRange}
+                selectedCycle={selectedCycle}
                 onProjectSelect={setSelectedProject}
                 onAssigneesSelect={setSelectedAssignees}
                 onDateSelect={setSelectedDateRange}
-                onSave={async ({ title, description, project, assignees, startDate, endDate }) => {
+                onCycleSelect={setSelectedCycle}
+                onSave={async ({ title, description, project, assignees, cycle, startDate, endDate }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
@@ -180,6 +187,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       description,
                       projectId: project?.projectId,
                       projectIdentifier: workItem.projectIdentifier,
+                      cycleId: cycle?.id,
                       assignees: assignees,
                       startDate,
                       endDate

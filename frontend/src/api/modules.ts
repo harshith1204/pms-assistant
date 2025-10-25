@@ -1,4 +1,4 @@
-import { API_HTTP_URL } from "@/config";
+import { MODULE_ENDPOINTS } from "@/api/endpoints";
 
 export type CreateModuleRequest = {
   title: string;
@@ -31,7 +31,9 @@ export type CreateModuleResponse = {
 };
 
 export async function createModule(payload: CreateModuleRequest): Promise<CreateModuleResponse> {
-  const res = await fetch(`${API_HTTP_URL}/modules`, {
+  const endpoint = MODULE_ENDPOINTS.CREATE_MODULE(payload.projectId || "");
+
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -53,7 +55,9 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
 }
 
 export async function createModuleWithMembers(payload: CreateModuleWithMembersRequest): Promise<CreateModuleResponse> {
-  const res = await fetch(`${API_HTTP_URL}/modules`, {
+  const endpoint = MODULE_ENDPOINTS.CREATE_MODULE(payload.projectId || "");
+
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
