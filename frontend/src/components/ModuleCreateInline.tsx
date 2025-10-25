@@ -12,7 +12,9 @@ import MemberSelector from "@/components/MemberSelector";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
+import { type SubState } from "@/api/substates";
 import { DateRange } from "react-day-picker";
+import SubStateSelector from "@/components/SubStateSelector";
 
 export type ModuleCreateInlineProps = {
   title?: string;
@@ -21,11 +23,13 @@ export type ModuleCreateInlineProps = {
   selectedLead?: ProjectMember | null;
   selectedMembers?: ProjectMember[];
   selectedDateRange?: DateRange;
+  selectedSubState?: SubState | null;
   onProjectSelect?: (project: Project | null) => void;
   onLeadSelect?: (lead: ProjectMember | null) => void;
   onMembersSelect?: (members: ProjectMember[]) => void;
   onDateSelect?: (dateRange: DateRange | undefined) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; lead?: ProjectMember | null; members?: ProjectMember[]; startDate?: string; endDate?: string }) => void;
+  onSubStateSelect?: (subState: SubState | null) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; lead?: ProjectMember | null; members?: ProjectMember[]; subState?: SubState | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -51,10 +55,12 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
   selectedLead = null,
   selectedMembers = [],
   selectedDateRange,
+  selectedSubState = null,
   onProjectSelect,
   onLeadSelect,
   onMembersSelect,
   onDateSelect,
+  onSubStateSelect,
   onSave,
   onDiscard,
   className
@@ -72,6 +78,7 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
       project: selectedProject,
       lead: selectedLead,
       members: selectedMembers,
+      subState: selectedSubState,
       startDate,
       endDate
     });
@@ -131,7 +138,23 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
               placeholder="Duration"
               icon={<Calendar className="h-3.5 w-3.5" />}
             />
-            <FieldChip icon={<Layers className="h-3.5 w-3.5" />}>Backlog</FieldChip>
+            {selectedProject ? (
+              <SubStateSelector
+                projectId={selectedProject.projectId}
+                selectedSubState={selectedSubState}
+                onSubStateSelect={onSubStateSelect || (() => {})}
+                trigger={
+                  <FieldChip
+                    icon={<Layers className="h-3.5 w-3.5" />}
+                    className={selectedSubState ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedSubState ? selectedSubState.name : "State"}
+                  </FieldChip>
+                }
+              />
+            ) : (
+              <FieldChip icon={<Layers className="h-3.5 w-3.5" />}>State</FieldChip>
+            )}
             {selectedProject && (
               <MemberSelector
                 projectId={selectedProject.projectId}

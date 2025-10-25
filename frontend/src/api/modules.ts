@@ -4,6 +4,7 @@ export type CreateModuleRequest = {
   title: string;
   description?: string;
   projectId?: string;
+  subStateId?: string;
   startDate?: string;
   endDate?: string;
   lead?: string;
@@ -15,6 +16,7 @@ export type CreateModuleWithMembersRequest = {
   title: string;
   description?: string;
   projectId?: string;
+  subStateId?: string;
   startDate?: string;
   endDate?: string;
   lead?: { id: string; name: string };
@@ -40,6 +42,7 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
       title: payload.title,
       description: payload.description || "",
       project_id: payload.projectId,
+      sub_state_id: payload.subStateId,
       start_date: payload.startDate,
       end_date: payload.endDate,
       lead: payload.lead,
@@ -64,6 +67,7 @@ export async function createModuleWithMembers(payload: CreateModuleWithMembersRe
       title: payload.title,
       description: payload.description || "",
       project_id: payload.projectId,
+      sub_state_id: payload.subStateId,
       start_date: payload.startDate,
       end_date: payload.endDate,
       lead: payload.lead?.id,
