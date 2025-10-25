@@ -29,6 +29,7 @@ try:
     cycle_collection = db["cycle"]
     module_collection = db["module"]
     project_collection = db["project"]
+    epic_collection = db["epic"]
 
 except Exception as e:
     print("❌ MongoDB connection failed:", e)
