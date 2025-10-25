@@ -10,9 +10,11 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
 import MemberSelector from "@/components/MemberSelector";
+import LabelSelector from "@/components/LabelSelector";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
+import { type ProjectLabel } from "@/api/labels";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
 import { type Module } from "@/api/modules";
@@ -26,17 +28,19 @@ export type WorkItemCreateInlineProps = {
   description?: string;
   selectedProject?: Project | null;
   selectedAssignees?: ProjectMember[];
+  selectedLabels?: ProjectLabel[];
   selectedDateRange?: DateRange;
   selectedCycle?: Cycle | null;
   selectedSubState?: SubState | null;
   selectedModule?: Module | null;
   onProjectSelect?: (project: Project | null) => void;
   onAssigneesSelect?: (assignees: ProjectMember[]) => void;
+  onLabelsSelect?: (labels: ProjectLabel[]) => void;
   onDateSelect?: (dateRange: DateRange | undefined) => void;
   onCycleSelect?: (cycle: Cycle | null) => void;
   onSubStateSelect?: (subState: SubState | null) => void;
   onModuleSelect?: (module: Module | null) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; cycle?: Cycle | null; subState?: SubState | null; module?: Module | null; startDate?: string; endDate?: string }) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; labels?: ProjectLabel[]; cycle?: Cycle | null; subState?: SubState | null; module?: Module | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -60,12 +64,14 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   description = "",
   selectedProject = null,
   selectedAssignees = [],
+  selectedLabels = [],
   selectedDateRange,
   selectedCycle = null,
   selectedSubState = null,
   selectedModule = null,
   onProjectSelect,
   onAssigneesSelect,
+  onLabelsSelect,
   onDateSelect,
   onCycleSelect,
   onSubStateSelect,
@@ -81,7 +87,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const handleSave = () => {
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
     const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, cycle: selectedCycle, subState: selectedSubState, module: selectedModule, startDate, endDate });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, labels: selectedLabels, cycle: selectedCycle, subState: selectedSubState, module: selectedModule, startDate, endDate });
   };
 
   return (
@@ -174,7 +180,28 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
             {!selectedProject && (
               <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
             )}
-            <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>Labels</FieldChip>
+            {selectedProject ? (
+              <LabelSelector
+                projectId={selectedProject.projectId}
+                selectedLabels={selectedLabels}
+                onLabelsSelect={onLabelsSelect || (() => {})}
+                mode="multiple"
+                title="Select Labels"
+                placeholder="Labels"
+                trigger={
+                  <FieldChip
+                    icon={<Tag className="h-3.5 w-3.5" />}
+                    className={selectedLabels.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedLabels.length === 0 ? "Labels" :
+                     selectedLabels.length === 1 ? selectedLabels[0].label :
+                     `${selectedLabels.length} labels`}
+                  </FieldChip>
+                }
+              />
+            ) : (
+              <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>Labels</FieldChip>
+            )}
             <DateRangePicker
               date={selectedDateRange}
               onDateChange={onDateSelect}

@@ -116,3 +116,9 @@ export const SUBSTATE_ENDPOINTS = {
   GET_SUBSTATES: (projectId: string) =>
     `${STAGE_API_BASE_URL}/project/states/${projectId}/sub-states`,
 };
+
+export const LABEL_ENDPOINTS = {
+  // Get labels for a project
+  GET_LABELS: (projectId: string) =>
+    `${STAGE_API_BASE_URL}/project/${projectId}/label`,
+};
