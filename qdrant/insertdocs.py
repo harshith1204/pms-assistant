@@ -632,8 +632,15 @@ def index_workitems_to_qdrant():
             # Clean HTML/entities before chunking for better retrieval quality
             title_clean = html_to_text(doc.get("title", ""))
             desc_clean = html_to_text(doc.get("description", ""))
-            worklogs_description = doc["workLogs"].get("description","")
-            combined_text = " ".join(filter(None, [title_clean, desc_clean,worklogs_description])).strip()
+            # Extract work log descriptions (workLogs is an array)
+            worklogs_descriptions = []
+            if doc.get("workLogs") and isinstance(doc["workLogs"], list):
+                worklogs_descriptions = [
+                    log.get("description", "") for log in doc["workLogs"]
+                    if isinstance(log, dict) and log.get("description")
+                ]
+            worklogs_description = " ".join(worklogs_descriptions)
+            combined_text = " ".join(filter(None, [title_clean, desc_clean, worklogs_description])).strip()
             if not combined_text:
                 print(f"⚠️ Skipping work item {mongo_id} - no substantial text content found")
                 continue
