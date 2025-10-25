@@ -71,13 +71,33 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_id: payload.projectId,
-      sub_state_id: payload.subStateId,
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : undefined,
+      lead: payload.lead ? {
+        id: payload.lead,
+        name: "" // Will be populated by backend
+      } : undefined,
+      assignee: payload.members ? payload.members.map(member => ({
+        id: member,
+        name: "" // Will be populated by backend
+      })) : [],
       start_date: payload.startDate,
       end_date: payload.endDate,
+      business: {
+        id: localStorage.getItem("businessId") || "",
+        name: "" // Will be populated by backend
+      },
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      project_id: payload.projectId,
+      sub_state_id: payload.subStateId,
       lead: payload.lead,
       members: payload.members,
-      created_by: payload.createdBy,
+      created_by: payload.createdBy || localStorage.getItem("memberId") || "",
     }),
   });
   if (!res.ok) {
@@ -127,18 +147,49 @@ export async function createModuleWithMembers(payload: CreateModuleWithMembersRe
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_id: payload.projectId,
-      sub_state_id: payload.subStateId,
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : undefined,
+      lead: payload.lead,
+      assignee: payload.members?.map(member => ({
+        id: member.id,
+        name: member.name
+      })) || [],
       start_date: payload.startDate,
       end_date: payload.endDate,
+      business: {
+        id: localStorage.getItem("businessId") || "",
+        name: "" // Will be populated by backend
+      },
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      project_id: payload.projectId,
+      sub_state_id: payload.subStateId,
       lead: payload.lead?.id,
       members: payload.members?.map(m => m.id),
-      created_by: payload.createdBy,
+      created_by: payload.createdBy || localStorage.getItem("memberId") || "",
     }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Failed to create module (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getWorkItemsByModule(moduleId: string): Promise<any> {
+  const endpoint = MODULE_ENDPOINTS.GET_WORKITEMS(moduleId);
+
+  const res = await fetch(endpoint, {
+    method: "GET",
+    headers: { "accept": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get work items by module (${res.status})`);
   }
   return res.json();
 }
