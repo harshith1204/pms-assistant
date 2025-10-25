@@ -6,6 +6,9 @@ from typing import Dict, Any, List
 import os
 import contextlib
 import asyncio
+from dotenv import load_dotenv
+
+load_dotenv()
 
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -20,11 +23,11 @@ except Exception:
 from mongo.constants import (
     DATABASE_NAME,
     MONGODB_CONNECTION_STRING,
-    BUSINESS_UUID,
-    ENFORCE_BUSINESS_FILTER,
     uuid_str_to_mongo_binary,
     COLLECTIONS_WITH_DIRECT_BUSINESS,
 )
+
+import websocket_handler as _ws_ctx
 
 
 class DirectMongoClient:
@@ -103,11 +106,28 @@ class DirectMongoClient:
                 raise RuntimeError("MongoDB client not initialized. Call connect() first.")
             
             try:
-                # Prepare business scoping injection (prepend stages)
+                # --- Resolve RBAC context at query time ---
+                def _flag(name: str) -> bool:
+                    return os.getenv(name, "").lower() in ("1", "true", "yes")
+
+                # Prefer runtime websocket context; fall back to env vars
+                biz_uuid: str | None = getattr(_ws_ctx, "business_id_global", None) or os.getenv("BUSINESS_UUID")
+                member_uuid: str | None = (
+                    os.getenv("MEMBER_UUID")
+                    or os.getenv("STAFF_ID")
+                    or getattr(_ws_ctx, "user_id_global", None)
+                )
+
+                enforce_business: bool = _flag("ENFORCE_BUSINESS_FILTER") or bool(biz_uuid)
+                enforce_member: bool = _flag("ENFORCE_MEMBER_FILTER") or bool(member_uuid)
+
+                # Prepare business and member scoping injections (prepend stages)
                 injected_stages: List[Dict[str, Any]] = []
-                if ENFORCE_BUSINESS_FILTER and BUSINESS_UUID:
+
+                # 1) Business scoping
+                if enforce_business and biz_uuid:
                     try:
-                        biz_bin = uuid_str_to_mongo_binary(BUSINESS_UUID)
+                        biz_bin = uuid_str_to_mongo_binary(biz_uuid)
                         if collection in COLLECTIONS_WITH_DIRECT_BUSINESS:
                             injected_stages.append({"$match": {"business._id": biz_bin}})
                         elif collection == "members":
@@ -133,9 +153,50 @@ class DirectMongoClient:
                                 {"$match": {"__biz_proj__.business._id": biz_bin}},
                                 {"$unset": "__biz_proj__"},
                             ])
-                    except Exception:
-                        # Do not fail query if business filter construction fails
-                        injected_stages = []
+                    except ValueError as e:
+                        # Invalid UUID format - log and skip business filter
+                        print(f"⚠️  Invalid BUSINESS_UUID format '{biz_uuid}': {e}")
+                        print(f"   Skipping business filter for {collection}")
+                    except Exception as e:
+                        # Other errors - log and skip business filter
+                        print(f"⚠️  Error applying business filter for {collection}: {e}")
+
+                # 2) Member-level project RBAC scoping
+                if enforce_member and member_uuid:
+                    try:
+                        mem_bin = uuid_str_to_mongo_binary(member_uuid)
+
+                        def _membership_join(local_field: str) -> List[Dict[str, Any]]:
+                            """Build a $lookup + $match + $unset pipeline ensuring the document's project belongs to member."""
+                            return [
+                                {"$lookup": {
+                                    "from": "members",
+                                    "localField": local_field,
+                                    "foreignField": "project._id",
+                                    "as": "__mem__",
+                                }},
+                                # Ensure at least one membership document for this member
+                                {"$match": {"__mem__": {"$elemMatch": {"staff._id": mem_bin}}}},
+                                {"$unset": "__mem__"},
+                            ]
+
+                        if collection == "members":
+                            # Only allow viewing own memberships
+                            injected_stages.append({"$match": {"staff._id": mem_bin}})
+                        elif collection == "project":
+                            injected_stages.extend(_membership_join("_id"))
+                        elif collection in ("workItem", "cycle", "module", "page"):
+                            injected_stages.extend(_membership_join("project._id"))
+                        elif collection == "projectState":
+                            injected_stages.extend(_membership_join("projectId"))
+                        # Other collections: no-op
+                    except ValueError as e:
+                        # Invalid UUID format - log and skip member filter
+                        print(f"⚠️  Invalid MEMBER_UUID format '{member_uuid}': {e}")
+                        print(f"   Skipping member filter for {collection}")
+                    except Exception as e:
+                        # Other errors - log and skip member filter
+                        print(f"⚠️  Error applying member filter for {collection}: {e}")
 
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]

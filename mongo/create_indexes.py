@@ -121,6 +121,12 @@ async def create_indexes():
     # Index for project._id for relationship lookups
     create_index_if_not_exists(db.members, [("project._id", 1)], "members_project_id")
 
+    # Index for staff._id lookups (member identity)
+    create_index_if_not_exists(db.members, [("staff._id", 1)], "members_staff_id")
+
+    # Compound index for (project._id, staff._id) to speed RBAC joins
+    create_index_if_not_exists(db.members, [("project._id", 1), ("staff._id", 1)], "members_project_staff_compound")
+
     # 6. PAGE COLLECTION INDEXES
     print("📝 Creating page collection indexes...")
 

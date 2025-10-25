@@ -8,7 +8,7 @@ load_dotenv()
 
 # Database configuration
 DATABASE_NAME = "ProjectManagement"
-MONGODB_CONNECTION_STRING = "mongodb://backendInterns:mUXe57JwdugphnEn@4.213.88.219:27017/?authSource=admin"
+MONGODB_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
 
 # Qdrant configuration
 QDRANT_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfubjbSDBCTZaH321Eya7qis_tP6sHMAZ3Gki6Y"
@@ -35,15 +35,61 @@ class _LazyMongoDBTools:
 mongodb_tools = _LazyMongoDBTools()
 
 # --- Global business scoping ---
-# Business UUID to scope all queries/searches. Set via env BUSINESS_UUID.
-# Example: BUSINESS_UUID=3f2504e0-4f89-11d3-9a0c-0305e82c3301
-BUSINESS_UUID: str | None = os.getenv("BUSINESS_UUID")
-
-# Whether to enforce business scoping globally (default: True when BUSINESS_UUID is set)
-ENFORCE_BUSINESS_FILTER: bool = os.getenv("ENFORCE_BUSINESS_FILTER", "").lower() in ("1", "true", "yes") or bool(BUSINESS_UUID)
-
-# Collections that carry a direct business reference at path 'business._id'
+# Business UUID to scope all queries/searches. Set via env or websocket context
 COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page"}
+
+def _get_business_uuid():
+    """Get business UUID from websocket context or environment variables."""
+    # Try websocket context first (dynamic)
+    try:
+        import websocket_handler as _ws_ctx
+        ws_business = getattr(_ws_ctx, "business_id_global", None)
+        if isinstance(ws_business, str) and ws_business:
+            return ws_business
+    except Exception:
+        pass
+
+    # Fall back to environment variables
+    return os.getenv("BUSINESS_UUID") or os.getenv("BUSINESS_ID") or ""
+
+def _get_member_uuid():
+    """Get member UUID from websocket context or environment variables."""
+    # Try websocket context first (dynamic)
+    try:
+        import websocket_handler as _ws_ctx
+        ws_member = getattr(_ws_ctx, "user_id_global", None)
+        if isinstance(ws_member, str) and ws_member:
+            return ws_member
+    except Exception:
+        pass
+
+    # Fall back to environment variables
+    return os.getenv("MEMBER_UUID") or os.getenv("STAFF_ID") or os.getenv("USER_ID") or ""
+
+def _get_current_context():
+    """Get current business and member context."""
+    return {
+        "business_uuid": _get_business_uuid(),
+        "member_uuid": _get_member_uuid()
+    }
+
+# BUSINESS_UUID function that returns current value from websocket context or environment
+def BUSINESS_UUID():
+    """Get current business UUID from websocket context or environment variables.
+
+    Returns:
+        str: Current business UUID or empty string if not available
+    """
+    return _get_business_uuid()
+
+# MEMBER_UUID function that returns current value from websocket context or environment
+def MEMBER_UUID():
+    """Get current member UUID from websocket context or environment variables.
+
+    Returns:
+        str: Current member UUID or empty string if not available
+    """
+    return _get_member_uuid()
 
 def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
     """Convert canonical UUID string to Mongo Binary subtype 3 (legacy UUID).

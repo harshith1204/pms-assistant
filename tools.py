@@ -49,16 +49,16 @@ DEFAULT_RAG_LIMIT: int = 10
 # - include_adjacent controls whether to pull neighboring chunks for context
 # - min_score sets a score threshold for initial vector hits
 CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
-    "page": 4,
-    "work_item": 3,
+    "page": 3,          # Reduced from 4 to minimize context window usage
+    "work_item": 4,     # Reduced from 3 to minimize context window usage
     "project": 2,
     "cycle": 2,
     "module": 2,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
-    "page": True,
-    "work_item": True,
+    "page": True,      # Disabled to reduce context window usage (was True)
+    "work_item": True,  # Keep adjacent for work items for better context
     "project": False,
     "cycle": False,
     "module": False,
@@ -130,6 +130,8 @@ def filter_meaningful_content(data: Any) -> Any:
         'members', 'pages', 'projectStates', 'subStates', 'linkedCycle', 'linkedModule',
         # Date fields (but not timestamps)
         'startDate', 'endDate', 'joiningDate', 'createdAt', 'updatedAt',
+        # Estimate and work tracking
+        'estimate', 'estimateSystem', 'workLogs',
         # Count/aggregation results
         'total', 'count', 'group', 'items'
     }
@@ -327,7 +329,8 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
               "visibility", "access", "imageUrl", "icon",
               "favourite", "isFavourite", "isActive", "isArchived",
               "content", "displayBugNo", "projectDisplayId",
-              "startDate", "endDate", "createdAt", "updatedAt"]:
+              "startDate", "endDate", "createdAt", "updatedAt",
+              "estimate", "estimateSystem", "workLogs"]:
         if k in doc:
             out[k] = doc[k]
 
@@ -396,6 +399,20 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
             if slim:
                 out["subStates"] = slim
 
+    elif collection == "timeline":
+        # Surface friendly names and key attributes
+        set_name("project", "projectName")
+        # user is actor
+        set_name("user", "actorName")
+        # include work item title if present
+        if isinstance(doc.get("workItemTitle"), str):
+            out["workItemTitle"] = doc["workItemTitle"]
+        # event type and field changed are useful summarizers
+        if isinstance(doc.get("type"), str):
+            out["timelineType"] = doc["type"]
+        if isinstance(doc.get("fieldChanged"), str):
+            out["fieldChanged"] = doc["fieldChanged"]
+
     # Drop empty/None values and metadata keys
     out = {k: v for k, v in out.items() if v not in (None, "", [], {}) and k != "_class"}
     return out
@@ -435,7 +452,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     Use this ONLY when the user asks for authoritative data that must come from
     MongoDB (counts, lists, filters, group-by, breakdowns, state/assignee/project details)
     across collections: `project`, `workItem`, `cycle`, `module`, `members`,
-    `page`, `projectState`.
+    `page`, `projectState`, `timeline`.
 
     Do NOT use this for:
     - Free-form content questions (use `rag_search`).
@@ -551,7 +568,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 filtered = parsed
 
 
-            def format_llm_friendly(data, max_items=20, primary_entity: Optional[str] = None):
+            def format_llm_friendly(data, max_items=50, primary_entity: Optional[str] = None):
                 """Format data in a more LLM-friendly way to avoid hallucinations."""
                 def get_nested(d: Dict[str, Any], key: str) -> Any:
                     if key in d:
@@ -598,7 +615,37 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        return f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        
+                        # Build base line
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        
+                        # Add estimate if present
+                        estimate = entity.get("estimate")
+                        if estimate and isinstance(estimate, dict):
+                            hr = estimate.get("hr", "0")
+                            min_val = estimate.get("min", "0")
+                            base += f", estimate={hr}h {min_val}m"
+                        elif estimate:
+                            base += f", estimate={estimate}"
+                        
+                        # Add work logs if present
+                        work_logs = entity.get("workLogs")
+                        if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
+                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                            total_hours += total_mins // 60
+                            total_mins = total_mins % 60
+                            base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
+                            
+                            descriptions = [
+                                log.get("description", "").strip()
+                                for log in work_logs
+                                if isinstance(log, dict) and log.get("description")
+                            ]
+                            descriptions_text = "; ".join(descriptions) if descriptions else "No descriptions"
+
+                            base += f", descriptions=[{descriptions_text}]"
+                        return base
                     if e == "project":
                         pid = entity.get("projectDisplayId")
                         name = entity.get("name") or entity.get("title")
@@ -639,6 +686,16 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         subs = entity.get("subStates")
                         sub_count = len(subs) if isinstance(subs, list) else 0
                         return f"• {name or 'State'} — icon={icon or 'N/A'}, substates={sub_count}"
+                    
+                    if e == "epic":
+                        title = entity.get("title") or entity.get("name")
+                        description = entity.get("description")
+                        state = entity.get("stateName") or get_nested(entity, "state.name")
+                        priority = entity.get("priority")
+                        assignee = entity.get("assigneeName") or get_nested(entity, "assignee.name")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        Bug = entity.get("bugNo")
+                        return f"• {title or 'Epic'} — description={description or 'N/A'}, state={state or 'N/A'}, priority={priority or 'N/A'}, project={project or 'N/A'}, assignee={assignee or 'N/A'}, bugNo={Bug or 'N/A'}"
                     # Default fallback
                     title = entity.get("title") or entity.get("name") or "Item"
                     return f"• {truncate_str(title, 80)}"
@@ -648,49 +705,73 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         return f"📊 RESULTS:\nTotal: {data[0]['total']}"
 
                     # Handle grouped/aggregated results
-                    if len(data) > 0 and isinstance(data[0], dict) and "count" in data[0]:
+                    if len(data) > 0 and isinstance(data[0], dict) and ("count" in data[0] or "totalMinutes" in data[0]):
                         response = "📊 RESULTS SUMMARY:\n"
+                        # Prefer minutes total when available, else use count
+                        has_minutes = any('totalMinutes' in item for item in data)
                         total_items = sum(item.get('count', 0) for item in data)
+                        total_minutes = sum(item.get('totalMinutes', 0) for item in data) if has_minutes else None
 
                         # Determine what type of grouping this is
                         first_item = data[0]
-                        group_keys = [k for k in first_item.keys() if k not in ['count', 'items']]
+                        group_keys = [k for k in first_item.keys() if k not in ['count', 'items', 'totalMinutes']]
 
                         if group_keys:
-                            response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
+                            if has_minutes and total_minutes is not None:
+                                response += f"Found {len(data)} groups grouped by {', '.join(group_keys)} (total {int(total_minutes)} min):\n\n"
+                            else:
+                                response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
 
                             # Sort by count (highest first) and show more groups
-                            sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
+                            if has_minutes:
+                                sorted_data = sorted(data, key=lambda x: x.get('totalMinutes', 0), reverse=True)
+                            else:
+                                sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
 
                             # Show all groups if max_items is None, otherwise limit
-                            display_limit = len(sorted_data) if max_items is None else 15
+                            display_limit = len(sorted_data) if max_items is None else 25
                             for item in sorted_data[:display_limit]:
                                 group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
                                 group_label = ', '.join(group_values)
-                                count = item.get('count', 0)
-                                response += f"• {group_label}: {count} items\n"
+                                if has_minutes:
+                                    mins = int(item.get('totalMinutes', 0) or 0)
+                                    response += f"• {group_label}: {mins} min\n"
+                                else:
+                                    count = item.get('count', 0)
+                                    response += f"• {group_label}: {count} items\n"
 
-                            if max_items is not None and len(data) > 15:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[15:])
-                                response += f"• ... and {len(data) - 15} other categories: {remaining} items\n"
+                            if max_items is not None and len(data) > 25:
+                                if has_minutes:
+                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[25:])
+                                    response += f"• ... and {len(data) - 25} other categories: {remaining} min\n"
+                                else:
+                                    remaining = sum(item.get('count', 0) for item in sorted_data[25:])
+                                    response += f"• ... and {len(data) - 25} other categories: {remaining} items\n"
                             elif max_items is None and len(data) > display_limit:
-                                remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
-                                response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
+                                if has_minutes:
+                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[display_limit:])
+                                    response += f"• ... and {len(data) - display_limit} other categories: {remaining} min\n"
+                                else:
+                                    remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
+                                    response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
                         else:
-                            response += f"Found {total_items} items\n"
+                            if has_minutes and total_minutes is not None:
+                                response += f"Found total {int(total_minutes)} min\n"
+                            else:
+                                response += f"Found {total_items} items\n"
                         print(response)
                         return response
 
                     # Handle list of documents - show summary instead of raw JSON
                     if max_items is not None and len(data) > max_items:
                         response = f"📊 RESULTS SUMMARY:\n"
-                        response += f"Found {len(data)} items. Showing key details for first {max_items}:\n\n"
+                        response += f"Found {len(data)} items. Showing key details for last {max_items}:\n\n"
                         # Show sample items in a collection-aware way
-                        for i, item in enumerate(data[:max_items], 1):
+                        for i, item in enumerate(data[-max_items:], len(data) - max_items + 1):
                             if isinstance(item, dict):
                                 response += render_line(item) + "\n"
                         if len(data) > max_items:
-                            response += f"• ... and {len(data) - max_items} more items\n"
+                            response += f"• ... and {len(data) - max_items} items were omitted above\n"
                         return response
                     else:
                         # Show all items or small list - show in formatted way
@@ -734,7 +815,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             filtered = filter_and_transform_content(filtered, primary_entity=primary_entity)
 
             # Format in LLM-friendly way
-            max_items = None if show_all else 20
+            max_items = None if show_all else 50
             formatted_result = format_llm_friendly(filtered, max_items=max_items, primary_entity=primary_entity)
             # If members primary entity and no rows, proactively hint about filters
             try:
@@ -979,10 +1060,338 @@ async def rag_search(
         return f"❌ RAG SEARCH ERROR: {str(e)}"
 
 
+# Global websocket registry for content generation
+_GENERATION_WEBSOCKET = None
+_GENERATION_CONVERSATION_ID = None
+
+def set_generation_websocket(websocket):
+    """Set the websocket connection for direct content streaming."""
+    global _GENERATION_WEBSOCKET
+    _GENERATION_WEBSOCKET = websocket
+
+def get_generation_websocket():
+    """Get the current websocket connection."""
+    return _GENERATION_WEBSOCKET
+
+def set_generation_context(websocket, conversation_id):
+    """Set websocket and conversation context for generated content persistence."""
+    global _GENERATION_WEBSOCKET, _GENERATION_CONVERSATION_ID
+    _GENERATION_WEBSOCKET = websocket
+    _GENERATION_CONVERSATION_ID = conversation_id
+
+def get_generation_conversation_id():
+    """Get the current conversation id for generated content context."""
+    return _GENERATION_CONVERSATION_ID
+
+
+@tool
+async def generate_content(
+    content_type: str,
+    prompt: str,
+    template_title: str = "",
+    template_content: str = "",
+    context: Optional[Dict[str, Any]] = None
+) -> str:
+    """Generate work items, pages, cycles, or modules - sends content DIRECTLY to frontend, returns minimal confirmation.
+    
+    **CRITICAL TOKEN OPTIMIZATION**: 
+    - Full generated content is sent directly to the frontend via WebSocket
+    - Agent receives only a minimal success/failure signal (no content details)
+    - Prevents generated content from being sent back through the LLM
+    
+    Use this to create new content:
+    - Work items: bugs, tasks, features  
+    - Pages: documentation, meeting notes, project plans
+    - Cycles: sprints, iterations, development cycles
+    - Modules: feature modules, components, subsystems
+    
+    Args:
+        content_type: Type of content - 'work_item', 'page', 'cycle', or 'module'
+        prompt: User's instruction for what to generate
+        template_title: Optional template title to base generation on
+        template_content: Optional template content to use as structure
+        context: Optional context dict with additional parameters (pageId, projectId, etc.)
+    
+    Returns:
+        Minimal success/failure signal (NOT content details) - saves maximum tokens
+    
+    Examples:
+        generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
+        generate_content(content_type="page", prompt="Create API documentation", context={...})
+        generate_content(content_type="cycle", prompt="Q4 2024 Sprint")
+        generate_content(content_type="module", prompt="Authentication Module")
+    """
+    import httpx
+    
+    try:
+        if content_type not in ["work_item", "page", "cycle", "module"]:
+            return "❌ Invalid content type"
+        
+        # Get API base URL from environment or use default
+        api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+        
+        if content_type == "work_item":
+            # Call work item generation endpoint
+            url = f"{api_base}/generate-work-item"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Work Item",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "work_item",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated artifact as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_work_item
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    description = (result or {}).get("description") if isinstance(result, dict) else None
+                    await save_generated_work_item(conv_id, {
+                        "title": (title or "Work item").strip(),
+                        "description": (description or "").strip(),
+                        # Optional fields; may be filled later by explicit save to domain DB
+                        "projectIdentifier": (result or {}).get("projectIdentifier") if isinstance(result, dict) else None,
+                        "sequenceId": (result or {}).get("sequenceId") if isinstance(result, dict) else None,
+                        "link": (result or {}).get("link") if isinstance(result, dict) else None,
+                    })
+            except Exception as e:
+                # Non-fatal
+                print(f"Warning: failed to persist generated work item to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+        elif content_type == "cycle":
+            # Call cycle generation endpoint
+            url = f"{api_base}/generate-cycle"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Cycle",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "cycle",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated artifact as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_cycle
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    description = (result or {}).get("description") if isinstance(result, dict) else None
+                    await save_generated_cycle(conv_id, {
+                        "title": (title or "Cycle").strip(),
+                        "description": (description or "").strip(),
+                    })
+            except Exception as e:
+                # Non-fatal
+                print(f"Warning: failed to persist generated cycle to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+        elif content_type == "module":
+            # Call module generation endpoint
+            url = f"{api_base}/generate-module"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Module",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "module",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated artifact as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_module
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    description = (result or {}).get("description") if isinstance(result, dict) else None
+                    await save_generated_module(conv_id, {
+                        "title": (title or "Module").strip(),
+                        "description": (description or "").strip(),
+                    })
+            except Exception as e:
+                # Non-fatal
+                print(f"Warning: failed to persist generated module to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+        else:  # content_type == "page"
+            # Call page generation endpoint
+            url = f"{api_base}/stream-page-content"
+            
+            # Build request context
+            page_context = context or {}
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Page",
+                    "content": template_content or ""
+                },
+                "context": page_context.get("context", {
+                    "tenantId": "",
+                    "page": {"type": "DOCUMENTATION"},
+                    "subject": {},
+                    "timeScope": {},
+                    "retrieval": {},
+                    "privacy": {}
+                }),
+                "pageId": page_context.get("pageId", ""),
+                "projectId": page_context.get("projectId", ""),
+                "tenantId": page_context.get("tenantId", "")
+            }
+            
+            # Send as query param (matching the endpoint's expectation)
+            import json as json_lib
+            params = {"data": json_lib.dumps(payload)}
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "page",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated page as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_page
+                    # Ensure blocks shape
+                    blocks = result if isinstance(result, dict) else {}
+                    if not isinstance(blocks.get("blocks"), list):
+                        blocks = {"blocks": []}
+                    title = (result or {}).get("title") if isinstance(result, dict) else None
+                    await save_generated_page(conv_id, {
+                        "title": (title or "Generated Page").strip(),
+                        "blocks": blocks
+                    })
+            except Exception as e:
+                print(f"Warning: failed to persist generated page to conversation: {e}")
+            
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+            
+    except httpx.HTTPStatusError as e:
+        error_msg = f"API error: {e.response.status_code}"
+        # Send error to frontend
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+    except httpx.RequestError as e:
+        error_msg = "Connection error"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": error_msg,
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+    except Exception as e:
+        error_msg = "Generation failed"
+        websocket = get_generation_websocket()
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "content_generated",
+                    "content_type": content_type,
+                    "error": str(e)[:200],
+                    "success": False
+                })
+            except Exception:
+                pass
+        return f"❌ {error_msg}"
+
+
 # Define the tools list - streamlined and powerful
 tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
+    generate_content,         # Generate work items/pages (returns summary only, not full content)
 ]
 
 # import asyncio

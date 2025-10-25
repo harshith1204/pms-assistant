@@ -25,6 +25,7 @@ from qdrant.dbconnection import (
     cycle_collection,
     module_collection,
     project_collection,
+    epic_collection,
     qdrant_client,
     QDRANT_COLLECTION
 )
@@ -220,6 +221,16 @@ def ensure_collection_with_hybrid(
             if "already exists" not in str(e):
                 print(f"⚠️ Failed to ensure index on 'business_id': {e}")
 
+        try:
+            qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="project_name",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+        except Exception as e:
+            if "already exists" not in str(e):
+                print(f"⚠ Failed to ensure index on 'project_name': {e}")
+
         for text_field in ["title", "full_text"]:
             try:
                 qdrant_client.create_payload_index(
@@ -367,6 +378,7 @@ CHUNKING_CONFIG = {
         "overlap_words": 40,
         "min_words_to_chunk": 220,
     },
+    # timeline intentionally excluded from RAG indexing to avoid bulky data
 }
 
 # For more aggressive chunking (more multi-chunk documents), use:
@@ -610,7 +622,7 @@ def index_workitems_to_qdrant():
             "_id": 1, "title": 1, "description": 1, "displayBugNo": 1,
             "priority": 1, "status": 1, "state": 1, "assignee": 1,
             "createdAt": 1, "updatedAt": 1, "createdTimeStamp": 1, "updatedTimeStamp": 1,
-            "project": 1, "cycle": 1, "modules": 1, "business": 1, "createdBy": 1
+            "project": 1, "cycle": 1, "modules": 1, "business": 1, "createdBy": 1,"workLogs":1
         })
         points = []
 
@@ -620,7 +632,8 @@ def index_workitems_to_qdrant():
             # Clean HTML/entities before chunking for better retrieval quality
             title_clean = html_to_text(doc.get("title", ""))
             desc_clean = html_to_text(doc.get("description", ""))
-            combined_text = " ".join(filter(None, [title_clean, desc_clean])).strip()
+            worklogs_description = doc["workLogs"].get("description","")
+            combined_text = " ".join(filter(None, [title_clean, desc_clean,worklogs_description])).strip()
             if not combined_text:
                 print(f"⚠️ Skipping work item {mongo_id} - no substantial text content found")
                 continue
@@ -1015,6 +1028,145 @@ def index_modules_to_qdrant():
         return {"status": "success", "indexed_documents": total_indexed}
     except Exception as e:
         print(f"❌ Error during module indexing: {e}")
+        return {"status": "error", "message": str(e)}
+
+# New function to index epic
+def index_epic_to_qdrant():
+    try:
+        print("🔄 Indexing epic from MongoDB to Qdrant...")
+
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
+        try:
+            qdrant_client.create_payload_index(
+                collection_name=QDRANT_COLLECTION,
+                field_name="content_type",
+                field_schema=PayloadSchemaType.KEYWORD
+            )
+            print("✅ Ensured payload index on 'content_type'")
+        except Exception as e:
+            if "already exists" in str(e):
+                print("ℹ️ Index on 'content_type' already exists, skipping.")
+            else:
+                print(f"⚠️ Failed to ensure index: {e}")
+
+        documents = epic_collection.find({}, {
+            "_id": 1,
+            "title": 1,
+            "description": 1,
+            "bugNo": 1,
+            "priority": 1,
+            "assignee": 1,
+            "createdAt": 1,
+            "updatedAt": 1,
+            "createdTimeStamp": 1,
+            "updatedTimeStamp": 1,
+            "project": 1,
+            "business": 1,
+            "state": 1,
+            "stateMaster": 1,
+            "createdBy": 1
+        })
+        points = []
+
+        splade = get_splade_encoder()
+        for doc in documents:
+            mongo_id = normalize_mongo_id(doc["_id"])
+            title_clean = html_to_text(doc.get("title", ""))
+            desc_clean = html_to_text(doc.get("description", ""))
+            combined_text = " ".join(filter(None, [title_clean, desc_clean])).strip()
+            if not combined_text:
+                print(f"⚠️ Skipping epic {mongo_id} - no substantial text content found")
+                continue
+
+            metadata = {
+                "bugNo": doc.get("bugNo"),
+                "priority": doc.get("priority"),
+                "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
+                "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+            }
+            
+            if doc.get("state"):
+                if isinstance(doc["state"], dict):
+                    metadata["state_name"] = doc["state"].get("name")
+
+            if doc.get("stateMaster"):
+                if isinstance(doc["stateMaster"], dict):
+                    metadata["stateMaster_name"] = doc["stateMaster"].get("name")
+
+            if doc.get("project"):
+                if isinstance(doc["project"], dict):
+                    metadata["project_name"] = doc["project"].get("name")
+                    metadata["project_id"] = normalize_mongo_id(doc["project"].get("_id")) if doc["project"].get("_id") else None
+
+            if doc.get("business"):
+                if isinstance(doc["business"], dict):
+                    metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
+
+            if doc.get("assignee"):
+                assignee = doc["assignee"]
+                if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
+                    metadata["assignee_name"] = assignee[0].get("name")
+                elif isinstance(assignee, dict):
+                    metadata["assignee_name"] = assignee.get("name")
+
+            if doc.get("createdBy"):
+                if isinstance(doc["createdBy"], dict):
+                    metadata["created_by_name"] = doc["createdBy"].get("name")
+
+            chunks = get_chunks_for_content(combined_text, "epic")
+            if not chunks:
+                chunks = [combined_text]
+
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("epic", mongo_id, doc.get("title", ""), len(chunks), word_count)
+
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                full_text = f"{doc.get('title', '')} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": doc.get("title", ""),
+                    "content": chunk,
+                    "full_text": full_text,
+                    "content_type": "epic"
+                }
+
+                payload.update({k: v for k, v in metadata.items() if v is not None})
+
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/epic/{idx}"),
+                    "vector": {
+                        "dense": vector,
+                    },
+                    "payload": dict(payload),
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["vector"]["sparse"] = SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )
+                point = PointStruct(**point_kwargs)
+                points.append(point)
+
+        if not points:
+            print("⚠️ No valid epics to index.")
+            return {"status": "warning", "message": "No valid epics found to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        print(f"✅ Indexed {total_indexed} epics to Qdrant.")
+        return {"status": "success", "indexed_documents": total_indexed}
+
+    except Exception as e:
+        print(f"❌ Error during epic indexing: {e}")
         return {"status": "error", "message": str(e)}
 
 # ------------------ Usage ------------------

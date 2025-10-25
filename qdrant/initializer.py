@@ -4,10 +4,12 @@ import mongo.constants
 import os
 import json
 import re
+import uuid
+from bson import ObjectId, Binary
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
 from sentence_transformers import SentenceTransformer
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
@@ -85,7 +87,7 @@ class RAGTool:
             # Generate embedding for the query
             query_embedding = self.embedding_model.encode(query).tolist()
             # Build filter if content_type is specified
-            from mongo.constants import BUSINESS_UUID
+            from mongo.constants import BUSINESS_UUID, MEMBER_UUID
             must_conditions = []
             if content_type:
                 must_conditions.append(
@@ -94,13 +96,36 @@ class RAGTool:
                         match=MatchValue(value=content_type)
                     )
                 )
-            if BUSINESS_UUID:
+
+            # Business-level scoping
+            business_uuid = BUSINESS_UUID()
+            if business_uuid:
                 must_conditions.append(
                     FieldCondition(
                         key="business_id",
-                        match=MatchValue(value=BUSINESS_UUID)
+                        match=MatchValue(value=business_uuid)
                     )
                 )
+
+            # Member-level project RBAC scoping
+            member_uuid = MEMBER_UUID()
+            if member_uuid:
+                try:
+                    # Get list of project IDs this member has access to
+                    member_projects = await self._get_member_projects(member_uuid, business_uuid)
+                    if member_projects:
+                        # Only apply member filtering for content types that belong to projects
+                        project_content_types = {"page", "work_item", "cycle", "module"}
+                        if content_type is None or content_type in project_content_types:
+                            # Filter by accessible project IDs
+                            must_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
+                        elif content_type == "project":
+                            # For project searches, only show projects the member has access to
+                            must_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
+                except Exception as e:
+                    # Error getting member projects - log and skip member filter
+                    print(f"⚠️  Error getting member projects for '{member_uuid}': {e}")
+                    print(f"   Skipping member filter for search")
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
@@ -220,4 +245,60 @@ class RAGTool:
                 f"Relevance Score: {result['score']:.3f}\n"
             )
 
-        return "\n".join(context_parts) if context_parts else "No relevant content found." 
+        return "\n".join(context_parts) if context_parts else "No relevant content found."
+
+    def _normalize_mongo_id(self, mongo_id) -> str:
+        """Convert Mongo _id (ObjectId or Binary UUID) into a safe string like Qdrant expects."""
+        if isinstance(mongo_id, ObjectId):
+            return str(mongo_id)
+        elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
+            return str(uuid.UUID(bytes=mongo_id))
+        return str(mongo_id)
+
+    async def _get_member_projects(self, member_uuid: str, business_uuid: str) -> List[str]:
+        """
+        Get list of project IDs that the member has access to.
+
+        Args:
+            member_uuid: The member's UUID
+            business_uuid: The business UUID for additional scoping
+
+        Returns:
+            List of project IDs the member can access
+        """
+        try:
+            # Import here to avoid circular imports
+            from mongo.client import direct_mongo_client
+            from mongo.constants import uuid_str_to_mongo_binary
+
+            # Query MongoDB to get projects the member is associated with
+            pipeline = [
+                {
+                    "$match": {
+                        "staff._id": uuid_str_to_mongo_binary(member_uuid)
+                    }
+                },
+                {
+                    "$project": {
+                        "project_id": "$project._id"
+                    }
+                }
+            ]
+
+            # Add business scoping if available
+            if business_uuid:
+                pipeline[0]["$match"]["project.business._id"] = uuid_str_to_mongo_binary(business_uuid)
+
+            results = await direct_mongo_client.aggregate("ProjectManagement", "members", pipeline)
+
+            # Extract project IDs and convert back to string format using same normalization as Qdrant
+            project_ids = []
+            for result in results:
+                if result.get("project_id"):
+                    project_ids.append(self._normalize_mongo_id(result["project_id"]))
+
+            return project_ids
+
+        except Exception as e:
+            print(f"Error querying member projects: {e}")
+            return [] 

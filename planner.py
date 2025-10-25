@@ -157,7 +157,7 @@ class LLMIntentParser:
         # Keep the model reasonably deterministic for planning
         self.llm = ChatGroq(
             model=self.model_name,
-            temperature=0.1,
+            temperature=0,
             max_tokens=1024,
             top_p=0.8,
         )
@@ -191,6 +191,7 @@ class LLMIntentParser:
             "issues": "workItem",
             "tickets": "workItem",
             "ticket": "workItem",
+            "epic" : "epic",
         }
 
     def _is_placeholder(self, v) -> bool:
@@ -340,7 +341,8 @@ class LLMIntentParser:
             "- Work items belong to projects, cycles, and modules\n"
             "- Work items are assigned to team members\n"
             "- Projects contain cycles and modules\n"
-            "- Cycles and modules belong to projects\n\n"
+            "- Cycles and modules belong to projects\n"
+            "- Epics contain multiple features and belong to a project lifecycle.\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -360,7 +362,12 @@ class LLMIntentParser:
             "- visibility: PUBLIC|PRIVATE|ARCHIVED (for pages)\n"
             "- project_name, cycle_name, assignee_name, module_name\n"
             "- createdBy_name: (creator names)\n"
-            "- label: (work item labels)\n\n"
+            "- label: (work item labels)\n"
+            "- estimateSystem: TIME|POINTS|etc (for workItem)\n"
+            "- estimate: object with hr/min fields (for workItem)\n"
+            "- workLogs: array of work log entries with user, hours, minutes, description, loggedAt (for workItem)\n\n"
+            "- state_name: Backlog|New|Started|Unstarted|Completed (for epic)\n"
+            "- priority: URGENT|HIGH|MEDIUM|LOW (for epic)\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -374,9 +381,9 @@ class LLMIntentParser:
             "- 'top N' / 'first N' / 'N items' → limit: N (e.g., 'top 5' → limit: 5)\n"
             "- 'all' / 'every' / 'list all' → limit: 1000 (high limit to get all results)\n"
             "- 'a few' / 'some' → limit: 5\n"
-            "- 'several' → limit: 10\n"
+            "- 'several' → limit: 50\n"
             "- 'one' / 'single' / 'find X' (singular) → limit: 1, fetch_one: true\n"
-            "- No specific mention → limit: 20 (reasonable default)\n"
+            "- No specific mention → limit: 50 (reasonable default)\n"
             "- For count/aggregation queries → limit: null (no limit needed)\n"
             "IMPORTANT: When 'top N' is used, also infer appropriate sorting:\n"
             "  - 'top N' with priority context → sort_order: {\"priority\": -1}\n"
@@ -434,7 +441,7 @@ class LLMIntentParser:
             '  "group_by": [],\n'
             '  "projections": [],\n'
             '  "sort_order": null,\n'
-            '  "limit": 20,\n'
+            '  "limit": 50,\n'
             '  "skip": 0,\n'
             '  "wants_details": true,\n'
             '  "wants_count": false,\n'
@@ -470,7 +477,9 @@ class LLMIntentParser:
             "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
             "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
             "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
-            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n\n"
+            "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
+            "- 'show work items with estimates' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"estimate\", \"estimateSystem\"], \"aggregations\": []}\n"
+            "- 'show work logs for tasks' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"workLogs\"], \"aggregations\": []}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -534,6 +543,15 @@ class LLMIntentParser:
         # Map legacy 'status' to 'state' for workItem if present
         if primary == "workItem" and "status" in raw_filters and "state" not in raw_filters:
             raw_filters["state"] = raw_filters.pop("status")
+
+        # For epic collection, accept 'state_name' as the canonical filter key
+        # and also map legacy 'status' to 'state_name' when provided by LLMs/users
+        if primary == "epic":
+            if "status" in raw_filters and "state_name" not in raw_filters:
+                raw_filters["state_name"] = raw_filters.pop("status")
+            # Some LLMs may emit 'state' for epics; prefer 'state_name'
+            if "state" in raw_filters and "state_name" not in raw_filters:
+                raw_filters["state_name"] = raw_filters.pop("state")
 
         # Allow plain 'status' for project/cycle as their canonical status
         if primary in ("project", "cycle") and "status" in raw_filters:
@@ -608,6 +626,8 @@ class LLMIntentParser:
             "project_name", "cycle_name", "assignee_name", "module_name", "member_role",
             # actor/name filters
             "createdBy_name", "lead_name", "leadMail", "business_name",
+            # timeline specific actor/task tokens
+            "actor_name", "work_item_title",
             "defaultAssignee_name", "defaultAsignee_name", "staff_name",
             # members specific
             "role", "type", "joiningDate", "joiningDate_from", "joiningDate_to",
@@ -619,6 +639,9 @@ class LLMIntentParser:
         for f in date_like_fields:
             known_filter_keys.add(f + "_from")
             known_filter_keys.add(f + "_to")
+            # Also preserve relative window keys so timeline's timestamp_within is not dropped
+            known_filter_keys.add(f + "_within")
+            known_filter_keys.add(f + "_duration")
 
         for k, v in raw_filters.items():
             if k not in known_filter_keys or self._is_placeholder(v):
@@ -732,14 +755,33 @@ class LLMIntentParser:
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
             # Accept synonyms and normalize
-            key_map = {
-                "created": "createdTimeStamp",
-                "createdAt": "createdTimeStamp",
-                "created_time": "createdTimeStamp",
-                "time": "createdTimeStamp",
-                "date": "createdTimeStamp",
-                "timestamp": "createdTimeStamp",
-            }
+            if primary == "page":
+                key_map = {
+                    "created": "createdAt",
+                    "createdAt": "createdAt",
+                    "created_time": "createdAt",
+                    "time": "createdAt",
+                    "date": "createdAt",
+                    "timestamp": "updatedAt",
+                }
+            elif primary == "timeline":
+                key_map = {
+                    "created": "timestamp",
+                    "createdAt": "timestamp",
+                    "created_time": "timestamp",
+                    "time": "timestamp",
+                    "date": "timestamp",
+                    "timestamp": "timestamp",
+                }
+            else:
+                key_map = {
+                    "created": "createdTimeStamp",
+                    "createdAt": "createdTimeStamp",
+                    "created_time": "createdTimeStamp",
+                    "time": "createdTimeStamp",
+                    "date": "createdTimeStamp",
+                    "timestamp": "createdTimeStamp",
+                }
             norm_key = key_map.get(key, key)
 
             def _norm_dir(v: Any) -> Optional[int]:
@@ -754,7 +796,7 @@ class LLMIntentParser:
                 return None
 
             norm_dir = _norm_dir(val)
-            if norm_key in {"createdTimeStamp", "priority", "state", "status"} and norm_dir in (1, -1):
+            if norm_key in {"createdTimeStamp", "createdAt", "updatedAt", "timestamp", "priority", "state", "status"} and norm_dir in (1, -1):
                 sort_order = {norm_key: norm_dir}
 
         # Limit - intelligent handling based on query type
@@ -763,18 +805,18 @@ class LLMIntentParser:
             # For count/aggregation-only queries, no limit needed unless specifically requested
             if aggregations and not wants_details and limit_val is None:
                 limit = None
-            elif limit_val is None or limit_val == 20:
+            elif limit_val is None or limit_val == 50:
                 # Use default limit when LLM doesn't provide a specific limit
-                limit = 20
+                limit = 50
             else:
                 limit = int(limit_val)
                 if limit <= 0:
-                    limit = 20
+                    limit = 50
                 # Cap at 1000 to prevent runaway queries (instead of 100)
                 limit = min(limit, 1000)
         except Exception:
             # Last resort fallback: use default limit
-            limit = 20
+            limit = 50
 
         # Skip (offset)
         skip_val = data.get("skip")
@@ -807,11 +849,51 @@ class LLMIntentParser:
             if group_by and wants_details_raw is None:
                 wants_details = False
 
+        # Heuristic: timeline TIME_LOGGED queries that mention per-task breakdown should group by work item
+        # This enables questions like "amount of time logged by <user> per task for today"
+        if primary == "timeline":
+            tval = str(filters.get("type", "")).lower()
+            mentions_time = any(k in oq for k in ["time logged", "amount of time", "time spent", "logged time"]) or ("time_logged" in tval)
+            mentions_per_task = any(k in oq for k in ["per task", "by task", "per work item", "by work item", "per ticket", "by ticket", "breakdown"])
+            if mentions_time and (mentions_per_task or ("time_logged" in tval and not group_by)):
+                if "group" not in aggregations:
+                    aggregations = ["group"] + [a for a in aggregations if a != "group"]
+                if not group_by:
+                    group_by = ["work_item_title"]
+                # Grouped summaries don't need wants_details by default
+                wants_details = False
+
+            # Infer missing time window for timeline when the query includes relative periods
+            has_time_window = any(k in filters for k in [
+                "timestamp_from", "timestamp_to", "timestamp_within", "timestamp_duration"
+            ])
+            if not has_time_window:
+                if re.search(r"\btoday\b", oq):
+                    filters["timestamp_within"] = "today"
+                elif re.search(r"\byesterday\b", oq):
+                    filters["timestamp_within"] = "yesterday"
+                elif re.search(r"\bthis\s+week\b", oq):
+                    filters["timestamp_within"] = "this_week"
+                elif re.search(r"\blast\s+week\b", oq):
+                    filters["timestamp_within"] = "last_week"
+                elif re.search(r"\bthis\s+month\b", oq):
+                    filters["timestamp_within"] = "this_month"
+                elif re.search(r"\blast\s+month\b", oq):
+                    filters["timestamp_within"] = "last_month"
+
         # If no explicit sort provided and no grouping/count, infer time-based sort from phrasing
         if not sort_order and not group_by and not wants_count:
             inferred_sort = self._infer_sort_order_from_query(original_query or "")
             if inferred_sort:
-                sort_order = inferred_sort
+                # If timeline → map createdTimeStamp to timestamp
+                if primary == "timeline" and "createdTimeStamp" in inferred_sort:
+                    dirv = inferred_sort.get("createdTimeStamp", -1)
+                    sort_order = {"timestamp": dirv}
+                elif primary == "page" and "createdTimeStamp" in inferred_sort:
+                    dirv = inferred_sort.get("createdTimeStamp", -1)
+                    sort_order = {"createdAt": dirv}
+                else:
+                    sort_order = inferred_sort
 
         # Fetch one heuristic
         fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
@@ -1042,6 +1124,11 @@ class PipelineGenerator:
                 'project': 'project',
                 'business': 'project',
             },
+            'epic': {
+                'project': 'project',
+                'business': 'project',
+            }
+
         }.get(collection, {})
 
         # Include explicit target entities requested by the intent (supports multi-hop like "project.cycles")
@@ -1182,12 +1269,50 @@ class PipelineGenerator:
                 pass
             else:
                 group_id_expr = list(id_fields.values())[0] if len(id_fields) == 1 else id_fields
-                group_stage: Dict[str, Any] = {
-                    "$group": {
-                        "_id": group_id_expr,
-                        "count": {"$sum": 1},
+
+                # Special handling: for timeline TIME_LOGGED breakdowns, sum parsed minutes from newValue
+                is_timeline_time_logged = (
+                    intent.primary_entity == 'timeline' and (
+                        isinstance(intent.filters.get('type'), str) and 'time_logged' in str(intent.filters.get('type')).lower()
+                    )
+                )
+                if is_timeline_time_logged:
+                    # Compute parsed minutes from strings like "1 hr 30 min", "45 min", "2 hr"
+                    pipeline.append({
+                        "$addFields": {
+                            "_parsedMinutes": {
+                                "$let": {
+                                    "vars": {
+                                        "h": {"$regexFind": {"input": "$newValue", "regex": "([0-9]+)\\s*(?:h|hr|hrs|hour|hours)"}},
+                                        "m": {"$regexFind": {"input": "$newValue", "regex": "([0-9]+)\\s*(?:m|min|mins|minute|minutes)"}}
+                                    },
+                                    "in": {
+                                        "$add": [
+                                            {"$multiply": [
+                                                {"$toInt": {"$ifNull": [{"$arrayElemAt": ["$$h.captures", 0]}, 0]}}, 60
+                                            ]},
+                                            {"$toInt": {"$ifNull": [{"$arrayElemAt": ["$$m.captures", 0]}, 0]}}
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    group_stage: Dict[str, Any] = {
+                        "$group": {
+                            "_id": group_id_expr,
+                            "totalMinutes": {"$sum": "$__parsedMinutes__"}  # placeholder to be replaced
+                        }
                     }
-                }
+                    # Replace placeholder key with the actual parsed minutes field name
+                    group_stage["$group"]["totalMinutes"] = {"$sum": "$_parsedMinutes"}
+                else:
+                    group_stage: Dict[str, Any] = {
+                        "$group": {
+                            "_id": group_id_expr,
+                            "count": {"$sum": 1},
+                        }
+                    }
                 if intent.wants_details:
                     group_stage["$group"]["items"] = {
                         "$push": {
@@ -1195,10 +1320,13 @@ class PipelineGenerator:
                             "displayBugNo": "$displayBugNo",
                             "title": "$title",
                             "priority": "$priority",
+                            "estimate": "$estimate",
+                            "estimateSystem": "$estimateSystem",
+                            "workLogs": "$workLogs",
                         }
                     }
                 pipeline.append(group_stage)
-                # Sorting for grouped results: default to count desc, allow sorting by grouped keys
+                # Sorting for grouped results: default to metric desc (count or totalMinutes), allow sorting by grouped keys
                 if intent.sort_order:
                     sort_key, sort_dir = next(iter(intent.sort_order.items()))
                     if sort_key in intent.group_by:
@@ -1208,14 +1336,24 @@ class PipelineGenerator:
                         else:
                             pipeline.append({"$sort": {f"_id.{sort_key}": sort_dir}})
                     else:
-                        pipeline.append({"$sort": {"count": -1}})
+                        # Default to the primary metric
+                        if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
+                            pipeline.append({"$sort": {"totalMinutes": -1}})
+                        else:
+                            pipeline.append({"$sort": {"count": -1}})
                 else:
-                    pipeline.append({"$sort": {"count": -1}})
+                    if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
+                        pipeline.append({"$sort": {"totalMinutes": -1}})
+                    else:
+                        pipeline.append({"$sort": {"count": -1}})
                 # Present a tidy shape
                 project_shape: Dict[str, Any] = {"count": 1}
                 if intent.wants_details:
                     project_shape["items"] = 1
                 project_shape["group"] = "$_id"
+                # Expose totalMinutes when computed
+                if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
+                    project_shape["totalMinutes"] = 1
                 pipeline.append({"$project": project_shape})
                 # Respect limit on grouped results
                 if intent.limit:
@@ -1465,6 +1603,20 @@ class PipelineGenerator:
                     gte_key = gte_key or rng.get("from")
                     lte_key = lte_key or rng.get("to")
 
+            # Also interpret relative tokens provided directly in _from/_to
+            # e.g. createdTimeStamp_from: "last_week" or updatedTimeStamp_to: "yesterday"
+            if isinstance(gte_key, str):
+                rng_from = _parse_relative_window(gte_key)
+                if rng_from:
+                    gte_key = rng_from.get("from")
+                    # If caller did not specify an upper bound, use the window's natural end
+                    if lte_key is None:
+                        lte_key = rng_from.get("to")
+            if isinstance(lte_key, str):
+                rng_to = _parse_relative_window(lte_key)
+                if rng_to:
+                    lte_key = rng_to.get("to")
+
             if gte_key is None and lte_key is None:
                 return
             range_expr: Dict[str, Any] = {}
@@ -1641,6 +1793,24 @@ class PipelineGenerator:
             if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
                 primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
 
+        elif collection == "epic":
+            if 'priority' in filters:
+                primary_filters['priority'] = filters['priority']
+            if 'state' in filters:
+                # Map logical state filter to embedded field
+                primary_filters['state.name'] = filters['state']
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # module.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+
         return primary_filters
 
     def _extract_secondary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
@@ -1771,7 +1941,7 @@ class PipelineGenerator:
                 "displayBugNo", "title", "priority",
                 "state.name", "assignee",
                 "project.name", "cycle.name", "modules.name",
-                "createdTimeStamp"
+                "createdTimeStamp", "estimateSystem", "estimate", "workLogs"
             ],
             "project": [
                 "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
@@ -1791,6 +1961,9 @@ class PipelineGenerator:
             ],
             "projectState": [
                 "name", "subStates.name", "subStates.order"
+            ],
+            "epic": [
+                "title", "priority", "state.name", "createdTimeStamp", "project.name","description","assignee.name","bugNo"
             ],
         }
 
@@ -1821,6 +1994,9 @@ class PipelineGenerator:
             # which: 'created' | 'updated'
             if entity == 'page':
                 return 'createdAt' if which == 'created' else 'updatedAt'
+            if entity == 'timeline':
+                # timeline stores a single 'timestamp' field for event time
+                return 'timestamp'
             # Default to *TimeStamp for other entities
             return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
 
@@ -1901,6 +2077,17 @@ class PipelineGenerator:
             'projectState': {
                 'project': 'project.name',
                 'business': 'project.business.name',
+            },
+            'timeline': {
+                'project': 'project.name',
+                'status': 'type',
+                'assignee': 'user.name',
+                'created_day': bucket_expr('timeline', 'created', 'day'),
+                'created_week': bucket_expr('timeline', 'created', 'week'),
+                'created_month': bucket_expr('timeline', 'created', 'month'),
+                'updated_day': bucket_expr('timeline', 'updated', 'day'),
+                'updated_week': bucket_expr('timeline', 'updated', 'week'),
+                'updated_month': bucket_expr('timeline', 'updated', 'month'),
             },
         }
         entity_map = mapping.get(primary_entity, {})
