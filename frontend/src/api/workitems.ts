@@ -5,6 +5,7 @@ export type CreateWorkItemRequest = {
   description?: string;
   projectIdentifier?: string;
   projectId?: string;
+  cycleId?: string;
   assignees?: string[];
   startDate?: string;
   endDate?: string;
@@ -16,6 +17,7 @@ export type CreateWorkItemWithMembersRequest = {
   description?: string;
   projectIdentifier?: string;
   projectId?: string;
+  cycleId?: string;
   assignees?: { id: string; name: string }[];
   startDate?: string;
   endDate?: string;
@@ -40,6 +42,7 @@ export async function createWorkItem(payload: CreateWorkItemRequest): Promise<Cr
       description: payload.description || "",
       project_identifier: payload.projectIdentifier,
       project_id: payload.projectId,
+      cycle_id: payload.cycleId,
       assignees: payload.assignees,
       start_date: payload.startDate,
       end_date: payload.endDate,
@@ -62,6 +65,7 @@ export async function createWorkItemWithMembers(payload: CreateWorkItemWithMembe
       description: payload.description || "",
       project_identifier: payload.projectIdentifier,
       project_id: payload.projectId,
+      cycle_id: payload.cycleId,
       assignees: payload.assignees?.map(a => a.id),
       start_date: payload.startDate,
       end_date: payload.endDate,

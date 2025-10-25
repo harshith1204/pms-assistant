@@ -1,21 +1,24 @@
 import React from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Copy } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Copy, CalendarClock } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
+import { type Cycle } from "@/api/cycles";
 
 export type WorkItemCardProps = {
   title: string;
   description?: string;
   projectIdentifier?: string;
   sequenceId?: string | number;
+  cycle?: Cycle | null;
   link?: string;
   onCopy?: (field: "title" | "description" | "link") => void;
   className?: string;
 };
 
-export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description = "", projectIdentifier, sequenceId, link, onCopy, className }) => {
+export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description = "", projectIdentifier, sequenceId, cycle, link, onCopy, className }) => {
   const [copied, setCopied] = React.useState<null | "title" | "description" | "link">(null);
 
   const handleCopy = async (field: "title" | "description" | "link") => {
@@ -42,6 +45,14 @@ export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description =
               )}
             </div>
             <div className="mt-0.5 text-base font-semibold leading-snug break-words">{title}</div>
+            {cycle && (
+              <div className="mt-2">
+                <Badge variant="outline" className="text-xs gap-1">
+                  <CalendarClock className="h-3 w-3" />
+                  {cycle.title}
+                </Badge>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 text-xs">
             {link && (
