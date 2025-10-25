@@ -281,15 +281,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onSave={async ({ title, description, project, startDate, endDate }) => {
                   try {
                     setSaving(true);
-                    const businessId = getBusinessId();
-                    const memberId = getMemberId();
                     const created = await createCycle({
                       title,
                       description,
                       projectId: project?.projectId,
                       startDate: startDate || cycle.startDate,
-                      endDate: endDate || cycle.endDate,
-                      createdBy: { id: memberId, name: "" }
+                      endDate: endDate || cycle.endDate
                     });
                     setSavedCycle(created);
                     toast({ title: "Cycle saved", description: "Your cycle has been created." });
@@ -329,8 +326,6 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onSave={async ({ title, description, project, lead, members, subState, startDate, endDate }) => {
                   try {
                     setSaving(true);
-                    const businessId = getBusinessId();
-                    const memberId = getMemberId();
                     const created = await createModuleWithMembers({
                       title,
                       description,
@@ -339,8 +334,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       lead,
                       members: members?.map(m => ({ id: m.id, name: m.displayName || m.name })),
                       startDate,
-                      endDate,
-                      createdBy: { id: memberId, name: "" }
+                      endDate
                     });
                     setSavedModule(created);
                     toast({ title: "Module saved", description: "Your module has been created." });
