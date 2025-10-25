@@ -1,4 +1,4 @@
-import { API_HTTP_URL } from "@/config";
+import { PROJECT_ENDPOINTS } from "@/api/endpoints";
 
 export type ProjectMember = {
   id: string;
@@ -25,7 +25,9 @@ export type GetProjectMembersResponse = {
 };
 
 export async function getProjectMembers(projectId: string): Promise<GetProjectMembersResponse> {
-  const res = await fetch(`https://stage-project.simpo.ai/project/${projectId}/member`, {
+  const endpoint = PROJECT_ENDPOINTS.GET_PROJECT_MEMBERS(projectId);
+
+  const res = await fetch(endpoint, {
     method: "GET",
     headers: { "accept": "application/json" },
   });

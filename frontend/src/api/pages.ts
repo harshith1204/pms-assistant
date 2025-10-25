@@ -1,4 +1,4 @@
-import { API_HTTP_URL } from "@/config";
+import { PAGE_ENDPOINTS } from "@/api/endpoints";
 
 export type CreatePageRequest = {
   title: string;
@@ -15,7 +15,9 @@ export type CreatePageResponse = {
 };
 
 export async function createPage(payload: CreatePageRequest): Promise<CreatePageResponse> {
-  const res = await fetch(`${API_HTTP_URL}/pages`, {
+  const endpoint = PAGE_ENDPOINTS.CREATE_PAGE(payload.projectId);
+
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
