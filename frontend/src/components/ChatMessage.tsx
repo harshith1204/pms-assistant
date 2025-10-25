@@ -60,6 +60,7 @@ import { createCycle } from "@/api/cycles";
 import { createModule, createModuleWithMembers } from "@/api/modules";
 import { type ProjectMember } from "@/api/members";
 import { type Cycle } from "@/api/cycles";
+import { type SubState } from "@/api/substates";
 import { toast } from "@/components/ui/use-toast";
 
 export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module }: ChatMessageProps) => {
@@ -74,6 +75,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [savedCycle, setSavedCycle] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
   const [savedModule, setSavedModule] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
 
+  // Module sub-state selection state
+  const [selectedModuleSubState, setSelectedModuleSubState] = useState<SubState | null>(null);
+
   // Cycle selection state
   const [selectedCycle, setSelectedCycle] = useState<any>(null);
 
@@ -87,6 +91,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
 
   // Date range selection state
   const [selectedDateRange, setSelectedDateRange] = useState<DateRange | undefined>();
+
+  // Sub-state selection state
+  const [selectedSubState, setSelectedSubState] = useState<SubState | null>(null);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -163,6 +170,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 projectIdentifier={savedWorkItem.projectIdentifier}
                 sequenceId={savedWorkItem.sequenceId}
                 cycle={selectedCycle}
+                subState={selectedSubState}
                 link={savedWorkItem.link}
                 className="mt-1"
               />
@@ -174,11 +182,13 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 selectedAssignees={selectedAssignees}
                 selectedDateRange={selectedDateRange}
                 selectedCycle={selectedCycle}
+                selectedSubState={selectedSubState}
                 onProjectSelect={setSelectedProject}
                 onAssigneesSelect={setSelectedAssignees}
                 onDateSelect={setSelectedDateRange}
                 onCycleSelect={setSelectedCycle}
-                onSave={async ({ title, description, project, assignees, cycle, startDate, endDate }) => {
+                onSubStateSelect={setSelectedSubState}
+                onSave={async ({ title, description, project, assignees, cycle, subState, startDate, endDate }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
@@ -188,6 +198,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       projectId: project?.projectId,
                       projectIdentifier: workItem.projectIdentifier,
                       cycleId: cycle?.id,
+                      subStateId: subState?.id,
                       assignees: assignees,
                       startDate,
                       endDate
@@ -278,6 +289,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
               <ModuleCard
                 title={savedModule.title}
                 description={savedModule.description}
+                subState={selectedModuleSubState}
                 link={savedModule.link}
                 className="mt-1"
               />
@@ -289,11 +301,13 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 selectedLead={selectedLead}
                 selectedMembers={selectedMembers}
                 selectedDateRange={selectedDateRange}
+                selectedSubState={selectedModuleSubState}
                 onProjectSelect={setSelectedProject}
                 onLeadSelect={setSelectedLead}
                 onMembersSelect={setSelectedMembers}
                 onDateSelect={setSelectedDateRange}
-                onSave={async ({ title, description, project, lead, members, startDate, endDate }) => {
+                onSubStateSelect={setSelectedModuleSubState}
+                onSave={async ({ title, description, project, lead, members, subState, startDate, endDate }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
@@ -301,6 +315,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       title,
                       description,
                       projectId: project?.projectId,
+                      subStateId: subState?.id,
                       lead,
                       members,
                       startDate,
