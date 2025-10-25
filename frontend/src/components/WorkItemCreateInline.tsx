@@ -15,9 +15,11 @@ import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
+import { type Module } from "@/api/modules";
 import { DateRange } from "react-day-picker";
 import CycleSelector from "@/components/CycleSelector";
 import SubStateSelector from "@/components/SubStateSelector";
+import ModuleSelector from "@/components/ModuleSelector";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
@@ -27,12 +29,14 @@ export type WorkItemCreateInlineProps = {
   selectedDateRange?: DateRange;
   selectedCycle?: Cycle | null;
   selectedSubState?: SubState | null;
+  selectedModule?: Module | null;
   onProjectSelect?: (project: Project | null) => void;
   onAssigneesSelect?: (assignees: ProjectMember[]) => void;
   onDateSelect?: (dateRange: DateRange | undefined) => void;
   onCycleSelect?: (cycle: Cycle | null) => void;
   onSubStateSelect?: (subState: SubState | null) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; cycle?: Cycle | null; subState?: SubState | null; startDate?: string; endDate?: string }) => void;
+  onModuleSelect?: (module: Module | null) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; cycle?: Cycle | null; subState?: SubState | null; module?: Module | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
 };
@@ -59,11 +63,13 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   selectedDateRange,
   selectedCycle = null,
   selectedSubState = null,
+  selectedModule = null,
   onProjectSelect,
   onAssigneesSelect,
   onDateSelect,
   onCycleSelect,
   onSubStateSelect,
+  onModuleSelect,
   onSave,
   onDiscard,
   className
@@ -75,7 +81,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const handleSave = () => {
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
     const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, cycle: selectedCycle, subState: selectedSubState, startDate, endDate });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, cycle: selectedCycle, subState: selectedSubState, module: selectedModule, startDate, endDate });
   };
 
   return (
@@ -192,7 +198,23 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
             ) : (
               <FieldChip icon={<CalendarClock className="h-3.5 w-3.5" />}>Cycle</FieldChip>
             )}
-            <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Modules</FieldChip>
+            {selectedProject ? (
+              <ModuleSelector
+                projectId={selectedProject.projectId}
+                selectedModule={selectedModule}
+                onModuleSelect={onModuleSelect || (() => {})}
+                trigger={
+                  <FieldChip
+                    icon={<Boxes className="h-3.5 w-3.5" />}
+                    className={selectedModule ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedModule ? selectedModule.title : "Modules"}
+                  </FieldChip>
+                }
+              />
+            ) : (
+              <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Modules</FieldChip>
+            )}
             <FieldChip icon={<Plus className="h-3.5 w-3.5" />}>Add parent</FieldChip>
           </div>
         </div>

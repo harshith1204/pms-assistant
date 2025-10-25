@@ -85,6 +85,10 @@ export const MODULE_ENDPOINTS = {
   // Delete module (if needed in future)
   DELETE_MODULE: (projectId: string, moduleId: string) =>
     `${STAGE_API_BASE_URL}/project/${projectId}/modules/${moduleId}`,
+
+  // Get all modules with PUT method (based on user requirements)
+  GET_ALL_MODULES: () =>
+    `${STAGE_API_BASE_URL}/project/module`,
 };
 
 export const PAGE_ENDPOINTS = {

@@ -1,4 +1,34 @@
 import { MODULE_ENDPOINTS } from "@/api/endpoints";
+import { getBusinessId } from "@/config";
+
+export type Module = {
+  id: string;
+  title: string;
+  description?: string;
+  projectId?: string;
+  subStateId?: string;
+  startDate?: string;
+  endDate?: string;
+  lead?: {
+    id: string;
+    name: string;
+    email?: string;
+  };
+  members?: {
+    id: string;
+    name: string;
+    email?: string;
+  }[];
+  createdTimeStamp?: string;
+  updatedTimeStamp?: string;
+  link?: string;
+  // Make properties optional to handle different API response formats
+  [key: string]: any;
+};
+
+export type GetAllModulesResponse = {
+  data: Module[];
+};
 
 export type CreateModuleRequest = {
   title: string;
@@ -55,6 +85,37 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
     throw new Error(text || `Failed to create module (${res.status})`);
   }
   return res.json();
+}
+
+export async function getAllModules(projectId: string): Promise<GetAllModulesResponse> {
+  const businessId = getBusinessId();
+  const endpoint = MODULE_ENDPOINTS.GET_ALL_MODULES();
+
+  const res = await fetch(endpoint, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      projectId: projectId,
+      businessId: businessId,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to fetch modules (${res.status})`);
+  }
+
+  const response = await res.json();
+
+  // Handle the response format from the API
+  if (response.data && Array.isArray(response.data)) {
+    return { data: response.data };
+  }
+
+  // Fallback for different response formats
+  return {
+    data: []
+  };
 }
 
 export async function createModuleWithMembers(payload: CreateModuleWithMembersRequest): Promise<CreateModuleResponse> {
