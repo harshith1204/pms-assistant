@@ -622,7 +622,7 @@ def index_workitems_to_qdrant():
             "_id": 1, "title": 1, "description": 1, "displayBugNo": 1,
             "priority": 1, "status": 1, "state": 1, "assignee": 1,
             "createdAt": 1, "updatedAt": 1, "createdTimeStamp": 1, "updatedTimeStamp": 1,
-            "project": 1, "cycle": 1, "modules": 1, "business": 1, "createdBy": 1
+            "project": 1, "cycle": 1, "modules": 1, "business": 1, "createdBy": 1,"workLogs":1
         })
         points = []
 
@@ -632,7 +632,8 @@ def index_workitems_to_qdrant():
             # Clean HTML/entities before chunking for better retrieval quality
             title_clean = html_to_text(doc.get("title", ""))
             desc_clean = html_to_text(doc.get("description", ""))
-            combined_text = " ".join(filter(None, [title_clean, desc_clean])).strip()
+            worklogs_description = doc["workLogs"].get("description","")
+            combined_text = " ".join(filter(None, [title_clean, desc_clean,worklogs_description])).strip()
             if not combined_text:
                 print(f"⚠️ Skipping work item {mongo_id} - no substantial text content found")
                 continue
