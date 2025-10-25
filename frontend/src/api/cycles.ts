@@ -43,7 +43,6 @@ export type CreateCycleRequest = {
   projectId?: string;
   startDate?: string;
   endDate?: string;
-  createdBy?: { id: string; name: string };
 };
 
 export type CreateCycleResponse = {
@@ -113,7 +112,6 @@ export async function createCycle(payload: CreateCycleRequest): Promise<CreateCy
       description: payload.description || "",
       startDate: payload.startDate,
       endDate: payload.endDate,
-      created_by: payload.createdBy || { id: getMemberId(), name: "" },
     }),
   });
   if (!res.ok) {
