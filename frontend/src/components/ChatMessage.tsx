@@ -61,6 +61,7 @@ import { createModule, createModuleWithMembers } from "@/api/modules";
 import { type ProjectMember } from "@/api/members";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
+import { type Module } from "@/api/modules";
 import { toast } from "@/components/ui/use-toast";
 
 export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module }: ChatMessageProps) => {
@@ -94,6 +95,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
 
   // Sub-state selection state
   const [selectedSubState, setSelectedSubState] = useState<SubState | null>(null);
+
+  // Module selection state
+  const [selectedModule, setSelectedModule] = useState<Module | null>(null);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -183,12 +187,14 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 selectedDateRange={selectedDateRange}
                 selectedCycle={selectedCycle}
                 selectedSubState={selectedSubState}
+                selectedModule={selectedModule}
                 onProjectSelect={setSelectedProject}
                 onAssigneesSelect={setSelectedAssignees}
                 onDateSelect={setSelectedDateRange}
                 onCycleSelect={setSelectedCycle}
                 onSubStateSelect={setSelectedSubState}
-                onSave={async ({ title, description, project, assignees, cycle, subState, startDate, endDate }) => {
+                onModuleSelect={setSelectedModule}
+                onSave={async ({ title, description, project, assignees, cycle, subState, module, startDate, endDate }) => {
                   try {
                     setSaving(true);
                     const projectId = localStorage.getItem("projectId") || undefined;
@@ -199,6 +205,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       projectIdentifier: workItem.projectIdentifier,
                       cycleId: cycle?.id,
                       subStateId: subState?.id,
+                      moduleId: module?.id,
                       assignees: assignees,
                       startDate,
                       endDate

@@ -7,6 +7,8 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
+import { type Module } from "@/api/modules";
+import { Boxes } from "lucide-react";
 
 export type WorkItemCardProps = {
   title: string;
@@ -15,12 +17,13 @@ export type WorkItemCardProps = {
   sequenceId?: string | number;
   cycle?: Cycle | null;
   subState?: SubState | null;
+  module?: Module | null;
   link?: string;
   onCopy?: (field: "title" | "description" | "link") => void;
   className?: string;
 };
 
-export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description = "", projectIdentifier, sequenceId, cycle, subState, link, onCopy, className }) => {
+export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description = "", projectIdentifier, sequenceId, cycle, subState, module, link, onCopy, className }) => {
   const [copied, setCopied] = React.useState<null | "title" | "description" | "link">(null);
 
   const handleCopy = async (field: "title" | "description" | "link") => {
@@ -58,6 +61,12 @@ export const WorkItemCard: React.FC<WorkItemCardProps> = ({ title, description =
                 <Badge variant="outline" className="text-xs gap-1">
                   <Tag className="h-3 w-3" />
                   {subState.name}
+                </Badge>
+              )}
+              {module && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  <Boxes className="h-3 w-3" />
+                  {module.title}
                 </Badge>
               )}
             </div>
