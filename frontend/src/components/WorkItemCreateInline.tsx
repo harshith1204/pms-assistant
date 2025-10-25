@@ -155,7 +155,6 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
             ) : (
               <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>State</FieldChip>
             )}
-            <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>None</FieldChip>
             {selectedProject && (
               <MemberSelector
                 projectId={selectedProject.projectId}
