@@ -615,9 +615,9 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        
+                        label = entity.get_nested(entity,"label.name")
                         # Build base line
-                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}"
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}"
                         
                         # Add estimate if present
                         estimate = entity.get("estimate")
@@ -695,7 +695,8 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         assignee = entity.get("assigneeName") or get_nested(entity, "assignee.name")
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         Bug = entity.get("bugNo")
-                        return f"• {title or 'Epic'} — description={description or 'N/A'}, state={state or 'N/A'}, priority={priority or 'N/A'}, project={project or 'N/A'}, assignee={assignee or 'N/A'}, bugNo={Bug or 'N/A'}"
+                        label = entity.get_nested(entity,"label.name")
+                        return f"• {title or 'Epic'} — description={description or 'N/A'}, state={state or 'N/A'}, priority={priority or 'N/A'}, project={project or 'N/A'}, assignee={assignee or 'N/A'}, bugNo={Bug or 'N/A'}, label={label or 'N/A'}"
                     # Default fallback
                     title = entity.get("title") or entity.get("name") or "Item"
                     return f"• {truncate_str(title, 80)}"
