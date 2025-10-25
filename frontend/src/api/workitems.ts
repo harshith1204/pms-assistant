@@ -9,6 +9,7 @@ export type CreateWorkItemRequest = {
   subStateId?: string;
   moduleId?: string;
   assignees?: string[];
+  labels?: { id: string; name: string; color: string }[];
   startDate?: string;
   endDate?: string;
   createdBy?: string;
@@ -23,6 +24,7 @@ export type CreateWorkItemWithMembersRequest = {
   subStateId?: string;
   moduleId?: string;
   assignees?: { id: string; name: string }[];
+  labels?: { id: string; name: string; color: string }[];
   startDate?: string;
   endDate?: string;
   createdBy?: string;
@@ -52,6 +54,7 @@ export async function createWorkItem(payload: CreateWorkItemRequest): Promise<Cr
       sub_state_id: payload.subStateId,
       module_id: payload.moduleId,
       assignees: payload.assignees,
+      labels: payload.labels,
       start_date: payload.startDate,
       end_date: payload.endDate,
       created_by: payload.createdBy,
@@ -79,6 +82,7 @@ export async function createWorkItemWithMembers(payload: CreateWorkItemWithMembe
       sub_state_id: payload.subStateId,
       module_id: payload.moduleId,
       assignees: payload.assignees?.map(a => a.id),
+      labels: payload.labels,
       start_date: payload.startDate,
       end_date: payload.endDate,
       created_by: payload.createdBy,
