@@ -21,6 +21,9 @@ export async function getConversationMessages(conversationId: string): Promise<A
   feedback?: string;
   workItem?: { title: string; description?: string; projectIdentifier?: string; sequenceId?: string | number; link?: string };
   page?: { title: string; blocks: { blocks: any[] } };
+  cycle?: { title: string; description?: string; startDate?: string; endDate?: string };
+  module?: { title: string; description?: string; projectName?: string };
+  epic?: { title: string; description?: string; projectName?: string; status?: string; priority?: string; startDate?: string; endDate?: string };
 }>> {
   try {
     const res = await fetch(`${API_HTTP_URL}/conversations/${encodeURIComponent(conversationId)}`);

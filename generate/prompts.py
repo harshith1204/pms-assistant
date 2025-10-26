@@ -360,5 +360,74 @@ PAGE_CONTENT_GENERATION_PROMPTS = {
   {{"id": "unique_id_3", "type": "header", "data": {{"text": "Key Performance Indicators", "level": 3}}}},
   {{"id": "unique_id_4", "type": "list", "data": {{"style": "unordered", "items": ["Revenue Growth: 15% increase", "Customer Satisfaction: 92% score", "Project Completion Rate: 85%"]}}}}
 ]}}"""
+
+# Epic Generation Prompts
+EPIC_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates concise, actionable epic titles and descriptions.
+Use the provided template as a structure and the user's prompt for specifics.
+Return markdown in the description. Keep the title under 120 characters.
+Respond as JSON only, without code fences or surrounding text.
+Example response: {"title": "User Authentication Epic", "description": "## Overview\\nImplement comprehensive authentication system..."}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line epic name, no surrounding quotes.
+- Description: markdown body with epic overview, goals, and key deliverables.
+- Example: {{"title": "User Authentication Epic", "description": "## Overview\\nComprehensive authentication system\\n## Goals\\n- Secure login\\n- User management"}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+# Epic Surprise-Me Prompts
+EPIC_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances epic descriptions to be more detailed, actionable, and comprehensive.
+Take the provided title and existing description and generate a much more detailed and professional epic description.
+Add specific epic goals, objectives, deliverables, scope, and success criteria.
+Return ONLY the markdown description with proper formatting, sections, and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Description:
+{description}
+
+Instructions:
+- Enhance the existing description to be much more detailed and actionable for epic planning
+- Add specific epic goals, key deliverables, scope, success metrics, and dependencies
+- Include business value, user stories, and potential risks
+- Structure the description with markdown headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates a comprehensive, professional, and actionable epic description from only a title.
+Create a detailed epic description suitable for enterprise project management.
+Include sections such as Epic Overview, Business Value, Key Deliverables, User Stories, Success Metrics, Dependencies, and Risks.
+Return ONLY the markdown description with proper headers and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate a comprehensive, detailed, and actionable description for this epic
+- Include specific business value, user stories, deliverables, success metrics, dependencies, and risks
+- Use clear markdown structure with headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    }
 }
 

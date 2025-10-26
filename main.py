@@ -92,24 +92,41 @@ class CycleCreateResponse(BaseModel):
     link: Optional[str] = None
 
 class ModuleCreateRequest(BaseModel):
-    title: str
-    description: Optional[str] = ""
-    project_id: Optional[str] = None
-    lead: Optional[str] = None
-    members: Optional[List[str]] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    created_by: Optional[str] = None
+        title: str
+        description: Optional[str] = ""
+        project_id: Optional[str] = None
+        lead: Optional[str] = None
+        members: Optional[List[str]] = None
+        start_date: Optional[str] = None
+        end_date: Optional[str] = None
+        created_by: Optional[str] = None
 
-class ModuleCreateResponse(BaseModel):
-    id: str
-    title: str
-    description: str
-    projectId: Optional[str] = None
-    link: Optional[str] = None
+    class ModuleCreateResponse(BaseModel):
+        id: str
+        title: str
+        description: str
+        projectId: Optional[str] = None
+        link: Optional[str] = None
 
-# Global MongoDB agent instance
-mongodb_agent = None
+    class EpicCreateRequest(BaseModel):
+        title: str
+        description: Optional[str] = ""
+        project_id: Optional[str] = None
+        status: Optional[str] = "NEW"
+        priority: Optional[str] = "MEDIUM"
+        start_date: Optional[str] = None
+        end_date: Optional[str] = None
+        created_by: Optional[str] = None
+
+    class EpicCreateResponse(BaseModel):
+        id: str
+        title: str
+        description: str
+        projectId: Optional[str] = None
+        link: Optional[str] = None
+
+    # Global MongoDB agent instance
+    mongodb_agent = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -233,6 +250,8 @@ async def get_conversation(conversation_id: str):
                 entry["cycle"] = m.get("cycle")
             if m.get("type") == "module" and isinstance(m.get("module"), dict):
                 entry["module"] = m.get("module")
+            if m.get("type") == "epic" and isinstance(m.get("epic"), dict):
+                entry["epic"] = m.get("epic")
             norm.append(entry)
         return {"id": conversation_id, "messages": norm}
     except Exception as e:
@@ -385,50 +404,95 @@ async def create_cycle(req: CycleCreateRequest):
 
 
 @app.post("/modules", response_model=ModuleCreateResponse)
-async def create_module(req: ModuleCreateRequest):
-    """Create a minimal module in MongoDB 'module' collection."""
-    try:
-        if not mongodb_tools.client:
-            await mongodb_tools.connect()
+    async def create_module(req: ModuleCreateRequest):
+        """Create a minimal module in MongoDB 'module' collection."""
+        try:
+            if not mongodb_tools.client:
+                await mongodb_tools.connect()
 
-        db = mongodb_tools.client[DATABASE_NAME]
-        coll = db["module"]
+            db = mongodb_tools.client[DATABASE_NAME]
+            coll = db["module"]
 
-        from datetime import datetime
-        now_iso = datetime.utcnow().isoformat()
+            from datetime import datetime
+            now_iso = datetime.utcnow().isoformat()
 
-        doc: Dict[str, Any] = {
-            "title": (req.title or "").strip() or "Untitled Module",
-            "description": (req.description or "").strip(),
-            "createdAt": now_iso,
-            "updatedAt": now_iso,
-        }
-        if req.project_id:
-            doc["project"] = {"id": req.project_id}
-        if req.lead:
-            doc["lead"] = {"name": req.lead}
-        if req.members:
-            doc["members"] = [{"name": m} for m in req.members]
-        if req.start_date:
-            doc["startDate"] = req.start_date
-        if req.end_date:
-            doc["endDate"] = req.end_date
-        if req.created_by:
-            doc["createdBy"] = {"name": req.created_by}
+            doc: Dict[str, Any] = {
+                "title": (req.title or "").strip() or "Untitled Module",
+                "description": (req.description or "").strip(),
+                "createdAt": now_iso,
+                "updatedAt": now_iso,
+            }
+            if req.project_id:
+                doc["project"] = {"id": req.project_id}
+            if req.lead:
+                doc["lead"] = {"name": req.lead}
+            if req.members:
+                doc["members"] = [{"name": m} for m in req.members]
+            if req.start_date:
+                doc["startDate"] = req.start_date
+            if req.end_date:
+                doc["endDate"] = req.end_date
+            if req.created_by:
+                doc["createdBy"] = {"name": req.created_by}
 
-        result = await coll.insert_one(doc)
+            result = await coll.insert_one(doc)
 
-        return ModuleCreateResponse(
-            id=str(result.inserted_id),
-            title=doc["title"],
-            description=doc["description"],
-            projectId=req.project_id,
-            link=None,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            return ModuleCreateResponse(
+                id=str(result.inserted_id),
+                title=doc["title"],
+                description=doc["description"],
+                projectId=req.project_id,
+                link=None,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.post("/epics", response_model=EpicCreateResponse)
+    async def create_epic(req: EpicCreateRequest):
+        """Create a minimal epic in MongoDB 'epic' collection."""
+        try:
+            if not mongodb_tools.client:
+                await mongodb_tools.connect()
+
+            db = mongodb_tools.client[DATABASE_NAME]
+            coll = db["epic"]
+
+            from datetime import datetime
+            now_iso = datetime.utcnow().isoformat()
+
+            doc: Dict[str, Any] = {
+                "title": (req.title or "").strip() or "Untitled Epic",
+                "description": (req.description or "").strip(),
+                "status": req.status or "NEW",
+                "priority": req.priority or "MEDIUM",
+                "createdAt": now_iso,
+                "updatedAt": now_iso,
+            }
+            if req.project_id:
+                doc["project"] = {"id": req.project_id}
+            if req.start_date:
+                doc["startDate"] = req.start_date
+            if req.end_date:
+                doc["endDate"] = req.end_date
+            if req.created_by:
+                doc["createdBy"] = {"name": req.created_by}
+
+            result = await coll.insert_one(doc)
+
+            return EpicCreateResponse(
+                id=str(result.inserted_id),
+                title=doc["title"],
+                description=doc["description"],
+                projectId=req.project_id,
+                link=None,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/conversations/reaction")

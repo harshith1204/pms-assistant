@@ -1,0 +1,71 @@
+[{
+  "_id": {
+    "$binary": {
+      "base64": "OEwyhTOzQo3zaPInIkeFsQ==",
+      "subType": "03"
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "W0zni91t0XXulreiTDqbkQ==",
+        "subType": "03"
+      }
+    }
+  },
+  "title": "User Authentication System Epic",
+  "description": "Implement a comprehensive user authentication and authorization system with login, registration, password reset, role-based access control, and security features.",
+  "status": "IN_PROGRESS",
+  "priority": "HIGH",
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "LWhHOIg4Bx+lOLY5uAEanQ==",
+        "subType": "03"
+      }
+    },
+    "name": "In Progress"
+  },
+  "assignee": {
+    "_id": {
+      "$binary": {
+        "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
+        "subType": "03"
+      }
+    },
+    "name": "John Developer"
+  },
+  "startDate": {
+    "$date": "2025-01-15T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-03-15T00:00:00.000Z"
+  },
+  "createdTimeStamp": {
+    "$date": "2025-01-10T10:30:00.000Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-01-10T10:30:00.000Z"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "h24OhNvMBx8aHG3bN19UmA==",
+        "subType": "03"
+      }
+    }
+  },
+  "label": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "nWY8JZVBBx94STt034U4sg==",
+          "subType": "03"
+        }
+      },
+      "name": "Backend",
+      "color": "#FF6B9D"
+    }
+  ],
+  "_class": "com.lm.project.project_management.pms.model.Epic"
+}]

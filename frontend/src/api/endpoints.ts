@@ -176,3 +176,33 @@ export const LABEL_ENDPOINTS = {
   GET_LABELS: (projectId: string) =>
     `${STAGE_API_BASE_URL}/project/${projectId}/label`,
 };
+
+export const EPIC_ENDPOINTS = {
+  // Get epics
+  GET_EPICS: (projectId: string) =>
+    `${STAGE_API_BASE_URL}/project/${projectId}/epics`,
+
+  // Create epic
+  CREATE_EPIC: (projectId: string) =>
+    `${STAGE_API_BASE_URL}/project/epic`,
+
+  // Update epic
+  UPDATE_EPIC: (epicId: string) =>
+    `${STAGE_API_BASE_URL}/project/epic/${epicId}`,
+
+  // Delete epic
+  DELETE_EPIC: (epicId: string) =>
+    `${STAGE_API_BASE_URL}/project/epic?id=${epicId}`,
+
+  // Get all epics with PUT method (based on user requirements)
+  GET_ALL_EPICS: () =>
+    `${STAGE_API_BASE_URL}/project/epic`,
+
+  // Mark epic as favourite
+  MARK_FAVOURITE: (epicId: string) =>
+    `${STAGE_API_BASE_URL}/project/epic/${epicId}/favourite`,
+
+  // Get work items by epic
+  GET_WORKITEMS: (epicId: string) =>
+    `${STAGE_API_BASE_URL}/project/epic/id?epicId=${epicId}`,
+};
