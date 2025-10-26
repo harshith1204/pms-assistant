@@ -44,6 +44,7 @@ interface ChatMessageProps {
     description?: string;
     projectName?: string;
   };
+  conversationId?: string;
 }
 
 import WorkItemCreateInline from "@/components/WorkItemCreateInline";
@@ -64,8 +65,9 @@ import { type SubState } from "@/api/substates";
 import { type Module } from "@/api/modules";
 import { toast } from "@/components/ui/use-toast";
 import { getBusinessId, getMemberId } from "@/config";
+import { invalidateProjectCache } from "@/api/projectData";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, conversationId }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -215,6 +217,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       createdBy: { id: memberId, name: "" }
                     });
                     setSavedWorkItem(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Work item saved", description: "Your work item has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save work item", description: String(e?.message || e), variant: "destructive" as any });
@@ -224,6 +232,16 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 }}
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  // Send the project data loaded message via WebSocket
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
               />
             )
           ) : page ? (
@@ -251,6 +269,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       createdBy: { id: memberId, name: "" }
                     });
                     setSavedPage(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Page saved", description: "Your page has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save page", description: String(e?.message || e), variant: "destructive" as any });
@@ -289,6 +313,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       endDate: endDate || cycle.endDate
                     });
                     setSavedCycle(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Cycle saved", description: "Your cycle has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save cycle", description: String(e?.message || e), variant: "destructive" as any });
@@ -298,6 +328,16 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 }}
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  // Send the project data loaded message via WebSocket
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
               />
             )
           ) : module ? (
@@ -337,6 +377,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       endDate
                     });
                     setSavedModule(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Module saved", description: "Your module has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save module", description: String(e?.message || e), variant: "destructive" as any });
@@ -346,6 +392,16 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 }}
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  // Send the project data loaded message via WebSocket
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
               />
             )
           ) : (
