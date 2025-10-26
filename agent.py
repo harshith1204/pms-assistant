@@ -196,10 +196,19 @@ class TTLCache:
 
 
 # Lightweight helper to create natural, user-facing action statements
-async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
+async def generate_action_statement(
+    user_query: str,
+    tool_calls: List[Dict[str, Any]],
+    llm_reasoning: str = ""
+) -> str:
     """Generate a concise, user-facing action sentence based on planned tool calls.
 
     The sentence avoids exposing internal tooling and focuses on intent/benefit.
+
+    Args:
+        user_query: The user's original question
+        tool_calls: List of tool calls being executed
+        llm_reasoning: Optional reasoning from the LLM about what it's doing
     """
     try:
         if not tool_calls:
@@ -244,6 +253,7 @@ async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, 
             HumanMessage(content=(
                 f"User asked: '{user_query}'\n"
                 f"Planned actions: {tools_desc}\n"
+                f"{'Your reasoning: ' + llm_reasoning if llm_reasoning else ''}\n"
                 "Your next step (one sentence):"
             )),
         ]
@@ -638,16 +648,20 @@ class MongoDBAgent:
                             pass
                 last_response = response
 
-                # Persist assistant message
-                await conversation_memory.add_message(conversation_id, response)
-                try:
-                    await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                except Exception as e:
-                    print(f"Warning: failed to save assistant message: {e}")
-
-                # If no tools requested, we are done
+                # Only persist assistant messages when there are NO tool calls (final response)
+                # Intermediate reasoning should not be saved as assistant messages
                 if not getattr(response, "tool_calls", None):
+                    # This is a final response, save it
+                    await conversation_memory.add_message(conversation_id, response)
+                    try:
+                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                    except Exception as e:
+                        print(f"Warning: failed to save assistant message: {e}")
                     return response.content
+                else:
+                    # This is an intermediate step with tool calls
+                    # Only add to in-memory conversation for context, don't persist to DB
+                    await conversation_memory.add_message(conversation_id, response)
 
                 # Execute requested tools
                 # The LLM decides execution order by how it calls tools:
@@ -655,13 +669,33 @@ class MongoDBAgent:
                 # - Sequential needs are handled by the LLM making separate calls
                 # Emit a dynamic, user-facing action line before running any tools
                 try:
-                    action_text = await generate_action_statement(query, response.tool_calls)
-                    try:
-                        await save_action_event(conversation_id, "action", action_text)
-                    except Exception:
-                        pass
-                except Exception:
+                    # Extract any reasoning content from the LLM response
+                    llm_reasoning = getattr(response, "content", "").strip()
+
+                    # ✅ ALWAYS transform through generate_action_statement
+                    # This ensures consistent, user-friendly action messages
+                    action_text = await generate_action_statement(
+                        query,
+                        response.tool_calls,
+                        llm_reasoning  # Pass reasoning as context, but always generate clean action
+                    )
+
+                    # Create a minimal callback handler for DB-only actions (no websocket)
+                    db_only_handler = PhoenixCallbackHandler(websocket=None, conversation_id=conversation_id)
+                    if action_text:
+                        await db_only_handler.emit_dynamic_action(action_text)
+                except Exception as e:
+                    # Log exception for debugging
+                    print(f"Warning: Failed to generate action statement: {e}")
                     pass
+
+                # ✅ CRITICAL: Clear the intermediate reasoning content before adding to messages
+                # This prevents raw LLM reasoning from leaking to the frontend
+                # We've already extracted and transformed it into a clean action above
+                if getattr(response, "tool_calls", None):
+                    # This is an intermediate response - clear its content
+                    response.content = ""  # Clear the raw reasoning
+
                 messages.append(response)
                 did_any_tool = False
                 
@@ -853,7 +887,9 @@ class MongoDBAgent:
                             "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
                             "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); generate_content needs content_type + prompt."
                         ))
-                        invoke_messages = messages + [routing_instructions]
+                        # Determine if this is a finalization turn BEFORE calling LLM
+                        is_finalizing = need_finalization  # ✅ Save the state BEFORE modifying it
+
                         if need_finalization:
                             finalization_instructions = SystemMessage(content=(
                                 "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
@@ -866,6 +902,7 @@ class MongoDBAgent:
                                 synth_action = await generate_action_statement(
                                     query,
                                     [{"name": "synthesize", "args": {"query": "finalize answer from gathered findings"}}],
+                                    "Synthesizing findings into a comprehensive answer...",
                                 )
                                 if callback_handler:
                                     await callback_handler.emit_dynamic_action(synth_action)
@@ -873,9 +910,16 @@ class MongoDBAgent:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
+                        else:
+                            invoke_messages = messages + [routing_instructions]
+
+                        # Only stream tokens during finalization, NOT during tool planning
+                        # During tool planning, we'll emit action events instead
+                        should_stream = is_finalizing  # ✅ Use the saved state
+
                         response = await llm_with_tools.ainvoke(
                             invoke_messages,
-                            config={"callbacks": [callback_handler]},
+                            config={"callbacks": [callback_handler] if should_stream else []},
                         )
                         if llm_span and getattr(response, "content", None):
                             try:
@@ -886,26 +930,51 @@ class MongoDBAgent:
                                 pass
                     last_response = response
 
-                    # Persist assistant message
-                    await conversation_memory.add_message(conversation_id, response)
-                    try:
-                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                    except Exception as e:
-                        print(f"Warning: failed to save assistant message: {e}")
-
+                    # Only persist assistant messages when there are NO tool calls (final response)
+                    # Intermediate reasoning should not be saved as assistant messages
                     if not getattr(response, "tool_calls", None):
+                        # This is a final response, save it
+                        await conversation_memory.add_message(conversation_id, response)
+                        try:
+                            await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                        except Exception as e:
+                            print(f"Warning: failed to save assistant message: {e}")
                         yield response.content
                         return
+                    else:
+                        # This is an intermediate step with tool calls
+                        # Only add to in-memory conversation for context, don't persist to DB
+                        await conversation_memory.add_message(conversation_id, response)
 
                     # Execute requested tools with streaming callbacks
                     # The LLM decides execution order by how it calls tools
                     # Emit a dynamic, user-facing action line before running any tools
                     try:
-                        action_text = await generate_action_statement(query, response.tool_calls)
-                        if callback_handler:
+                        # Extract any reasoning content from the LLM response
+                        llm_reasoning = getattr(response, "content", "").strip()
+
+                        # ✅ ALWAYS transform through generate_action_statement
+                        # This ensures consistent, user-friendly action messages
+                        action_text = await generate_action_statement(
+                            query,
+                            response.tool_calls,
+                            llm_reasoning  # Pass reasoning as context, but always generate clean action
+                        )
+
+                        if callback_handler and action_text:
                             await callback_handler.emit_dynamic_action(action_text)
-                    except Exception:
+                    except Exception as e:
+                        # Log exception for debugging
+                        print(f"Warning: Failed to generate action statement: {e}")
                         pass
+
+                    # ✅ CRITICAL: Clear the intermediate reasoning content before adding to messages
+                    # This prevents raw LLM reasoning from leaking to the frontend
+                    # We've already extracted and transformed it into a clean action above
+                    if getattr(response, "tool_calls", None):
+                        # This is an intermediate response - clear its content
+                        response.content = ""  # Clear the raw reasoning
+
                     messages.append(response)
                     did_any_tool = False
                     
