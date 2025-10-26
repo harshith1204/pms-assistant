@@ -8,9 +8,8 @@ import { Calendar, Wand2, Briefcase } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
-import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { DateRangePicker, DateRange } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
-import { DateRange } from "react-day-picker";
 
 export type CycleCreateInlineProps = {
   title?: string;

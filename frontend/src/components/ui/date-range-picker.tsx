@@ -1,13 +1,18 @@
 import * as React from "react";
-import { DateRange } from "react-day-picker";
+import DatePicker from "react-datepicker";
+import { Calendar } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+// Export DateRange type for backward compatibility
+export type DateRange = {
+  from?: Date;
+  to?: Date;
+};
 
 export interface DateRangePickerProps {
-  date?: DateRange;
-  onDateChange?: (date: DateRange | undefined) => void;
+  date?: DateRange | null;
+  onDateChange?: (date: DateRange | null) => void;
   placeholder?: string;
   className?: string;
   disabled?: boolean;
@@ -22,53 +27,100 @@ export function DateRangePicker({
   disabled = false,
   icon,
 }: DateRangePickerProps) {
-  const [isOpen, setIsOpen] = React.useState(false);
+  // Convert between different date formats
+  const convertToInternalFormat = (input: DateRange | null | undefined) => {
+    if (!input) return { start: null, end: null };
 
-  const handleSelect = (range: DateRange | undefined) => {
-    onDateChange?.(range);
-    // Close the popover when both start and end dates are selected
-    if (range?.from && range?.to) {
-      setIsOpen(false);
+    return {
+      start: input.from || null,
+      end: input.to || null
+    };
+  };
+
+  const internalDate = convertToInternalFormat(date);
+
+  const [startDate, setStartDate] = React.useState<Date | null>(internalDate.start);
+  const [endDate, setEndDate] = React.useState<Date | null>(internalDate.end);
+
+  // Update internal state when external date changes
+  React.useEffect(() => {
+    const newInternalDate = convertToInternalFormat(date);
+    setStartDate(newInternalDate.start);
+    setEndDate(newInternalDate.end);
+  }, [date]);
+
+  const handleDateChange = (dates: [Date | null, Date | null]) => {
+    const [start, end] = dates;
+    setStartDate(start);
+    setEndDate(end);
+
+    if (start && end) {
+      onDateChange?.({ from: start, to: end });
+    } else if (!start && !end) {
+      onDateChange?.(null);
     }
   };
 
-  const formatDateRange = (dateRange: DateRange | undefined): string => {
-    if (!dateRange?.from) return placeholder;
+  const formatDateRange = (): string => {
+    if (!date) return placeholder;
 
-    if (dateRange.to) {
-      return `${dateRange.from.toLocaleDateString()} - ${dateRange.to.toLocaleDateString()}`;
+    if (!date.from) return placeholder;
+    if (date.to) {
+      return `${date.from.toLocaleDateString()} - ${date.to.toLocaleDateString()}`;
     }
-
-    return dateRange.from.toLocaleDateString();
+    return date.from.toLocaleDateString();
   };
+
+  // Custom input component for the date picker trigger
+  const CustomInput = React.forwardRef<
+    HTMLDivElement,
+    React.HTMLProps<HTMLDivElement>
+  >(({ onClick }, ref) => (
+    <div
+      className={cn(
+        "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background cursor-pointer hover:bg-muted/50 hover:border-primary/20 transition-colors",
+        !date && "text-muted-foreground",
+        date && "text-foreground border-primary/20 bg-primary/5",
+        disabled && "cursor-not-allowed opacity-50",
+        className
+      )}
+      onClick={!disabled ? onClick : undefined}
+      ref={ref}
+    >
+      {icon || <Calendar className="h-3.5 w-3.5" />}
+      <span className="whitespace-nowrap">{formatDateRange()}</span>
+    </div>
+  ));
+
+  CustomInput.displayName = "CustomInput";
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
-      <PopoverTrigger asChild>
-        <div
-          className={cn(
-            "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground bg-background cursor-pointer hover:bg-muted/50 hover:border-primary/20 transition-colors",
-            !date && "text-muted-foreground",
-            date && "text-foreground border-primary/20 bg-primary/5",
-            disabled && "cursor-not-allowed opacity-50",
-            className
-          )}
-          onClick={() => !disabled && setIsOpen(!isOpen)}
-        >
-          {icon}
-          <span className="whitespace-nowrap">{formatDateRange(date)}</span>
-        </div>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto min-w-[280px] max-w-[600px] p-0 border border-border bg-popover shadow-lg" align="start">
-        <Calendar
-          initialFocus
-          mode="range"
-          defaultMonth={date?.from}
-          selected={date}
-          onSelect={handleSelect}
-          numberOfMonths={2}
-        />
-      </PopoverContent>
-    </Popover>
+    <DatePicker
+      selected={startDate}
+      onChange={handleDateChange}
+      startDate={startDate}
+      endDate={endDate}
+      selectsRange
+      inline={false}
+      monthsShown={2}
+      showPopperArrow={false}
+      customInput={<CustomInput />}
+      disabled={disabled}
+      calendarClassName="modern-calendar"
+      wrapperClassName="date-picker-wrapper"
+      popperClassName="date-picker-popper"
+      dayClassName={(date) => {
+        if (startDate && endDate && date >= startDate && date <= endDate) {
+          return "react-datepicker__day--in-range";
+        }
+        if (startDate && date.getTime() === startDate.getTime()) {
+          return "react-datepicker__day--range-start";
+        }
+        if (endDate && date.getTime() === endDate.getTime()) {
+          return "react-datepicker__day--range-end";
+        }
+        return "";
+      }}
+    />
   );
 }

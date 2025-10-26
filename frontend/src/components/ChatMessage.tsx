@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { AgentActivity } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
 import { type Project } from "@/api/projects";
-import { DateRange } from "react-day-picker";
+import { DateRange } from "@/components/ui/date-range-picker";
 
 interface ChatMessageProps {
   id: string;
