@@ -39,16 +39,6 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     try {
       const response = await getProjects();
       setProjects(response.data);
-
-      // Pre-load all project data for each project to avoid API calls later
-      // This runs in the background and doesn't block the UI
-      response.data.forEach(async (project) => {
-        try {
-          await getAllProjectData(project.projectId);
-        } catch (error) {
-          console.warn(`Failed to pre-load data for project ${project.projectName}:`, error);
-        }
-      });
     } catch (error) {
       console.error("Failed to load projects:", error);
       setProjects([]);
