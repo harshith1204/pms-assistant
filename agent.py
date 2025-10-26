@@ -196,10 +196,19 @@ class TTLCache:
 
 
 # Lightweight helper to create natural, user-facing action statements
-async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
+async def generate_action_statement(
+    user_query: str,
+    tool_calls: List[Dict[str, Any]],
+    llm_reasoning: str = ""
+) -> str:
     """Generate a concise, user-facing action sentence based on planned tool calls.
 
     The sentence avoids exposing internal tooling and focuses on intent/benefit.
+
+    Args:
+        user_query: The user's original question
+        tool_calls: List of tool calls being executed
+        llm_reasoning: Optional reasoning from the LLM about what it's doing
     """
     try:
         if not tool_calls:
@@ -244,6 +253,7 @@ async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, 
             HumanMessage(content=(
                 f"User asked: '{user_query}'\n"
                 f"Planned actions: {tools_desc}\n"
+                f"{'Your reasoning: ' + llm_reasoning if llm_reasoning else ''}\n"
                 "Your next step (one sentence):"
             )),
         ]
@@ -655,7 +665,17 @@ class MongoDBAgent:
                 # - Sequential needs are handled by the LLM making separate calls
                 # Emit a dynamic, user-facing action line before running any tools
                 try:
-                    action_text = await generate_action_statement(query, response.tool_calls)
+                    # Extract any reasoning content from the LLM response
+                    llm_reasoning = getattr(response, "content", "").strip()
+
+                    # Generate action statement based on both reasoning and tool calls
+                    if llm_reasoning and len(llm_reasoning) < 200:
+                        # Use LLM's own explanation if it's concise
+                        action_text = llm_reasoning
+                    else:
+                        # Otherwise generate from tool calls
+                        action_text = await generate_action_statement(query, response.tool_calls, llm_reasoning)
+
                     try:
                         await save_action_event(conversation_id, "action", action_text)
                     except Exception:
@@ -866,6 +886,7 @@ class MongoDBAgent:
                                 synth_action = await generate_action_statement(
                                     query,
                                     [{"name": "synthesize", "args": {"query": "finalize answer from gathered findings"}}],
+                                    "Synthesizing findings into a comprehensive answer...",
                                 )
                                 if callback_handler:
                                     await callback_handler.emit_dynamic_action(synth_action)
@@ -873,9 +894,13 @@ class MongoDBAgent:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
+                        # Suppress streaming callbacks when we expect tool calls (not final response)
+                        # Only stream when we're in finalization mode
+                        should_stream = need_finalization or steps >= self.max_steps - 1
+
                         response = await llm_with_tools.ainvoke(
                             invoke_messages,
-                            config={"callbacks": [callback_handler]},
+                            config={"callbacks": [callback_handler] if should_stream else []},
                         )
                         if llm_span and getattr(response, "content", None):
                             try:
@@ -901,8 +926,18 @@ class MongoDBAgent:
                     # The LLM decides execution order by how it calls tools
                     # Emit a dynamic, user-facing action line before running any tools
                     try:
-                        action_text = await generate_action_statement(query, response.tool_calls)
-                        if callback_handler:
+                        # Extract any reasoning content from the LLM response
+                        llm_reasoning = getattr(response, "content", "").strip()
+
+                        # Generate action statement based on both reasoning and tool calls
+                        if llm_reasoning and len(llm_reasoning) < 200:
+                            # Use LLM's own explanation if it's concise
+                            action_text = llm_reasoning
+                        else:
+                            # Otherwise generate from tool calls
+                            action_text = await generate_action_statement(query, response.tool_calls, llm_reasoning)
+
+                        if callback_handler and action_text:
                             await callback_handler.emit_dynamic_action(action_text)
                     except Exception:
                         pass
