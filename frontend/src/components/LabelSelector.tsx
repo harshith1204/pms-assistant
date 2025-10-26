@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { getProjectLabels, type ProjectLabel } from "@/api/labels";
+import { getCachedLabels } from "@/api/projectData";
 
 export type LabelSelectorProps = {
   projectId: string;
@@ -46,6 +47,15 @@ export const LabelSelector: React.FC<LabelSelectorProps> = ({
   const loadLabels = async () => {
     setLoading(true);
     try {
+      // First check if data is cached
+      const cachedLabels = getCachedLabels(projectId);
+      if (cachedLabels) {
+        setLabels(cachedLabels.data || []);
+        setLoading(false);
+        return;
+      }
+
+      // If not cached, fetch from API
       const response = await getProjectLabels(projectId);
       setLabels(response.data || []);
     } catch (error) {
