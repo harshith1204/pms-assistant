@@ -659,9 +659,10 @@ class MongoDBAgent:
                         print(f"Warning: failed to save assistant message: {e}")
                     return response.content
                 else:
-                    # This is an intermediate step with tool calls
-                    # Only add to in-memory conversation for context, don't persist to DB
+                    # ✅ NEW: Keep intermediate response WITH reasoning in conversation history
+                    # This helps LLM maintain context, but don't persist to DB (not shown to user)
                     await conversation_memory.add_message(conversation_id, response)
+                    # Note: NOT calling save_assistant_message() - only actions are saved to DB
 
                 # Execute requested tools
                 # The LLM decides execution order by how it calls tools:
@@ -689,14 +690,13 @@ class MongoDBAgent:
                     print(f"Warning: Failed to generate action statement: {e}")
                     pass
 
-                # ✅ CRITICAL: Clear the intermediate reasoning content before adding to messages
-                # This prevents raw LLM reasoning from leaking to the frontend
-                # We've already extracted and transformed it into a clean action above
-                if getattr(response, "tool_calls", None):
-                    # This is an intermediate response - clear its content
-                    response.content = ""  # Clear the raw reasoning
-
-                messages.append(response)
+                # ✅ NEW: Create a clean version of the response for messages (without reasoning)
+                # The reasoning stays in conversation memory for LLM context but doesn't go to messages
+                clean_response = AIMessage(
+                    content="",  # Clear content for clean message handling
+                    tool_calls=response.tool_calls,  # Keep tool calls for execution
+                )
+                messages.append(clean_response)
                 did_any_tool = False
                 
                 # Log execution info
@@ -942,9 +942,10 @@ class MongoDBAgent:
                         yield response.content
                         return
                     else:
-                        # This is an intermediate step with tool calls
-                        # Only add to in-memory conversation for context, don't persist to DB
+                        # ✅ NEW: Keep intermediate response WITH reasoning in conversation history
+                        # This helps LLM maintain context, but don't persist to DB (not shown to user)
                         await conversation_memory.add_message(conversation_id, response)
+                        # Note: NOT calling save_assistant_message() - only actions are saved to DB
 
                     # Execute requested tools with streaming callbacks
                     # The LLM decides execution order by how it calls tools
@@ -968,14 +969,13 @@ class MongoDBAgent:
                         print(f"Warning: Failed to generate action statement: {e}")
                         pass
 
-                    # ✅ CRITICAL: Clear the intermediate reasoning content before adding to messages
-                    # This prevents raw LLM reasoning from leaking to the frontend
-                    # We've already extracted and transformed it into a clean action above
-                    if getattr(response, "tool_calls", None):
-                        # This is an intermediate response - clear its content
-                        response.content = ""  # Clear the raw reasoning
-
-                    messages.append(response)
+                    # ✅ NEW: Create a clean version of the response for messages (without reasoning)
+                    # The reasoning stays in conversation memory for LLM context but doesn't go to messages
+                    clean_response = AIMessage(
+                        content="",  # Clear content for clean message handling
+                        tool_calls=response.tool_calls,  # Keep tool calls for execution
+                    )
+                    messages.append(clean_response)
                     did_any_tool = False
                     
                     # Log execution info
