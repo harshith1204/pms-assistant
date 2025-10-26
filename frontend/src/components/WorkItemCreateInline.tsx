@@ -21,6 +21,8 @@ import { type Module } from "@/api/modules";
 import CycleSelector from "@/components/CycleSelector";
 import SubStateSelector from "@/components/SubStateSelector";
 import ModuleSelector from "@/components/ModuleSelector";
+import { getAllProjectData, sendProjectDataToConversation } from "@/api/projectData";
+import { getBusinessId } from "@/config";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
@@ -42,6 +44,8 @@ export type WorkItemCreateInlineProps = {
   onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; labels?: ProjectLabel[]; cycle?: Cycle | null; subState?: SubState | null; module?: Module | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
+  conversationId?: string;
+  onProjectDataLoaded?: (message: string) => void;
 };
 
 const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
@@ -77,7 +81,9 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   onModuleSelect,
   onSave,
   onDiscard,
-  className
+  className,
+  conversationId,
+  onProjectDataLoaded
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
@@ -87,6 +93,28 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
     const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
     onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, labels: selectedLabels, cycle: selectedCycle, subState: selectedSubState, module: selectedModule, startDate, endDate });
+  };
+
+  const handleProjectSelect = async (project: Project | null) => {
+    // Call the original onProjectSelect handler
+    onProjectSelect?.(project);
+
+    // If a project is selected, fetch all project data and send to conversation
+    if (project) {
+      try {
+        const projectData = await getAllProjectData(project.projectId);
+        const message = await sendProjectDataToConversation(
+          projectData,
+          project.projectName,
+          project.projectDisplayId,
+          conversationId
+        );
+        // Call the callback to notify the parent component
+        onProjectDataLoaded?.(message);
+      } catch (error) {
+        console.error('Failed to fetch project data:', error);
+      }
+    }
   };
 
   return (
@@ -127,7 +155,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
           <div className="flex flex-wrap gap-2">
             <ProjectSelector
               selectedProject={selectedProject}
-              onProjectSelect={onProjectSelect}
+              onProjectSelect={handleProjectSelect}
               trigger={(
                 <FieldChip
                   icon={<Briefcase className="h-3.5 w-3.5" />}

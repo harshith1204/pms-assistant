@@ -177,6 +177,15 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 })
                 continue
 
+            # Handle project_data_loaded message
+            if data.get("type") == "project_data_loaded":
+                await websocket.send_json({
+                    "type": "project_data_loaded",
+                    "message": data.get("message", "Project data loaded"),
+                    "timestamp": datetime.now().isoformat()
+                })
+                continue
+
             # Handle handshake message to set user context
             if data.get("type") == "handshake":
                 user_context["user_id"] = data.get("member_id")

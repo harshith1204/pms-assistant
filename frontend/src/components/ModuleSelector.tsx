@@ -7,6 +7,7 @@ import { Loader2, Boxes, Search, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { getAllModules, type Module } from "@/api/modules";
+import { getCachedModules } from "@/api/projectData";
 
 export type ModuleSelectorProps = {
   projectId: string;
@@ -37,6 +38,15 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({
   const loadModules = async () => {
     setLoading(true);
     try {
+      // First check if data is cached
+      const cachedModules = getCachedModules(projectId);
+      if (cachedModules) {
+        setModules(cachedModules.data);
+        setLoading(false);
+        return;
+      }
+
+      // If not cached, fetch from API
       const response = await getAllModules(projectId);
       setModules(response.data);
     } catch (error) {

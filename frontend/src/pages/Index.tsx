@@ -229,6 +229,10 @@ const Index = () => {
         result.push({ id: m.id, role: "assistant", content: "", module: (m as any).module });
         continue;
       }
+      if (type === "project_data_loaded" && (m as any).message) {
+        result.push({ id: m.id, role: "assistant", content: (m as any).message });
+        continue;
+      }
       // Fallback: treat unknown types as assistant text
       result.push({ id: m.id, role: "assistant", content: m.content || "" });
     }
@@ -388,6 +392,16 @@ const Index = () => {
           if (exists) return prev;
           return [...prev, candidate];
         });
+      } else if (evt.content_type === "project_data_loaded") {
+        const id = `project-data-${Date.now()}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id,
+            role: "assistant",
+            content: (evt as any).message || "Project data loaded successfully.",
+          },
+        ]);
       } else {
         const id = `assistant-${Date.now()}`;
         setMessages((prev) => [
@@ -849,6 +863,7 @@ const Index = () => {
                   page={message.page}
                   cycle={message.cycle}
                   module={message.module}
+                  conversationId={activeConversationId || undefined}
                   onLike={handleLike}
                   onDislike={handleDislike}
                 />

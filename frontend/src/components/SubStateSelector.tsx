@@ -7,6 +7,7 @@ import { Loader2, Tag, Search, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { getSubStates, getSubStatesByState, getAllSubStatesAsArray, type SubState, type GetSubStatesResponse } from "@/api/substates";
+import { getCachedSubStates } from "@/api/projectData";
 
 /**
  * SubStateSelector component for selecting sub-states from the API
@@ -45,6 +46,15 @@ export const SubStateSelector: React.FC<SubStateSelectorProps> = ({
   const loadSubStates = async () => {
     setLoading(true);
     try {
+      // First check if data is cached
+      const cachedSubStates = getCachedSubStates(projectId);
+      if (cachedSubStates) {
+        setSubStatesResponse(cachedSubStates);
+        setLoading(false);
+        return;
+      }
+
+      // If not cached, fetch from API
       const response = await getSubStates(projectId);
       setSubStatesResponse(response);
     } catch (error) {
