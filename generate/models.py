@@ -49,3 +49,8 @@ class ModuleSurpriseMeRequest(BaseModel):
     title: str
     description: Optional[str] = None
 
+
+class EpicSurpriseMeRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+

@@ -290,6 +290,7 @@ async def save_generated_module(conversation_id: str, module: Dict[str, Any]) ->
     )
 
 
+
 async def update_message_reaction(
     conversation_id: str,
     message_id: str,
@@ -323,3 +324,21 @@ async def update_message_reaction(
     )
     return getattr(result, "modified_count", 0) > 0
 
+
+
+async def save_generated_epic(conversation_id: str, epic: Dict[str, Any]) -> None:
+    """Persist a generated epic as a conversation message.
+
+    Expects a minimal payload: {title, description?}
+    """
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "epic",
+            "content": "",  # keep content empty; UI renders from structured field
+            "epic": {
+                "title": (epic.get("title") or "Epic"),
+                "description": (epic.get("description") or ""),
+            },
+        })
+    )

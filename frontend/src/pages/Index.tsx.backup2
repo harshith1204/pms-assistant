@@ -405,34 +405,6 @@ const Index = () => {
           if (exists) return prev;
           return [...prev, candidate];
         });
-      } else if (evt.content_type === "epic" && evt.success && (evt as any).data) {
-        const data: any = (evt as any).data;
-        const id = `epic-${Date.now()}`;
-        const candidate = {
-          id,
-          role: "assistant" as const,
-          content: "",
-          epic: {
-            title: (data.title as string) || "Epic",
-            description: (data.description as string) || "",
-            projectName: (data.projectName as string) || undefined,
-            status: (data.status as string) || undefined,
-            priority: (data.priority as string) || undefined,
-            startDate: (data.startDate as string) || undefined,
-            endDate: (data.endDate as string) || undefined,
-          },
-        };
-
-        setMessages((prev) => {
-          const hash = (ep: NonNullable<Message['epic']>) => [
-            (ep.title || '').trim(),
-            (ep.description || '').trim()
-          ].join('|');
-          const candidateHash = hash(candidate.epic);
-          const exists = prev.slice(-10).some((m) => m.epic && hash(m.epic) === candidateHash);
-          if (exists) return prev;
-          return [...prev, candidate];
-        });
       } else if (evt.content_type === "project_data_loaded") {
         const id = `project-data-${Date.now()}`;
         setMessages((prev) => [
@@ -516,29 +488,19 @@ const Index = () => {
                 JSON.stringify((pg.blocks && Array.isArray(pg.blocks.blocks)) ? pg.blocks.blocks : [])
               ].join('|');
 
-              const hashEpic = (ep: NonNullable<Message['epic']>) => [
-                (ep.title || '').trim(),
-                (ep.description || '').trim()
-              ].join('|');
-
               const serverWorkItemHashes = new Set(
                 transformed.filter((m) => !!m.workItem).map((m) => hashWorkItem(m.workItem!))
               );
               const serverPageHashes = new Set(
                 transformed.filter((m) => !!m.page).map((m) => hashPage(m.page!))
               );
-              const serverEpicHashes = new Set(
-                transformed.filter((m) => !!m.epic).map((m) => hashEpic(m.epic!))
-              );
 
               const remainingEphemeralWorkItems = prev.filter((m) => m.workItem)
                 .filter((m) => !serverWorkItemHashes.has(hashWorkItem(m.workItem!)));
               const remainingEphemeralPages = prev.filter((m) => m.page)
                 .filter((m) => !serverPageHashes.has(hashPage(m.page!)));
-              const remainingEphemeralEpics = prev.filter((m) => m.epic)
-                .filter((m) => !serverEpicHashes.has(hashEpic(m.epic!)));
 
-              return [...transformed, ...remainingEphemeralWorkItems, ...remainingEphemeralPages, ...remainingEphemeralEpics];
+              return [...transformed, ...remainingEphemeralWorkItems, ...remainingEphemeralPages];
             });
           } catch {
             // ignore
@@ -914,7 +876,6 @@ const Index = () => {
                   page={message.page}
                   cycle={message.cycle}
                   module={message.module}
-                  epic={message.epic}
                   conversationId={activeConversationId || undefined}
                   onLike={handleLike}
                   onDislike={handleDislike}
