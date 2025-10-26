@@ -9,11 +9,10 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
 import MemberSelector from "@/components/MemberSelector";
-import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { DateRangePicker, DateRange } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
 import { type SubState } from "@/api/substates";
-import { DateRange } from "react-day-picker";
 import SubStateSelector from "@/components/SubStateSelector";
 
 export type ModuleCreateInlineProps = {
