@@ -103,7 +103,7 @@ export const ModuleCreateInline: React.FC<ModuleCreateInlineProps> = ({
           conversationId
         );
       } catch (error) {
-        console.error('Failed to fetch project data:', error);
+        // Failed to fetch project data
       }
     }
   };

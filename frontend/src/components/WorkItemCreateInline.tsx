@@ -112,7 +112,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
         // Call the callback to notify the parent component
         onProjectDataLoaded?.(message);
       } catch (error) {
-        console.error('Failed to fetch project data:', error);
+        // Failed to fetch project data
       }
     }
   };

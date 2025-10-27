@@ -685,11 +685,13 @@ const Index = () => {
     }
 
     // Send to backend via WebSocket
+    const mid = getMemberId();
+    const bid = getBusinessId();
     const ok = send({
       message: content,
       conversation_id: convId,
-      member_id: getMemberId(),
-      business_id: getBusinessId()
+      member_id: mid,
+      business_id: bid
     });
     if (!ok) {
       // Fallback: show error and stop loading

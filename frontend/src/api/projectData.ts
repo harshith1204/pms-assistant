@@ -123,7 +123,7 @@ export async function getAllProjectData(projectId: string): Promise<ProjectData>
       result.members = membersResponse.value;
       setInCache(globalProjectCache.members, projectId, result);
     } else {
-      console.error('Failed to fetch project members:', membersResponse.reason);
+      // Failed to fetch project members
       errors.members = membersResponse.reason?.message || 'Failed to fetch members';
     }
 
@@ -132,7 +132,7 @@ export async function getAllProjectData(projectId: string): Promise<ProjectData>
       result.labels = labelsResponse.value;
       setInCache(globalProjectCache.labels, projectId, result);
     } else {
-      console.error('Failed to fetch project labels:', labelsResponse.reason);
+      // Failed to fetch project labels
       errors.labels = labelsResponse.reason?.message || 'Failed to fetch labels';
     }
 
@@ -141,7 +141,7 @@ export async function getAllProjectData(projectId: string): Promise<ProjectData>
       result.cycles = cyclesResponse.value;
       setInCache(globalProjectCache.cycles, projectId, result);
     } else {
-      console.error('Failed to fetch project cycles:', cyclesResponse.reason);
+      // Failed to fetch project cycles
       errors.cycles = cyclesResponse.reason?.message || 'Failed to fetch cycles';
     }
 
@@ -150,7 +150,7 @@ export async function getAllProjectData(projectId: string): Promise<ProjectData>
       result.modules = modulesResponse.value;
       setInCache(globalProjectCache.modules, projectId, result);
     } else {
-      console.error('Failed to fetch project modules:', modulesResponse.reason);
+      // Failed to fetch project modules
       errors.modules = modulesResponse.reason?.message || 'Failed to fetch modules';
     }
 
@@ -159,18 +159,18 @@ export async function getAllProjectData(projectId: string): Promise<ProjectData>
       result.substates = substatesResponse.value;
       setInCache(globalProjectCache.substates, projectId, result);
     } else {
-      console.error('Failed to fetch project substates:', substatesResponse.reason);
+      // Failed to fetch project substates
       errors.substates = substatesResponse.reason?.message || 'Failed to fetch substates';
     }
 
     // If there are any errors, we might want to handle them, but for now just log them
     if (Object.keys(errors).length > 0) {
-      console.warn('Some project data failed to load:', errors);
+      // Some project data failed to load
     }
 
     return result;
   } catch (error) {
-    console.error('Failed to fetch project data:', error);
+    // Failed to fetch project data
     throw error;
   }
 }
@@ -227,8 +227,7 @@ export async function sendProjectDataToConversation(
         });
       }
     } catch (error) {
-      console.warn('Failed to send project data via WebSocket:', error);
-      // Silently fail - this is not critical functionality
+      // Failed to send project data via WebSocket - silently fail as this is not critical functionality
     }
   }
 
@@ -312,7 +311,7 @@ export async function preloadProjectsData(projectIds: string[]): Promise<void> {
     try {
       await getAllProjectData(projectId);
     } catch (error) {
-      console.warn(`Failed to preload data for project ${projectId}:`, error);
+      // Failed to preload data for project - continue with other projects
     }
   });
 
