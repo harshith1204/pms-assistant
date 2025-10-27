@@ -135,31 +135,30 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             "businessId": None,
         }
 
-        await ws_manager.connect(websocket, "connecting")
-        authenticated = True
-
         # Set a timeout for handshake completion (30 seconds)
         import asyncio
         handshake_timeout = 30
         handshake_timer = None
+        authenticated = False
 
         async def check_handshake_timeout():
             nonlocal authenticated
             await asyncio.sleep(handshake_timeout)
-            if not user_context["user_id"] or not user_context["businessId"]:
+            if not authenticated:
                 await websocket.send_json({
                     "type": "error",
                     "message": "Handshake timeout. Please send member_id and business_id within 30 seconds.",
                     "timestamp": datetime.now().isoformat()
                 })
-                authenticated = False
+                # Close the connection on timeout
+                await websocket.close()
 
         handshake_timer = asyncio.create_task(check_handshake_timeout())
 
         # === MAIN MESSAGE LOOP ===
-        while authenticated:
+        while True:
             # Send connected message only after handshake is received
-            if user_context["user_id"] and user_context["businessId"]:
+            if authenticated and user_context["user_id"] and user_context["businessId"]:
                 await websocket.send_json({
                     "type": "connected",
                     "user_id": user_context["user_id"],
@@ -167,7 +166,11 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     "timestamp": datetime.now().isoformat()
                 })
 
-            data_str = await websocket.receive_text()
+            try:
+                data_str = await websocket.receive_text()
+            except Exception:
+                # Connection closed
+                break
             data = json.loads(data_str)
 
             if data.get("type") == "ping":
@@ -199,9 +202,11 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 user_id_global = user_context["user_id"]
                 business_id_global = user_context["businessId"]
 
-                # Update WebSocket manager with the actual user_id
-                ws_manager.disconnect("connecting")
+                # Connect with the actual user_id (no placeholder "connecting" needed)
                 await ws_manager.connect(websocket, user_context["user_id"])
+
+                # Mark as authenticated now that handshake is complete
+                authenticated = True
 
                 await websocket.send_json({
                     "type": "handshake_ack",
@@ -212,7 +217,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 continue
 
             # Check if handshake has been completed
-            if not user_context["user_id"] or not user_context["businessId"]:
+            if not authenticated:
                 await websocket.send_json({
                     "type": "error",
                     "message": "Handshake required. Please send member_id and business_id.",
@@ -334,9 +339,9 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         # Cancel handshake timer if it exists
         if handshake_timer:
             handshake_timer.cancel()
-        if user_id:
-            ws_manager.disconnect(user_id)
-        print(f"Client {user_id} disconnected")
+        if user_context["user_id"]:
+            ws_manager.disconnect(user_context["user_id"])
+        print(f"Client {user_context['user_id'] or 'unknown'} disconnected")
     except Exception as e:
         # Cancel handshake timer if it exists
         if handshake_timer:
@@ -347,5 +352,5 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "message": str(e),
                 "timestamp": datetime.now().isoformat()
             })
-        if user_id:
-            ws_manager.disconnect(user_id)
+        if user_context["user_id"]:
+            ws_manager.disconnect(user_context["user_id"])
