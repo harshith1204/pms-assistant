@@ -25,9 +25,9 @@ from mongo.constants import (
     MONGODB_CONNECTION_STRING,
     uuid_str_to_mongo_binary,
     COLLECTIONS_WITH_DIRECT_BUSINESS,
+    BUSINESS_UUID,
+    MEMBER_UUID,
 )
-
-import websocket_handler as _ws_ctx
 
 
 class DirectMongoClient:
@@ -110,13 +110,9 @@ class DirectMongoClient:
                 def _flag(name: str) -> bool:
                     return os.getenv(name, "").lower() in ("1", "true", "yes")
 
-                # Prefer runtime websocket context; fall back to env vars
-                biz_uuid: str | None = getattr(_ws_ctx, "business_id_global", None) or os.getenv("BUSINESS_UUID")
-                member_uuid: str | None = (
-                    os.getenv("MEMBER_UUID")
-                    or os.getenv("STAFF_ID")
-                    or getattr(_ws_ctx, "user_id_global", None)
-                )
+                # Prefer runtime websocket context; fall back to env vars (via helpers)
+                biz_uuid: str | None = BUSINESS_UUID()
+                member_uuid: str | None = MEMBER_UUID()
 
                 enforce_business: bool = _flag("ENFORCE_BUSINESS_FILTER") or bool(biz_uuid)
                 enforce_member: bool = _flag("ENFORCE_MEMBER_FILTER") or bool(member_uuid)

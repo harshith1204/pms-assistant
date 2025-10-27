@@ -4,16 +4,18 @@ export const API_WS_URL = import.meta.env.VITE_API_WS_URL || `${API_HTTP_URL.rep
 // Stage Project API Configuration
 export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://stage-project.simpo.ai";
 
-// Get staff and business details dynamically from localStorage (set by parent wrapper) or fall back to environment variables
+// Get staff and business details dynamically from localStorage (set by parent wrapper)
+// Fallback to hard-coded defaults only (no env fallbacks for IDs)
+
+export const DEFAULT_MEMBER_ID = '1f01b572-b7a0-6e64-b890-2d102d936e6e';
+export const DEFAULT_BUSINESS_ID = '1f067040-82d8-6384-a1fc-996e5f7d7335';
 
 export const getMemberId = () => {
-  const envFallback = import.meta.env.VITE_MEMBER_UUID || '1f01b572-b7a0-6e64-b890-2d102d936e6e';
   const fromStorage = (localStorage.getItem('staffId') || '').trim();
-  return fromStorage || envFallback;
+  return fromStorage || DEFAULT_MEMBER_ID;
 };
 
 export const getBusinessId = () => {
-  const envFallback = import.meta.env.VITE_BUSINESS_UUID || '1f067040-82d8-6384-a1fc-996e5f7d7335';
   const raw = localStorage.getItem('bDetails');
   if (raw) {
     try {
@@ -27,13 +29,13 @@ export const getBusinessId = () => {
         parsed?.organizationId ||
         parsed?.orgId
       );
-      return (candidate && String(candidate).trim()) || envFallback;
+      return (candidate && String(candidate).trim()) || DEFAULT_BUSINESS_ID;
     } catch {
       const s = raw.trim();
-      return s || envFallback;
+      return s || DEFAULT_BUSINESS_ID;
     }
   }
-  return envFallback;
+  return DEFAULT_BUSINESS_ID;
 };
 
 export const getStaffType = () => {
