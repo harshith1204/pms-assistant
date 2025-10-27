@@ -73,6 +73,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
               business_id,
               timestamp: new Date().toISOString()
             }));
+            console.log('[Project Lens] Sent WS handshake with IDs:', { member_id, business_id });
           } catch (e) {
             console.warn("Failed to send handshake:", e);
           }

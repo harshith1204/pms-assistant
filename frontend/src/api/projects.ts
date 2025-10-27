@@ -42,6 +42,7 @@ export type GetProjectsResponse = {
 export async function getProjects(): Promise<GetProjectsResponse> {
   const businessId = getBusinessId();
   const memberId = getMemberId();
+  console.log('[Project Lens] Fetching projects with IDs:', { businessId, memberId });
   const endpoint = PROJECT_ENDPOINTS.GET_PROJECTS(businessId, memberId);
 
   const res = await fetch(endpoint, {
