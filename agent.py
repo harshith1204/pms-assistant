@@ -156,6 +156,21 @@ class MongoDBAgent:
             await self.connect()
 
         try:
+            # Try router-planner-executor flow first for deterministic tool responses
+            try:
+                from router_planner import make_plan
+                from executor import execute
+                
+                plan = make_plan(query)
+                exec_result = await execute(plan)
+                answer = exec_result["final"]
+                
+                if answer and isinstance(answer, str) and len(answer.strip()) > 0:
+                    return answer  # Return deterministic tool result
+            except Exception as e:
+                # If planning/execution fails, continue to existing conversational flow
+                print(f"Planner/executor failed, falling back to conversational flow: {e}")
+
             # Use default conversation ID if none provided
             if not conversation_id:
                 conversation_id = f"conv_{int(time.time())}"
@@ -232,6 +247,47 @@ class MongoDBAgent:
             await self.connect()
 
         try:
+            # Try router-planner-executor flow first for deterministic tool responses
+            try:
+                from router_planner import make_plan
+                from executor import execute
+                
+                plan = make_plan(query)
+                exec_result = await execute(plan)
+                answer = exec_result["final"]
+                
+                if answer and isinstance(answer, str) and len(answer.strip()) > 0:
+                    # Stream the deterministic response in chunks for consistent UI
+                    if websocket:
+                        await websocket.send_json({
+                            "type": "llm_start",
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    
+                    # Stream response in chunks
+                    chunk_size = 50
+                    for i in range(0, len(answer), chunk_size):
+                        chunk = answer[i:i+chunk_size]
+                        if websocket:
+                            await websocket.send_json({
+                                "type": "token",
+                                "content": chunk,
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        yield chunk
+                        await asyncio.sleep(0.01)  # Small delay for natural streaming
+                    
+                    if websocket:
+                        await websocket.send_json({
+                            "type": "llm_end",
+                            "elapsed_time": 0.1,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    return
+            except Exception as e:
+                # If planning/execution fails, continue to existing conversational flow
+                print(f"Planner/executor failed, falling back to conversational flow: {e}")
+
             # Use default conversation ID if none provided
             if not conversation_id:
                 conversation_id = f"conv_{int(time.time())}"
