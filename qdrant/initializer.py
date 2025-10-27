@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from bson import ObjectId, Binary
+from mongo.constants import mongo_binary_to_uuid_str
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -252,7 +253,7 @@ class RAGTool:
         if isinstance(mongo_id, ObjectId):
             return str(mongo_id)
         elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
-            return str(uuid.UUID(bytes=mongo_id))
+            return mongo_binary_to_uuid_str(mongo_id)
         return str(mongo_id)
 
     async def _get_member_projects(self, member_uuid: str, business_uuid: str) -> List[str]:

@@ -4,6 +4,7 @@ import json
 import uuid
 from itertools import islice
 from bson.binary import Binary
+from mongo.constants import mongo_binary_to_uuid_str
 from bson.objectid import ObjectId
 from qdrant_client.http.models import (
     PointStruct,
@@ -249,7 +250,7 @@ def normalize_mongo_id(mongo_id) -> str:
     if isinstance(mongo_id, ObjectId):
         return str(mongo_id)
     elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
-        return str(uuid.UUID(bytes=mongo_id))
+        return mongo_binary_to_uuid_str(mongo_id)
     return str(mongo_id)
 
 def html_to_text(html: str) -> str:
