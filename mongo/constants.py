@@ -1,6 +1,6 @@
 import os
 import uuid
-from bson.binary import Binary
+from bson.binary import Binary, UuidRepresentation
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -123,7 +123,7 @@ def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
     cleaned_uuid = uuid_str.strip('"\'')
     try:
         u = uuid.UUID(cleaned_uuid)
-        return Binary(_uuid_to_java_legacy_bytes(u), subtype=3)
+        return Binary.from_uuid(u, uuid_representation=UuidRepresentation.JAVA_LEGACY)
     except ValueError as e:
         raise ValueError(f"Invalid UUID format '{uuid_str}': {e}") from e
 
@@ -135,7 +135,7 @@ def mongo_binary_to_uuid_str(b: Binary) -> str:
     """
     try:
         if isinstance(b, Binary) and getattr(b, "subtype", None) == 3:
-            return str(_java_legacy_bytes_to_uuid(bytes(b)))
+            return str(b.as_uuid(uuid_representation=UuidRepresentation.JAVA_LEGACY))
         return str(b)
     except Exception:
         return str(b)
