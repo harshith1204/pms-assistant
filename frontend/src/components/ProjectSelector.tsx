@@ -40,7 +40,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       const response = await getProjects();
       setProjects(response.data);
     } catch (error) {
-      console.error("Failed to load projects:", error);
+      // Failed to load projects
       setProjects([]);
     } finally {
       setLoading(false);
@@ -59,7 +59,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     try {
       await getAllProjectData(project.projectId);
     } catch (error) {
-      console.warn(`Failed to load data for selected project ${project.projectName}:`, error);
+      // Failed to load data for selected project - continue anyway
     }
 
     setOpen(false);

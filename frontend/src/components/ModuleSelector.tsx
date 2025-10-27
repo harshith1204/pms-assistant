@@ -50,7 +50,7 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({
       const response = await getAllModules(projectId);
       setModules(response.data);
     } catch (error) {
-      console.error("Failed to load modules:", error);
+      // Failed to load modules
       setModules([]);
     } finally {
       setLoading(false);
@@ -87,7 +87,7 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({
         return `Until ${endDate}`;
       }
     } catch (error) {
-      console.warn("Error formatting date range:", error);
+      // Error formatting date range - return null
     }
     return null;
   };

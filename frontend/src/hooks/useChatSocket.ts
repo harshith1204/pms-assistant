@@ -74,7 +74,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
               timestamp: new Date().toISOString()
             }));
           } catch (e) {
-            console.warn("Failed to send handshake:", e);
+            // Failed to send handshake
           }
         }
       };

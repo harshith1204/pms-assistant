@@ -54,8 +54,8 @@ export type CreateCycleResponse = {
 };
 
 export async function getAllCycles(projectId?: string): Promise<GetAllCyclesResponse> {
-  const businessId = getBusinessId();
-  const endpoint = CYCLE_ENDPOINTS.GET_ALL_CYCLES(businessId, projectId);
+  const businessId : any= getBusinessId();
+  const endpoint = CYCLE_ENDPOINTS.GET_ALL_CYCLES(businessId.id, projectId);
 
   const res = await fetch(endpoint, {
     method: "GET",

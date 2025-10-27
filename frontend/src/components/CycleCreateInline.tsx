@@ -78,7 +78,7 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
           conversationId
         );
       } catch (error) {
-        console.error('Failed to fetch project data:', error);
+        // Failed to fetch project data
       }
     }
   };

@@ -59,7 +59,7 @@ export const LabelSelector: React.FC<LabelSelectorProps> = ({
       const response = await getProjectLabels(projectId);
       setLabels(response.data || []);
     } catch (error) {
-      console.error("Failed to load project labels:", error);
+      // Failed to load project labels
       setLabels([]);
     } finally {
       setLoading(false);
