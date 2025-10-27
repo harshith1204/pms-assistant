@@ -7,22 +7,33 @@ export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "ht
 // Get staff and business details dynamically from localStorage (set by parent wrapper) or fall back to environment variables
 
 export const getMemberId = () => {
-  const fromStorage = localStorage.getItem('staffId');
-  if (fromStorage) return fromStorage;
-  return import.meta.env.VITE_MEMBER_UUID || '1f01b572-b7a0-6e64-b890-2d102d936e6e';
+  const envFallback = import.meta.env.VITE_MEMBER_UUID || '1f01b572-b7a0-6e64-b890-2d102d936e6e';
+  const fromStorage = (localStorage.getItem('staffId') || '').trim();
+  return fromStorage || envFallback;
 };
 
 export const getBusinessId = () => {
-  const fromStorage = localStorage.getItem('bDetails');
-  if (fromStorage) {
+  const envFallback = import.meta.env.VITE_BUSINESS_UUID || '1f067040-82d8-6384-a1fc-996e5f7d7335';
+  const raw = localStorage.getItem('bDetails');
+  if (raw) {
     try {
-      const parsed = JSON.parse(fromStorage);
-      return parsed.businessId || parsed.id;
+      const parsed = JSON.parse(raw);
+      const candidate = (
+        parsed?.businessId ||
+        parsed?.id ||
+        parsed?.business_id ||
+        parsed?.business?.id ||
+        parsed?.business?._id ||
+        parsed?.organizationId ||
+        parsed?.orgId
+      );
+      return (candidate && String(candidate).trim()) || envFallback;
     } catch {
-      return fromStorage;
+      const s = raw.trim();
+      return s || envFallback;
     }
   }
-  return import.meta.env.VITE_BUSINESS_UUID || '1f067040-82d8-6384-a1fc-996e5f7d7335';
+  return envFallback;
 };
 
 export const getStaffType = () => {
