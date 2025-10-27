@@ -124,7 +124,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy text: ', err);
+      // Failed to copy text
     }
   };
 

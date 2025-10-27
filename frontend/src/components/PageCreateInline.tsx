@@ -79,12 +79,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
   });
   const [editorReady, setEditorReady] = useState<boolean>(false);
 
-  // Debug logging
-  console.log('PageCreateInline props:', { initialEditorJs });
-  console.log('Editor data state:', editorData);
-
   useEffect(() => {
-    console.log('Initializing Editor.js with data:', initialEditorJs);
 
     if (editorContainerRef.current && !editorRef.current) {
       try {
@@ -162,7 +157,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
 
         editorRef.current.isReady
           .then(() => {
-            console.log('Editor.js is ready to work!');
+            // Editor.js is ready to work
             setEditorReady(true);
             // Update local state after editor is ready
             setEditorData(initialEditorJs || { blocks: [] });
@@ -172,15 +167,15 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
               try {
                 editorRef.current.focus();
               } catch (error) {
-                console.log('Focus method not available');
+                // Focus method not available
               }
             }
           })
           .catch((reason) => {
-            console.error(`Editor.js initialization failed:`, reason);
+            // Editor.js initialization failed
           });
       } catch (error) {
-        console.error('Failed to create Editor.js instance:', error);
+        // Failed to create Editor.js instance
       }
     }
 
@@ -258,9 +253,11 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
               try { editorRef.current?.focus?.(); } catch {}
             }
           })
-          .catch((err) => console.error('Editor.js (re)initialization failed:', err));
+          .catch((err) => {
+            // Editor.js (re)initialization failed
+          });
       } catch (err) {
-        console.error('Failed to rebuild Editor.js instance:', err);
+        // Failed to rebuild Editor.js instance
       }
     })();
 
@@ -274,7 +271,6 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
 
     // If the data presence state changed significantly, recreate the editor
     if (hasData !== currentHasData && editorRef.current) {
-      console.log('Data presence changed, recreating editor');
       if (editorRef.current.destroy) {
         editorRef.current.destroy();
       }
@@ -359,7 +355,7 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
 
               editorRef.current.isReady
                 .then(() => {
-                  console.log('Editor.js recreated and ready');
+                  // Editor.js recreated and ready
                   setEditorReady(true);
                   setEditorData(initialEditorJs || { blocks: [] });
 
@@ -368,15 +364,15 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
                     try {
                       editorRef.current.focus();
                     } catch (error) {
-                      console.log('Focus method not available');
+                      // Focus method not available
                     }
                   }
                 })
                 .catch((error) => {
-                  console.error('Failed to recreate Editor.js:', error);
+                  // Failed to recreate Editor.js
                 });
             } catch (error) {
-              console.error('Failed to create new Editor.js instance:', error);
+              // Failed to create new Editor.js instance
             }
           }
         }, 100);
@@ -391,11 +387,10 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
     if (editorRef.current) {
       try {
         const outputData = await editorRef.current.save();
-        console.log('Editor.js save data:', outputData);
         setEditorData(outputData);
         onSave?.({ title: "Untitled Page", editorJs: outputData, project: selectedProject });
       } catch (error) {
-        console.error('Saving failed: ', error);
+        // Saving failed
       }
     }
   };

@@ -4,18 +4,34 @@ export const API_WS_URL = import.meta.env.VITE_API_WS_URL || `${API_HTTP_URL.rep
 // Stage Project API Configuration
 export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://stage-project.simpo.ai";
 
-// Get staff and business details dynamically from localStorage (set by parent wrapper)
-// Fallback to hard-coded defaults only (no env fallbacks for IDs)
-
-export const DEFAULT_MEMBER_ID = '1f01b572-b7a0-6e64-b890-2d102d936e6e';
-export const DEFAULT_BUSINESS_ID = '1f067040-82d8-6384-a1fc-996e5f7d7335';
+// Get staff and business details dynamically from postMessage/localStorage (set by parent wrapper)
+// Note: Hardcoded fallbacks are intentionally commented out to avoid accidental misuse
+// const DEFAULT_MEMBER_ID = '...';
+// const DEFAULT_BUSINESS_ID = '...';
 
 export const getMemberId = () => {
-  const fromStorage = (localStorage.getItem('staffId') || '').trim();
-  return fromStorage || DEFAULT_MEMBER_ID;
+  const stored = localStorage.getItem('staffId');
+  if (!stored) return '';
+  // Support values sent as JSON strings (e.g., '"uuid"')
+  try {
+    const parsed = JSON.parse(stored);
+    if (typeof parsed === 'string') return parsed.trim();
+  } catch {}
+  return stored.trim();
 };
 
 export const getBusinessId = () => {
+  // Prefer a directly stored businessId if provided
+  const direct = localStorage.getItem('bDetails');
+  if (direct && direct.trim()) {
+    try {
+      const parsed = JSON.parse(direct);
+      if (typeof parsed === 'string' && parsed.trim()) return parsed.trim();
+    } catch {}
+    return direct.trim();
+  }
+
+  // Otherwise, parse from bDetails payload provided by wrapper
   const raw = localStorage.getItem('bDetails');
   if (raw) {
     try {
@@ -29,13 +45,14 @@ export const getBusinessId = () => {
         parsed?.organizationId ||
         parsed?.orgId
       );
-      return (candidate && String(candidate).trim()) || DEFAULT_BUSINESS_ID;
+      return (candidate && String(candidate).trim()) || '';
     } catch {
+      // Some wrappers may send businessId as a simple string in bDetails
       const s = raw.trim();
-      return s || DEFAULT_BUSINESS_ID;
+      return s || '';
     }
   }
-  return DEFAULT_BUSINESS_ID;
+  return '';
 };
 
 export const getStaffType = () => {

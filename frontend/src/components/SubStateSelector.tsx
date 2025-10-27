@@ -58,7 +58,7 @@ export const SubStateSelector: React.FC<SubStateSelectorProps> = ({
       const response = await getSubStates(projectId);
       setSubStatesResponse(response);
     } catch (error) {
-      console.error("Failed to load sub-states:", error);
+      // Failed to load sub-states
       setSubStatesResponse({ data: [] });
     } finally {
       setLoading(false);

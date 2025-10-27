@@ -60,7 +60,7 @@ export const CycleSelector: React.FC<CycleSelectorProps> = ({
       const response = await getAllCycles(projectId);
       setCyclesByStatus(response.data);
     } catch (error) {
-      console.error("Failed to load cycles:", error);
+      // Failed to load cycles
       setCyclesByStatus({
         UPCOMING: [],
         ACTIVE: [],
@@ -111,7 +111,7 @@ export const CycleSelector: React.FC<CycleSelectorProps> = ({
         return `Until ${endDate}`;
       }
     } catch (error) {
-      console.warn("Error formatting date range:", error);
+      // Error formatting date range - return null
     }
     return null;
   };

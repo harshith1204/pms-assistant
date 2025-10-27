@@ -60,7 +60,7 @@ export const MemberSelector: React.FC<MemberSelectorProps> = ({
       const response = await getProjectMembers(projectId);
       setMembers(response.data);
     } catch (error) {
-      console.error("Failed to load project members:", error);
+      // Failed to load project members
       setMembers([]);
     } finally {
       setLoading(false);
