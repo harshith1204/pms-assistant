@@ -99,7 +99,14 @@ def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
     """
     if not isinstance(uuid_str, str) or not uuid_str:
         raise ValueError("uuid_str must be a non-empty string")
-    u = uuid.UUID(uuid_str)
-    # Subtype 3 = OLD_UUID_SUBTYPE in BSON; PyMongo accepts literal 3
-    return Binary(u.bytes, subtype=3)
+
+    # Strip surrounding quotes if present (handles JSON-serialized UUIDs)
+    cleaned_uuid = uuid_str.strip('"\'')
+
+    try:
+        u = uuid.UUID(cleaned_uuid)
+        # Subtype 3 = OLD_UUID_SUBTYPE in BSON; PyMongo accepts literal 3
+        return Binary(u.bytes, subtype=3)
+    except ValueError as e:
+        raise ValueError(f"Invalid UUID format '{uuid_str}': {e}") from e
 
