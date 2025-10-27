@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 import re
 import uuid
 from bson import ObjectId, Binary
-from mongo.constants import BUSINESS_UUID, MEMBER_UUID
+from mongo.constants import BUSINESS_UUID, MEMBER_UUID, mongo_binary_to_uuid_str
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
@@ -649,7 +649,7 @@ class ChunkAwareRetriever:
         if isinstance(mongo_id, ObjectId):
             return str(mongo_id)
         elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
-            return str(uuid.UUID(bytes=mongo_id))
+            return mongo_binary_to_uuid_str(mongo_id)
         return str(mongo_id)
 
     async def _get_member_projects(self, member_uuid: str, business_uuid: str) -> List[str]:
