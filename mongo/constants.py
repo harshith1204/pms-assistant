@@ -1,6 +1,6 @@
 import os
 import uuid
-from bson.binary import Binary
+from bson.binary import Binary, UuidRepresentation
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -36,7 +36,7 @@ mongodb_tools = _LazyMongoDBTools()
 
 # --- Global business scoping ---
 # Business UUID to scope all queries/searches. Set via env or websocket context
-COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page"}
+COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page", "epic"}
 
 def _get_business_uuid():
     """Get business UUID from websocket context or environment variables."""
@@ -50,7 +50,7 @@ def _get_business_uuid():
         pass
 
     # Fall back to environment variables
-    return os.getenv("BUSINESS_UUID") or os.getenv("BUSINESS_ID") or ""
+    return ""
 
 def _get_member_uuid():
     """Get member UUID from websocket context or environment variables."""
@@ -64,15 +64,7 @@ def _get_member_uuid():
         pass
 
     # Fall back to environment variables
-    return os.getenv("MEMBER_UUID") or os.getenv("STAFF_ID") or os.getenv("USER_ID") or ""
-
-def _get_current_context():
-    """Get current business and member context."""
-    return {
-        "business_uuid": _get_business_uuid(),
-        "member_uuid": _get_member_uuid()
-    }
-
+    return ""
 # BUSINESS_UUID function that returns current value from websocket context or environment
 def BUSINESS_UUID():
     """Get current business UUID from websocket context or environment variables.
@@ -105,8 +97,7 @@ def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
 
     try:
         u = uuid.UUID(cleaned_uuid)
-        # Subtype 3 = OLD_UUID_SUBTYPE in BSON; PyMongo accepts literal 3
-        return Binary(u.bytes, subtype=3)
+        return Binary.from_uuid(u, uuid_representation=UuidRepresentation.JAVA_LEGACY)
     except ValueError as e:
         raise ValueError(f"Invalid UUID format '{uuid_str}': {e}") from e
 

@@ -21,37 +21,24 @@ export const getMemberId = () => {
 };
 
 export const getBusinessId = () => {
-  // Prefer a directly stored businessId if provided
-  const direct = localStorage.getItem('bDetails');
-  if (direct && direct.trim()) {
-    try {
-      const parsed = JSON.parse(direct);
-      if (typeof parsed === 'string' && parsed.trim()) return parsed.trim();
-    } catch {}
-    return direct.trim();
+  const raw = localStorage.getItem('bDetails');
+  if (!raw) return '';
+
+  try {
+    const parsed = JSON.parse(raw);
+    // bDetails is a business object with an 'id' field
+    if (parsed && typeof parsed === 'object' && parsed.id) {
+      return String(parsed.id).trim();
+    }
+    // Fallback: some wrappers may send businessId as a simple string
+    if (typeof parsed === 'string' && parsed.trim()) {
+      return parsed.trim();
+    }
+  } catch {
+    // Not JSON, treat as direct string
+    return raw.trim();
   }
 
-  // Otherwise, parse from bDetails payload provided by wrapper
-  const raw = localStorage.getItem('bDetails');
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      const candidate = (
-        parsed?.businessId ||
-        parsed?.id ||
-        parsed?.business_id ||
-        parsed?.business?.id ||
-        parsed?.business?._id ||
-        parsed?.organizationId ||
-        parsed?.orgId
-      );
-      return (candidate && String(candidate).trim()) || '';
-    } catch {
-      // Some wrappers may send businessId as a simple string in bDetails
-      const s = raw.trim();
-      return s || '';
-    }
-  }
   return '';
 };
 
