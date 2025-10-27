@@ -202,6 +202,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                     setSaving(true);
                     const businessId = getBusinessId();
                     const memberId = getMemberId();
+                    console.log('[Project Lens] Creating work item with IDs:', { businessId, memberId });
                     const created = await createWorkItemWithMembers({
                       title,
                       description,
@@ -262,6 +263,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                     setSaving(true);
                     const businessId = getBusinessId();
                     const memberId = getMemberId();
+                    console.log('[Project Lens] Creating page with IDs:', { businessId, memberId });
                     const created = await createPage({
                       title: title || "Untitled Page",
                       content: editorJs,

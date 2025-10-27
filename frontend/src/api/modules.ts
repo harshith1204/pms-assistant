@@ -100,6 +100,7 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
 
 export async function getAllModules(projectId: string): Promise<GetAllModulesResponse> {
   const businessId = getBusinessId();
+  console.log('[Project Lens] Fetching modules with businessId:', businessId);
   const endpoint = MODULE_ENDPOINTS.GET_ALL_MODULES();
 
   const res = await fetch(endpoint, {

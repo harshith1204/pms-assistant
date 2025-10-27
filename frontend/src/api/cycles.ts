@@ -55,6 +55,7 @@ export type CreateCycleResponse = {
 
 export async function getAllCycles(projectId?: string): Promise<GetAllCyclesResponse> {
   const businessId = getBusinessId();
+  console.log('[Project Lens] Fetching cycles with businessId:', businessId);
   const endpoint = CYCLE_ENDPOINTS.GET_ALL_CYCLES(businessId, projectId);
 
   const res = await fetch(endpoint, {

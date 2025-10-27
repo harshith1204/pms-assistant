@@ -51,6 +51,7 @@ const App = () => {
         localStorage.setItem('staffType', event.data.data);
       } else if (event.data.type === 'staffId') {
         localStorage.setItem('staffId', event.data.data);
+        console.log('[Project Lens] Received staffId from wrapper:', event.data.data);
       } else if (event.data.type === 'staffName') {
         localStorage.setItem('staffName', event.data.data);
       } else if (event.data.type === 'staff_data') {
@@ -58,24 +59,52 @@ const App = () => {
         if (event.data.staffId !== undefined) {
           const v = typeof event.data.staffId === 'string' ? event.data.staffId : JSON.stringify(event.data.staffId);
           localStorage.setItem('staffId', v);
+          console.log('[Project Lens] Received staff_data.staffId:', v);
         }
         if (event.data.businessId !== undefined) {
           const v = typeof event.data.businessId === 'string' ? event.data.businessId : JSON.stringify(event.data.businessId);
           localStorage.setItem('businessId', v);
+          console.log('[Project Lens] Received staff_data.businessId:', v);
         }
       } else if (event.data.type === 'business_staff_data') {
         // Combined payload from parent with business and staff info
         if (event.data.staffId !== undefined) {
           const v = typeof event.data.staffId === 'string' ? event.data.staffId : JSON.stringify(event.data.staffId);
           localStorage.setItem('staffId', v);
+          console.log('[Project Lens] Received business_staff_data.staffId:', v);
         }
         if (event.data.businessId !== undefined) {
           const v = typeof event.data.businessId === 'string' ? event.data.businessId : JSON.stringify(event.data.businessId);
           localStorage.setItem('businessId', v);
+          console.log('[Project Lens] Received business_staff_data.businessId:', v);
         }
         if (event.data.businessName !== undefined) {
           localStorage.setItem('businessName', String(event.data.businessName));
         }
+      }
+
+      // After handling each message, if we have any business details payload, try to log extracted businessId
+      if (event.data.type === 'localStorage') {
+        try {
+          const raw = localStorage.getItem('bDetails');
+          if (raw) {
+            let obj: any = raw;
+            try { obj = JSON.parse(raw); } catch {}
+            const candidate = (
+              obj?.businessId ||
+              obj?.id ||
+              obj?.business_id ||
+              obj?.business?.id ||
+              obj?.business?._id ||
+              obj?.organizationId ||
+              obj?.orgId ||
+              (typeof obj === 'string' ? obj : '')
+            );
+            if (candidate) {
+              console.log('[Project Lens] Extracted businessId candidate from bDetails:', candidate);
+            }
+          }
+        } catch {}
       }
     };
 
@@ -89,6 +118,7 @@ const App = () => {
       window.parent.postMessage({ type: 'project_lens_ready' }, '*');
       // Request IDs explicitly in case wrapper requires a request cycle
       window.parent.postMessage({ type: 'get_staff_data' }, '*');
+      console.log('[Project Lens] Sent project_lens_ready and get_staff_data requests to wrapper');
     };
 
     // Send ready message after a short delay to ensure app is fully loaded
