@@ -13,7 +13,7 @@ load_dotenv()
 
 from agent import MongoDBAgent
 import os
-from websocket_handler import handle_chat_websocket, ws_manager
+from websocket_handler import handle_chat_websocket, ws_manager,user_id_global,business_id_global
 from qdrant.initializer import RAGTool
 from mongo.conversations import ensure_conversation_client_connected
 from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
@@ -237,6 +237,63 @@ async def get_conversation(conversation_id: str):
         return {"id": conversation_id, "messages": norm}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/conversations/{user_id}/{business_id}")
+async def get_conversation(user_id: str, business_id: str):
+    """Get all conversations' messages for a given member_id and business_id."""
+    try:
+        coll = await conversation_mongo_client.get_collection(
+            CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
+        )
+
+        # Find all matching conversations
+        cursor = coll.find({"memberId": user_id, "businessId": business_id})
+        docs = await cursor.to_list(length=None)
+
+        if not docs:
+            return {"id": user_id, "businessId": business_id, "conversations": []}
+
+        all_conversations = []
+
+        for doc in docs:
+            messages = doc.get("messages") or []
+            norm = []
+            for m in messages:
+                if not isinstance(m, dict):
+                    continue
+                entry = {
+                    "id": m.get("id") or "",
+                    "type": m.get("type") or "assistant",
+                    "content": m.get("content") or "",
+                    "timestamp": m.get("timestamp") or "",
+                    "liked": m.get("liked"),
+                    "feedback": m.get("feedback"),
+                }
+                # Pass through structured generated artifacts when present
+                if m.get("type") == "work_item" and isinstance(m.get("workItem"), dict):
+                    entry["workItem"] = m.get("workItem")
+                if m.get("type") == "page" and isinstance(m.get("page"), dict):
+                    entry["page"] = m.get("page")
+                if m.get("type") == "cycle" and isinstance(m.get("cycle"), dict):
+                    entry["cycle"] = m.get("cycle")
+                if m.get("type") == "module" and isinstance(m.get("module"), dict):
+                    entry["module"] = m.get("module")
+                norm.append(entry)
+
+            all_conversations.append({
+                "conversationId": doc.get("conversationId"),
+                "messages": norm,
+            })
+
+        return {
+            "id": user_id,
+            "businessId": business_id,
+            "conversations": all_conversations,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.post("/work-items", response_model=WorkItemCreateResponse)
