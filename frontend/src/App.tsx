@@ -19,14 +19,63 @@ const App = () => {
         // Store the current path for navigation
         localStorage.setItem('wrapper_path', event.data.path);
       } else if (event.data.type === 'localStorage') {
-        // Set localStorage data from wrapper
-        localStorage.setItem('bDetails', event.data.data);
+        // Normalize and set business details from wrapper
+        // event.data.data may be: object, JSON string, or double-encoded JSON string
+        try {
+          const raw = event.data.data;
+          let value: any = raw;
+          if (typeof value === 'string') {
+            try {
+              value = JSON.parse(value);
+            } catch {}
+          }
+          if (typeof value === 'string') {
+            // Could still be double-encoded JSON
+            try {
+              const second = JSON.parse(value);
+              value = second;
+            } catch {}
+          }
+          if (typeof value === 'object' && value) {
+            localStorage.setItem('bDetails', JSON.stringify(value));
+          } else if (typeof value === 'string') {
+            localStorage.setItem('bDetails', value);
+          }
+        } catch {
+          // Fallback to raw string
+          if (typeof event.data.data === 'string') {
+            localStorage.setItem('bDetails', event.data.data);
+          }
+        }
       } else if (event.data.type === 'staffType') {
         localStorage.setItem('staffType', event.data.data);
       } else if (event.data.type === 'staffId') {
         localStorage.setItem('staffId', event.data.data);
       } else if (event.data.type === 'staffName') {
         localStorage.setItem('staffName', event.data.data);
+      } else if (event.data.type === 'staff_data') {
+        // Parent responds with staffId and businessId
+        if (event.data.staffId !== undefined) {
+          const v = typeof event.data.staffId === 'string' ? event.data.staffId : JSON.stringify(event.data.staffId);
+          localStorage.setItem('staffId', v);
+        }
+        if (event.data.businessId !== undefined) {
+          const v = typeof event.data.businessId === 'string' ? event.data.businessId : JSON.stringify(event.data.businessId);
+          localStorage.setItem('businessId', v);
+        }
+      } else if (event.data.type === 'business_staff_data') {
+        // Combined payload from parent with business and staff info
+        if (event.data.staffId !== undefined) {
+          const v = typeof event.data.staffId === 'string' ? event.data.staffId : JSON.stringify(event.data.staffId);
+          localStorage.setItem('staffId', v);
+        }
+        if (event.data.businessId !== undefined) {
+          const v = typeof event.data.businessId === 'string' ? event.data.businessId : JSON.stringify(event.data.businessId);
+          localStorage.setItem('businessId', v);
+        }
+        if (event.data.businessName !== undefined) {
+          localStorage.setItem('businessName', String(event.data.businessName));
+        }
       }
     };
 
@@ -38,6 +87,8 @@ const App = () => {
   useEffect(() => {
     const sendReadyMessage = () => {
       window.parent.postMessage({ type: 'project_lens_ready' }, '*');
+      // Request IDs explicitly in case wrapper requires a request cycle
+      window.parent.postMessage({ type: 'get_staff_data' }, '*');
     };
 
     // Send ready message after a short delay to ensure app is fully loaded
