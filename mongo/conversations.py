@@ -118,12 +118,13 @@ def _resolve_business_and_member_ids() -> Dict[str, str]:
     # Prefer runtime websocket context if available (set by websocket_handler)
     try:
         import websocket_handler as _ws_ctx  # dynamic import to avoid circular dependency at module import time
+        from constants import uuid_str_to_mongo_binary
         ws_business = getattr(_ws_ctx, "business_id_global", None)
         ws_member = getattr(_ws_ctx, "user_id_global", None)
         if isinstance(ws_business, str) and ws_business:
-            business_id = ws_business
+            business_id = uuid_str_to_mongo_binary(ws_business)
         if isinstance(ws_member, str) and ws_member:
-            member_id = ws_member
+            member_id = uuid_str_to_mongo_binary(ws_member)
     except Exception:
         # Best-effort: fall back to environment below
         pass
