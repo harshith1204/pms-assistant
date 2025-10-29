@@ -12,6 +12,7 @@ import { getConversations, getConversationMessages, reactToMessage } from "@/api
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { getMemberId, getBusinessId } from "@/config";
 
 interface Message {
   id: string;
@@ -61,35 +62,6 @@ const CONV_QUERY_PARAM = "conversationId";
 const VIEW_QUERY_PARAM = "view";
 const VIEW_SETTINGS = "settings";
 const VIEW_GETTING_STARTED = "getting-started";
-
-// Hardcoded values for now - will be replaced with dynamic loading from parent website later
-const getMemberId = () => {
-  return '1f01b572-b7a0-6e64-b890-2d102d936e6e'; // MEMBER_UUID from .env
-};
-
-const getBusinessId = () => {
-  return '1f067040-82d8-6384-a1fc-996e5f7d7335'; // BUSINESS_UUID from .env
-};
-
-/*
-// Older localStorage approach - commented out but preserved for future implementation
-const getMemberIdFromStorage = () => {
-  return localStorage.getItem('staffId') || undefined;
-};
-
-const getBusinessIdFromStorage = () => {
-  const bDetails = localStorage.getItem('bDetails');
-  if (bDetails) {
-    try {
-      const businessData = JSON.parse(bDetails);
-      return businessData.id || businessData.uuid || businessData._id || undefined;
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-};
-*/
 
 const Index = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -257,6 +229,10 @@ const Index = () => {
         result.push({ id: m.id, role: "assistant", content: "", module: (m as any).module });
         continue;
       }
+      if (type === "project_data_loaded" && (m as any).message) {
+        result.push({ id: m.id, role: "assistant", content: (m as any).message });
+        continue;
+      }
       // Fallback: treat unknown types as assistant text
       result.push({ id: m.id, role: "assistant", content: m.content || "" });
     }
@@ -416,6 +392,16 @@ const Index = () => {
           if (exists) return prev;
           return [...prev, candidate];
         });
+      } else if (evt.content_type === "project_data_loaded") {
+        const id = `project-data-${Date.now()}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id,
+            role: "assistant",
+            content: (evt as any).message || "Project data loaded successfully.",
+          },
+        ]);
       } else {
         const id = `assistant-${Date.now()}`;
         setMessages((prev) => [
@@ -699,11 +685,13 @@ const Index = () => {
     }
 
     // Send to backend via WebSocket
+    const mid = getMemberId();
+    const bid = getBusinessId();
     const ok = send({
       message: content,
       conversation_id: convId,
-      member_id: getMemberId(),
-      business_id: getBusinessId()
+      member_id: mid,
+      business_id: bid
     });
     if (!ok) {
       // Fallback: show error and stop loading
@@ -877,6 +865,7 @@ const Index = () => {
                   page={message.page}
                   cycle={message.cycle}
                   module={message.module}
+                  conversationId={activeConversationId || undefined}
                   onLike={handleLike}
                   onDislike={handleDislike}
                 />

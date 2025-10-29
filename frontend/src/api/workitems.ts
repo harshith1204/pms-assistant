@@ -1,4 +1,5 @@
 import { WORKITEM_ENDPOINTS } from "@/api/endpoints";
+import { getBusinessId, getMemberId } from "@/config";
 
 export type CreateWorkItemRequest = {
   title: string;
@@ -7,10 +8,16 @@ export type CreateWorkItemRequest = {
   projectId?: string;
   cycleId?: string;
   subStateId?: string;
-  assignees?: string[];
+  moduleId?: string;
+  assignees?: { id: string; name: string }[];
+  labels?: { id: string; name: string; color: string }[];
   startDate?: string;
   endDate?: string;
-  createdBy?: string;
+  createdBy?: { id: string; name: string };
+  priority?: string;
+  estimate?: number;
+  estimateSystem?: string;
+  status?: string;
 };
 
 export type CreateWorkItemWithMembersRequest = {
@@ -20,10 +27,16 @@ export type CreateWorkItemWithMembersRequest = {
   projectId?: string;
   cycleId?: string;
   subStateId?: string;
+  moduleId?: string;
   assignees?: { id: string; name: string }[];
+  labels?: { id: string; name: string; color: string }[];
   startDate?: string;
   endDate?: string;
-  createdBy?: string;
+  createdBy?: { id: string; name: string };
+  priority?: string;
+  estimate?: number;
+  estimateSystem?: string;
+  status?: string;
 };
 
 export type CreateWorkItemResponse = {
@@ -44,14 +57,39 @@ export async function createWorkItem(payload: CreateWorkItemRequest): Promise<Cr
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_identifier: payload.projectIdentifier,
-      project_id: payload.projectId,
-      cycle_id: payload.cycleId,
-      sub_state_id: payload.subStateId,
-      assignees: payload.assignees,
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      created_by: payload.createdBy,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      label: payload.labels || [],
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : null,
+      createdBy: payload.createdBy || { id: getMemberId(), name: "" },
+      priority: payload.priority || "NONE",
+      estimate: payload.estimate,
+      estimateSystem: payload.estimateSystem || "TIME",
+      status: payload.status || "ACCEPTED",
+      assignee: payload.assignees ? payload.assignees.map(a => ({
+        id: a.id,
+        name: a.name
+      })) : [],
+      modules: payload.moduleId ? {
+        id: payload.moduleId,
+        name: "" // Will be populated by backend
+      } : null,
+      cycle: payload.cycleId ? {
+        id: payload.cycleId,
+        name: "" // Will be populated by backend
+      } : null,
+      parent: null,
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      }
     }),
   });
   if (!res.ok) {
@@ -70,19 +108,78 @@ export async function createWorkItemWithMembers(payload: CreateWorkItemWithMembe
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_identifier: payload.projectIdentifier,
-      project_id: payload.projectId,
-      cycle_id: payload.cycleId,
-      sub_state_id: payload.subStateId,
-      assignees: payload.assignees?.map(a => a.id),
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      created_by: payload.createdBy,
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      label: payload.labels || [],
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : null,
+      createdBy: payload.createdBy || { id: getMemberId(), name: "" },
+      priority: payload.priority || "NONE",
+      estimate: payload.estimate,
+      estimateSystem: payload.estimateSystem || "TIME",
+      status: payload.status || "ACCEPTED",
+      assignee: payload.assignees ? payload.assignees.map(a => ({
+        id: a.id,
+        name: a.name
+      })) : [],
+      modules: payload.moduleId ? {
+        id: payload.moduleId,
+        name: "" // Will be populated by backend
+      } : null,
+      cycle: payload.cycleId ? {
+        id: payload.cycleId,
+        name: "" // Will be populated by backend
+      } : null,
+      parent: null,
+      project: {
+        id: payload.projectId || "",
+        name: "" // Will be populated by backend
+      },
+      business: {
+        id: getBusinessId(),
+        name: "" // Will be populated by backend
+      }
     }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Failed to create work item (${res.status})`);
+  }
+  return res.json();
+}
+
+export type GetWorkItemsRequest = {
+  projectId: string;
+  businessId: string;
+  moduleId?: string;
+  cycleId?: string;
+  stateId?: string;
+  assigneeId?: string;
+  labelId?: string;
+  priority?: string;
+  searchText?: string;
+  sortField?: string;
+  sortDirection?: string;
+};
+
+export type GetWorkItemsResponse = {
+  success: boolean;
+  data: CreateWorkItemResponse[];
+};
+
+export async function getWorkItems(payload: GetWorkItemsRequest): Promise<GetWorkItemsResponse> {
+  const endpoint = WORKITEM_ENDPOINTS.GET_WORKITEMS();
+
+  const res = await fetch(endpoint, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get work items (${res.status})`);
   }
   return res.json();
 }

@@ -12,7 +12,8 @@ export type ChatEvent =
   | { type: "tool_end"; output?: string; output_preview?: string; hidden?: boolean; timestamp: string }
   | { type: "planner_error"; message: string; timestamp: string }
   | { type: "agent_action"; text: string; step: number; timestamp: string }
-  | { type: "content_generated"; content_type: "work_item" | "page"; data?: any; error?: string; success: boolean }
+  | { type: "content_generated"; content_type: "work_item" | "page" | "cycle" | "module"; data?: any; error?: string; success: boolean }
+  | { type: "project_data_loaded"; message: string; projectData?: any; timestamp: string }
   | { type: "complete"; conversation_id: string; timestamp: string }
   | { type: "pong"; timestamp: string }
   | { type: "error"; message: string; timestamp?: string }
@@ -73,7 +74,7 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
               timestamp: new Date().toISOString()
             }));
           } catch (e) {
-            console.warn("Failed to send handshake:", e);
+            // Failed to send handshake
           }
         }
       };

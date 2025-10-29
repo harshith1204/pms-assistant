@@ -1,4 +1,34 @@
 import { MODULE_ENDPOINTS } from "@/api/endpoints";
+import { getBusinessId, getMemberId } from "@/config";
+
+export type Module = {
+  id: string;
+  title: string;
+  description?: string;
+  projectId?: string;
+  subStateId?: string;
+  startDate?: string;
+  endDate?: string;
+  lead?: {
+    id: string;
+    name: string;
+    email?: string;
+  };
+  members?: {
+    id: string;
+    name: string;
+    email?: string;
+  }[];
+  createdTimeStamp?: string;
+  updatedTimeStamp?: string;
+  link?: string;
+  // Make properties optional to handle different API response formats
+  [key: string]: any;
+};
+
+export type GetAllModulesResponse = {
+  data: Module[];
+};
 
 export type CreateModuleRequest = {
   title: string;
@@ -9,7 +39,6 @@ export type CreateModuleRequest = {
   endDate?: string;
   lead?: string;
   members?: string[];
-  createdBy?: string;
 };
 
 export type CreateModuleWithMembersRequest = {
@@ -21,7 +50,6 @@ export type CreateModuleWithMembersRequest = {
   endDate?: string;
   lead?: { id: string; name: string };
   members?: { id: string; name: string }[];
-  createdBy?: string;
 };
 
 export type CreateModuleResponse = {
@@ -41,13 +69,26 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_id: payload.projectId,
-      sub_state_id: payload.subStateId,
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      lead: payload.lead,
-      members: payload.members,
-      created_by: payload.createdBy,
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : null,
+      lead: payload.lead ? {
+        id: payload.lead,
+        name: "" // Will be populated by backend
+      } : null,
+      assignee: payload.members ? payload.members.map(member => ({
+        id: member,
+        name: "" // Will be populated by backend
+      })) : [],
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      business: {
+        id: getBusinessId()
+      },
+      project: {
+        id: payload.projectId || ""
+      },
     }),
   });
   if (!res.ok) {
@@ -55,6 +96,37 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
     throw new Error(text || `Failed to create module (${res.status})`);
   }
   return res.json();
+}
+
+export async function getAllModules(projectId: string): Promise<GetAllModulesResponse> {
+  const businessId = getBusinessId();
+  const endpoint = MODULE_ENDPOINTS.GET_ALL_MODULES();
+
+  const res = await fetch(endpoint, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      projectId: projectId,
+      businessId: businessId,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to fetch modules (${res.status})`);
+  }
+
+  const response = await res.json();
+
+  // Handle the response format from the API
+  if (response.data && Array.isArray(response.data)) {
+    return { data: response.data };
+  }
+
+  // Fallback for different response formats
+  return {
+    data: []
+  };
 }
 
 export async function createModuleWithMembers(payload: CreateModuleWithMembersRequest): Promise<CreateModuleResponse> {
@@ -66,18 +138,42 @@ export async function createModuleWithMembers(payload: CreateModuleWithMembersRe
     body: JSON.stringify({
       title: payload.title,
       description: payload.description || "",
-      project_id: payload.projectId,
-      sub_state_id: payload.subStateId,
-      start_date: payload.startDate,
-      end_date: payload.endDate,
-      lead: payload.lead?.id,
-      members: payload.members?.map(m => m.id),
-      created_by: payload.createdBy,
+      state: payload.subStateId ? {
+        id: payload.subStateId,
+        name: "" // Will be populated by backend
+      } : null,
+      lead: payload.lead,
+      assignee: payload.members?.map(member => ({
+        id: member.id,
+        name: member.name
+      })) || [],
+      startDate: payload.startDate,
+      endDate: payload.endDate,
+      business: {
+        id: getBusinessId()
+      },
+      project: {
+        id: payload.projectId || ""
+      },
     }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Failed to create module (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getWorkItemsByModule(moduleId: string): Promise<any> {
+  const endpoint = MODULE_ENDPOINTS.GET_WORKITEMS(moduleId);
+
+  const res = await fetch(endpoint, {
+    method: "GET",
+    headers: { "accept": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to get work items by module (${res.status})`);
   }
   return res.json();
 }

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { AgentActivity } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
 import { type Project } from "@/api/projects";
-import { DateRange } from "react-day-picker";
+import { DateRange } from "@/components/ui/date-range-picker";
 
 interface ChatMessageProps {
   id: string;
@@ -44,6 +44,7 @@ interface ChatMessageProps {
     description?: string;
     projectName?: string;
   };
+  conversationId?: string;
 }
 
 import WorkItemCreateInline from "@/components/WorkItemCreateInline";
@@ -61,9 +62,12 @@ import { createModule, createModuleWithMembers } from "@/api/modules";
 import { type ProjectMember } from "@/api/members";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
+import { type Module } from "@/api/modules";
 import { toast } from "@/components/ui/use-toast";
+import { getBusinessId, getMemberId } from "@/config";
+import { invalidateProjectCache } from "@/api/projectData";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, conversationId }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -95,6 +99,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   // Sub-state selection state
   const [selectedSubState, setSelectedSubState] = useState<SubState | null>(null);
 
+  // Module selection state
+  const [selectedModule, setSelectedModule] = useState<Module | null>(null);
+
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
       if (currentIndex < content.length) {
@@ -117,7 +124,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy text: ', err);
+      // Failed to copy text
     }
   };
 
@@ -183,15 +190,18 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 selectedDateRange={selectedDateRange}
                 selectedCycle={selectedCycle}
                 selectedSubState={selectedSubState}
+                selectedModule={selectedModule}
                 onProjectSelect={setSelectedProject}
                 onAssigneesSelect={setSelectedAssignees}
                 onDateSelect={setSelectedDateRange}
                 onCycleSelect={setSelectedCycle}
                 onSubStateSelect={setSelectedSubState}
-                onSave={async ({ title, description, project, assignees, cycle, subState, startDate, endDate }) => {
+                onModuleSelect={setSelectedModule}
+                onSave={async ({ title, description, project, assignees, cycle, subState, module, startDate, endDate }) => {
                   try {
                     setSaving(true);
-                    const projectId = localStorage.getItem("projectId") || undefined;
+                    const businessId = getBusinessId();
+                    const memberId = getMemberId();
                     const created = await createWorkItemWithMembers({
                       title,
                       description,
@@ -199,11 +209,20 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       projectIdentifier: workItem.projectIdentifier,
                       cycleId: cycle?.id,
                       subStateId: subState?.id,
-                      assignees: assignees,
+                      moduleId: module?.id,
+                      assignees: assignees?.map(a => ({ id: a.id, name: a.displayName || a.name })),
+                      labels: [], // Empty labels for now, can be added later
                       startDate,
-                      endDate
+                      endDate,
+                      createdBy: { id: memberId, name: "" }
                     });
                     setSavedWorkItem(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Work item saved", description: "Your work item has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save work item", description: String(e?.message || e), variant: "destructive" as any });
@@ -213,6 +232,16 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 }}
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  // Send the project data loaded message via WebSocket
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
               />
             )
           ) : page ? (
@@ -231,9 +260,21 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onSave={async ({ title, editorJs, project }) => {
                   try {
                     setSaving(true);
-                    const projectId = localStorage.getItem("projectId") || undefined;
-                    const created = await createPage({ title, content: editorJs, projectId: project?.projectId });
+                    const businessId = getBusinessId();
+                    const memberId = getMemberId();
+                    const created = await createPage({
+                      title: title || "Untitled Page",
+                      content: editorJs,
+                      projectId: project?.projectId,
+                      createdBy: { id: memberId, name: "" }
+                    });
                     setSavedPage(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Page saved", description: "Your page has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save page", description: String(e?.message || e), variant: "destructive" as any });
@@ -264,7 +305,6 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onSave={async ({ title, description, project, startDate, endDate }) => {
                   try {
                     setSaving(true);
-                    const projectId = localStorage.getItem("projectId") || undefined;
                     const created = await createCycle({
                       title,
                       description,
@@ -273,6 +313,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       endDate: endDate || cycle.endDate
                     });
                     setSavedCycle(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Cycle saved", description: "Your cycle has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save cycle", description: String(e?.message || e), variant: "destructive" as any });
@@ -282,6 +328,16 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 }}
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  // Send the project data loaded message via WebSocket
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
               />
             )
           ) : module ? (
@@ -310,18 +366,23 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onSave={async ({ title, description, project, lead, members, subState, startDate, endDate }) => {
                   try {
                     setSaving(true);
-                    const projectId = localStorage.getItem("projectId") || undefined;
                     const created = await createModuleWithMembers({
                       title,
                       description,
                       projectId: project?.projectId,
                       subStateId: subState?.id,
                       lead,
-                      members,
+                      members: members?.map(m => ({ id: m.id, name: m.displayName || m.name })),
                       startDate,
                       endDate
                     });
                     setSavedModule(created);
+
+                    // Invalidate cache for the project since new data was created
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
                     toast({ title: "Module saved", description: "Your module has been created." });
                   } catch (e: any) {
                     toast({ title: "Failed to save module", description: String(e?.message || e), variant: "destructive" as any });
@@ -331,6 +392,16 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 }}
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  // Send the project data loaded message via WebSocket
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
               />
             )
           ) : (

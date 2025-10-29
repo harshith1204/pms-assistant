@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { getProjectMembers, type ProjectMember } from "@/api/members";
+import { getCachedMembers } from "@/api/projectData";
 
 export type MemberSelectorProps = {
   projectId: string;
@@ -47,10 +48,19 @@ export const MemberSelector: React.FC<MemberSelectorProps> = ({
   const loadMembers = async () => {
     setLoading(true);
     try {
+      // First check if data is cached
+      const cachedMembers = getCachedMembers(projectId);
+      if (cachedMembers) {
+        setMembers(cachedMembers.data);
+        setLoading(false);
+        return;
+      }
+
+      // If not cached, fetch from API
       const response = await getProjectMembers(projectId);
       setMembers(response.data);
     } catch (error) {
-      console.error("Failed to load project members:", error);
+      // Failed to load project members
       setMembers([]);
     } finally {
       setLoading(false);

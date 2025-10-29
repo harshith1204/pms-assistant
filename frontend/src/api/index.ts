@@ -21,4 +21,4 @@ export { getAllCyclesAsArray } from "@/api/cycles";
 export { getAllSubStatesAsArray, getSubStatesByState, getDefaultSubState } from "@/api/substates";
 
 // Export config utilities
-export { getMemberId, getBusinessId, API_HTTP_URL, API_WS_URL, STAGE_API_BASE_URL } from "@/config";
+export { getMemberId, getBusinessId, getStaffType, getStaffName, getBusinessDetails, API_HTTP_URL, API_WS_URL, STAGE_API_BASE_URL } from "@/config";

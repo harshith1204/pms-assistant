@@ -196,10 +196,19 @@ class TTLCache:
 
 
 # Lightweight helper to create natural, user-facing action statements
-async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, Any]]) -> str:
+async def generate_action_statement(
+    user_query: str,
+    tool_calls: List[Dict[str, Any]],
+    llm_reasoning: str = ""
+) -> str:
     """Generate a concise, user-facing action sentence based on planned tool calls.
 
     The sentence avoids exposing internal tooling and focuses on intent/benefit.
+
+    Args:
+        user_query: The user's original question
+        tool_calls: List of tool calls being executed
+        llm_reasoning: Optional reasoning from the LLM about what it's doing
     """
     try:
         if not tool_calls:
@@ -244,6 +253,7 @@ async def generate_action_statement(user_query: str, tool_calls: List[Dict[str, 
             HumanMessage(content=(
                 f"User asked: '{user_query}'\n"
                 f"Planned actions: {tools_desc}\n"
+                f"{'Your reasoning: ' + llm_reasoning if llm_reasoning else ''}\n"
                 "Your next step (one sentence):"
             )),
         ]
@@ -499,231 +509,6 @@ class MongoDBAgent:
         # Tracing removed: nothing to clean up
         pass
 
-    async def run(self, query: str, conversation_id: Optional[str] = None) -> str:
-        """Run the agent with a query and optional conversation context"""
-        if not self.connected:
-            await self.connect()
-
-        try:
-            tracer = None
-            if tracer is not None:
-                span_cm = tracer.start_as_current_span(
-                    "agent_run",
-                    # kind=trace.SpanKind.INTERNAL,  # Tracing removed
-                    attributes={
-                        "query_preview": query[:80],
-                        "query_length": len(query or ""),
-                        "database.name": DATABASE_NAME,
-                    },
-                )
-            else:
-                span_cm = None
-
-            with (span_cm if span_cm is not None else contextlib.nullcontext()) as run_span:
-                pass
-                # Use default conversation ID if none provided
-                if not conversation_id:
-                    conversation_id = f"conv_{int(time.time())}"
-
-                # Get conversation history (automatically loads from MongoDB if cache empty)
-                conversation_context = await conversation_memory.get_recent_context(conversation_id)
-
-                # Build messages with optional system instruction
-                messages: List[BaseMessage] = []
-                if self.system_prompt:
-                    messages.append(SystemMessage(content=self.system_prompt))
-
-                messages.extend(conversation_context)
-
-                # Add current user message
-                human_message = HumanMessage(content=query)
-                messages.append(human_message)
-
-                # Persist the human message
-                await conversation_memory.add_message(conversation_id, human_message)
-
-                steps = 0
-                last_response: Optional[AIMessage] = None
-                need_finalization: bool = False
-
-                while steps < self.max_steps:
-                    # Choose tools for this query iteration
-                    selected_tools, allowed_names = _select_tools_for_query(query)
-                    llm_with_tools = self.llm_base.bind_tools(selected_tools)
-
-                    llm_cm = None
-
-                    with (llm_cm if llm_cm is not None else contextlib.nullcontext()) as llm_span:
-                        # Record model invocation parameters
-                        pass
-                # Lightweight routing hint to bias correct tool choice
-                routing_instructions = SystemMessage(content=(
-                    "PLANNING & ROUTING:\n"
-                    "- Break the user request into logical steps.\n"
-                    "- For INDEPENDENT operations: Call multiple tools together.\n"
-                    "- For DEPENDENT operations: Call tools separately (wait for results before next call).\n\n"
-                    "RESPONSE FORMATTING (CRITICAL):\n"
-                    "- ALWAYS format your responses using **markdown** for maximum readability.\n"
-                    "- Use headings (##, ###) to organize sections and break up content.\n"
-                    "- Use **bold** for emphasis on key terms, numbers, and important concepts.\n"
-                    "- Use bullet points (-, *) for lists and structured information.\n"
-                    "- Use numbered lists (1., 2., 3.) for sequential steps or ordered information.\n"
-                    "- Use code blocks (```language) for queries, code, or technical output.\n"
-                    "- Use tables (| column |) when presenting structured data comparisons.\n"
-                    "- Use horizontal rules (---) to separate distinct sections when appropriate.\n"
-                    "- Use blockquotes (>) for important notes, warnings, or highlights.\n"
-                    "- Keep paragraphs short (2-3 sentences max) for better scanning.\n\n"
-                    "DECISION GUIDE:\n"
-                    "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState, timeline.\n"
-                    "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
-                    "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
-                    "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
-                    "   - Do NOT answer from memory; run a query.\n"
-                    "2) Use 'rag_search' for content-based searches (semantic meaning, not just keywords).\n"
-                    "   - Returns FULL chunk content for synthesis - analyze and format the actual content in your response.\n"
-                    "   - Find pages/work items by meaning, analyze content patterns, search documentation.\n"
-                    "   - Examples: 'find notes about OAuth', 'show API docs', 'content mentioning authentication', 'analyze patterns in descriptions'.\n"
-                    "   - SMART CONTENT TYPE SELECTION: Choose appropriate content_type based on query semantics:\n"
-                    "     • 'release', 'documentation', 'notes', 'wiki' keywords → content_type='page'\n"
-                    "     • 'work items', 'bugs', 'tasks', 'issues' keywords → content_type='work_item'\n"
-                    "     • 'cycle', 'sprint', 'iteration' keywords → content_type='cycle'\n"
-                    "     • 'module', 'component', 'feature area' keywords → content_type='module'\n"
-                    "     • 'project' keyword → content_type='project'\n"
-                    "     • Timeline/history questions → use mongo_query on 'timeline' (do not use RAG)\n"
-                    "     • Unclear/multi-type query → content_type=None (all) OR multiple rag_search calls\n"
-                    "3) Use 'generate_content' to CREATE new work items, pages, cycles, or modules.\n"
-                    "   - CRITICAL: Content sent DIRECTLY to frontend, returns only '✅ Content generated'.\n"
-                    "   - Do NOT expect details - just acknowledge success to user.\n"
-                    "   - Examples: 'create a bug report', 'generate documentation', 'draft meeting notes', 'create sprint', 'generate module'.\n"
-                    "   - REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'), prompt.\n"
-                    "   - OPTIONAL: template_title, template_content, context.\n"
-                    "4) Use MULTIPLE tools together when question needs different operations.\n"
-                    "   - Example: 'Show bug counts by priority (mongo_query) and find related documentation (rag_search)'.\n"
-                    "   - Agent decides tool combination based on query complexity and dependencies.\n\n"
-                    "TOOL CHEATSHEET:\n"
-                    "- mongo_query(query:str, show_all:bool=False): Natural-language to Mongo aggregation. Safe fields only.\n"
-                    "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
-                    "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
-                    "  REQUIRED: 'query' - semantic search terms.\n"
-                    "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None), group_by (field), limit, show_content.\n"
-                    "- generate_content(content_type:str, prompt:str, template_title:str='', template_content:str='', context:dict=None): Generate work items/pages/cycles/modules.\n"
-                    "  REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'), prompt.\n"
-                    "  OPTIONAL: template_title, template_content, context.\n"
-                    "  NOTE: Returns '✅ Content generated' only - content goes directly to frontend.\n\n"
-                    "CONTENT TYPE EXAMPLES:\n"
-                    "- 'What is next release about?' → rag_search(query='next release', content_type='page')\n"
-                    "- 'Recent work items about auth?' → rag_search(query='recent work items auth', content_type='work_item')\n"
-                    "- 'Active cycle details?' → rag_search(query='active cycle', content_type='cycle')\n"
-                    "- 'CRM module overview?' → rag_search(query='CRM module', content_type='module')\n"
-                    "- 'Create bug for login' → generate_content(content_type='work_item', prompt='Bug: login fails on mobile')\n"
-                    "- 'Generate API docs' → generate_content(content_type='page', prompt='API documentation for auth')\n"
-                    "- 'Create Q4 sprint' → generate_content(content_type='cycle', prompt='Q4 2024 Sprint')\n"
-                    "- 'Generate auth module' → generate_content(content_type='module', prompt='Authentication Module')\n\n"
-                    "WHEN UNSURE WHICH TOOL:\n"
-                    "- If the query is ambiguous or entity/field mapping to Mongo is unclear → prefer rag_search first.\n"
-                    "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
-                    "- Question about content meaning/semantics (find docs, analyze patterns, content search, descriptions) → rag_search.\n"
-                    "- Request to CREATE/GENERATE content → generate_content.\n"
-                    "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
-                    "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); generate_content needs content_type + prompt."
-                ))
-                invoke_messages = messages + [routing_instructions]
-                response = await llm_with_tools.ainvoke(invoke_messages)
-                if llm_span and getattr(response, "content", None):
-                        try:
-                            preview = str(response.content)[:500]
-                            llm_span.set_attribute('output.value', preview)
-                            llm_span.add_event("llm_response", {"preview_len": len(preview)})
-                        except Exception:
-                            pass
-                last_response = response
-
-                # Persist assistant message
-                await conversation_memory.add_message(conversation_id, response)
-                try:
-                    await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                except Exception as e:
-                    print(f"Warning: failed to save assistant message: {e}")
-
-                # If no tools requested, we are done
-                if not getattr(response, "tool_calls", None):
-                    return response.content
-
-                # Execute requested tools
-                # The LLM decides execution order by how it calls tools:
-                # - Multiple tools in one response = parallel execution
-                # - Sequential needs are handled by the LLM making separate calls
-                # Emit a dynamic, user-facing action line before running any tools
-                try:
-                    action_text = await generate_action_statement(query, response.tool_calls)
-                    try:
-                        await save_action_event(conversation_id, "action", action_text)
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-                messages.append(response)
-                did_any_tool = False
-                
-                # Log execution info
-                tool_names = [tc["name"] for tc in response.tool_calls]
-                execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
-                print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
-                
-                if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                    # Multiple tools called together = LLM determined they're independent
-                    pass
-                    
-                    tool_tasks = [
-                        self._execute_single_tool(None, tool_call, selected_tools, None)
-                        for tool_call in response.tool_calls
-                    ]
-                    tool_results = await asyncio.gather(*tool_tasks)
-                    
-                    # Process results in order
-                    for tool_message, success in tool_results:
-                        messages.append(tool_message)
-                        await conversation_memory.add_message(conversation_id, tool_message)
-                        # Skip saving 'result' events to DB
-                        if success:
-                            did_any_tool = True
-                else:
-                    # Single tool or parallel disabled
-                    for tool_call in response.tool_calls:
-                        tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
-                        messages.append(tool_message)
-                        await conversation_memory.add_message(conversation_id, tool_message)
-                        # Skip saving 'result' events to DB
-                        if success:
-                            did_any_tool = True
-                
-                steps += 1
-
-                # After executing any tools, force the next LLM turn to synthesize
-                if did_any_tool:
-                    need_finalization = True
-                else:
-                    # If no tools were executed, return the latest response
-                    if last_response is not None:
-                        pass
-                        return last_response.content
-
-            # If we exit the loop due to step cap, return the best available answer
-            if last_response is not None:
-                # Register turn and update summary if needed
-                await conversation_memory.register_turn(conversation_id)
-                if await conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
-                    try:
-                        asyncio.create_task(
-                            conversation_memory.update_summary_async(conversation_id, self.llm_base)
-                        )
-                    except Exception as e:
-                        print(f"Warning: Failed to update summary: {e}")
-                return last_response.content
-            return "Reached maximum reasoning steps without a final answer."
-
-        except Exception as e:
-            return f"Error running agent: {str(e)}"
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Run the agent with streaming support and conversation context"""
@@ -853,7 +638,9 @@ class MongoDBAgent:
                             "- Question needs both structured + semantic analysis → use BOTH tools together.\n\n"
                             "IMPORTANT: Use valid args: mongo_query needs 'query'; rag_search needs 'query' (optional: content_type, group_by, limit, show_content); generate_content needs content_type + prompt."
                         ))
-                        invoke_messages = messages + [routing_instructions]
+                        # Determine if this is a finalization turn BEFORE calling LLM
+                        is_finalizing = need_finalization  # ✅ Save the state BEFORE modifying it
+
                         if need_finalization:
                             finalization_instructions = SystemMessage(content=(
                                 "FINALIZATION: Write a concise answer in your own words based on the tool outputs above. "
@@ -866,6 +653,7 @@ class MongoDBAgent:
                                 synth_action = await generate_action_statement(
                                     query,
                                     [{"name": "synthesize", "args": {"query": "finalize answer from gathered findings"}}],
+                                    "Synthesizing findings into a comprehensive answer...",
                                 )
                                 if callback_handler:
                                     await callback_handler.emit_dynamic_action(synth_action)
@@ -873,9 +661,16 @@ class MongoDBAgent:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
                             need_finalization = False
+                        else:
+                            invoke_messages = messages + [routing_instructions]
+
+                        # Only stream tokens during finalization, NOT during tool planning
+                        # During tool planning, we'll emit action events instead
+                        should_stream = is_finalizing  # ✅ Use the saved state
+
                         response = await llm_with_tools.ainvoke(
                             invoke_messages,
-                            config={"callbacks": [callback_handler]},
+                            config={"callbacks": [callback_handler] if should_stream else []},
                         )
                         if llm_span and getattr(response, "content", None):
                             try:
@@ -886,27 +681,52 @@ class MongoDBAgent:
                                 pass
                     last_response = response
 
-                    # Persist assistant message
-                    await conversation_memory.add_message(conversation_id, response)
-                    try:
-                        await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
-                    except Exception as e:
-                        print(f"Warning: failed to save assistant message: {e}")
-
+                    # Only persist assistant messages when there are NO tool calls (final response)
+                    # Intermediate reasoning should not be saved as assistant messages
                     if not getattr(response, "tool_calls", None):
+                        # This is a final response, save it
+                        await conversation_memory.add_message(conversation_id, response)
+                        try:
+                            await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
+                        except Exception as e:
+                            print(f"Warning: failed to save assistant message: {e}")
                         yield response.content
                         return
+                    else:
+                        # ✅ NEW: Keep intermediate response WITH reasoning in conversation history
+                        # This helps LLM maintain context, but don't persist to DB (not shown to user)
+                        await conversation_memory.add_message(conversation_id, response)
+                        # Note: NOT calling save_assistant_message() - only actions are saved to DB
 
                     # Execute requested tools with streaming callbacks
                     # The LLM decides execution order by how it calls tools
                     # Emit a dynamic, user-facing action line before running any tools
                     try:
-                        action_text = await generate_action_statement(query, response.tool_calls)
-                        if callback_handler:
+                        # Extract any reasoning content from the LLM response
+                        llm_reasoning = getattr(response, "content", "").strip()
+
+                        # ✅ ALWAYS transform through generate_action_statement
+                        # This ensures consistent, user-friendly action messages
+                        action_text = await generate_action_statement(
+                            query,
+                            response.tool_calls,
+                            llm_reasoning  # Pass reasoning as context, but always generate clean action
+                        )
+
+                        if callback_handler and action_text:
                             await callback_handler.emit_dynamic_action(action_text)
-                    except Exception:
+                    except Exception as e:
+                        # Log exception for debugging
+                        print(f"Warning: Failed to generate action statement: {e}")
                         pass
-                    messages.append(response)
+
+                    # ✅ NEW: Create a clean version of the response for messages (without reasoning)
+                    # The reasoning stays in conversation memory for LLM context but doesn't go to messages
+                    clean_response = AIMessage(
+                        content="",  # Clear content for clean message handling
+                        tool_calls=response.tool_calls,  # Keep tool calls for execution
+                    )
+                    messages.append(clean_response)
                     did_any_tool = False
                     
                     # Log execution info

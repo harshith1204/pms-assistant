@@ -7,6 +7,7 @@ import { Loader2, CalendarClock, Search, Check, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { getAllCycles, getAllCyclesAsArray, type Cycle, type CyclesByStatus } from "@/api/cycles";
+import { getCachedCycles } from "@/api/projectData";
 
 /**
  * CycleSelector component for selecting cycles from the API
@@ -47,10 +48,19 @@ export const CycleSelector: React.FC<CycleSelectorProps> = ({
   const loadCycles = async () => {
     setLoading(true);
     try {
+      // First check if data is cached
+      const cachedCycles = getCachedCycles(projectId);
+      if (cachedCycles) {
+        setCyclesByStatus(cachedCycles.data);
+        setLoading(false);
+        return;
+      }
+
+      // If not cached, fetch from API
       const response = await getAllCycles(projectId);
       setCyclesByStatus(response.data);
     } catch (error) {
-      console.error("Failed to load cycles:", error);
+      // Failed to load cycles
       setCyclesByStatus({
         UPCOMING: [],
         ACTIVE: [],
@@ -101,7 +111,7 @@ export const CycleSelector: React.FC<CycleSelectorProps> = ({
         return `Until ${endDate}`;
       }
     } catch (error) {
-      console.warn("Error formatting date range:", error);
+      // Error formatting date range - return null
     }
     return null;
   };

@@ -8,6 +8,7 @@ import { Loader2, Briefcase, Search, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { getProjects, type Project } from "@/api/projects";
+import { getAllProjectData } from "@/api/projectData";
 
 export type ProjectSelectorProps = {
   selectedProject?: Project | null;
@@ -39,7 +40,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       const response = await getProjects();
       setProjects(response.data);
     } catch (error) {
-      console.error("Failed to load projects:", error);
+      // Failed to load projects
       setProjects([]);
     } finally {
       setLoading(false);
@@ -51,8 +52,16 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     project.projectDisplayId.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleProjectSelect = (project: Project) => {
+  const handleProjectSelect = async (project: Project) => {
     onProjectSelect(project);
+
+    // Pre-load project data in the background (in case it wasn't already loaded)
+    try {
+      await getAllProjectData(project.projectId);
+    } catch (error) {
+      // Failed to load data for selected project - continue anyway
+    }
+
     setOpen(false);
   };
 

@@ -10,31 +10,42 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
 import MemberSelector from "@/components/MemberSelector";
-import { DateRangePicker } from "@/components/ui/date-range-picker";
+import LabelSelector from "@/components/LabelSelector";
+import { DateRangePicker, DateRange } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
 import { type ProjectMember } from "@/api/members";
+import { type ProjectLabel } from "@/api/labels";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
-import { DateRange } from "react-day-picker";
+import { type Module } from "@/api/modules";
 import CycleSelector from "@/components/CycleSelector";
 import SubStateSelector from "@/components/SubStateSelector";
+import ModuleSelector from "@/components/ModuleSelector";
+import { getAllProjectData, sendProjectDataToConversation } from "@/api/projectData";
+import { getBusinessId } from "@/config";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
   description?: string;
   selectedProject?: Project | null;
   selectedAssignees?: ProjectMember[];
+  selectedLabels?: ProjectLabel[];
   selectedDateRange?: DateRange;
   selectedCycle?: Cycle | null;
   selectedSubState?: SubState | null;
+  selectedModule?: Module | null;
   onProjectSelect?: (project: Project | null) => void;
   onAssigneesSelect?: (assignees: ProjectMember[]) => void;
+  onLabelsSelect?: (labels: ProjectLabel[]) => void;
   onDateSelect?: (dateRange: DateRange | undefined) => void;
   onCycleSelect?: (cycle: Cycle | null) => void;
   onSubStateSelect?: (subState: SubState | null) => void;
-  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; cycle?: Cycle | null; subState?: SubState | null; startDate?: string; endDate?: string }) => void;
+  onModuleSelect?: (module: Module | null) => void;
+  onSave?: (values: { title: string; description: string; project?: Project | null; assignees?: ProjectMember[]; labels?: ProjectLabel[]; cycle?: Cycle | null; subState?: SubState | null; module?: Module | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
+  conversationId?: string;
+  onProjectDataLoaded?: (message: string) => void;
 };
 
 const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
@@ -56,17 +67,23 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   description = "",
   selectedProject = null,
   selectedAssignees = [],
+  selectedLabels = [],
   selectedDateRange,
   selectedCycle = null,
   selectedSubState = null,
+  selectedModule = null,
   onProjectSelect,
   onAssigneesSelect,
+  onLabelsSelect,
   onDateSelect,
   onCycleSelect,
   onSubStateSelect,
+  onModuleSelect,
   onSave,
   onDiscard,
-  className
+  className,
+  conversationId,
+  onProjectDataLoaded
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
@@ -75,7 +92,29 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const handleSave = () => {
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
     const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
-    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, cycle: selectedCycle, subState: selectedSubState, startDate, endDate });
+    onSave?.({ title: name.trim(), description: desc, project: selectedProject, assignees: selectedAssignees, labels: selectedLabels, cycle: selectedCycle, subState: selectedSubState, module: selectedModule, startDate, endDate });
+  };
+
+  const handleProjectSelect = async (project: Project | null) => {
+    // Call the original onProjectSelect handler
+    onProjectSelect?.(project);
+
+    // If a project is selected, fetch all project data and send to conversation
+    if (project) {
+      try {
+        const projectData = await getAllProjectData(project.projectId);
+        const message = await sendProjectDataToConversation(
+          projectData,
+          project.projectName,
+          project.projectDisplayId,
+          conversationId
+        );
+        // Call the callback to notify the parent component
+        onProjectDataLoaded?.(message);
+      } catch (error) {
+        // Failed to fetch project data
+      }
+    }
   };
 
   return (
@@ -116,7 +155,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
           <div className="flex flex-wrap gap-2">
             <ProjectSelector
               selectedProject={selectedProject}
-              onProjectSelect={onProjectSelect}
+              onProjectSelect={handleProjectSelect}
               trigger={(
                 <FieldChip
                   icon={<Briefcase className="h-3.5 w-3.5" />}
@@ -143,7 +182,6 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
             ) : (
               <FieldChip icon={<Shuffle className="h-3.5 w-3.5" />}>State</FieldChip>
             )}
-            <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>None</FieldChip>
             {selectedProject && (
               <MemberSelector
                 projectId={selectedProject.projectId}
@@ -168,7 +206,28 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
             {!selectedProject && (
               <FieldChip icon={<Users className="h-3.5 w-3.5" />}>Assignees</FieldChip>
             )}
-            <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>Labels</FieldChip>
+            {selectedProject ? (
+              <LabelSelector
+                projectId={selectedProject.projectId}
+                selectedLabels={selectedLabels}
+                onLabelsSelect={onLabelsSelect || (() => {})}
+                mode="multiple"
+                title="Select Labels"
+                placeholder="Labels"
+                trigger={
+                  <FieldChip
+                    icon={<Tag className="h-3.5 w-3.5" />}
+                    className={selectedLabels.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedLabels.length === 0 ? "Labels" :
+                     selectedLabels.length === 1 ? selectedLabels[0].label :
+                     `${selectedLabels.length} labels`}
+                  </FieldChip>
+                }
+              />
+            ) : (
+              <FieldChip icon={<Tag className="h-3.5 w-3.5" />}>Labels</FieldChip>
+            )}
             <DateRangePicker
               date={selectedDateRange}
               onDateChange={onDateSelect}
@@ -192,7 +251,23 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
             ) : (
               <FieldChip icon={<CalendarClock className="h-3.5 w-3.5" />}>Cycle</FieldChip>
             )}
-            <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Modules</FieldChip>
+            {selectedProject ? (
+              <ModuleSelector
+                projectId={selectedProject.projectId}
+                selectedModule={selectedModule}
+                onModuleSelect={onModuleSelect || (() => {})}
+                trigger={
+                  <FieldChip
+                    icon={<Boxes className="h-3.5 w-3.5" />}
+                    className={selectedModule ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                  >
+                    {selectedModule ? selectedModule.title : "Modules"}
+                  </FieldChip>
+                }
+              />
+            ) : (
+              <FieldChip icon={<Boxes className="h-3.5 w-3.5" />}>Modules</FieldChip>
+            )}
             <FieldChip icon={<Plus className="h-3.5 w-3.5" />}>Add parent</FieldChip>
           </div>
         </div>

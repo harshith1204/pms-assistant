@@ -8,9 +8,9 @@ import { Calendar, Wand2, Briefcase } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
-import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { DateRangePicker, DateRange } from "@/components/ui/date-range-picker";
 import { type Project } from "@/api/projects";
-import { DateRange } from "react-day-picker";
+import { getAllProjectData, sendProjectDataToConversation } from "@/api/projectData";
 
 export type CycleCreateInlineProps = {
   title?: string;
@@ -22,6 +22,8 @@ export type CycleCreateInlineProps = {
   onSave?: (values: { title: string; description: string; project?: Project | null; startDate?: string; endDate?: string }) => void;
   onDiscard?: () => void;
   className?: string;
+  conversationId?: string;
+  onProjectDataLoaded?: (message: string) => void;
 };
 
 const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
@@ -47,7 +49,9 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
   onDateSelect,
   onSave,
   onDiscard,
-  className
+  className,
+  conversationId,
+  onProjectDataLoaded
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
@@ -57,6 +61,26 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
     const endDate = selectedDateRange?.to?.toISOString().split('T')[0];
     onSave?.({ title: name.trim(), description: desc, project: selectedProject, startDate, endDate });
+  };
+
+  const handleProjectSelect = async (project: Project | null) => {
+    // Call the original onProjectSelect handler
+    onProjectSelect?.(project);
+
+    // If a project is selected, fetch all project data and send to conversation
+    if (project && conversationId) {
+      try {
+        const projectData = await getAllProjectData(project.projectId);
+        await sendProjectDataToConversation(
+          projectData,
+          project.projectName,
+          project.projectDisplayId,
+          conversationId
+        );
+      } catch (error) {
+        // Failed to fetch project data
+      }
+    }
   };
 
   return (
@@ -97,7 +121,7 @@ export const CycleCreateInline: React.FC<CycleCreateInlineProps> = ({
           <div className="flex flex-wrap gap-2">
             <ProjectSelector
               selectedProject={selectedProject}
-              onProjectSelect={onProjectSelect}
+              onProjectSelect={handleProjectSelect}
               trigger={(
                 <FieldChip
                   icon={<Briefcase className="h-3.5 w-3.5" />}

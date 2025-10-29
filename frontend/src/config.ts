@@ -4,12 +4,61 @@ export const API_WS_URL = import.meta.env.VITE_API_WS_URL || `${API_HTTP_URL.rep
 // Stage Project API Configuration
 export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://stage-project.simpo.ai";
 
-// Hardcoded IDs - will be replaced with dynamic loading from parent website later
+// Get staff and business details dynamically from postMessage/localStorage (set by parent wrapper)
+// Note: Hardcoded fallbacks are intentionally commented out to avoid accidental misuse
+// const DEFAULT_MEMBER_ID = '...';
+// const DEFAULT_BUSINESS_ID = '...';
+
 export const getMemberId = () => {
-  return import.meta.env.VITE_MEMBER_UUID || '1f01b572-b7a0-6e64-b890-2d102d936e6e';
+  const stored = localStorage.getItem('staffId');
+  if (!stored) return '';
+  // Support values sent as JSON strings (e.g., '"uuid"')
+  try {
+    const parsed = JSON.parse(stored);
+    if (typeof parsed === 'string') return parsed.trim();
+  } catch {}
+  return stored.trim();
 };
 
 export const getBusinessId = () => {
-  return import.meta.env.VITE_BUSINESS_UUID || '1f067040-82d8-6384-a1fc-996e5f7d7335';
+  const raw = localStorage.getItem('bDetails');
+  if (!raw) return '';
+
+  try {
+    const parsed = JSON.parse(raw);
+    // bDetails is a business object with an 'id' field
+    if (parsed && typeof parsed === 'object' && parsed.id) {
+      return String(parsed.id).trim();
+    }
+    // Fallback: some wrappers may send businessId as a simple string
+    if (typeof parsed === 'string' && parsed.trim()) {
+      return parsed.trim();
+    }
+  } catch {
+    // Not JSON, treat as direct string
+    return raw.trim();
+  }
+
+  return '';
+};
+
+export const getStaffType = () => {
+  return localStorage.getItem('staffType') || import.meta.env.VITE_STAFF_TYPE || '';
+};
+
+export const getStaffName = () => {
+  return localStorage.getItem('staffName') || import.meta.env.VITE_STAFF_NAME || '';
+};
+
+export const getBusinessDetails = () => {
+  const fromStorage = localStorage.getItem('bDetails');
+  if (fromStorage) {
+    try {
+      return JSON.parse(fromStorage);
+    } catch {
+      return { id: fromStorage };
+    }
+  }
+  return null;
 };
 
