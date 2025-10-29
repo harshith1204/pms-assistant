@@ -45,6 +45,7 @@ interface ChatMessageProps {
     projectName?: string;
   };
   conversationId?: string;
+  analytics?: any;
 }
 
 import WorkItemCreateInline from "@/components/WorkItemCreateInline";
@@ -64,10 +65,11 @@ import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
 import { type Module } from "@/api/modules";
 import { toast } from "@/components/ui/use-toast";
+import AnalyticsPanel from "@/components/AnalyticsPanel";
 import { getBusinessId, getMemberId } from "@/config";
 import { invalidateProjectCache } from "@/api/projectData";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, conversationId }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, conversationId, analytics }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -409,6 +411,12 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
               content={displayedContent}
               className="prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground prose-strong:text-foreground prose-li:text-foreground"
             />
+          )}
+          {/* Analytics panel (stitched after text) */}
+          {analytics && (
+            <div className="mt-2">
+              <AnalyticsPanel payload={analytics} />
+            </div>
           )}
           {isStreaming && currentIndex < content.length && (
             <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />

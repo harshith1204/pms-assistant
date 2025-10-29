@@ -49,6 +49,7 @@ interface Message {
     description?: string;
     projectName?: string;
   };
+  analytics?: any;
 }
 
 interface Conversation {
@@ -415,6 +416,18 @@ const Index = () => {
           },
         ]);
       }
+    } else if (evt.type === "analytics") {
+      // Insert analytics panel as a separate assistant message
+      const id = `analytics-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id,
+          role: "assistant",
+          content: (evt as any).summary || "",
+          analytics: evt,
+        },
+      ]);
     } else if (evt.type === "error") {
       const id = `assistant-${Date.now()}`;
       setMessages((prev) => [
