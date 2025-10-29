@@ -27,6 +27,12 @@ try:
 except ImportError:
     plan_and_execute_query = None
 
+# Analytics planner (separate from main planner)
+try:
+    from analytics_planner import plan_and_execute_analytics_query
+except ImportError:
+    plan_and_execute_analytics_query = None
+
 
 # ------------------ RAG Retrieval Defaults ------------------
 # Per content_type default limits for retrieval. These are applied when the caller
@@ -1372,20 +1378,155 @@ async def generate_content(
             except Exception:
                 pass
         return f"❌ {error_msg}"
-    except Exception as e:
-        error_msg = "Generation failed"
+
+
+@tool
+async def generate_analytics(
+    query: str,
+    visualization_type: str = "auto"
+) -> str:
+    """Generate analytics visualization and KPIs DIRECTLY to frontend; return minimal confirmation.
+
+    Use this when the user asks for trends, breakdowns, charts, burndown/velocity, or large-result summaries.
+
+    Behavior:
+    - Calls a dedicated analytics planner with safe high caps (no unlimited scans)
+    - Infers a simple chart spec (recharts) from grouped results
+    - Sends a WebSocket event: { type: "analytics", kpis, visualization, raw_data?, meta }
+    - Returns only a short confirmation string to the agent
+    """
+    if not plan_and_execute_analytics_query:
+        return "❌ Analytics planner not available."
+
+    def _is_grouped(rows: Any) -> bool:
+        return isinstance(rows, list) and len(rows) > 0 and isinstance(rows[0], dict) and (
+            ("group" in rows[0] and ("count" in rows[0] or "totalMinutes" in rows[0]))
+        )
+
+    def _sum_total(rows: Any) -> int:
+        if isinstance(rows, list) and rows and isinstance(rows[0], dict) and ("count" in rows[0] or "totalMinutes" in rows[0]):
+            if "totalMinutes" in rows[0]:
+                # For time-logged style analytics
+                try:
+                    return int(sum(int(r.get("totalMinutes", 0) or 0) for r in rows))
+                except Exception:
+                    return 0
+            try:
+                return int(sum(int(r.get("count", 0) or 0) for r in rows))
+            except Exception:
+                return 0
+        return len(rows) if isinstance(rows, list) else 0
+
+    def _infer_chart(group_key: str, has_minutes: bool) -> str:
+        time_keys = {"created_day", "created_week", "created_month", "updated_day", "updated_week", "updated_month"}
+        if group_key in time_keys:
+            return "line"
+        return "bar"
+
+    def _extract_primary_group_key(rows: list[dict]) -> Optional[str]:
+        try:
+            g = rows[0].get("group")
+            if isinstance(g, dict) and len(g.keys()) >= 1:
+                # Prefer a single key if available
+                return list(g.keys())[0]
+            # If group is a primitive, treat as generic category
+            return "value"
+        except Exception:
+            return None
+
+    def _build_recharts_series(rows: list[dict], group_key: Optional[str]) -> Dict[str, Any]:
+        has_minutes = bool(rows and isinstance(rows[0], dict) and ("totalMinutes" in rows[0]))
+        metric_key = "totalMinutes" if has_minutes else "count"
+        chart_type = _infer_chart(group_key or "", has_minutes)
+
+        data: list[dict] = []
+        # Build x/y pairs
+        for r in rows:
+            g = r.get("group")
+            # Extract x label
+            if isinstance(g, dict):
+                x = g.get(group_key) if group_key else next(iter(g.values()), None)
+            else:
+                x = g
+            # Normalize date-ish labels to string (YYYY-MM-DD)
+            if isinstance(x, dict) and "$date" in x:
+                x = str(x["$date"])[:10]
+            if isinstance(x, str):
+                x_label = x
+            else:
+                x_label = str(x)
+            y_val = r.get(metric_key, 0) or 0
+            try:
+                y_val = int(y_val)
+            except Exception:
+                try:
+                    y_val = float(y_val)
+                except Exception:
+                    y_val = 0
+            data.append({"x": x_label, "y": y_val})
+
+        return {
+            "format": "recharts",
+            "chart": {"type": chart_type},
+            "xKey": "x",
+            "yKey": "y",
+            "data": data,
+        }
+
+    try:
+        result = await plan_and_execute_analytics_query(query)
+        if not result.get("success"):
+            return f"❌ Analytics failed: {result.get('error', 'unknown error')}"
+
+        intent = result.get("intent", {}) or {}
+        rows = result.get("result")
+        rows = rows if isinstance(rows, list) else (rows or [])
+
+        total_records = _sum_total(rows)
+        is_grouped = _is_grouped(rows)
+        primary_entity = str(intent.get("primary_entity", "")).lower()
+
+        # Minimal KPIs for v1
+        kpis = [
+            {"label": "Total", "value": total_records},
+        ]
+        if is_grouped:
+            kpis.append({"label": "Groups", "value": len(rows)})
+
+        visualization = None
+        if is_grouped and rows:
+            group_key = _extract_primary_group_key(rows)
+            visualization = _build_recharts_series(rows, group_key)
+
+        # Build payload
+        payload = {
+            "type": "analytics",
+            "timestamp": __import__("datetime").datetime.now().isoformat(),
+            "query": query,
+            "summary": f"Analytics ready — {total_records} records" if total_records else "Analytics ready",
+            "kpis": kpis,
+            "visualization": visualization,
+            "raw_data": rows[:1000] if is_grouped else None,  # include grouped rows for export (capped)
+            "meta": {
+                "total_records": total_records,
+                "displayed_records": len(rows) if isinstance(rows, list) else 0,
+                "aggregation_level": "grouped" if is_grouped else "sample",
+                "entity": primary_entity,
+            },
+        }
+
+        # Send to frontend via websocket
         websocket = get_generation_websocket()
         if websocket:
             try:
-                await websocket.send_json({
-                    "type": "content_generated",
-                    "content_type": content_type,
-                    "error": str(e)[:200],
-                    "success": False
-                })
-            except Exception:
+                await websocket.send_json(payload)
+            except Exception as e:
+                # Non-fatal; still return confirmation
                 pass
-        return f"❌ {error_msg}"
+
+        return "✅ Analytics visualization sent"
+    except Exception as e:
+        return f"❌ Analytics error: {str(e)}"
 
 
 # Define the tools list - streamlined and powerful
@@ -1393,6 +1534,7 @@ tools = [
     mongo_query,              # Structured MongoDB queries with intelligent planning
     rag_search,               # Universal RAG search with filtering, grouping, and metadata
     generate_content,         # Generate work items/pages (returns summary only, not full content)
+    generate_analytics,       # Send analytics (charts + KPIs) directly to UI
 ]
 
 # import asyncio

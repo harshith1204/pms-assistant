@@ -27,6 +27,7 @@ import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
 from mongo.conversations import save_assistant_message, save_action_event
+import re
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -115,6 +116,10 @@ DEFAULT_SYSTEM_PROMPT = (
     "     * Timeline/history questions → use mongo_query on 'timeline' (do not use RAG)\n"
     "     * Ambiguous queries → omit content_type (searches all types) OR call rag_search multiple times with different types\n"
     "3) Use 'generate_content' to CREATE new work items, pages, cycles, or modules.\n"
+    "4) Use 'generate_analytics' for charts/breakdowns/trends or large-result visualizations.\n"
+    "   - CRITICAL: Analytics data is sent DIRECTLY to the frontend via WebSocket.\n"
+    "   - The tool returns only a short confirmation; do not expect the dataset in the reply.\n"
+    "   - Prefer analytics when result count would exceed 100 items or when users ask to 'visualize', 'trend', 'breakdown', 'burndown', or 'velocity'.\n"
     "   - CRITICAL: Content is sent DIRECTLY to frontend, tool returns only '✅ Content generated' or '❌ Error'.\n"
     "   - Do NOT expect content details in the response - they go straight to the user's screen.\n"
     "   - Just acknowledge success: 'The [type] has been generated' or similar.\n"
@@ -285,7 +290,7 @@ def _select_tools_for_query(user_query: str):
     - Let the LLM decide routing based on instructions; no keyword gating.
     - Add query analysis hints for complex join decisions.
     """
-    allowed_names = ["mongo_query", "rag_search", "generate_content"]
+    allowed_names = ["mongo_query", "rag_search", "generate_content", "generate_analytics"]
     selected_tools = [tool for name, tool in _TOOLS_BY_NAME.items() if name in allowed_names]
     if not selected_tools and "mongo_query" in _TOOLS_BY_NAME:
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
@@ -550,6 +555,32 @@ class MongoDBAgent:
                 messages.append(human_message)
 
                 callback_handler = PhoenixCallbackHandler(websocket, conversation_id)
+
+                # Opportunistic fast-path: trigger analytics directly when query clearly asks for it
+                def _should_trigger_analytics(q: str) -> bool:
+                    if not isinstance(q, str) or not q:
+                        return False
+                    text = q.lower()
+                    # Common analytics intents
+                    keywords = [
+                        "visualize", "visualise", "chart", "trend", "breakdown", "distribution",
+                        "burndown", "velocity", "graph", "plot", "analytics", "dashboard",
+                    ]
+                    return any(k in text for k in keywords)
+
+                if _should_trigger_analytics(query):
+                    try:
+                        # Emit a friendly action and kick off analytics in the background
+                        await callback_handler.emit_dynamic_action("Preparing analytics view…")
+                        import tools as _tools
+                        # Fire-and-forget; visualization will arrive via WebSocket
+                        asyncio.create_task(_tools.generate_analytics.ainvoke({
+                            "query": query,
+                            "visualization_type": "auto",
+                        }))
+                    except Exception:
+                        # Non-fatal
+                        pass
 
                 # Persist the human message
                 await conversation_memory.add_message(conversation_id, human_message)
