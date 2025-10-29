@@ -27,6 +27,7 @@ import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
 from mongo.conversations import save_assistant_message, save_action_event
+import re
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -554,6 +555,32 @@ class MongoDBAgent:
                 messages.append(human_message)
 
                 callback_handler = PhoenixCallbackHandler(websocket, conversation_id)
+
+                # Opportunistic fast-path: trigger analytics directly when query clearly asks for it
+                def _should_trigger_analytics(q: str) -> bool:
+                    if not isinstance(q, str) or not q:
+                        return False
+                    text = q.lower()
+                    # Common analytics intents
+                    keywords = [
+                        "visualize", "visualise", "chart", "trend", "breakdown", "distribution",
+                        "burndown", "velocity", "graph", "plot", "analytics", "dashboard",
+                    ]
+                    return any(k in text for k in keywords)
+
+                if _should_trigger_analytics(query):
+                    try:
+                        # Emit a friendly action and kick off analytics in the background
+                        await callback_handler.emit_dynamic_action("Preparing analytics view…")
+                        import tools as _tools
+                        # Fire-and-forget; visualization will arrive via WebSocket
+                        asyncio.create_task(_tools.generate_analytics.ainvoke({
+                            "query": query,
+                            "visualization_type": "auto",
+                        }))
+                    except Exception:
+                        # Non-fatal
+                        pass
 
                 # Persist the human message
                 await conversation_memory.add_message(conversation_id, human_message)
