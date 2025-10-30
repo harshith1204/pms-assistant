@@ -327,6 +327,76 @@ Instructions:
     }
 }
 
+# Epic Generation Prompts
+EPIC_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates concise, strategic epic titles and descriptions.
+Use the provided template as a structure and the user's prompt for specifics.
+Return markdown in the description. Keep the title under 120 characters.
+Respond as JSON only, without code fences or surrounding text.
+Example response: {"title": "Customer Onboarding Revamp", "description": "## Overview\\nReimagine onboarding..."}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line epic name, no surrounding quotes.
+- Description: markdown body with epic overview, problem statement, scope, milestones, and success metrics.
+- Example: {{"title": "Customer Onboarding Revamp", "description": "## Epic Goal\\nImprove onboarding..."}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+# Epic Surprise-Me Prompts
+EPIC_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances epic descriptions to be more detailed, strategic, and outcome-driven.
+Take the provided title and existing description and generate a much more detailed and professional epic brief.
+Add business goals, key capabilities, milestones, dependencies, risks, and success metrics.
+Return ONLY the markdown description with proper formatting, sections, and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Description:
+{description}
+
+Instructions:
+- Enhance the existing description to be a comprehensive epic brief for cross-team execution
+- Add business justification, scope boundaries, key deliverables, milestones, dependencies, and risks
+- Include success metrics and measurable outcomes
+- Structure the description with markdown headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates a comprehensive, strategic epic description from only a title.
+Create a detailed epic brief suitable for enterprise product or project planning.
+Include sections such as Epic Overview, Business Goals, Scope, Key Capabilities, Milestones, Dependencies, Risks, and Success Metrics.
+Return ONLY the markdown description with proper headers and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate a comprehensive, detailed, and outcome-oriented description for this epic
+- Include business goals, scope, key capabilities, milestones, dependencies, risks, and success metrics
+- Use clear markdown structure with headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    }
+}
+
 # Page Content Generation Prompts
 PAGE_CONTENT_GENERATION_PROMPTS = {
     'system_prompt_template': """You are an AI assistant specialized in generating professional business content for enterprise project management pages in Editor.js block format.

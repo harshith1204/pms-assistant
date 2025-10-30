@@ -9,6 +9,7 @@ from .models import (
     WorkItemSurpriseMeRequest,
     CycleSurpriseMeRequest,
     ModuleSurpriseMeRequest,
+    EpicSurpriseMeRequest,
 )
 from .prompts import (
     PAGE_TYPE_PROMPTS,
@@ -19,6 +20,8 @@ from .prompts import (
     CYCLE_SURPRISE_ME_PROMPTS,
     MODULE_GENERATION_PROMPTS,
     MODULE_SURPRISE_ME_PROMPTS,
+    EPIC_GENERATION_PROMPTS,
+    EPIC_SURPRISE_ME_PROMPTS,
 )
 
 try:
@@ -307,6 +310,100 @@ def generate_cycle_surprise_me(req: CycleSurpriseMeRequest) -> GenerateResponse:
 
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
+
+@router.post("/generate-epic", response_model=GenerateResponse)
+def generate_epic(req: GenerateRequest) -> GenerateResponse:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    system_prompt = EPIC_GENERATION_PROMPTS['system_prompt']
+
+    user_prompt = EPIC_GENERATION_PROMPTS['user_prompt_template'].format(
+        template_title=req.template.title,
+        template_content=req.template.content,
+        prompt=req.prompt
+    )
+
+    try:
+        completion = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = completion.choices[0].message.content or ""
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+
+    title = req.template.title
+    description = req.template.content
+    parsed = None
+    try:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            parsed = json.loads(content[start: end + 1])
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        title = parsed.get("title") or title
+        description = parsed.get("description") or description
+    else:
+        description = content.strip() or description
+        first_line = description.splitlines()[0] if description else req.prompt
+        title = first_line[:120]
+
+    return GenerateResponse(title=title.strip(), description=description.strip())
+
+
+@router.post("/generate-epic-surprise-me", response_model=GenerateResponse)
+def generate_epic_surprise_me(req: EpicSurpriseMeRequest) -> GenerateResponse:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    provided_description = (req.description or "").strip()
+    if provided_description:
+        system_prompt = EPIC_SURPRISE_ME_PROMPTS['with_description']['system_prompt']
+        user_prompt = EPIC_SURPRISE_ME_PROMPTS['with_description']['user_prompt_template'].format(
+            title=req.title,
+            description=provided_description
+        )
+    else:
+        system_prompt = EPIC_SURPRISE_ME_PROMPTS['without_description']['system_prompt']
+        user_prompt = EPIC_SURPRISE_ME_PROMPTS['without_description']['user_prompt_template'].format(
+            title=req.title
+        )
+
+    try:
+        completion = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            temperature=0.2,
+            max_tokens=512,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        generated_description = (completion.choices[0].message.content or "").strip()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+
+    return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 @router.post("/generate-module", response_model=GenerateResponse)
 def generate_module(req: GenerateRequest) -> GenerateResponse:
