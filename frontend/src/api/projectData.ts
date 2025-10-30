@@ -212,7 +212,7 @@ export async function sendProjectDataToConversation(
   conversationId?: string
 ): Promise<string> {
   // Return a confirmation message that can be displayed in the conversation
-  const message = `✅ Project data loaded for "${projectName} (${projectDisplayId})" - Ready to create work items, cycles, modules, and pages.`;
+  const message = `✅ Project data loaded for "${projectName} (${projectDisplayId})" - Ready to create work items, cycles, modules, epics, and pages.`;
 
   // Try to send via the existing chat socket system
   if (typeof window !== 'undefined') {
