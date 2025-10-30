@@ -108,6 +108,29 @@ class ModuleCreateResponse(BaseModel):
     projectId: Optional[str] = None
     link: Optional[str] = None
 
+
+class EpicCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    project_id: Optional[str] = None
+    priority: Optional[str] = None
+    state_name: Optional[str] = None
+    assignee: Optional[str] = None
+    labels: Optional[List[str]] = None
+    start_date: Optional[str] = None
+    due_date: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+class EpicCreateResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    projectId: Optional[str] = None
+    state: Optional[str] = None
+    priority: Optional[str] = None
+    link: Optional[str] = None
+
 # Global MongoDB agent instance
 mongodb_agent = None
 
@@ -233,6 +256,8 @@ async def get_conversation(conversation_id: str):
                 entry["cycle"] = m.get("cycle")
             if m.get("type") == "module" and isinstance(m.get("module"), dict):
                 entry["module"] = m.get("module")
+            if m.get("type") == "epic" and isinstance(m.get("epic"), dict):
+                entry["epic"] = m.get("epic")
             norm.append(entry)
         return {"id": conversation_id, "messages": norm}
     except Exception as e:
@@ -278,6 +303,8 @@ async def get_conversation(user_id: str, business_id: str):
                     entry["cycle"] = m.get("cycle")
                 if m.get("type") == "module" and isinstance(m.get("module"), dict):
                     entry["module"] = m.get("module")
+                if m.get("type") == "epic" and isinstance(m.get("epic"), dict):
+                    entry["epic"] = m.get("epic")
                 norm.append(entry)
 
             all_conversations.append({
@@ -480,6 +507,61 @@ async def create_module(req: ModuleCreateRequest):
             title=doc["title"],
             description=doc["description"],
             projectId=req.project_id,
+            link=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/epics", response_model=EpicCreateResponse)
+async def create_epic(req: EpicCreateRequest):
+    """Create a minimal epic in MongoDB 'epic' collection."""
+    try:
+        if not mongodb_tools.client:
+            await mongodb_tools.connect()
+
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["epic"]
+
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat()
+
+        doc: Dict[str, Any] = {
+            "title": (req.title or "").strip() or "Untitled Epic",
+            "description": (req.description or "").strip(),
+            "createdAt": now_iso,
+            "updatedAt": now_iso,
+        }
+        if req.project_id:
+            doc["project"] = {"id": req.project_id}
+        if req.priority:
+            doc["priority"] = req.priority
+        if req.state_name:
+            doc["state"] = {"name": req.state_name}
+        if req.assignee:
+            doc["assignee"] = {"name": req.assignee}
+        if req.labels:
+            cleaned_labels = [label.strip() for label in req.labels if isinstance(label, str) and label.strip()]
+            if cleaned_labels:
+                doc["label"] = [{"name": label} for label in cleaned_labels]
+        if req.start_date:
+            doc["startDate"] = req.start_date
+        if req.due_date:
+            doc["dueDate"] = req.due_date
+        if req.created_by:
+            doc["createdBy"] = {"name": req.created_by}
+
+        result = await coll.insert_one(doc)
+
+        return EpicCreateResponse(
+            id=str(result.inserted_id),
+            title=doc["title"],
+            description=doc["description"],
+            projectId=req.project_id,
+            state=req.state_name,
+            priority=req.priority,
             link=None,
         )
     except HTTPException:

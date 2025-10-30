@@ -291,6 +291,54 @@ async def save_generated_module(conversation_id: str, module: Dict[str, Any]) ->
     )
 
 
+async def save_generated_epic(conversation_id: str, epic: Dict[str, Any]) -> None:
+    """Persist a generated epic as a conversation message.
+
+    Expects a minimal payload: {title, description?, priority?, state?, assignee?, labels?}
+    """
+    epic_payload: Dict[str, Any] = {
+        "title": (epic.get("title") or "Epic"),
+        "description": (epic.get("description") or ""),
+    }
+
+    if isinstance(epic.get("priority"), str) and epic["priority"].strip():
+        epic_payload["priority"] = epic["priority"].strip()
+    state_val = epic.get("state") or epic.get("stateName")
+    if isinstance(state_val, str) and state_val.strip():
+        epic_payload["state"] = state_val.strip()
+    assignee_val = epic.get("assignee") or epic.get("assigneeName")
+    if isinstance(assignee_val, str) and assignee_val.strip():
+        epic_payload["assignee"] = assignee_val.strip()
+    if isinstance(epic.get("labels"), list) and epic["labels"]:
+        label_names = []
+        for label in epic["labels"]:
+            if isinstance(label, str) and label.strip():
+                label_names.append(label.strip())
+            elif isinstance(label, dict):
+                name = label.get("name")
+                if isinstance(name, str) and name.strip():
+                    label_names.append(name.strip())
+        if label_names:
+            epic_payload["labels"] = label_names
+    if isinstance(epic.get("projectId"), str) and epic["projectId"].strip():
+        epic_payload["projectId"] = epic["projectId"].strip()
+    if isinstance(epic.get("startDate"), str) and epic["startDate"].strip():
+        epic_payload["startDate"] = epic["startDate"].strip()
+    if isinstance(epic.get("dueDate"), str) and epic["dueDate"].strip():
+        epic_payload["dueDate"] = epic["dueDate"].strip()
+    if isinstance(epic.get("link"), str) and epic["link"].strip():
+        epic_payload["link"] = epic["link"].strip()
+
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "epic",
+            "content": "",
+            "epic": epic_payload,
+        })
+    )
+
+
 async def update_message_reaction(
     conversation_id: str,
     message_id: str,
