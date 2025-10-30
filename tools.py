@@ -39,6 +39,7 @@ CONTENT_TYPE_DEFAULT_LIMITS: Dict[str, int] = {
     "project": 6,
     "cycle": 6,
     "module": 6,
+    "epic": 6,
 }
 
 # Fallback when content_type is unknown or not provided
@@ -54,6 +55,7 @@ CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
     "project": 2,
     "cycle": 2,
     "module": 2,
+    "epic": 2,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
@@ -62,6 +64,7 @@ CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
     "project": False,
     "cycle": False,
     "module": False,
+    "epic": False,
 }
 
 CONTENT_TYPE_MIN_SCORE: Dict[str, float] = {
@@ -70,6 +73,7 @@ CONTENT_TYPE_MIN_SCORE: Dict[str, float] = {
     "project": 0.55,
     "cycle": 0.55,
     "module": 0.55,
+    "epic": 0.55,
 }
 
 
@@ -451,7 +455,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 
     Use this ONLY when the user asks for authoritative data that must come from
     MongoDB (counts, lists, filters, group-by, breakdowns, state/assignee/project details)
-    across collections: `project`, `workItem`, `cycle`, `module`, `members`,
+    across collections: `project`, `workItem`, `cycle`, `module`, `epic`, `members`,
     `page`, `projectState`, `timeline`.
 
     Do NOT use this for:
@@ -694,9 +698,14 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         priority = entity.get("priority")
                         assignee = entity.get("assigneeName") or get_nested(entity, "assignee.name")
                         project = entity.get("projectName") or get_nested(entity, "project.name")
-                        Bug = entity.get("bugNo")
-                        label = entity.get_nested(entity,"label.name")
-                        return f"• {title or 'Epic'} — description={description or 'N/A'}, state={state or 'N/A'}, priority={priority or 'N/A'}, project={project or 'N/A'}, assignee={assignee or 'N/A'}, bugNo={Bug or 'N/A'}, label={label or 'N/A'}"
+                        bug_number = entity.get("bugNo")
+                        label_name = get_nested(entity, "label.name")
+                        return (
+                            f"• {truncate_str(title or 'Epic', 80)} — "
+                            f"state={state or 'N/A'}, priority={priority or 'N/A'}, "
+                            f"project={project or 'N/A'}, assignee={assignee or 'N/A'}, "
+                            f"bugNo={bug_number or 'N/A'}, label={label_name or 'N/A'}"
+                        )
                     # Default fallback
                     title = entity.get("title") or entity.get("name") or "Item"
                     return f"• {truncate_str(title, 80)}"
@@ -852,7 +861,7 @@ async def rag_search(
     - Synthesize information from multiple sources
     
     Use this for ANY content-based search or analysis needs:
-    - Find relevant pages, work items, projects, cycles, modules
+    - Find relevant pages, work items, projects, cycles, modules, epics
     - Search by semantic meaning (not just keywords)
     - Get full context for answering questions
     - Analyze content patterns and distributions
@@ -870,7 +879,7 @@ async def rag_search(
     
     Args:
         query: Search query (semantic meaning, not just keywords)
-        content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', or None (all)
+        content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', 'epic', or None (all)
         group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
                  'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
         limit: Max results to retrieve (default 10, increase for broader searches)
@@ -1093,7 +1102,7 @@ async def generate_content(
     template_content: str = "",
     context: Optional[Dict[str, Any]] = None
 ) -> str:
-    """Generate work items, pages, cycles, or modules - sends content DIRECTLY to frontend, returns minimal confirmation.
+    """Generate work items, pages, cycles, modules, or epics - sends content DIRECTLY to frontend, returns minimal confirmation.
     
     **CRITICAL TOKEN OPTIMIZATION**: 
     - Full generated content is sent directly to the frontend via WebSocket
@@ -1105,9 +1114,10 @@ async def generate_content(
     - Pages: documentation, meeting notes, project plans
     - Cycles: sprints, iterations, development cycles
     - Modules: feature modules, components, subsystems
+    - Epics: larger initiatives spanning multiple work items
     
     Args:
-        content_type: Type of content - 'work_item', 'page', 'cycle', or 'module'
+        content_type: Type of content - 'work_item', 'page', 'cycle', 'module', or 'epic'
         prompt: User's instruction for what to generate
         template_title: Optional template title to base generation on
         template_content: Optional template content to use as structure
@@ -1121,11 +1131,12 @@ async def generate_content(
         generate_content(content_type="page", prompt="Create API documentation", context={...})
         generate_content(content_type="cycle", prompt="Q4 2024 Sprint")
         generate_content(content_type="module", prompt="Authentication Module")
+        generate_content(content_type="epic", prompt="Customer Onboarding Epic")
     """
     import httpx
     
     try:
-        if content_type not in ["work_item", "page", "cycle", "module"]:
+        if content_type not in ["work_item", "page", "cycle", "module", "epic"]:
             return "❌ Invalid content type"
         
         # Get API base URL from environment or use default
@@ -1273,6 +1284,62 @@ async def generate_content(
                 # Non-fatal
                 print(f"Warning: failed to persist generated module to conversation: {e}")
             
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+
+        elif content_type == "epic":
+            # Call epic generation endpoint
+            url = f"{api_base}/generate-epic"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Epic",
+                    "content": template_content or ""
+                }
+            }
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "epic",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not send to websocket: {e}")
+
+            # Persist generated epic as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_epic
+                    epic_payload = {}
+                    if isinstance(result, dict):
+                        epic_payload = {
+                            "title": result.get("title"),
+                            "description": result.get("description"),
+                            "priority": result.get("priority"),
+                            "state": result.get("state") or result.get("stateName"),
+                            "assignee": result.get("assignee"),
+                            "labels": result.get("labels"),
+                            "projectId": result.get("projectId"),
+                            "startDate": result.get("startDate"),
+                            "dueDate": result.get("dueDate"),
+                            "link": result.get("link"),
+                        }
+                    await save_generated_epic(conv_id, epic_payload)
+            except Exception as e:
+                # Non-fatal
+                print(f"Warning: failed to persist generated epic to conversation: {e}")
+
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
             

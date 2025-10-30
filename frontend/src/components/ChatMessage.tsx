@@ -44,6 +44,17 @@ interface ChatMessageProps {
     description?: string;
     projectName?: string;
   };
+  epic?: {
+    title: string;
+    description?: string;
+    priority?: string;
+    state?: string;
+    assignee?: string;
+    labels?: string[];
+    startDate?: string;
+    dueDate?: string;
+    link?: string;
+  };
   conversationId?: string;
 }
 
@@ -55,19 +66,23 @@ import CycleCreateInline from "@/components/CycleCreateInline";
 import CycleCard from "@/components/CycleCard";
 import ModuleCreateInline from "@/components/ModuleCreateInline";
 import ModuleCard from "@/components/ModuleCard";
+import EpicCreateInline from "@/components/EpicCreateInline";
+import EpicCard from "@/components/EpicCard";
 import { createWorkItem, createWorkItemWithMembers } from "@/api/workitems";
 import { createPage } from "@/api/pages";
 import { createCycle } from "@/api/cycles";
 import { createModule, createModuleWithMembers } from "@/api/modules";
+import { createEpic } from "@/api/epics";
 import { type ProjectMember } from "@/api/members";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
 import { type Module } from "@/api/modules";
+import { type ProjectLabel } from "@/api/labels";
 import { toast } from "@/components/ui/use-toast";
 import { getBusinessId, getMemberId } from "@/config";
 import { invalidateProjectCache } from "@/api/projectData";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, conversationId }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, epic, conversationId }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -78,6 +93,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [savedPage, setSavedPage] = useState<null | { id: string; title: string; content: string; link?: string }>(null);
   const [savedCycle, setSavedCycle] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
   const [savedModule, setSavedModule] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
+  const [savedEpic, setSavedEpic] = useState<null | { id: string; title: string; description: string; priority?: string | null; state?: string | null; assignee?: string | null; labels?: string[]; link?: string | null }>(null);
 
   // Module sub-state selection state
   const [selectedModuleSubState, setSelectedModuleSubState] = useState<SubState | null>(null);
@@ -95,6 +111,37 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
 
   // Date range selection state
   const [selectedDateRange, setSelectedDateRange] = useState<DateRange | undefined>();
+
+  // Epic-specific selection state
+  const [selectedEpicPriority, setSelectedEpicPriority] = useState<string | null>(epic?.priority ?? null);
+  const [selectedEpicState, setSelectedEpicState] = useState<string | null>(epic?.state ?? null);
+  const [selectedEpicAssignee, setSelectedEpicAssignee] = useState<ProjectMember | null>(null);
+  const [selectedEpicLabels, setSelectedEpicLabels] = useState<ProjectLabel[]>([]);
+  const [selectedEpicDateRange, setSelectedEpicDateRange] = useState<DateRange | undefined>(
+    epic?.startDate || epic?.dueDate
+      ? {
+          from: epic?.startDate ? new Date(epic.startDate) : undefined,
+          to: epic?.dueDate ? new Date(epic.dueDate) : undefined,
+        }
+      : undefined
+  );
+
+  useEffect(() => {
+    if (epic && !savedEpic) {
+      setSelectedEpicPriority(epic.priority ?? null);
+      setSelectedEpicState(epic.state ?? null);
+      setSelectedEpicAssignee(null);
+      setSelectedEpicLabels([]);
+      setSelectedEpicDateRange(
+        epic.startDate || epic.dueDate
+          ? {
+              from: epic.startDate ? new Date(epic.startDate) : undefined,
+              to: epic.dueDate ? new Date(epic.dueDate) : undefined,
+            }
+          : undefined
+      );
+    }
+  }, [epic, savedEpic]);
 
   // Sub-state selection state
   const [selectedSubState, setSelectedSubState] = useState<SubState | null>(null);
@@ -395,6 +442,86 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 conversationId={conversationId}
                 onProjectDataLoaded={(message) => {
                   // Send the project data loaded message via WebSocket
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
+              />
+            )
+          ) : epic ? (
+            savedEpic ? (
+              <EpicCard
+                title={savedEpic.title}
+                description={savedEpic.description}
+                priority={savedEpic.priority ?? epic.priority}
+                state={savedEpic.state ?? epic.state}
+                assigneeName={savedEpic.assignee ?? epic.assignee}
+                labels={savedEpic.labels ?? epic.labels ?? []}
+                link={savedEpic.link ?? epic.link}
+                className="mt-1"
+              />
+            ) : (
+              <EpicCreateInline
+                title={epic.title}
+                description={epic.description}
+                selectedProject={selectedProject}
+                selectedPriority={selectedEpicPriority}
+                selectedState={selectedEpicState}
+                selectedAssignee={selectedEpicAssignee}
+                selectedLabels={selectedEpicLabels}
+                selectedDateRange={selectedEpicDateRange}
+                onProjectSelect={setSelectedProject}
+                onPrioritySelect={setSelectedEpicPriority}
+                onStateSelect={setSelectedEpicState}
+                onAssigneeSelect={setSelectedEpicAssignee}
+                onLabelsSelect={setSelectedEpicLabels}
+                onDateSelect={setSelectedEpicDateRange}
+                onSave={async ({ title, description, project, priority, state, assignee, labels, startDate, dueDate }) => {
+                  try {
+                    setSaving(true);
+                    const labelNames = labels?.map((label) => label.label).filter(Boolean) ?? [];
+                    const created = await createEpic({
+                      title,
+                      description,
+                      projectId: project?.projectId,
+                      priority: priority ?? undefined,
+                      stateName: state ?? undefined,
+                      assigneeName: assignee ? (assignee.displayName || assignee.name) : undefined,
+                      labels: labelNames.length ? labelNames : undefined,
+                      startDate,
+                      dueDate,
+                      createdBy: getMemberId(),
+                    });
+
+                    setSavedEpic({
+                      id: created.id,
+                      title: created.title,
+                      description: created.description,
+                      priority: priority ?? created.priority ?? null,
+                      state: state ?? created.state ?? null,
+                      assignee: assignee ? assignee.displayName || assignee.name : null,
+                      labels: labelNames,
+                      link: created.link ?? null,
+                    });
+
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
+                    toast({ title: "Epic saved", description: "Your epic has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save epic", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
                   if (conversationId && (window as any).chatSocket) {
                     (window as any).chatSocket.send({
                       message: message,
