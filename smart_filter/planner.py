@@ -281,11 +281,6 @@ class LLMIntentParser:
 
         return None
 
-
-
-
-
-
     async def parse(self, query: str) -> Optional[QueryIntent]:
         """Use the LLM to produce a structured intent. Returns None on failure."""
         system = (
