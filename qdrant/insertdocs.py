@@ -53,7 +53,6 @@ try:
     embedder = SentenceTransformer("google/embeddinggemma-300m")
 except Exception as e:
     print(f"⚠️ Failed to load embedding model 'google/embeddinggemma-300m': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
-    embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # ------------------ Chunking Statistics ------------------
 
