@@ -214,6 +214,11 @@ async def lifespan(app: FastAPI):
     await RAGTool.initialize()
     print("RAGTool initialized successfully!")
 
+    # Initialize Smart Filter Tools (singleton)
+    from smart_filter import tools as smart_filter_tools_module
+    await smart_filter_tools_module.SmartFilterTools.initialize()
+    print("Smart Filter Tools initialized successfully!")
+
     # Initialize Smart Filter Agent after RAGTool
     from smart_filter.agent import SmartFilterAgent
     smart_filter_agent = SmartFilterAgent()
