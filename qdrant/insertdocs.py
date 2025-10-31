@@ -241,6 +241,29 @@ def ensure_collection_with_hybrid(
             except Exception as e:
                 if "already exists" not in str(e):
                     print(f"⚠️ Failed to ensure text index on '{text_field}': {e}")
+
+        # Chunk index for efficient adjacent chunk retrieval
+        try:
+            qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="chunk_index",
+                field_schema=PayloadSchemaType.INTEGER,
+            )
+        except Exception as e:
+            if "already exists" not in str(e):
+                print(f"⚠️ Failed to ensure index on 'chunk_index': {e}")
+
+        # Additional indexes for filtering operations
+        for field_name in ["parent_id", "project_id", "mongo_id"]:
+            try:
+                qdrant_client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=field_name,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception as e:
+                if "already exists" not in str(e):
+                    print(f"⚠️ Failed to ensure index on '{field_name}': {e}")
     except Exception as e:
         print(f"❌ Error ensuring collection '{collection_name}': {e}")
 
