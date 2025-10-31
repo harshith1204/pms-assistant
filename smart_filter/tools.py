@@ -91,105 +91,84 @@ class SmartFilterTools:
         except Exception:
             return False
     
-    async def execute_mongo_query(self, query: str, show_all: bool = False) -> MongoQueryResult:
+    async def execute_mongo_query(
+        self,
+        query: str,
+        show_all: bool = False,
+        limit: Optional[int] = None,
+    ) -> MongoQueryResult:
         """
         Execute mongo-query with the given parameters
-        
+
         Args:
             query: Natural language query for MongoDB
             show_all: Whether to show all results or limit for performance
-            
+
         Returns:
             MongoQueryResult with formatted work items
         """
-        if not mongo_query:
-            raise RuntimeError("mongo_query tool not available")
-        
+        # Note: mongo_query is no longer used - we use plan_and_execute_query from planner
+
         try:
-            result = await plan_and_execute_query(query)
-            # Execute the mongo-query tool
-            
-            # Parse the result to extract work items
-            work_items = []
-            total_count = 0
-            
-            # Try to parse the result string as JSON first
-            try:
-                parsed_result = json.loads(result)
-                
-                # Handle different possible result formats
-                if isinstance(parsed_result, list):
-                    # Direct list of work items
-                    work_items = parsed_result
-                    total_count = len(parsed_result)
-                elif isinstance(parsed_result, dict):
-                    # Dictionary format - look for common keys
-                    if 'data' in parsed_result:
-                        work_items = parsed_result['data']
-                    elif 'work_items' in parsed_result:
-                        work_items = parsed_result['work_items']
-                    elif 'results' in parsed_result:
-                        work_items = parsed_result['results']
-                    else:
-                        # Try to find any list in the result
-                        for value in parsed_result.values():
-                            if isinstance(value, list):
-                                work_items = value
-                                break
-                    
+            result_payload = await plan_and_execute_query(query)
+
+            if not isinstance(result_payload, dict):
+                raise RuntimeError("Planner returned unexpected response type")
+
+            if not result_payload.get("success"):
+                raise RuntimeError(result_payload.get("error", "Unknown planner error"))
+
+            raw_rows = result_payload.get("result") or []
+
+            work_items: List[Dict[str, Any]] = []
+            total_count: int = 0
+
+            if isinstance(raw_rows, list):
+                for item in raw_rows:
+                    if isinstance(item, dict):
+                        work_items.append(item)
+                    elif isinstance(item, str):
+                        try:
+                            parsed_item = json.loads(item)
+                            if isinstance(parsed_item, dict):
+                                work_items.append(parsed_item)
+                        except Exception:
+                            continue
+
+                # Attempt to extract total/count metadata when present
+                if raw_rows and isinstance(raw_rows[0], dict) and "total" in raw_rows[0]:
+                    try:
+                        total_count = int(raw_rows[0]["total"])
+                    except Exception:
+                        total_count = len(work_items)
+                else:
                     total_count = len(work_items)
-                    
-                    # Try to get total count from metadata
-                    if 'total' in parsed_result:
-                        total_count = parsed_result['total']
-                    elif 'total_count' in parsed_result:
-                        total_count = parsed_result['total_count']
-                        
-            except json.JSONDecodeError:
-                # Result is a string - parse it manually
-                lines = result.split('\n')
-                in_results_section = False
-                
-                for line in lines:
-                    line = line.strip()
-                    if line.startswith('📊 RESULTS:') or line.startswith('📊 RESULT:'):
-                        in_results_section = True
-                        continue
-                    
-                    if line.startswith('🎯 INTELLIGENT QUERY RESULT:'):
-                        # Extract query info
-                        continue
-                    
-                    if line.startswith('📋 UNDERSTOOD INTENT:') or line.startswith('🔧 GENERATED PIPELINE:'):
-                        in_results_section = False
-                        continue
-                    
-                    if in_results_section and line.startswith('• '):
-                        # This is a work item - parse it
-                        try:
-                            # Extract JSON from the line if present
-                            if '{' in line and '}' in line:
-                                json_part = line[line.find('{'):line.rfind('}') + 1]
-                                item = json.loads(json_part)
-                                work_items.append(item)
-                        except Exception:
-                            # Skip parsing errors
-                            pass
-                    elif line.startswith('Found') and 'item(s)' in line:
-                        # Extract count from "Found X items" message
-                        try:
-                            count_part = line.split('item(s)')[0].split('Found ')[1]
-                            total_count = int(count_part.strip())
-                        except Exception:
-                            pass
-            
+
+            elif isinstance(raw_rows, dict):
+                # Count-only shape
+                if "total" in raw_rows:
+                    try:
+                        total_count = int(raw_rows["total"])
+                    except Exception:
+                        total_count = 0
+                # When single document returned
+                if raw_rows:
+                    work_items.append(raw_rows)
+
+            # Honor explicit limit when provided (unless show_all requested)
+            if not show_all and limit is not None and limit > 0:
+                work_items = work_items[:limit]
+
+            if total_count == 0:
+                total_count = len(work_items)
+
             return MongoQueryResult(
                 work_items=work_items,
                 total_count=total_count,
                 query=query,
-                raw_result=result
+                raw_result=result_payload,
             )
-            
+
         except Exception as e:
             raise RuntimeError(f"Mongo query execution failed: {str(e)}")
     
@@ -283,37 +262,45 @@ class SmartFilterTools:
                         min_score=0.5,
                         context_token_budget=4000
                     )
-                    
-                    # Extract work item IDs from reconstructed docs
+
+                    # Extract identifiers and keep reconstructed docs for downstream usage
                     for doc in reconstructed_docs:
-                        # Extract work item IDs from content using regex patterns
-                        import re
-                        
-                        # Look for patterns like "HELLO-123", work item numbers, or IDs
-                        patterns = [
-                            r'([A-Z]+-\d+)',  # HELLO-123 format
-                            r'work.?item.?(\w+)',  # work item mentions
-                            r'task.?(\w+)',  # task mentions
-                            r'issue.?(\w+)',  # issue mentions
-                        ]
-                        
-                        content = doc.full_content.lower()
-                        for pattern in patterns:
-                            matches = re.findall(pattern, content, re.IGNORECASE)
-                            for match in matches:
-                                if isinstance(match, tuple):
-                                    match = match[0]
-                                # Clean the match
-                                clean_match = re.sub(r'[^\w-]', '', str(match))
-                                if clean_match and len(clean_match) > 2:
-                                    work_item_ids.add(clean_match)
-                        
-                        # Also check metadata for direct work item references
-                        if doc.metadata.get('work_item_id'):
-                            work_item_ids.add(doc.metadata['work_item_id'])
-                        if doc.metadata.get('display_bug_no'):
-                            work_item_ids.add(doc.metadata['display_bug_no'])
-                            
+                        if doc.mongo_id:
+                            work_item_ids.add(str(doc.mongo_id))
+
+                        # Collect metadata-sourced identifiers
+                        if doc.metadata:
+                            for key in ["mongo_id", "work_item_id", "workItemId", "displayBugNo", "display_bug_no"]:
+                                value = doc.metadata.get(key)
+                                if isinstance(value, str) and value.strip():
+                                    work_item_ids.add(value.strip())
+
+                                elif isinstance(value, list):
+                                    for item in value:
+                                        if isinstance(item, str) and item.strip():
+                                            work_item_ids.add(item.strip())
+
+                        # Regex-based fallback from reconstructed content
+                        try:
+                            import re
+                            content_lower = doc.full_content.lower()
+                            patterns = [
+                                r'([A-Z]+-\d+)',  # BUG-123 style identifiers
+                                r'displaybugno[:\s]+([\w-]+)',
+                                r'bug[:\s]+([\w-]+)',
+                            ]
+                            for pattern in patterns:
+                                for match in re.findall(pattern, content_lower, re.IGNORECASE):
+                                    if isinstance(match, tuple):
+                                        match = match[0]
+                                    cleaned = re.sub(r'[^\w-]', '', match)
+                                    if cleaned:
+                                        work_item_ids.add(cleaned)
+                        except Exception:
+                            pass
+
+                    reconstructed_docs = reconstructed_docs or []
+
                 except Exception as e:
                     print(f"Warning: Direct RAG search failed: {e}")
             
@@ -326,73 +313,7 @@ class SmartFilterTools:
             
         except Exception as e:
             raise RuntimeError(f"RAG search execution failed: {str(e)}")
-    
-        
-        # # Project to match the required API response structure
-        # pipeline.append({
-        #     "$project": {
-        #         "id": 1,
-        #         "displayBugNo": 1,
-        #         "title": 1,
-        #         "description": 1,
-        #         "state": {
-        #             "id": "$state.id",
-        #             "name": "$state.name"
-        #         },
-        #         "priority": 1,
-        #         "assignee": {
-        #             "$map": {
-        #                 "input": "$assignee",
-        #                 "as": "a",
-        #                 "in": {
-        #                     "id": "$$a.id",
-        #                     "name": "$$a.name"
-        #                 }
-        #             }
-        #         },
-        #         "label": {
-        #             "$map": {
-        #                 "input": "$label",
-        #                 "as": "l",
-        #                 "in": {
-        #                     "id": "$$l.id",
-        #                     "name": "$$l.name",
-        #                     "color": "$$l.color"
-        #                 }
-        #             }
-        #         },
-        #         "modules": {
-        #             "id": "$modules.id",
-        #             "name": "$modules.name"
-        #         },
-        #         "cycle": {
-        #             "id": "$cycle.id",
-        #             "name": "$cycle.name",
-        #             "title": "$cycle.title"
-        #         },
-        #         "startDate": 1,
-        #         "endDate": 1,
-        #         "dueDate": 1,
-        #         "createdOn": 1,
-        #         "updatedOn": 1,
-        #         "releaseDate": 1,
-        #         "createdBy": {
-        #             "id": "$createdBy.id",
-        #             "name": "$$createdBy.name"
-        #         },
-        #         "subWorkItem": 1,
-        #         "attachment": 1
-        #     }
-        # })
-        
-        # # Limit results to prevent overwhelming responses
-        # pipeline.append({"$limit": 50})
-        
-        # return {
-        #     "database": DATABASE_NAME,
-        #     "collection": "workItem",
-        #     "pipeline": pipeline
-        # }
+
 
 
 # Global instance
