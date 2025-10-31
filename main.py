@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
 from generate.router import router as generate_router
-from smart_filter.agent import smart_filter_agent
 
 # Load environment variables from .env file
 load_dotenv()
@@ -198,13 +197,14 @@ class SmartFilterResponse(BaseModel):
     total_count: int
     query: str
 
-# Global MongoDB agent instance
+# Global agent instances
 mongodb_agent = None
+smart_filter_agent = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage the lifespan of the FastAPI application"""
-    global mongodb_agent
+    global mongodb_agent, smart_filter_agent
 
     # Startup
     print("Starting MongoDB Agent...")
@@ -212,12 +212,18 @@ async def lifespan(app: FastAPI):
     await mongodb_agent.connect()
     print("MongoDB Agent connected successfully!")
     await RAGTool.initialize()
+    print("RAGTool initialized successfully!")
+
+    # Initialize Smart Filter Agent after RAGTool
+    from smart_filter.agent import SmartFilterAgent
+    smart_filter_agent = SmartFilterAgent()
+    print("Smart Filter Agent initialized successfully!")
+
     # Ensure conversation DB connection pool is ready
     try:
         await ensure_conversation_client_connected()
     except Exception as e:
         print(f"Warning: Conversations DB not connected: {e}")
-    print("RAGTool initialized successfully!")
     yield
 
     # Shutdown
