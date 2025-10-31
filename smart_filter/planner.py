@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import copy
 from dotenv import load_dotenv
 load_dotenv()
-from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 
 from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_groq import ChatGroq
@@ -43,7 +42,6 @@ if not groq_api_key:
 class QueryIntent:
     """Represents the parsed intent of a user query"""
     primary_entity: str  # Main collection/entity (e.g., "workItem", "project")
-    target_entities: List[str]  # Related entities to include
     filters: Dict[str, Any]  # Filter conditions
     aggregations: List[str]  # Aggregation operations (count, group, etc.)
     group_by: List[str]  # Grouping keys (e.g., ["cycle"]) when 'group by' present
@@ -55,6 +53,25 @@ class QueryIntent:
     wants_count: bool  # Whether the user asked for a count
     fetch_one: bool  # Whether the user wants a single specific item
 
+
+ALLOWED_FIELDS: Dict[str, Set[str]] = {
+    "workItem": {
+        "_id", "displayBugNo", "title", "description",
+        "priority", "status",
+        # Embedded state/cycle/module per production schema
+        "state.name",
+        "project._id", "project.name",
+        "cycle._id", "cycle.name",
+        "modules._id", "modules.name",
+        "createdBy._id", "createdBy.name",
+        "createdTimeStamp", "updatedTimeStamp", "dueDate",
+        "assignee", "assignee._id", "assignee.name", "label.name",
+        # Estimate and work logs
+        "estimateSystem", "estimate", "estimate.hr", "estimate.min",
+        "workLogs", "workLogs.user", "workLogs.user.name", "workLogs.hours", 
+        "workLogs.minutes", "workLogs.description", "workLogs.loggedAt"
+    }
+}
 
 def _serialize_pipeline_for_json(pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Convert datetime objects in pipeline to JSON-serializable format using MongoDB ISODate format"""
@@ -120,8 +137,7 @@ class LLMIntentParser:
     """LLM-backed intent parser that produces a structured plan compatible with QueryIntent.
 
     The LLM proposes:
-    - primary_entity
-    - target_entities (relations to join)
+    - primary_entity (workItem)
     - filters (normalized keys: status, priority, project_status, cycle_status, page_visibility,
       project_name, cycle_name, assignee_name, module_name)
     - aggregations: ["count"|"group"|"summary"]
@@ -131,7 +147,7 @@ class LLMIntentParser:
     - limit (int)
     - wants_details, wants_count
 
-    Safety: we filter LLM output against REL and ALLOWED_FIELDS before use.
+    Safety: we filter LLM output against ALLOWED_FIELDS before use.
     """
 
     def __init__(self, model_name: Optional[str] = None):
@@ -145,10 +161,7 @@ class LLMIntentParser:
         )
 
         # Precompute compact schema context to keep prompts short
-        self.entities: List[str] = list(REL.keys())
-        self.entity_relations: Dict[str, List[str]] = {
-            entity: list(REL.get(entity, {}).keys()) for entity in self.entities
-        }
+        self.entities: List[str] = list("workItem")
         self.allowed_fields: Dict[str, List[str]] = {
             entity: sorted(list(ALLOWED_FIELDS.get(entity, set()))) for entity in self.entities
         }
@@ -208,32 +221,6 @@ class LLMIntentParser:
         }
         return priority_map.get(value.lower())
 
-    # def _normalize_status_value(self, filter_key: str, value: str) -> Optional[str]:
-    #     """Normalize status values based on filter type"""
-    #     if filter_key == "project_status":
-    #         status_map = {
-    #             "not_started": "NOT_STARTED",
-    #             "not started": "NOT_STARTED",
-    #             "started": "STARTED",
-    #             "completed": "COMPLETED",
-    #             "overdue": "OVERDUE"
-    #         }
-    #     elif filter_key == "cycle_status":
-    #         status_map = {
-    #             "active": "ACTIVE",
-    #             "upcoming": "UPCOMING",
-    #             "completed": "COMPLETED"
-    #         }
-    #     elif filter_key == "page_visibility":
-    #         status_map = {
-    #             "public": "PUBLIC",
-    #             "private": "PRIVATE",
-    #             "archived": "ARCHIVED"
-    #         }
-    #     else:
-    #         return None
-
-    #     return status_map.get(value.lower())
 
     def _normalize_boolean_value(self, value: str) -> Optional[bool]:
         """Normalize string booleans to actual booleans"""
@@ -305,11 +292,11 @@ class LLMIntentParser:
             "You are an expert MongoDB query planner for work item management.\n"
             "Your task is to convert natural language queries into structured JSON intent objects.\n\n"
 
-            # "## DOMAIN CONTEXT\n"
-            # "This is a project management system with these main entities:\n"
-            # f"- {', '.join(self.entities)}\n\n"
-            # "Users ask questions in many different ways. Be flexible with their wording.\n"
-            # "Focus on understanding their intent, not exact keywords.\n\n"
+            "## DOMAIN CONTEXT\n"
+            "This is a project management system with these main entities:\n"
+            f"- {', '.join(self.entities)}\n\n"
+            "Users ask questions in many different ways. Be flexible with their wording.\n"
+            "Focus on understanding their intent, not exact keywords.\n\n"
 
             "## KEY RELATIONSHIPS\n"
             "- Work items belong to projects, cycles, and modules\n"
@@ -394,8 +381,7 @@ class LLMIntentParser:
             "CRITICAL: The response must be parseable by json.loads().\n\n"
             "EXACT JSON structure:\n"
             "{\n"
-            f'  "primary_entity": "workItem",\n'  # Use a valid default
-            '  "target_entities": [],\n'
+            f' "primary_entity": "workItem",\n' 
             '  "filters": {},\n'
             '  "aggregations": [],\n'
             '  "group_by": [],\n'
@@ -413,31 +399,16 @@ class LLMIntentParser:
             "- 'how many bugs are there' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"count\"]}\n"
             # "- 'count active projects' → {\"primary_entity\": \"project\", \"filters\": {\"project_status\": \"STARTED\"}, \"aggregations\": [\"count\"]}\n"
             "- 'group tasks by priority' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"group\"], \"group_by\": [\"priority\"]}\n"
-            # "- 'show archived projects' → {\"primary_entity\": \"project\", \"filters\": {\"isArchived\": true}, \"aggregations\": []}\n"
-            # "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
             "- 'show work items with bug label' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": []}\n"
             "- 'find work items with title containing component' → {\"primary_entity\": \"workItem\", \"filters\": {\"title\": \"component\"}, \"aggregations\": []}\n"
-            # "- 'who created this project' → {\"primary_entity\": \"project\", \"filters\": {\"createdBy_name\": \"john\"}, \"aggregations\": []}\n"
-            # "- 'find active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
-            # "- 'list cycles where state.active = true' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
-            # "- 'list all cycles that currently active' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": []}\n"
-            # "- 'show upcoming cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"UPCOMING\"}, \"aggregations\": []}\n"
-            # "- 'count completed cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"COMPLETED\"}, \"aggregations\": [\"count\"]}\n"
-            # "- 'what is the email address for the project member Vikas' → {\"primary_entity\": \"members\", \"filters\": {\"name\": \"Vikas\"}, \"projections\": [\"email\"], \"aggregations\": []}\n"
-            # "- 'what is the role of Vikas in Simpo Builder project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"name\": \"Vikas\", \"business_name\": \"Simpo.ai\"}, \"aggregations\": []}\n"
-            # "- 'show members in Simpo project' → {\"primary_entity\": \"members\", \"target_entities\": [\"project\"], \"filters\": {\"project_name\": \"Simpo\"}, \"aggregations\": []}\n\n"
             "- 'show recent tasks' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": -1}}\n"
-            # "- 'list oldest projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
             "- 'bugs in ascending created order' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"createdTimeStamp\": 1}}\n"
             "- 'work items updated in the last 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
             "- 'tasks created since yesterday' → {\"primary_entity\": \"workItem\", \"filters\": {\"createdTimeStamp_from\": \"yesterday\"}, \"aggregations\": []}\n"
             "- 'issues from the last week' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"last_week\"}, \"aggregations\": []}\n"
             "- 'workItem.last_date >= current_date - 30 days' → {\"primary_entity\": \"workItem\", \"filters\": {\"updatedTimeStamp_from\": \"now-30d\"}, \"aggregations\": []}\n"
             "- 'top 5 priority work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [], \"sort_order\": {\"priority\": -1}, \"limit\": 5}\n"
-            # "- 'first 10 projects' → {\"primary_entity\": \"project\", \"aggregations\": [], \"limit\": 10}\n"
-            # "- 'all active cycles' → {\"primary_entity\": \"cycle\", \"filters\": {\"cycle_status\": \"ACTIVE\"}, \"aggregations\": [], \"limit\": 1000}\n"
             "- 'show me a few bugs' → {\"primary_entity\": \"workItem\", \"filters\": {\"label\": \"bug\"}, \"aggregations\": [], \"limit\": 5}\n"
-            # "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
             "- 'show work items with estimates' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"estimate\", \"estimateSystem\"], \"aggregations\": []}\n"
             "- 'show work logs for tasks' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"workLogs\"], \"aggregations\": []}\n\n"
 
@@ -489,13 +460,6 @@ class LLMIntentParser:
         # requested_primary = (data.get("primary_entity") or "").strip()
         primary = "workItem"
 
-        # Allowed relations for primary
-        allowed_rels = set(self.entity_relations.get(primary, []))
-        target_entities: List[str] = []
-        for rel in (data.get("target_entities") or []):
-            if isinstance(rel, str) and rel.split(".")[0] in allowed_rels:
-                target_entities.append(rel)
-
         # Simplified filter processing - keep valid filters, expanded to cover all collections
         raw_filters = data.get("filters") or {}
         filters: Dict[str, Any] = {}
@@ -504,21 +468,6 @@ class LLMIntentParser:
         if primary == "workItem" and "status" in raw_filters and "state" not in raw_filters:
             raw_filters["state"] = raw_filters.pop("status")
 
-        # For epic collection, accept 'state_name' as the canonical filter key
-        # and also map legacy 'status' to 'state_name' when provided by LLMs/users
-        # if primary == "epic":
-        #     if "status" in raw_filters and "state_name" not in raw_filters:
-        #         raw_filters["state_name"] = raw_filters.pop("status")
-        #     # Some LLMs may emit 'state' for epics; prefer 'state_name'
-        #     if "state" in raw_filters and "state_name" not in raw_filters:
-        #         raw_filters["state_name"] = raw_filters.pop("state")
-
-        # Allow plain 'status' for project/cycle as their canonical status
-        # if primary in ("project", "cycle") and "status" in raw_filters:
-        #     if primary == "project" and "project_status" not in raw_filters:
-        #         raw_filters["project_status"] = raw_filters["status"]
-        #     if primary == "cycle" and "cycle_status" not in raw_filters:
-        #         raw_filters["cycle_status"] = raw_filters["status"]
 
         if primary in ("workItem") and "label" in raw_filters:
             raw_filters["label_name"] = raw_filters["label"]
@@ -526,16 +475,6 @@ class LLMIntentParser:
         # Examples the LLM might emit: createdAt_from, created_from, date_to, updated_since, etc.
         def _normalize_date_filter_keys(primary_entity: str, rf: Dict[str, Any]) -> Dict[str, Any]:
             normalized: Dict[str, Any] = {}
-            # # Determine canonical created/updated fields per entity
-            # if primary_entity == "page":
-            #     created_field = "createdAt"
-            #     updated_field = "updatedAt"
-            # elif primary_entity == "members":
-            #     # members commonly use joiningDate
-            #     created_field = "joiningDate"
-            #     updated_field = None
-            # else:
-                # workItem/project/cycle/module use createdTimeStamp/updatedTimeStamp
             created_field = "createdTimeStamp"
             updated_field = "updatedTimeStamp"
 
@@ -710,32 +649,13 @@ class LLMIntentParser:
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
             # Accept synonyms and normalize
-            if primary == "page":
-                key_map = {
-                    "created": "createdAt",
-                    "createdAt": "createdAt",
-                    "created_time": "createdAt",
-                    "time": "createdAt",
-                    "date": "createdAt",
-                    "timestamp": "updatedAt",
-                }
-            elif primary == "timeline":
-                key_map = {
-                    "created": "timestamp",
-                    "createdAt": "timestamp",
-                    "created_time": "timestamp",
-                    "time": "timestamp",
-                    "date": "timestamp",
-                    "timestamp": "timestamp",
-                }
-            else:
-                key_map = {
-                    "created": "createdTimeStamp",
-                    "createdAt": "createdTimeStamp",
-                    "created_time": "createdTimeStamp",
-                    "time": "createdTimeStamp",
-                    "date": "createdTimeStamp",
-                    "timestamp": "createdTimeStamp",
+            key_map = {
+                "created": "createdTimeStamp",
+                "createdAt": "createdTimeStamp",
+                "created_time": "createdTimeStamp",
+                "time": "createdTimeStamp",
+                "date": "createdTimeStamp",
+                "timestamp": "createdTimeStamp",
                 }
             norm_key = key_map.get(key, key)
 
@@ -796,28 +716,13 @@ class LLMIntentParser:
             aggregations = ["count"]
             wants_details = False
             group_by = []
-            target_entities = []
             projections = []
             sort_order = None
         else:
             # For non-count queries, ensure consistency
             if group_by and wants_details_raw is None:
                 wants_details = False
-
-        # Heuristic: timeline TIME_LOGGED queries that mention per-task breakdown should group by work item
-        # This enables questions like "amount of time logged by <user> per task for today"
-        if primary == "timeline":
-            tval = str(filters.get("type", "")).lower()
-            mentions_time = any(k in oq for k in ["time logged", "amount of time", "time spent", "logged time"]) or ("time_logged" in tval)
-            mentions_per_task = any(k in oq for k in ["per task", "by task", "per work item", "by work item", "per ticket", "by ticket", "breakdown"])
-            if mentions_time and (mentions_per_task or ("time_logged" in tval and not group_by)):
-                if "group" not in aggregations:
-                    aggregations = ["group"] + [a for a in aggregations if a != "group"]
-                if not group_by:
-                    group_by = ["work_item_title"]
-                # Grouped summaries don't need wants_details by default
-                wants_details = False
-
+        
             # Infer missing time window for timeline when the query includes relative periods
             has_time_window = any(k in filters for k in [
                 "timestamp_from", "timestamp_to", "timestamp_within", "timestamp_duration"
@@ -855,7 +760,6 @@ class LLMIntentParser:
 
         return QueryIntent(
             primary_entity=primary,
-            target_entities=target_entities,
             filters=filters,
             aggregations=aggregations,
             group_by=group_by,
@@ -868,45 +772,6 @@ class LLMIntentParser:
             fetch_one=fetch_one,
         )
 
-    async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
-        """Use DB counts across collections to decide which name filter is most plausible.
-
-        Preference order on ties: assignee -> project -> cycle -> module.
-        Returns the chosen filter key or None if inconclusive.
-        """
-        # Build candidate lookups: mapping filter key -> (collection, field)
-        candidates = {
-            "assignee_name": ("members", "name"),
-            "project_name": ("project", "name"),
-            "cycle_name": ("cycle", "name"),
-            "module_name": ("module", "name"),
-        }
-        counts: Dict[str, int] = {}
-        for key, (collection, field) in candidates.items():
-            if key not in proposed:
-                continue
-            value = proposed[key]
-            try:
-                cnt = await self._aggregate_count(collection, {field: {"$regex": value, "$options": "i"}})
-            except Exception:
-                cnt = 0
-            counts[key] = cnt
-
-        if not counts:
-            return None
-
-        # Pick the key with the highest positive count
-        positive = {k: v for k, v in counts.items() if v and v > 0}
-        if not positive:
-            # No evidence; prefer assignee if proposed
-            if "assignee_name" in proposed:
-                return "assignee_name"
-            return None
-
-        # Sort keys by count desc then by preference order
-        preference = {"assignee_name": 0, "project_name": 1, "cycle_name": 2, "module_name": 3}
-        chosen = sorted(positive.items(), key=lambda kv: (-kv[1], preference.get(kv[0], 99)))[0][0]
-        return chosen
 
     async def _aggregate_count(self, collection: str, match_filter: Dict[str, Any]) -> int:
         """Run a count via aggregation to avoid needing a dedicated count tool."""
@@ -927,83 +792,6 @@ class PipelineGenerator:
 
     def __init__(self):
         self.relationship_cache = {}  # Cache for computed relationship paths
-
-    def _add_comprehensive_lookups(self, pipeline: List[Dict[str, Any]], collection: str, intent: QueryIntent, required_relations: Set[str]):
-        """Add strategic lookups only for relationships that provide clear query benefits"""
-        # Only add strategic relationships that are likely to improve query performance
-        # without adding unnecessary complexity for simple queries
-
-        strategic_relations = {
-            'workItem': {
-                # Only add project if we're doing multi-hop queries or need business context
-                'project': self._needs_multi_hop_context(intent, ['business', 'cycle', 'module']),
-            },
-            'project': {
-                # Only add business if we're grouping by or filtering by business
-                'business': 'business' in (intent.group_by or []) or 'business_name' in (intent.filters or {}),
-            },
-            'cycle': {
-                # Only add project if we're doing complex analysis
-                'project': len(intent.group_by or []) > 1 or intent.wants_details,
-            },
-            'module': {
-                # Only add project if we're doing complex analysis
-                'project': len(intent.group_by or []) > 1 or intent.wants_details,
-            },
-            'members': {
-                # Only add project if we're doing complex analysis
-                'project': len(intent.group_by or []) > 1 or intent.wants_details,
-            },
-            'page': {
-                # Only add project if we're doing complex analysis
-                'project': len(intent.group_by or []) > 1 or intent.wants_details,
-            }
-        }
-
-        # Get the strategic relations for this collection
-        relations_to_add = strategic_relations.get(collection, {})
-
-        # Only add relations that are actually beneficial for this specific query
-        for relation_name, should_add in relations_to_add.items():
-            if should_add and relation_name in REL.get(collection, {}):
-                # Only add if this relationship isn't already required but would be beneficial
-                if relation_name not in required_relations:
-                    required_relations.add(relation_name)
-
-    def _needs_multi_hop_context(self, intent: QueryIntent, context_fields: List[str]) -> bool:
-        """Check if the query needs multi-hop context for the given fields"""
-        # Check if any context fields are referenced in group_by or filters
-        for field in context_fields:
-            if field in (intent.group_by or []) or f'{field}_name' in (intent.filters or {}):
-                return True
-        return False
-
-    def _should_use_strategic_joins(self, intent: QueryIntent, required_relations: Set[str]) -> bool:
-        """Automatically determine if strategic joins would benefit this query"""
-        # Use strategic joins if:
-        # 1. Query has multiple group_by fields (complex analysis)
-        # 2. Query needs multi-hop context (business, cycle, module context)
-        # 3. Query filters by fields that require joins
-        # 4. Query requests details (indicating complex data needs)
-
-        # Check for multi-hop context needs
-        needs_multi_hop = (
-            self._needs_multi_hop_context(intent, ['business', 'cycle', 'module']) or
-            'business' in (intent.group_by or []) or
-            'business_name' in (intent.filters or {})
-        )
-
-        # Check for complex grouping
-        has_complex_grouping = len(intent.group_by or []) > 1
-
-        # Check for detail requests
-        wants_details = intent.wants_details
-
-        # Check if already has required relations (don't need strategic joins if relations already identified)
-        has_basic_relations = len(required_relations) > 0
-
-        # Use strategic joins if any of these conditions are met
-        return needs_multi_hop or has_complex_grouping or (wants_details and has_basic_relations)
 
     def generate_pipeline(self, intent: QueryIntent) -> List[Dict[str, Any]]:
         """Generate MongoDB aggregation pipeline for the given intent"""
@@ -1034,172 +822,9 @@ class PipelineGenerator:
         if primary_filters:
             pipeline.append({"$match": primary_filters})
 
-        # Ensure lookups needed by secondary filters or grouping are included
-        required_relations: Set[str] = set()
-
-        # Determine relation tokens per primary collection
-        relation_alias_by_token = {
-            'workItem': {
-                # All are embedded on workItem; no lookup needed for filters/grouping
-                'project': None,
-                'assignee': None,
-                'module': None,
-                'cycle': None,
-                # For business grouping we may need a project join to ensure business name
-                'business': 'project',
-            },
-            'project': {
-                'cycle': 'cycles',
-                'module': 'modules',
-                'assignee': 'members',
-                'page': 'pages',
-                'project': None,
-            },
-            'cycle': {
-                'project': 'project',
-                'business': 'project',
-            },
-            'module': {
-                'project': 'project',
-                'assignee': 'assignee',
-                'business': 'project',
-            },
-            'page': {
-                'project': 'project',  # key in REL is 'project', alias is 'projectDoc'
-                'cycle': 'linkedCycle',
-                'module': 'linkedModule',
-                'business': 'project',
-                'linkedMembers': 'linkedMembers',
-            },
-            'members': {
-                'project': 'project',
-                'business': 'project',
-            },
-            'projectState': {
-                'project': 'project',
-                'business': 'project',
-            },
-            'epic': {
-                'project': 'project',
-                'business': 'project',
-            }
-
-        }.get(collection, {})
-
-        # Include explicit target entities requested by the intent (supports multi-hop like "project.cycles")
-        for rel in (intent.target_entities or []):
-            if not isinstance(rel, str) or not rel:
-                continue
-            first_hop = rel.split(".")[0]
-            if first_hop in REL.get(collection, {}):
-                required_relations.add(rel)
-
-        # Filters → relations (map filter tokens to relation alias for this primary)
-        if intent.filters:
-            # For workItem, project/assignee/cycle/modules are embedded; no lookups needed for name filters
-            if collection != 'workItem':
-                if 'project_name' in intent.filters and relation_alias_by_token.get('project') in REL.get(collection, {}):
-                    required_relations.add(relation_alias_by_token['project'])
-                if 'cycle_name' in intent.filters and relation_alias_by_token.get('cycle') in REL.get(collection, {}):
-                    required_relations.add(relation_alias_by_token['cycle'])
-                if 'assignee_name' in intent.filters and relation_alias_by_token.get('assignee') in REL.get(collection, {}):
-                    required_relations.add(relation_alias_by_token['assignee'])
-                if 'module_name' in intent.filters and relation_alias_by_token.get('module') in REL.get(collection, {}):
-                    required_relations.add(relation_alias_by_token['module'])
-                # Business name may require project hop for collections without embedded business
-                if 'business_name' in intent.filters:
-                    # If primary lacks direct business relation, but has project relation, join project
-                    if relation_alias_by_token.get('project') in REL.get(collection, {}):
-                        required_relations.add(relation_alias_by_token['project'])
-                # Page linked members filter requires linkedMembers join
-                if collection == 'page' and 'LinkedMembers_0_name' in intent.filters and relation_alias_by_token.get('linkedMembers') in REL.get(collection, {}):
-                    required_relations.add(relation_alias_by_token['linkedMembers'])
-            if 'member_role' in intent.filters:
-                # Require member join depending on collection
-                if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
-                    required_relations.add('assignee')
-                if collection == 'project' and 'members' in REL.get('project', {}):
-                    required_relations.add('members')
-                if collection == 'module' and 'assignee' in REL.get('module', {}):
-                    required_relations.add('assignee')
-
-            # Multi-hop fallbacks for cycle/module via project when direct relations are absent
-            if 'cycle_name' in intent.filters and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {}) and 'linkedCycle' not in REL.get(collection, {})):
-                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
-                    required_relations.add('project')
-                    required_relations.add('project.cycles')
-            if 'module_name' in intent.filters and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {}) and 'linkedModule' not in REL.get(collection, {})):
-                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
-                    required_relations.add('project')
-                    required_relations.add('project.modules')
-
-        # Group-by → relations
-        for token in (intent.group_by or []):
-            # Map grouping token to relation alias for this primary
-            rel_alias = relation_alias_by_token.get(token)
-            if rel_alias and rel_alias in REL.get(collection, {}):
-                required_relations.add(rel_alias)
-            # Multi-hop fallback for grouping keys that require project hop (e.g., cycle/module on workItem)
-            if token == 'cycle' and ('cycle' not in REL.get(collection, {}) and 'cycles' not in REL.get(collection, {})):
-                if 'project' in REL.get(collection, {}) and 'cycles' in REL.get('project', {}):
-                    required_relations.add('project')
-                    required_relations.add('project.cycles')
-            if token == 'module' and ('module' not in REL.get(collection, {}) and 'modules' not in REL.get(collection, {})):
-                if 'project' in REL.get(collection, {}) and 'modules' in REL.get('project', {}):
-                    required_relations.add('project')
-                    required_relations.add('project.modules')
-
-        # Automatically add strategic lookups when they provide clear benefits for this query
-        # Complex joins are now fully automatic based on query requirements
-        if self._should_use_strategic_joins(intent, required_relations):
-            self._add_comprehensive_lookups(pipeline, collection, intent, required_relations)
-
-        # Add relationship lookups (supports multi-hop via dot syntax like project.states)
-        for target_entity in sorted(required_relations):
-            # Allow multi-hop relation names like "project.cycles"
-            hops = target_entity.split(".")
-            current_collection = collection
-            local_prefix = None
-            for hop in hops:
-                if hop not in REL.get(current_collection, {}):
-                    break
-                relationship = REL[current_collection][hop]
-
-                # SAFETY: avoid writing a lookup into an existing scalar field name
-                needs_alias_fix = (
-                    relationship.get("target") == "project"
-                    and current_collection in {"cycle", "module", "page", "members", "projectState"}
-                )
-                if needs_alias_fix:
-                    # Force a safe alias to prevent clobbering embedded project field
-                    relationship = {**relationship, "as": "projectDoc"}
-                lookup = build_lookup_stage(relationship["target"], relationship, current_collection, local_field_prefix=local_prefix)
-                if lookup:
-                    pipeline.append(lookup)
-                    # If array relation, unwind the alias used in $lookup
-                    is_many = bool(relationship.get("isArray") or relationship.get("many", False))
-                    alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
-                    if is_many:
-                        pipeline.append({
-                            "$unwind": {"path": f"${alias_name}", "preserveNullAndEmptyArrays": True}
-                        })
-                    # Set local prefix to the alias for chaining next hop
-                    local_prefix = alias_name
-                current_collection = relationship["target"]
-
         # Add secondary filters (on joined collections) BEFORE normalizing fields
         if secondary_filters:
             pipeline.append({"$match": secondary_filters})
-
-        # Normalize project fields to scalars for safe filtering/printing
-        if intent.primary_entity in {"cycle", "module", "page", "members", "projectState"}:
-            pipeline.append({
-                "$addFields": {
-                    "projectId": {"$ifNull": ["$project._id", {"$first": "$projectDoc._id"}]},
-                    "projectName": {"$ifNull": ["$project.name", {"$first": "$projectDoc.name"}]},
-                    "projectBusinessName": {"$ifNull": ["$project.business.name", {"$first": "$projectDoc.business.name"}]}
-                }
-            })
 
         # Add grouping if requested
         if intent.group_by:
@@ -1225,49 +850,12 @@ class PipelineGenerator:
             else:
                 group_id_expr = list(id_fields.values())[0] if len(id_fields) == 1 else id_fields
 
-                # Special handling: for timeline TIME_LOGGED breakdowns, sum parsed minutes from newValue
-                is_timeline_time_logged = (
-                    intent.primary_entity == 'timeline' and (
-                        isinstance(intent.filters.get('type'), str) and 'time_logged' in str(intent.filters.get('type')).lower()
-                    )
-                )
-                if is_timeline_time_logged:
-                    # Compute parsed minutes from strings like "1 hr 30 min", "45 min", "2 hr"
-                    pipeline.append({
-                        "$addFields": {
-                            "_parsedMinutes": {
-                                "$let": {
-                                    "vars": {
-                                        "h": {"$regexFind": {"input": "$newValue", "regex": "([0-9]+)\\s*(?:h|hr|hrs|hour|hours)"}},
-                                        "m": {"$regexFind": {"input": "$newValue", "regex": "([0-9]+)\\s*(?:m|min|mins|minute|minutes)"}}
-                                    },
-                                    "in": {
-                                        "$add": [
-                                            {"$multiply": [
-                                                {"$toInt": {"$ifNull": [{"$arrayElemAt": ["$$h.captures", 0]}, 0]}}, 60
-                                            ]},
-                                            {"$toInt": {"$ifNull": [{"$arrayElemAt": ["$$m.captures", 0]}, 0]}}
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    group_stage: Dict[str, Any] = {
-                        "$group": {
-                            "_id": group_id_expr,
-                            "totalMinutes": {"$sum": "$__parsedMinutes__"}  # placeholder to be replaced
-                        }
+                group_stage: Dict[str, Any] = {
+                    "$group": {
+                        "_id": group_id_expr,
+                        "count": {"$sum": 1},
                     }
-                    # Replace placeholder key with the actual parsed minutes field name
-                    group_stage["$group"]["totalMinutes"] = {"$sum": "$_parsedMinutes"}
-                else:
-                    group_stage: Dict[str, Any] = {
-                        "$group": {
-                            "_id": group_id_expr,
-                            "count": {"$sum": 1},
-                        }
-                    }
+                }
                 if intent.wants_details:
                     group_stage["$group"]["items"] = {
                         "$push": {
@@ -1291,25 +879,14 @@ class PipelineGenerator:
                         else:
                             pipeline.append({"$sort": {f"_id.{sort_key}": sort_dir}})
                     else:
-                        # Default to the primary metric
-                        if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
-                            pipeline.append({"$sort": {"totalMinutes": -1}})
-                        else:
-                            pipeline.append({"$sort": {"count": -1}})
+                        pass
                 else:
-                    if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
-                        pipeline.append({"$sort": {"totalMinutes": -1}})
-                    else:
-                        pipeline.append({"$sort": {"count": -1}})
+                    pass
                 # Present a tidy shape
                 project_shape: Dict[str, Any] = {"count": 1}
                 if intent.wants_details:
                     project_shape["items"] = 1
                 project_shape["group"] = "$_id"
-                # Expose totalMinutes when computed
-                if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
-                    project_shape["totalMinutes"] = 1
-                pipeline.append({"$project": project_shape})
                 # Respect limit on grouped results
                 if intent.limit:
                     pipeline.append({"$limit": intent.limit})
@@ -1362,18 +939,6 @@ class PipelineGenerator:
 
         # Compute projected aliases for joined relations so projections include them when needed
         projected_aliases: Set[str] = set()
-        if required_relations:
-            for rel_path in sorted(required_relations):
-                hops = rel_path.split(".")
-                current_collection = collection
-                for hop in hops:
-                    if hop not in REL.get(current_collection, {}):
-                        break
-                    relationship = REL[current_collection][hop]
-                    alias_name = relationship.get("as") or relationship.get("alias") or relationship.get("target")
-                    if alias_name:
-                        projected_aliases.add(alias_name)
-                    current_collection = relationship["target"]
 
         # Add projections after sorting so computed fields can be hidden
         if effective_projections and not intent.group_by:
@@ -1606,60 +1171,14 @@ class PipelineGenerator:
                 primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
             if 'displayBugNo' in filters and isinstance(filters['displayBugNo'], str):
                 primary_filters['displayBugNo'] = {'$regex': f"^{filters['displayBugNo']}", '$options': 'i'}
+            if 'business_name' in filters and isinstance(filters['business_name'], str):
+                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
             _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
             # Support dueDate ranges uniformly
             _apply_date_range(primary_filters, 'dueDate', filters)
-
-        elif collection == "project":
-            if 'project_status' in filters:
-                primary_filters['status'] = filters['project_status']
-            if 'status' in filters and 'status' not in primary_filters:
-                primary_filters['status'] = filters['status']
-            if 'isActive' in filters:
-                primary_filters['isActive'] = bool(filters['isActive'])
-            if 'isArchived' in filters:
-                primary_filters['isArchived'] = bool(filters['isArchived'])
-            if 'access' in filters:
-                primary_filters['access'] = filters['access']
-            if 'isFavourite' in filters:
-                # Some schemas use 'favourite' on projects
-                primary_filters['favourite'] = bool(filters['isFavourite'])
-            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
-                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
-            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
-                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
-            if 'leadMail' in filters and isinstance(filters['leadMail'], str):
-                primary_filters['leadMail'] = {'$regex': f"^{filters['leadMail']}", '$options': 'i'}
-            if 'projectDisplayId' in filters and isinstance(filters['projectDisplayId'], str):
-                primary_filters['projectDisplayId'] = {'$regex': f"^{filters['projectDisplayId']}", '$options': 'i'}
-            if 'name' in filters and isinstance(filters['name'], str):
-                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
-            if 'business_name' in filters and isinstance(filters['business_name'], str):
-                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
-            # default assignee (object): allow name filtering
-            if 'defaultAssignee_name' in filters and isinstance(filters['defaultAssignee_name'], str):
-                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAssignee_name'], '$options': 'i'}
-            if 'defaultAsignee_name' in filters and isinstance(filters['defaultAsignee_name'], str):
-                primary_filters['defaultAsignee.name'] = {'$regex': filters['defaultAsignee_name'], '$options': 'i'}
-            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
-            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
-
-        elif collection == "cycle":
-            if 'cycle_status' in filters:
-                primary_filters['status'] = filters['cycle_status']
-            if 'status' in filters and 'status' not in primary_filters:
-                primary_filters['status'] = filters['status']
-            if 'isDefault' in filters:
-                primary_filters['isDefault'] = bool(filters['isDefault'])
-            if 'isFavourite' in filters:
-                primary_filters['isFavourite'] = bool(filters['isFavourite'])
-            if 'title' in filters and isinstance(filters['title'], str):
-                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
-            _apply_date_range(primary_filters, 'startDate', filters)
-            _apply_date_range(primary_filters, 'endDate', filters)
-            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
-            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
 
             # Optional duration-based filtering in days: duration_days_from/to
             dur_from = filters.get('duration_days_from')
@@ -1695,79 +1214,6 @@ class PipelineGenerator:
                     else:
                         primary_filters["$expr"] = expr
 
-        elif collection == "page":
-            if 'page_visibility' in filters:
-                primary_filters['visibility'] = filters['page_visibility']
-            if 'visibility' in filters:
-                primary_filters['visibility'] = filters['visibility']
-            if 'isFavourite' in filters:
-                primary_filters['isFavourite'] = bool(filters['isFavourite'])
-            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
-                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
-            if 'locked' in filters:
-                primary_filters['locked'] = bool(filters['locked'])
-            if 'title' in filters and isinstance(filters['title'], str):
-                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
-            _apply_date_range(primary_filters, 'createdAt', filters)
-            _apply_date_range(primary_filters, 'updatedAt', filters)
-
-        elif collection == "module":
-            if 'isFavourite' in filters:
-                primary_filters['isFavourite'] = bool(filters['isFavourite'])
-            if 'title' in filters and isinstance(filters['title'], str):
-                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
-            if 'name' in filters and isinstance(filters['name'], str):
-                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
-            if 'business_name' in filters and isinstance(filters['business_name'], str):
-                primary_filters['business.name'] = {'$regex': filters['business_name'], '$options': 'i'}
-            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
-                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
-            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
-                # module.assignee can be array of member subdocs
-                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
-            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
-
-        elif collection == "members":
-            if 'role' in filters and isinstance(filters['role'], str):
-                primary_filters['role'] = {'$regex': f"^{filters['role']}$", '$options': 'i'}
-            if 'type' in filters and isinstance(filters['type'], str):
-                primary_filters['type'] = {'$regex': f"^{filters['type']}$", '$options': 'i'}
-            if 'name' in filters and isinstance(filters['name'], str):
-                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
-            if 'email' in filters and isinstance(filters['email'], str):
-                primary_filters['email'] = {'$regex': f"^{filters['email']}", '$options': 'i'}
-            if 'project_name' in filters and isinstance(filters['project_name'], str):
-                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
-            if 'staff_name' in filters and isinstance(filters['staff_name'], str):
-                primary_filters['staff.name'] = {'$regex': filters['staff_name'], '$options': 'i'}
-            _apply_date_range(primary_filters, 'joiningDate', filters)
-
-        elif collection == "projectState":
-            if 'name' in filters and isinstance(filters['name'], str):
-                primary_filters['name'] = {'$regex': filters['name'], '$options': 'i'}
-            if 'sub_state_name' in filters and isinstance(filters['sub_state_name'], str):
-                primary_filters['subStates.name'] = {'$regex': filters['sub_state_name'], '$options': 'i'}
-
-        elif collection == "epic":
-            if 'priority' in filters:
-                primary_filters['priority'] = filters['priority']
-            if 'state' in filters:
-                # Map logical state filter to embedded field
-                primary_filters['state.name'] = filters['state']
-            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
-                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
-            if 'title' in filters and isinstance(filters['title'], str):
-                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
-            if 'label_name' in filters and isinstance(filters['label_name'], str):
-                primary_filters['label.name'] = {'$regex': filters['label_name'], '$options': 'i'}
-            if 'project_name' in filters and isinstance(filters['project_name'], str):
-                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
-            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
-                # module.assignee can be array of member subdocs
-                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
-            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
-            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
-
         return primary_filters
 
     def _extract_secondary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
@@ -1788,92 +1234,22 @@ class PipelineGenerator:
                 {'projectDoc.name': {'$regex': filters['project_name'], '$options': 'i'}},
             ]
 
-        # Assignee name via joined alias 'assignees' (only if relation exists)
-        if 'assignee_name' in filters and 'assignee' in REL.get(collection, {}):
-            # Prefer embedded assignee names when present; joined alias may be 'assignees'
-            s['$or'] = s.get('$or', []) + [
-                {'assignee.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
-                {'assignees.name': {'$regex': filters['assignee_name'], '$options': 'i'}},
-            ]
-        # Member role filter when relation exists
-        if 'member_role' in filters:
-            # For workItem: embedded assignee or joined members
-            if collection == 'workItem' and 'assignee' in REL.get(collection, {}):
-                s['$or'] = s.get('$or', []) + [
-                    {'assignee.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
-                    {'assignees.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
-                ]
-            # For project: through members join
-            if collection == 'project' and 'members' in REL.get('project', {}):
-                s['members.role'] = {'$regex': f"^{filters['member_role']}$", '$options': 'i'}
-            # For module: embedded assignee or joined members
-            if collection == 'module' and 'assignee' in REL.get('module', {}):
-                s['$or'] = s.get('$or', []) + [
-                    {'assignee.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
-                    {'assignees.role': {'$regex': f"^{filters['member_role']}$", '$options': 'i'}},
-                ]
 
         # Cycle name filter: prefer embedded cycle.name; support joined aliases
         if 'cycle_name' in filters:
             if collection == 'workItem':
                 s['cycle.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
-            elif 'cycle' in REL.get(collection, {}):
-                s['cycle.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
-            elif 'cycles' in REL.get(collection, {}):
-                s['cycles.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
-            elif collection == 'page' and 'linkedCycle' in REL.get('page', {}):
-                s['linkedCycleDocs.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
 
         # Module name filter: prefer embedded modules.name; support joined aliases
         if 'module_name' in filters:
             if collection == 'workItem':
                 s['modules.name'] = {'$regex': filters['module_name'], '$options': 'i'}
-            elif 'module' in REL.get(collection, {}):
-                s['module.name'] = {'$regex': filters['module_name'], '$options': 'i'}
-            elif 'modules' in REL.get(collection, {}):
-                s['modules.name'] = {'$regex': filters['module_name'], '$options': 'i'}
-            elif collection == 'page' and 'linkedModule' in REL.get('page', {}):
-                s['linkedModuleDocs.name'] = {'$regex': filters['module_name'], '$options': 'i'}
 
-        # Business name via embedded or joined path
-        if 'business_name' in filters:
-            # Directly embedded business on these collections
-            if collection in ('project', 'page'):
-                s['$or'] = s.get('$or', []) + [
-                    {'business.name': {'$regex': filters['business_name'], '$options': 'i'}},
-                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
-                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
-                ]
-            # For cycle/module: prefer project join to reach project.business.name
-            if collection in ('cycle', 'module'):
-                s['$or'] = s.get('$or', []) + [
-                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
-                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
-                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
-                ]
-            # For members: through joined project
-            if collection == 'members' and 'project' in REL.get('members', {}):
-                s['$or'] = s.get('$or', []) + [
-                    {'project.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
-                    {'projectDoc.business.name': {'$regex': filters['business_name'], '$options': 'i'}},
-                    {'projectBusinessName': {'$regex': filters['business_name'], '$options': 'i'}},
-                ]
-
-        # Page linked members: support name filter via joined alias when available
-        if collection == 'page' and 'LinkedMembers_0_name' in filters:
-            # Interpret as any linked member name regex
-            s['linkedMembersDocs.name'] = {'$regex': filters['LinkedMembers_0_name'], '$options': 'i'}
 
         return s
 
-    def _generate_lookup_stage(self, from_collection: str, target_entity: str, filters: Dict[str, Any]) -> Dict[str, Any]:
-        # Deprecated in favor of build_lookup_stage imported from registry
-        if from_collection not in REL or target_entity not in REL[from_collection]:
-            return {}
-        relationship = REL[from_collection][target_entity]
-        return build_lookup_stage(relationship["target"], relationship, from_collection)
 
-    def _generate_projection(self, projections: List[str], target_entities: List[str], primary_entity: str) -> Dict[str, Any]:
+    def _generate_projection(self, projections: List[str], primary_entity: str) -> Dict[str, Any]:
         """Generate projection object"""
         projection = {"_id": 1}  # Always include ID
 
@@ -1881,11 +1257,6 @@ class PipelineGenerator:
         for field in projections:
             if field in ALLOWED_FIELDS.get(primary_entity, {}):
                 projection[field] = 1
-
-        # Add target entity fields
-        for entity in target_entities:
-            if entity in REL.get(primary_entity, {}):
-                projection[entity] = 1
 
         return projection
 
@@ -1899,28 +1270,6 @@ class PipelineGenerator:
                 "state.name", "assignee","label.name",
                 "project.name", "cycle.name", "modules.name",
                 "createdTimeStamp", "estimateSystem", "estimate", "workLogs"
-            ],
-            "project": [
-                "projectDisplayId", "name", "status", "isActive", "isArchived", "createdTimeStamp",
-                "createdBy.name", "lead.name", "leadMail", "defaultAsignee.name"
-            ],
-            "cycle": [
-                "title", "status", "startDate", "endDate", "projectName", "projectId"
-            ],
-            "members": [
-                "name", "email", "role", "joiningDate", "projectName", "projectId"
-            ],
-            "page": [
-                "title", "visibility", "createdAt", "projectName", "projectId"
-            ],
-            "module": [
-                "title", "description", "isFavourite", "createdTimeStamp", "projectName", "projectId"
-            ],
-            "projectState": [
-                "name", "subStates.name", "subStates.order"
-            ],
-            "epic": [
-                "title", "priority", "state.name", "createdTimeStamp", "project.name","description","assignee.name","bugNo","label.name"
             ],
         }
 
@@ -1948,12 +1297,6 @@ class PipelineGenerator:
         """
         # Date bucket helper
         def date_field_for(entity: str, which: str) -> Optional[str]:
-            # which: 'created' | 'updated'
-            if entity == 'page':
-                return 'createdAt' if which == 'created' else 'updatedAt'
-            if entity == 'timeline':
-                # timeline stores a single 'timestamp' field for event time
-                return 'timestamp'
             # Default to *TimeStamp for other entities
             return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
 
@@ -1984,68 +1327,6 @@ class PipelineGenerator:
                 'updated_day': bucket_expr('workItem', 'updated', 'day'),
                 'updated_week': bucket_expr('workItem', 'updated', 'week'),
                 'updated_month': bucket_expr('workItem', 'updated', 'month'),
-            },
-            'project': {
-                'status': 'status',
-                'business': 'business.name',
-                'created_day': bucket_expr('project', 'created', 'day'),
-                'created_week': bucket_expr('project', 'created', 'week'),
-                'created_month': bucket_expr('project', 'created', 'month'),
-                'updated_day': bucket_expr('project', 'updated', 'day'),
-                'updated_week': bucket_expr('project', 'updated', 'week'),
-                'updated_month': bucket_expr('project', 'updated', 'month'),
-            },
-            'cycle': {
-                'project': 'project.name',
-                'status': 'status',
-                'created_day': bucket_expr('cycle', 'created', 'day'),
-                'created_week': bucket_expr('cycle', 'created', 'week'),
-                'created_month': bucket_expr('cycle', 'created', 'month'),
-                'updated_day': bucket_expr('cycle', 'updated', 'day'),
-                'updated_week': bucket_expr('cycle', 'updated', 'week'),
-                'updated_month': bucket_expr('cycle', 'updated', 'month'),
-            },
-            'page': {
-                'project': 'projectDoc.name',
-                'cycle': 'linkedCycleDocs.name',
-                'module': 'linkedModuleDocs.name',
-                'visibility': 'visibility',
-                'business': 'projectDoc.business.name',
-                'created_day': bucket_expr('page', 'created', 'day'),
-                'created_week': bucket_expr('page', 'created', 'week'),
-                'created_month': bucket_expr('page', 'created', 'month'),
-                'updated_day': bucket_expr('page', 'updated', 'day'),
-                'updated_week': bucket_expr('page', 'updated', 'week'),
-                'updated_month': bucket_expr('page', 'updated', 'month'),
-            },
-            'module': {
-                'project': 'project.name',
-                'business': 'project.business.name',
-                'created_day': bucket_expr('module', 'created', 'day'),
-                'created_week': bucket_expr('module', 'created', 'week'),
-                'created_month': bucket_expr('module', 'created', 'month'),
-            },
-            'members': {
-                'project': 'project.name',
-                'business': 'project.business.name',
-                'created_day': bucket_expr('members', 'created', 'day'),
-                'created_week': bucket_expr('members', 'created', 'week'),
-                'created_month': bucket_expr('members', 'created', 'month'),
-            },
-            'projectState': {
-                'project': 'project.name',
-                'business': 'project.business.name',
-            },
-            'timeline': {
-                'project': 'project.name',
-                'status': 'type',
-                'assignee': 'user.name',
-                'created_day': bucket_expr('timeline', 'created', 'day'),
-                'created_week': bucket_expr('timeline', 'created', 'week'),
-                'created_month': bucket_expr('timeline', 'created', 'month'),
-                'updated_day': bucket_expr('timeline', 'updated', 'day'),
-                'updated_week': bucket_expr('timeline', 'updated', 'week'),
-                'updated_month': bucket_expr('timeline', 'updated', 'month'),
             },
         }
         entity_map = mapping.get(primary_entity, {})
