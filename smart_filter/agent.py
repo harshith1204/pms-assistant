@@ -10,7 +10,7 @@ from datetime import datetime
 
 from qdrant.retrieval import ChunkAwareRetriever
 from mongo.constants import mongodb_tools, DATABASE_NAME
-from mongo.registry import build_lookup_stage
+from mongo.registry import build_lookup_stage, REL
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -49,7 +49,9 @@ class SmartFilterAgent:
 
         # Initialize RAG components
         from qdrant.initializer import RAGTool
-        self.rag_tool = RAGTool()
+        from mongo.constants import QDRANT_COLLECTION_NAME
+        self.rag_tool = RAGTool.get_instance()
+        self.collection_name = QDRANT_COLLECTION_NAME
         self.retriever = ChunkAwareRetriever(
             qdrant_client=self.rag_tool.qdrant_client,
             embedding_model=self.rag_tool.embedding_model
@@ -193,14 +195,14 @@ class SmartFilterAgent:
             pipeline.append({"$match": match_conditions})
 
         # Add necessary lookups for the response structure
-        required_relations = {
-            "workItem": ["project", "state", "assignee", "label", "modules", "cycle", "createdBy"]
-        }
-
-        for relation in required_relations.get("workItem", []):
-            lookup_stage = build_lookup_stage("workItem", relation)
-            if lookup_stage:
-                pipeline.append(lookup_stage)
+        # Only lookup relationships that exist in the REL registry
+        workitem_relations = REL.get("workItem", {})
+        for relation_name in ["project", "cycle", "modules"]:  # Only these need lookups
+            relationship = workitem_relations.get(relation_name)
+            if relationship:
+                lookup_stage = build_lookup_stage(relationship["target"], relationship, "workItem")
+                if lookup_stage:
+                    pipeline.append(lookup_stage)
 
         # Project to match the required API response structure
         pipeline.append({
@@ -311,7 +313,7 @@ class SmartFilterAgent:
                 query_text = ctx["query"]  # type: ignore[index]
                 return await self.retriever.search_with_context(
                     query=query_text,
-                    collection_name=self.rag_tool.collection_name,
+                    collection_name=self.collection_name,
                     content_type="work_item",  # Focus on work items
                     limit=20,  # Get more context for better filtering
                     chunks_per_doc=2,
@@ -429,5 +431,5 @@ class SmartFilterAgent:
             )
 
 
-# Global instance
-smart_filter_agent = SmartFilterAgent()
+# Global instance - initialized lazily during startup
+smart_filter_agent = None
