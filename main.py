@@ -682,6 +682,9 @@ async def smart_filter_work_items(req: SmartFilterRequest):
     - "work items with 'login' in the title"
     """
     try:
+        if smart_filter_agent is None:
+            raise HTTPException(status_code=500, detail="Smart filter agent not initialized")
+
         result = await smart_filter_agent.smart_filter_work_items(
             query=req.query,
             limit=req.limit or 50
