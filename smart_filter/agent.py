@@ -110,6 +110,21 @@ DEFAULT_SYSTEM_PROMPT = (
 "4. Consider user intent over literal query structure\n"
 "5. Complex queries may benefit from semantic understanding over strict filtering\n\n"
 
+"QUERY REFINEMENT:\n"
+"For each query, also provide a 'refined_query' optimized for the selected tool:\n\n"
+
+"RAG SEARCH queries should:\n"
+"- Focus on semantic/conceptual aspects and core problems\n"
+"- Remove specific attribute filters (priority, status, assignee, etc.)\n"
+"- Emphasize natural language descriptions, symptoms, and relationships\n"
+"- Examples: 'authentication bugs and issues', 'user registration blocking problems'\n\n"
+
+"MONGODB QUERY refinements should:\n"
+"- Focus on structured attributes and concrete filters\n"
+"- Include specific criteria like priority, status, assignee, project, dates\n"
+"- Convert natural language into filter criteria\n"
+"- Examples: 'high priority bugs assigned to John in Auth module', 'completed tasks from last sprint'\n\n"
+
 "CONFIDENCE SCORING:\n"
 "- 0.9-1.0: Clear, unambiguous queries matching tool examples perfectly\n"
 "- 0.7-0.89: Good matches with some interpretation needed\n"
@@ -121,8 +136,9 @@ DEFAULT_SYSTEM_PROMPT = (
 "Output ONLY a valid JSON object with this exact structure:\n"
 "{\n"
 "  \"tool\": \"build_mongo_query\" | \"rag_search\",\n"
+"  \"refined_query\": \"optimized query for the selected tool\",\n"
 "  \"confidence\": 0.0-1.0,\n"
-"  \"reason\": \"brief explanation of routing decision\"\n"
+"  \"reason\": \"brief explanation of routing decision and query refinement\"\n"
 "}\n\n"
 "No additional text, markdown, or commentary allowed.")
 
@@ -159,17 +175,17 @@ class SmartFilterAgent:
 
         await smart_filter_tools.ensure_mongodb_connection()
 
-        tool_choice = await self._determine_tool(normalized_query)
+        tool_choice, tool_query = await self._determine_tool(normalized_query)
 
         if tool_choice == "rag_search":
-            rag_result = await self._handle_rag_flow(normalized_query, limit)
+            rag_result = await self._handle_rag_flow(tool_query, limit)
             if rag_result.work_items:
                 return rag_result
 
-        return await self._handle_mongo_flow(normalized_query, limit)
+        return await self._handle_mongo_flow(tool_query, limit)
 
-    async def _determine_tool(self, query: str) -> str:
-        """Use router model (with heuristics fallback) to choose execution path."""
+    async def _determine_tool(self, query: str) -> tuple[str, str]:
+        """Use router model (with heuristics fallback) to choose execution path and get refined query."""
 
         try:
             messages = [
@@ -182,32 +198,13 @@ class SmartFilterAgent:
                 try:
                     data = json.loads(content)
                     tool = data.get("tool")
+                    refined_query = data.get("refined_query", query)  # fallback to original query
                     if tool in ("build_mongo_query", "rag_search"):
-                        return tool
+                        return tool, refined_query
                 except Exception:
                     pass
         except Exception:
             pass
-
-        return self._heuristic_tool_decision(query)
-
-    def _heuristic_tool_decision(self, query: str) -> str:
-        text = query.lower()
-
-        rag_tokens = {
-            "summarize", "summary", "explain", "why", "cause", "context",
-            "insight", "reason", "describe", "overview", "clarify",
-        }
-        structured_tokens = {
-            "list", "show", "count", "filter", "due", "priority", "assigned",
-            "status", "state", "work item", "bug", "task", "cycle", "module",
-            "label", "assignee",
-        }
-
-        if any(token in text for token in rag_tokens) and not any(token in text for token in structured_tokens):
-            return "rag_search"
-
-        return "build_mongo_query"
 
     async def _handle_mongo_flow(self, query: str, limit: int) -> SmartFilterResult:
         mongo_result = await smart_filter_tools.execute_mongo_query(query, limit=limit)
