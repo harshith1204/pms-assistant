@@ -1263,7 +1263,13 @@ class PipelineGenerator:
     def _get_default_projections(self, primary_entity: str) -> List[str]:
         """Return sensible default fields for detail queries per collection.
         Only returns fields that are allow-listed for the given collection.
+
+        For smart filter agent, return no projections to avoid MongoDB projection issues.
         """
+        # For smart filter agent, don't use projections - let Python handle formatting
+        if primary_entity == "workItem":
+            return []
+
         defaults_map: Dict[str, List[str]] = {
             "workItem": [
                 "displayBugNo", "title", "priority",
