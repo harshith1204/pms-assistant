@@ -37,9 +37,13 @@ curl -s http://localhost:8083/connectors | jq
 4) Insert a document into MongoDB (triggers CDC → Kafka → Consumer → Qdrant):
 ```bash
 docker compose exec mongodb mongosh --eval '
-  db.getSiblingDB("data_sync").documents.insertOne({
-    text: "hello world from cdc",
-    payload: { source: "manual-test", ts: Date.now() }
+  db.getSiblingDB("ProjectManagement").page.insertOne({
+    title: "CDC smoke test",
+    content: JSON.stringify({ blocks: [{ type: "paragraph", data: { text: "Hello from change streams" } }] }),
+    project: { name: "Diagnostics" },
+    business: { name: "Demo" },
+    createdAt: new Date(),
+    updatedAt: new Date()
   })'
 ```
 
