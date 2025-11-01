@@ -42,7 +42,7 @@ services:
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/?replicaSet=rs0}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-ProjectManagement}
-      KAFKA_TOPIC: ${KAFKA_TOPIC:-data-sync.documents}
+      KAFKA_TOPIC_PREFIX: ${KAFKA_TOPIC_PREFIX:-ProjectManagement.}
     volumes:
       - ./connectors:/connectors
     command:
@@ -123,15 +123,15 @@ services:
 
   consumer:
     build:
-      context: ..
-      dockerfile: data-sync/consumer/Dockerfile
+      context: .
+      dockerfile: consumer/Dockerfile
     container_name: qdrant-consumer
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
-      - KAFKA_TOPIC=${KAFKA_TOPIC:-data-sync.documents}
+      - KAFKA_TOPIC=${KAFKA_TOPIC:-ProjectManagement\..*}
       - KAFKA_GROUP_ID=${KAFKA_GROUP_ID:-qdrant-consumer}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-ProjectManagement}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
       - FALLBACK_EMBEDDING_MODEL=${FALLBACK_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

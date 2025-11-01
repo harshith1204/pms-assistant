@@ -43,7 +43,7 @@ def main() -> None:
     args = parser.parse_args()
 
     qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
-    collection = os.getenv("QDRANT_COLLECTION", "pms_collection")
+    collection = os.getenv("QDRANT_COLLECTION", "ProjectManagement")
 
     client = QdrantClient(url=qdrant_url)
 

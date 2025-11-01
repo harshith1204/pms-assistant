@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -10,16 +11,19 @@ from dotenv import load_dotenv
 from huggingface_hub import login
 from kafka import KafkaConsumer
 from kafka.errors import NoBrokersAvailable
-from loguru import logger
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from sentence_transformers import SentenceTransformer
 
 
 # Ensure repo-root packages (qdrant, etc.) are importable when running locally
-REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
+if not any("qdrant" in p for p in sys.path):
+    try:
+        REPO_ROOT = Path(__file__).resolve().parents[3]
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.append(str(REPO_ROOT))
+    except IndexError:
+        pass
 
 from qdrant.encoder import get_splade_encoder  # noqa: E402
 from qdrant.indexing_shared import (  # noqa: E402
@@ -32,6 +36,7 @@ from qdrant.indexing_shared import (  # noqa: E402
 )
 
 
+# Updated to match setup-connectors.sh exactly
 RELEVANT_COLLECTIONS = {
     "page",
     "workItem",
@@ -58,13 +63,11 @@ def load_env_and_login() -> None:
     load_dotenv()
     token = os.getenv("HuggingFace_API_KEY")
     if not token:
-        logger.warning("No HuggingFace token provided; proceeding without login")
         return
     try:
         login(token)
-        logger.info("Authenticated with HuggingFace Hub")
     except Exception as exc:
-        logger.warning("HuggingFace login failed: {}", exc)
+        pass
 
 
 def load_embedder() -> SentenceTransformer:
@@ -73,11 +76,8 @@ def load_embedder() -> SentenceTransformer:
         "FALLBACK_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
     )
     try:
-        logger.info("Loading embedding model '{}'", primary_model)
         return SentenceTransformer(primary_model)
     except Exception as exc:
-        logger.warning("Failed to load '{}': {}", primary_model, exc)
-        logger.info("Falling back to '{}'", fallback_model)
         return SentenceTransformer(fallback_model)
 
 
@@ -92,24 +92,31 @@ def flatten_payload(raw: bytes) -> Optional[Any]:
     try:
         decoded = raw.decode("utf-8")
     except Exception as exc:
-        logger.warning("Failed to decode Kafka record as UTF-8: {}", exc)
         return None
 
+    # Handle double-escaped JSON strings from MongoDB connector
     try:
-        envelope = json.loads(decoded)
+        # First parse: might be a quoted JSON string
+        first_parse = json.loads(decoded)
+
+        # If it's a string, parse again (double-escaped case)
+        if isinstance(first_parse, str):
+            envelope = json.loads(first_parse)
+        else:
+            envelope = first_parse
     except Exception as exc:
-        logger.warning("Invalid JSON payload: {}", exc)
         return None
 
+    # Handle nested payload structure
     if isinstance(envelope, dict) and "payload" in envelope:
         payload = envelope.get("payload")
         if isinstance(payload, str):
             try:
                 return json.loads(payload)
             except Exception as exc:
-                logger.warning("Failed to parse nested payload JSON: {}", exc)
                 return None
         return payload
+
     return envelope
 
 
@@ -126,7 +133,6 @@ def parse_change_events(raw: bytes) -> List[ChangeEvent]:
         return events
 
     if not isinstance(payload, dict):
-        logger.debug("Skipping payload of type {}", type(payload))
         return []
 
     op = payload.get("operationType") or payload.get("op") or "insert"
@@ -139,7 +145,6 @@ def parse_change_events(raw: bytes) -> List[ChangeEvent]:
 
     full_document = payload.get("fullDocument")
     if isinstance(full_document, list) and full_document:
-        # Some CDC pipelines may wrap documents in a list
         events: List[ChangeEvent] = []
         for doc in full_document:
             if isinstance(doc, dict):
@@ -154,7 +159,6 @@ def parse_change_events(raw: bytes) -> List[ChangeEvent]:
         return events
 
     if op not in {"insert", "update", "replace", "delete"}:
-        logger.debug("Skipping unsupported operation '{}': {}", op, payload)
         return []
 
     document_key = payload.get("documentKey")
@@ -165,7 +169,6 @@ def parse_change_events(raw: bytes) -> List[ChangeEvent]:
     if isinstance(full_document, dict):
         document = full_document
     elif op in {"insert", "replace"}:
-        # Some connectors emit the full document at top level when publish.full.document.only=true
         document = payload if payload.get("_id") else None
 
     return [ChangeEvent(operation=op, collection=collection, full_document=document, document_key=document_key)]
@@ -189,9 +192,8 @@ def delete_points_for_parent(client: QdrantClient, collection: str, parent_id: s
             ),
             wait=True,
         )
-        logger.debug("Deleted existing points for parent_id={}", parent_id)
     except Exception as exc:
-        logger.warning("Failed to delete points for parent_id {}: {}", parent_id, exc)
+        pass
 
 
 def process_event(
@@ -202,77 +204,43 @@ def process_event(
     splade_encoder: Any,
 ) -> None:
     if event.collection not in RELEVANT_COLLECTIONS:
-        logger.debug("Ignoring collection '{}'", event.collection)
         return
 
     if event.operation == "delete":
         raw_id = (event.document_key or {}).get("_id")
         if raw_id is None:
-            logger.warning(
-                "Delete event missing _id; collection={} payload={}",
-                event.collection,
-                event.document_key,
-            )
             return
         mongo_id = normalize_mongo_id(raw_id)
         if not mongo_id:
-            logger.warning("Delete event produced empty mongo_id for collection {}", event.collection)
             return
         delete_points_for_parent(client, collection_name, mongo_id)
-        logger.info(
-            "Applied delete for mongo_id={} collection={}",
-            mongo_id,
-            event.collection,
-        )
         return
 
     if not event.full_document:
-        logger.warning(
-            "Missing fullDocument for operation '{}' on collection '{}'; skipping",
-            event.operation,
-            event.collection,
-        )
         return
 
     prepared, messages = prepare_document(event.collection, event.full_document)
-    for message in messages:
-        logger.info(message)
     if not prepared:
         return
 
     chunks = chunk_prepared_document(prepared)
     mongo_id = prepared.mongo_id
     if not mongo_id:
-        logger.warning("Prepared document missing mongo_id for collection {}", event.collection)
         return
 
     delete_points_for_parent(client, collection_name, mongo_id)
 
     if not chunks:
-        logger.info(
-            "Document {} in collection {} has no indexable content; existing points removed",
-            mongo_id,
-            event.collection,
-        )
         return
 
     points = generate_points(prepared, chunks, embedder, splade_encoder)
     if not points:
-        logger.info(
-            "Document {} in collection {} produced no points after chunk generation",
-            mongo_id,
-            event.collection,
-        )
         return
 
-    client.upsert(collection_name=collection_name, points=points, wait=True)
-    logger.info(
-        "Upserted {} points for mongo_id={} collection={} (operation={})",
-        len(points),
-        mongo_id,
-        event.collection,
-        event.operation,
-    )
+    try:
+        client.upsert(collection_name=collection_name, points=points, wait=True)
+    except Exception as exc:
+        raise
 
 
 def main() -> None:
@@ -281,37 +249,32 @@ def main() -> None:
     embedder = load_embedder()
     splade_encoder = get_splade_encoder()
     embedding_dim = embedder.get_sentence_embedding_dimension()
-    logger.debug("Loaded chunking config for: {}", ", ".join(sorted(CHUNKING_CONFIG.keys())))
-
     log_level = get_env("LOG_LEVEL", "INFO")
-    logger.remove()
-    logger.add(lambda msg: print(msg, end=""), level=log_level)
 
     bootstrap = get_env("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-    topic = get_env("KAFKA_TOPIC", "data-sync.documents")
+    topic_pattern = get_env("KAFKA_TOPIC", "ProjectManagement\..*")
     group_id = get_env("KAFKA_GROUP_ID", "qdrant-consumer")
     qdrant_url = get_env("QDRANT_URL", "http://qdrant:6333")
-    collection = get_env("QDRANT_COLLECTION", "pms_collection")
+    collection = get_env("QDRANT_COLLECTION", "ProjectManagement")
     batch_max_messages = int(get_env("BATCH_MAX_MESSAGES", "128"))
     batch_max_seconds = float(get_env("BATCH_MAX_SECONDS", "2"))
-
-    logger.info("Using embedding dimension {}", embedding_dim)
 
     client = None
     while client is None:
         try:
             client = QdrantClient(url=qdrant_url)
         except Exception as exc:
-            logger.warning("Waiting for Qdrant availability: {}", exc)
             time.sleep(2)
 
     ensure_collection_with_hybrid(client, collection, vector_size=embedding_dim)
 
+    # Convert regex pattern to actual regex for subscription
+    topic_regex = re.compile(topic_pattern)
+    
     consumer: Optional[KafkaConsumer] = None
     while consumer is None:
         try:
             consumer = KafkaConsumer(
-                topic,
                 bootstrap_servers=[s.strip() for s in bootstrap.split(",") if s.strip()],
                 group_id=group_id,
                 enable_auto_commit=False,
@@ -319,14 +282,15 @@ def main() -> None:
                 value_deserializer=lambda m: m,
                 key_deserializer=lambda m: m,
             )
+            # Subscribe using pattern
+            consumer.subscribe(pattern=topic_regex)
         except Exception as exc:
-            logger.warning("Waiting for Kafka consumer: {}", exc)
             time.sleep(2)
-
-    logger.info("Started consumer on topic '{}'", topic)
 
     batch_events: List[ChangeEvent] = []
     last_flush_ts = time.monotonic()
+    processed_count = 0
+    error_count = 0
 
     while True:
         try:
@@ -338,11 +302,10 @@ def main() -> None:
             records_map = consumer.poll(timeout_ms=poll_timeout_ms, max_records=max_records)
             total_polled = sum(len(records) for records in (records_map or {}).values())
 
-            for records in (records_map or {}).values():
+            for topic_partition, records in (records_map or {}).items():
                 for msg in records:
                     events = parse_change_events(msg.value)
                     if events:
-                        logger.debug("Parsed {} change events from message", len(events))
                         batch_events.extend(events)
 
             should_flush = False
@@ -352,22 +315,25 @@ def main() -> None:
                 should_flush = True
 
             if should_flush:
-                try:
-                    for event in batch_events:
+                batch_errors = 0
+                for idx, event in enumerate(batch_events):
+                    try:
                         process_event(event, client, collection, embedder, splade_encoder)
+                        processed_count += 1
+                    except Exception as exc:
+                        batch_errors += 1
+                        error_count += 1
+
+                if batch_errors == 0:
                     consumer.commit()
-                    batch_events.clear()
-                    last_flush_ts = time.monotonic()
-                except Exception as exc:
-                    logger.exception("Batch processing failed: {}", exc)
-                    time.sleep(0.5)
+                
+                batch_events.clear()
+                last_flush_ts = time.monotonic()
 
             if total_polled == 0 and not should_flush:
                 time.sleep(0.1)
 
         except Exception as exc:
-            logger.exception("Consumer loop error: {}", exc)
-            logger.warning("Recreating consumer in 5 seconds")
             time.sleep(5)
             try:
                 consumer.close()
@@ -377,7 +343,6 @@ def main() -> None:
             while consumer is None:
                 try:
                     consumer = KafkaConsumer(
-                        topic,
                         bootstrap_servers=[s.strip() for s in bootstrap.split(",") if s.strip()],
                         group_id=group_id,
                         enable_auto_commit=False,
@@ -385,8 +350,8 @@ def main() -> None:
                         value_deserializer=lambda m: m,
                         key_deserializer=lambda m: m,
                     )
+                    consumer.subscribe(pattern=topic_regex)
                 except NoBrokersAvailable as broker_exc:
-                    logger.warning("Waiting for Kafka broker during recovery: {}", broker_exc)
                     time.sleep(2)
 
 
