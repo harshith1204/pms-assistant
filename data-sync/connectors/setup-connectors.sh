@@ -19,7 +19,7 @@ config_path = os.environ.get("CONFIG_PATH", "/tmp/mongodb-source-connector.json"
 uri = os.environ.get("MONGODB_URI", "mongodb://mongodb:27017/?replicaSet=rs0")
 database = os.environ.get("MONGODB_DATABASE", "ProjectManagement")
 topic = os.environ.get("KAFKA_TOPIC", "data-sync.documents")
-collections = ["page", "workItem", "project", "cycle", "module", "epic"]
+collections = ["page", "workItem", "project", "cycle", "module", "epic", "features", "userStory"]
 
 pipeline = [
     {

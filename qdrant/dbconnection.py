@@ -30,6 +30,8 @@ try:
     module_collection = db["module"]
     project_collection = db["project"]
     epic_collection = db["epic"]
+    feature_collection = db["features"]
+    userstory_collection = db["userStory"]
 
 except Exception as e:
     print("❌ MongoDB connection failed:", e)

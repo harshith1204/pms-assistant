@@ -39,6 +39,10 @@ RELEVANT_COLLECTIONS = {
     "cycle",
     "module",
     "epic",
+    "feature",
+    "features",
+    "userStory",
+    "userStories",
 }
 
 

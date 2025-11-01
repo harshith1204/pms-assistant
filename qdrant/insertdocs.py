@@ -15,10 +15,12 @@ from qdrant.dbconnection import (  # noqa: E402
     QDRANT_COLLECTION,
     cycle_collection,
     epic_collection,
+    feature_collection,
     module_collection,
     page_collection,
     project_collection,
     qdrant_client,
+    userstory_collection,
     workitem_collection,
 )
 from qdrant.encoder import get_splade_encoder  # noqa: E402
@@ -268,6 +270,52 @@ COLLECTION_PROJECTIONS: Dict[str, Optional[Dict[str, int]]] = {
         "stateMaster": 1,
         "createdBy": 1,
     },
+    "features": {
+        "_id": 1,
+        "basicInfo": 1,
+        "problemInfo": 1,
+        "displayBugNo": 1,
+        "requirements": 1,
+        "riskAndDependencies": 1,
+        "project": 1,
+        "business": 1,
+        "state": 1,
+        "stateMaster": 1,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "createdBy": 1,
+        "priority": 1,
+        "assignee": 1,
+        "label": 1,
+        "modules": 1,
+        "cycle": 1,
+        "startDate": 1,
+        "endDate": 1,
+        "releaseDate": 1,
+        "scope": 1,
+        "goals": 1,
+        "painPoints": 1,
+        "workItems": 1,
+        "userStories": 1,
+        "addLink": 1,
+    },
+    "userStory": {
+        "_id": 1,
+        "displayBugNo": 1,
+        "title": 1,
+        "description": 1,
+        "demographics": 1,
+        "project": 1,
+        "business": 1,
+        "state": 1,
+        "stateMaster": 1,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "createdBy": 1,
+        "priority": 1,
+        "assignee": 1,
+        "label": 1,
+    },
 }
 
 
@@ -278,6 +326,8 @@ COLLECTION_SOURCES = {
     "cycle": cycle_collection,
     "module": module_collection,
     "epic": epic_collection,
+    "features": feature_collection,
+    "userStory": userstory_collection,
 }
 
 
@@ -357,7 +407,7 @@ def main() -> None:
         print(
             f"  - {content_type.upper()}: size {cfg['max_words']} words, overlap {cfg['overlap_words']}"
         )
-    print("  - EPIC: using WORK_ITEM defaults")
+    print("  - FEATURE & USER_STORY reuse WORK_ITEM defaults")
 
     results = {}
     for collection_name in COLLECTION_SOURCES:

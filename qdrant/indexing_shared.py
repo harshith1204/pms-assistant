@@ -40,6 +40,8 @@ CHUNKING_CONFIG: Dict[str, Dict[str, int]] = {
     "project": {"max_words": 220, "overlap_words": 40, "min_words_to_chunk": 220},
     "cycle": {"max_words": 220, "overlap_words": 40, "min_words_to_chunk": 220},
     "module": {"max_words": 220, "overlap_words": 40, "min_words_to_chunk": 220},
+    "feature": {"max_words": 220, "overlap_words": 40, "min_words_to_chunk": 220},
+    "user_story": {"max_words": 220, "overlap_words": 40, "min_words_to_chunk": 220},
 }
 
 
@@ -50,6 +52,10 @@ PROJECT_COLLECTIONS = {
     "cycle": "cycle",
     "module": "module",
     "epic": "epic",
+    "feature": "feature",
+    "features": "feature",
+    "userStory": "user_story",
+    "userStories": "user_story",
 }
 
 
@@ -346,6 +352,10 @@ def prepare_document(collection_name: str, doc: Dict[str, Any]) -> Tuple[Optiona
             return _prepare_module(doc)
         if content_type == "epic":
             return _prepare_epic(doc)
+        if content_type == "feature":
+            return _prepare_feature(doc)
+        if content_type == "user_story":
+            return _prepare_user_story(doc)
     except SkipDocument as exc:
         return None, [str(exc)]
     except Exception as exc:  # pragma: no cover - defensive logging
@@ -428,6 +438,25 @@ def generate_points(
 
 class SkipDocument(RuntimeError):
     pass
+
+
+def _extend_with_text(parts: List[str], value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, str):
+        text = html_to_text(value)
+        if text:
+            parts.append(text)
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            _extend_with_text(parts, item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _extend_with_text(parts, item)
+    else:
+        text = str(value)
+        if text and text.lower() not in {"none", "null"}:
+            parts.append(text)
 
 
 def _prepare_page(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
@@ -757,6 +786,240 @@ def _prepare_epic(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
     )
 
     return prepared, []
+
+
+def _prepare_feature(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
+    mongo_id = normalize_mongo_id(doc.get("_id"))
+    basic = doc.get("basicInfo") or {}
+    title = html_to_text(basic.get("title", "") or doc.get("title", ""))
+
+    text_parts: List[str] = []
+    if title:
+        text_parts.append(title)
+    _extend_with_text(text_parts, doc.get("displayBugNo"))
+    _extend_with_text(text_parts, basic.get("description"))
+    _extend_with_text(text_parts, basic.get("status"))
+
+    problem_info = doc.get("problemInfo") or {}
+    _extend_with_text(text_parts, problem_info.get("statement"))
+    _extend_with_text(text_parts, problem_info.get("objective"))
+    _extend_with_text(text_parts, problem_info.get("successCriteria"))
+
+    requirements = doc.get("requirements") or {}
+    _extend_with_text(text_parts, requirements.get("functionalRequirements"))
+    _extend_with_text(text_parts, requirements.get("nonFunctionalRequirements"))
+
+    risk = doc.get("riskAndDependencies") or {}
+    _extend_with_text(text_parts, risk.get("dependencies"))
+    _extend_with_text(text_parts, risk.get("risks"))
+
+    _extend_with_text(text_parts, doc.get("scope"))
+    _extend_with_text(text_parts, doc.get("goals"))
+    _extend_with_text(text_parts, doc.get("painPoints"))
+    _extend_with_text(text_parts, doc.get("description"))
+
+    work_items = doc.get("workItems")
+    if isinstance(work_items, list):
+        for item in work_items:
+            if isinstance(item, dict):
+                name = html_to_text(item.get("name", ""))
+                if name:
+                    text_parts.append(name)
+
+    linked_stories = doc.get("userStories")
+    if isinstance(linked_stories, list):
+        for item in linked_stories:
+            if isinstance(item, dict):
+                name = html_to_text(item.get("name", ""))
+                if name:
+                    text_parts.append(name)
+
+    links = doc.get("addLink")
+    if isinstance(links, list):
+        for entry in links:
+            if not isinstance(entry, dict):
+                continue
+            display_title = html_to_text(entry.get("displayTitle", ""))
+            if display_title:
+                text_parts.append(display_title)
+            url = entry.get("url")
+            if isinstance(url, str) and url:
+                text_parts.append(url)
+
+    combined_text = " ".join(part for part in text_parts if part).strip()
+    if not combined_text:
+        raise SkipDocument(f"WARN: skipping feature {mongo_id} - no substantial text content")
+
+    metadata: Dict[str, Any] = {
+        "displayBugNo": doc.get("displayBugNo"),
+        "priority": doc.get("priority"),
+        "status": basic.get("status"),
+        "createdAt": doc.get("createdAt"),
+        "updatedAt": doc.get("updatedAt"),
+        "startDate": doc.get("startDate"),
+        "endDate": doc.get("endDate"),
+        "releaseDate": doc.get("releaseDate"),
+    }
+
+    project = doc.get("project")
+    if isinstance(project, dict):
+        metadata["project_name"] = project.get("name")
+        if project.get("_id") is not None:
+            metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+
+    business = doc.get("business")
+    if isinstance(business, dict):
+        metadata["business_name"] = business.get("name")
+        if business.get("_id") is not None:
+            metadata["business_id"] = normalize_mongo_id(business.get("_id"))
+
+    state = doc.get("state")
+    if isinstance(state, dict):
+        metadata["state_name"] = state.get("name")
+
+    state_master = doc.get("stateMaster")
+    if isinstance(state_master, dict):
+        metadata["stateMaster_name"] = state_master.get("name")
+
+    cycle = doc.get("cycle")
+    if isinstance(cycle, dict):
+        metadata["cycle_name"] = cycle.get("name")
+
+    modules = doc.get("modules")
+    if isinstance(modules, dict):
+        metadata["module_name"] = modules.get("name")
+
+    created_by = doc.get("createdBy")
+    if isinstance(created_by, dict):
+        metadata["created_by_name"] = created_by.get("name")
+
+    assignee = doc.get("assignee")
+    if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
+        metadata["assignee_name"] = assignee[0].get("name")
+    elif isinstance(assignee, dict):
+        metadata["assignee_name"] = assignee.get("name")
+
+    labels = doc.get("label")
+    if isinstance(labels, list):
+        label_names = [html_to_text((label or {}).get("name", "")) for label in labels]
+        label_names = [name for name in label_names if name]
+        if label_names:
+            metadata["labels"] = label_names
+            text_parts.extend(label_names)
+
+    prepared_title = title or doc.get("displayBugNo", "") or mongo_id
+    warnings: List[str] = []
+    if not title:
+        warnings.append(f"WARN: feature {mongo_id} missing title; using identifier fallback")
+
+    prepared = PreparedDocument(
+        content_type="feature",
+        mongo_id=mongo_id,
+        title=prepared_title,
+        combined_text=combined_text,
+        metadata=metadata,
+    )
+
+    return prepared, warnings
+
+
+def _prepare_user_story(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
+    mongo_id = normalize_mongo_id(doc.get("_id"))
+    title = html_to_text(doc.get("title", ""))
+
+    text_parts: List[str] = []
+    if title:
+        text_parts.append(title)
+    _extend_with_text(text_parts, doc.get("displayBugNo"))
+    _extend_with_text(text_parts, doc.get("demographics"))
+    _extend_with_text(text_parts, doc.get("description"))
+    _extend_with_text(text_parts, doc.get("summary"))
+    _extend_with_text(text_parts, doc.get("acceptanceCriteria"))
+    _extend_with_text(text_parts, doc.get("notes"))
+
+    excluded = {
+        "_id",
+        "displayBugNo",
+        "title",
+        "description",
+        "demographics",
+        "project",
+        "business",
+        "state",
+        "stateMaster",
+        "createdAt",
+        "updatedAt",
+        "createdBy",
+        "priority",
+        "assignee",
+        "label",
+    }
+    text_parts.extend(_aggregate_text_parts(doc, excluded_fields=excluded))
+
+    combined_text = " ".join(part for part in text_parts if part).strip()
+    if not combined_text:
+        raise SkipDocument(f"WARN: skipping user story {mongo_id} - no substantial text content")
+
+    metadata: Dict[str, Any] = {
+        "displayBugNo": doc.get("displayBugNo"),
+        "demographics": doc.get("demographics"),
+        "priority": doc.get("priority"),
+        "createdAt": doc.get("createdAt"),
+        "updatedAt": doc.get("updatedAt"),
+    }
+
+    project = doc.get("project")
+    if isinstance(project, dict):
+        metadata["project_name"] = project.get("name")
+        if project.get("_id") is not None:
+            metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+
+    business = doc.get("business")
+    if isinstance(business, dict):
+        metadata["business_name"] = business.get("name")
+        if business.get("_id") is not None:
+            metadata["business_id"] = normalize_mongo_id(business.get("_id"))
+
+    state = doc.get("state")
+    if isinstance(state, dict):
+        metadata["state_name"] = state.get("name")
+
+    state_master = doc.get("stateMaster")
+    if isinstance(state_master, dict):
+        metadata["stateMaster_name"] = state_master.get("name")
+
+    created_by = doc.get("createdBy")
+    if isinstance(created_by, dict):
+        metadata["created_by_name"] = created_by.get("name")
+
+    assignee = doc.get("assignee")
+    if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
+        metadata["assignee_name"] = assignee[0].get("name")
+    elif isinstance(assignee, dict):
+        metadata["assignee_name"] = assignee.get("name")
+
+    labels = doc.get("label")
+    if isinstance(labels, list):
+        label_names = [html_to_text((label or {}).get("name", "")) for label in labels]
+        label_names = [name for name in label_names if name]
+        if label_names:
+            metadata["labels"] = label_names
+            text_parts.extend(label_names)
+
+    prepared_title = title or doc.get("displayBugNo", "") or mongo_id
+    warnings: List[str] = []
+    if not title:
+        warnings.append(f"WARN: user story {mongo_id} missing title; using identifier fallback")
+
+    prepared = PreparedDocument(
+        content_type="user_story",
+        mongo_id=mongo_id,
+        title=prepared_title,
+        combined_text=combined_text,
+        metadata=metadata,
+    )
+
+    return prepared, warnings
 
 
 def _aggregate_text_parts(doc: Dict[str, Any], *, excluded_fields: set[str]) -> List[str]:
