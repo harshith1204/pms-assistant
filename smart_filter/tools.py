@@ -89,288 +89,88 @@ class SmartFilterTools:
             return True
         except Exception:
             return False
-        
-    @tool
-    async def mongo_query(self, query: str, show_all: bool = False) -> MongoQueryResult:
+    
+    async def execute_mongo_query(
+        self,
+        query: str,
+        show_all: bool = False,
+        limit: Optional[int] = None,
+    ) -> MongoQueryResult:
         """
         Execute mongo-query with the given parameters
-        
+
         Args:
             query: Natural language query for MongoDB
             show_all: Whether to show all results or limit for performance
-            
+
         Returns:
             MongoQueryResult with formatted work items
         """
-        if not plan_and_execute_query:
-            raise RuntimeError("mongo-query tool not available")
-        
-        result = await plan_and_execute_query(query)
-            
-        if result["success"]:
-            response = f"🎯 INTELLIGENT QUERY RESULT:\n"
-            response += f"Query: '{query}'\n\n"
+        # Note: mongo_query is no longer used - we use plan_and_execute_query from planner
 
-            # Show parsed intent
-            intent = result["intent"]
-            response += f"📋 UNDERSTOOD INTENT:\n"
-            if result.get("planner"):
-                response += f"• Planner: {result['planner']}\n"
-            response += f"• Primary Entity: {intent['primary_entity']}\n"
-            if intent['target_entities']:
-                response += f"• Related Entities: {', '.join(intent['target_entities'])}\n"
-            if intent['filters']:
-                response += f"• Filters: {intent['filters']}\n"
-            if intent['aggregations']:
-                response += f"• Aggregations: {', '.join(intent['aggregations'])}\n"
-            response += "\n"
+        try:
+            result_payload = await plan_and_execute_query(query)
 
-            # Show the generated pipeline (first few stages)
-            pipeline = result.get("pipeline")
-            pipeline_js = result.get("pipeline_js")
-            if pipeline_js:
-                response += f"🔧 GENERATED PIPELINE:\n"
-                response += pipeline_js
-                response += "\n"
-            elif pipeline:
-                response += f"🔧 GENERATED PIPELINE:\n"
-                # Import the formatting function from planner
-                try:
-                    from .planner import _format_pipeline_for_display
-                    formatted_pipeline = _format_pipeline_for_display(pipeline)
-                    response += formatted_pipeline
-                except ImportError:
-                    # Fallback to JSON format if import fails
-                    for i, stage in enumerate(pipeline):
-                        stage_name = list(stage.keys())[0]
-                        # Format the stage content nicely
-                        stage_content = json.dumps(stage[stage_name], indent=2)
-                        # Truncate very long content for readability but show complete structure
-                        if len(stage_content) > 200:
-                            stage_content = stage_content + "..."
-                        response += f"• {stage_name}: {stage_content}\n"
-                response += "\n"
+            if not isinstance(result_payload, dict):
+                raise RuntimeError("Planner returned unexpected response type")
 
-            # Show results (compact preview)
-            rows = result.get("result")
-            try:
-                # Attempt to parse stringified JSON results
-                if isinstance(rows, str):
-                    parsed = json.loads(rows)
+            if not result_payload.get("success"):
+                raise RuntimeError(result_payload.get("error", "Unknown planner error"))
+
+            raw_rows = result_payload.get("result") or []
+
+            work_items: List[Dict[str, Any]] = []
+            total_count: int = 0
+
+            if isinstance(raw_rows, list):
+                for item in raw_rows:
+                    if isinstance(item, dict):
+                        work_items.append(item)
+                    elif isinstance(item, str):
+                        try:
+                            parsed_item = json.loads(item)
+                            if isinstance(parsed_item, dict):
+                                work_items.append(parsed_item)
+                        except Exception:
+                            continue
+
+                # Attempt to extract total/count metadata when present
+                if raw_rows and isinstance(raw_rows[0], dict) and "total" in raw_rows[0]:
+                    try:
+                        total_count = int(raw_rows[0]["total"])
+                    except Exception:
+                        total_count = len(work_items)
                 else:
-                    parsed = rows
-            except Exception:
-                parsed = rows
+                    total_count = len(work_items)
 
+            elif isinstance(raw_rows, dict):
+                # Count-only shape
+                if "total" in raw_rows:
+                    try:
+                        total_count = int(raw_rows["total"])
+                    except Exception:
+                        total_count = 0
+                # When single document returned
+                if raw_rows:
+                    work_items.append(raw_rows)
 
-            def format_llm_friendly(data, max_items=50, primary_entity: Optional[str] = None):
-                """Format data in a more LLM-friendly way to avoid hallucinations."""
-                def get_nested(d: Dict[str, Any], key: str) -> Any:
-                    if key in d:
-                        return d[key]
-                    if "." in key:
-                        cur: Any = d
-                        for part in key.split("."):
-                            if isinstance(cur, dict) and part in cur:
-                                cur = cur[part]
-                            else:
-                                return None
-                        return cur
-                    return None
+            # Honor explicit limit when provided (unless show_all requested)
+            if not show_all and limit is not None and limit > 0:
+                work_items = work_items[:limit]
 
-                def ensure_list_str(val: Any) -> List[str]:
-                    if isinstance(val, list):
-                        res: List[str] = []
-                        for x in val:
-                            if isinstance(x, str) and x.strip():
-                                res.append(x)
-                            elif isinstance(x, dict):
-                                n = x.get("name") or x.get("title")
-                                if isinstance(n, str) and n.strip():
-                                    res.append(n)
-                        return res
-                    if isinstance(val, dict):
-                        n = val.get("name") or val.get("title")
-                        return [n] if isinstance(n, str) and n.strip() else []
-                    if isinstance(val, str) and val.strip():
-                        return [val]
-                    return []
+            if total_count == 0:
+                total_count = len(work_items)
 
-                def truncate_str(s: Any, limit: int = 120) -> str:
-                    if not isinstance(s, str):
-                        return str(s)
-                    return s if len(s) <= limit else s[:limit] + "..."
+            return MongoQueryResult(
+                work_items=work_items,
+                total_count=total_count,
+                query=query,
+                raw_result=result_payload,
+            )
 
-                def render_line(entity: Dict[str, Any]) -> str:
-                    e = (primary_entity or "").lower()
-                    if e == "workitem":
-                        bug = entity.get("displayBugNo") or entity.get("title") or "Item"
-                        title = entity.get("title") or entity.get("name") or ""
-                        state = entity.get("stateName") or get_nested(entity, "state.name")
-                        project = entity.get("projectName") or get_nested(entity, "project.name")
-                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
-                        priority = entity.get("priority")
-                        label = entity.get_nested(entity,"label.name")
-                        # Build base line
-                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}"
-                        
-                        # Add estimate if present
-                        estimate = entity.get("estimate")
-                        if estimate and isinstance(estimate, dict):
-                            hr = estimate.get("hr", "0")
-                            min_val = estimate.get("min", "0")
-                            base += f", estimate={hr}h {min_val}m"
-                        elif estimate:
-                            base += f", estimate={estimate}"
-                        
-                        # Add work logs if present
-                        work_logs = entity.get("workLogs")
-                        if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
-                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
-                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
-                            total_hours += total_mins // 60
-                            total_mins = total_mins % 60
-                            base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
-                            
-                            descriptions = [
-                                log.get("description", "").strip()
-                                for log in work_logs
-                                if isinstance(log, dict) and log.get("description")
-                            ]
-                            descriptions_text = "; ".join(descriptions) if descriptions else "No descriptions"
-
-                            base += f", descriptions=[{descriptions_text}]"
-                        return base
-                    title = entity.get("title") or entity.get("name") or "Item"
-                    return f"• {truncate_str(title, 80)}"
-                if isinstance(data, list):
-                    # Handle count-only results
-                    if len(data) == 1 and isinstance(data[0], dict) and "total" in data[0]:
-                        return f"📊 RESULTS:\nTotal: {data[0]['total']}"
-
-                    # Handle grouped/aggregated results
-                    if len(data) > 0 and isinstance(data[0], dict) and ("count" in data[0] or "totalMinutes" in data[0]):
-                        response = "📊 RESULTS SUMMARY:\n"
-                        # Prefer minutes total when available, else use count
-                        has_minutes = any('totalMinutes' in item for item in data)
-                        total_items = sum(item.get('count', 0) for item in data)
-                        total_minutes = sum(item.get('totalMinutes', 0) for item in data) if has_minutes else None
-
-                        # Determine what type of grouping this is
-                        first_item = data[0]
-                        group_keys = [k for k in first_item.keys() if k not in ['count', 'items', 'totalMinutes']]
-
-                        if group_keys:
-                            if has_minutes and total_minutes is not None:
-                                response += f"Found {len(data)} groups grouped by {', '.join(group_keys)} (total {int(total_minutes)} min):\n\n"
-                            else:
-                                response += f"Found {total_items} items grouped by {', '.join(group_keys)}:\n\n"
-
-                            # Sort by count (highest first) and show more groups
-                            if has_minutes:
-                                sorted_data = sorted(data, key=lambda x: x.get('totalMinutes', 0), reverse=True)
-                            else:
-                                sorted_data = sorted(data, key=lambda x: x.get('count', 0), reverse=True)
-
-                            # Show all groups if max_items is None, otherwise limit
-                            display_limit = len(sorted_data) if max_items is None else 25
-                            for item in sorted_data[:display_limit]:
-                                group_values = [f"{k}: {item[k]}" for k in group_keys if k in item]
-                                group_label = ', '.join(group_values)
-                                if has_minutes:
-                                    mins = int(item.get('totalMinutes', 0) or 0)
-                                    response += f"• {group_label}: {mins} min\n"
-                                else:
-                                    count = item.get('count', 0)
-                                    response += f"• {group_label}: {count} items\n"
-
-                            if max_items is not None and len(data) > 25:
-                                if has_minutes:
-                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[25:])
-                                    response += f"• ... and {len(data) - 25} other categories: {remaining} min\n"
-                                else:
-                                    remaining = sum(item.get('count', 0) for item in sorted_data[25:])
-                                    response += f"• ... and {len(data) - 25} other categories: {remaining} items\n"
-                            elif max_items is None and len(data) > display_limit:
-                                if has_minutes:
-                                    remaining = sum(int(item.get('totalMinutes', 0) or 0) for item in sorted_data[display_limit:])
-                                    response += f"• ... and {len(data) - display_limit} other categories: {remaining} min\n"
-                                else:
-                                    remaining = sum(item.get('count', 0) for item in sorted_data[display_limit:])
-                                    response += f"• ... and {len(data) - display_limit} other categories: {remaining} items\n"
-                        else:
-                            if has_minutes and total_minutes is not None:
-                                response += f"Found total {int(total_minutes)} min\n"
-                            else:
-                                response += f"Found {total_items} items\n"
-                        print(response)
-                        return response
-
-                    # Handle list of documents - show summary instead of raw JSON
-                    if max_items is not None and len(data) > max_items:
-                        response = f"📊 RESULTS SUMMARY:\n"
-                        response += f"Found {len(data)} items. Showing key details for last {max_items}:\n\n"
-                        # Show sample items in a collection-aware way
-                        for i, item in enumerate(data[-max_items:], len(data) - max_items + 1):
-                            if isinstance(item, dict):
-                                response += render_line(item) + "\n"
-                        if len(data) > max_items:
-                            response += f"• ... and {len(data) - max_items} items were omitted above\n"
-                        return response
-                    else:
-                        # Show all items or small list - show in formatted way
-                        response = "📊 RESULTS:\n"
-                        for item in data:
-                            if isinstance(item, dict):
-                                response += render_line(item) + "\n"
-                        return response
-
-                # Single document or other data
-                if isinstance(data, dict):
-                    # Format single document in a readable way
-                    response = "📊 RESULT:\n"
-                    # Prefer a single-line summary first
-                    if isinstance(data, dict):
-                        response += render_line(data) + "\n\n"
-                    # Then show key fields compactly (truncate long strings)
-                    for key, value in data.items():
-                        if isinstance(value, (str, int, float, bool)):
-                            response += f"• {key}: {truncate_str(value, 140)}\n"
-                        elif isinstance(value, dict):
-                            # Show only shallow summary for dict
-                            name_val = value.get('name') or value.get('title')
-                            if name_val:
-                                response += f"• {key}: {truncate_str(name_val, 120)}\n"
-                            else:
-                                child_keys = ", ".join(list(value.keys())[:5])
-                                response += f"• {key}: {{ {child_keys} }}\n"
-                        elif isinstance(value, list):
-                            if len(value) <= 5:
-                                response += f"• {key}: {truncate_str(str(value), 160)}\n"
-                            else:
-                                response += f"• {key}: [{len(value)} items]\n"
-                    return response
-                else:
-                    # Fallback to JSON for other data types
-                    return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
-
-            # Apply strong filter/transform now that we know the primary entity
-
-            # Format in LLM-friendly way
-            max_items = None if show_all else 50
-            # If members primary entity and no rows, proactively hint about filters
-            try:
-                if isinstance(result.get("intent"), dict) and result["intent"].get("primary_entity") == "members" and not filtered:
-                    formatted_result += "\n(No members matched. Try filtering by name, role, type, or project.)"
-            except Exception:
-                pass
-            response += formatted_result
-            print(response)
-            return response
-        else:
-            return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
+        except Exception as e:
+            raise RuntimeError(f"Mongo query execution failed: {str(e)}")
     
-    @tool
     async def execute_rag_search(
         self, 
         query: str, 
@@ -461,37 +261,45 @@ class SmartFilterTools:
                         min_score=0.5,
                         context_token_budget=4000
                     )
-                    
-                    # Extract work item IDs from reconstructed docs
+
+                    # Extract identifiers and keep reconstructed docs for downstream usage
                     for doc in reconstructed_docs:
-                        # Extract work item IDs from content using regex patterns
-                        import re
-                        
-                        # Look for patterns like "HELLO-123", work item numbers, or IDs
-                        patterns = [
-                            r'([A-Z]+-\d+)',  # HELLO-123 format
-                            r'work.?item.?(\w+)',  # work item mentions
-                            r'task.?(\w+)',  # task mentions
-                            r'issue.?(\w+)',  # issue mentions
-                        ]
-                        
-                        content = doc.full_content.lower()
-                        for pattern in patterns:
-                            matches = re.findall(pattern, content, re.IGNORECASE)
-                            for match in matches:
-                                if isinstance(match, tuple):
-                                    match = match[0]
-                                # Clean the match
-                                clean_match = re.sub(r'[^\w-]', '', str(match))
-                                if clean_match and len(clean_match) > 2:
-                                    work_item_ids.add(clean_match)
-                        
-                        # Also check metadata for direct work item references
-                        if doc.metadata.get('work_item_id'):
-                            work_item_ids.add(doc.metadata['work_item_id'])
-                        if doc.metadata.get('display_bug_no'):
-                            work_item_ids.add(doc.metadata['display_bug_no'])
-                            
+                        if doc.mongo_id:
+                            work_item_ids.add(str(doc.mongo_id))
+
+                        # Collect metadata-sourced identifiers
+                        if doc.metadata:
+                            for key in ["mongo_id", "work_item_id", "workItemId", "displayBugNo", "display_bug_no"]:
+                                value = doc.metadata.get(key)
+                                if isinstance(value, str) and value.strip():
+                                    work_item_ids.add(value.strip())
+
+                                elif isinstance(value, list):
+                                    for item in value:
+                                        if isinstance(item, str) and item.strip():
+                                            work_item_ids.add(item.strip())
+
+                        # Regex-based fallback from reconstructed content
+                        try:
+                            import re
+                            content_lower = doc.full_content.lower()
+                            patterns = [
+                                r'([A-Z]+-\d+)',  # BUG-123 style identifiers
+                                r'displaybugno[:\s]+([\w-]+)',
+                                r'bug[:\s]+([\w-]+)',
+                            ]
+                            for pattern in patterns:
+                                for match in re.findall(pattern, content_lower, re.IGNORECASE):
+                                    if isinstance(match, tuple):
+                                        match = match[0]
+                                    cleaned = re.sub(r'[^\w-]', '', match)
+                                    if cleaned:
+                                        work_item_ids.add(cleaned)
+                        except Exception:
+                            pass
+
+                    reconstructed_docs = reconstructed_docs or []
+
                 except Exception as e:
                     print(f"Warning: Direct RAG search failed: {e}")
             
@@ -504,73 +312,7 @@ class SmartFilterTools:
             
         except Exception as e:
             raise RuntimeError(f"RAG search execution failed: {str(e)}")
-    
-        
-        # # Project to match the required API response structure
-        # pipeline.append({
-        #     "$project": {
-        #         "id": 1,
-        #         "displayBugNo": 1,
-        #         "title": 1,
-        #         "description": 1,
-        #         "state": {
-        #             "id": "$state.id",
-        #             "name": "$state.name"
-        #         },
-        #         "priority": 1,
-        #         "assignee": {
-        #             "$map": {
-        #                 "input": "$assignee",
-        #                 "as": "a",
-        #                 "in": {
-        #                     "id": "$$a.id",
-        #                     "name": "$$a.name"
-        #                 }
-        #             }
-        #         },
-        #         "label": {
-        #             "$map": {
-        #                 "input": "$label",
-        #                 "as": "l",
-        #                 "in": {
-        #                     "id": "$$l.id",
-        #                     "name": "$$l.name",
-        #                     "color": "$$l.color"
-        #                 }
-        #             }
-        #         },
-        #         "modules": {
-        #             "id": "$modules.id",
-        #             "name": "$modules.name"
-        #         },
-        #         "cycle": {
-        #             "id": "$cycle.id",
-        #             "name": "$cycle.name",
-        #             "title": "$cycle.title"
-        #         },
-        #         "startDate": 1,
-        #         "endDate": 1,
-        #         "dueDate": 1,
-        #         "createdOn": 1,
-        #         "updatedOn": 1,
-        #         "releaseDate": 1,
-        #         "createdBy": {
-        #             "id": "$createdBy.id",
-        #             "name": "$$createdBy.name"
-        #         },
-        #         "subWorkItem": 1,
-        #         "attachment": 1
-        #     }
-        # })
-        
-        # # Limit results to prevent overwhelming responses
-        # pipeline.append({"$limit": 50})
-        
-        # return {
-        #     "database": DATABASE_NAME,
-        #     "collection": "workItem",
-        #     "pipeline": pipeline
-        # }
+
 
 
 # Global instance
