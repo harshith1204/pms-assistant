@@ -1,6 +1,6 @@
 ## MongoDB CDC → Kafka → Qdrant (Real‑Time, No Manual Producer)
 
-This stack streams MongoDB changes to Kafka via the MongoDB Kafka Source Connector and ingests them into Qdrant through a Python consumer that embeds text with FastEmbed. You do NOT need to run a manual producer for normal operation.
+This stack streams MongoDB changes to Kafka via the MongoDB Kafka Source Connector and ingests them into Qdrant through a Python consumer that embeds text with SentenceTransformers + SPLADE. No manual producer is required.
 
 ### What’s included
 - **MongoDB** (replica set enabled) for CDC
@@ -9,7 +9,6 @@ This stack streams MongoDB changes to Kafka via the MongoDB Kafka Source Connect
 - **Qdrant** (pinned version) vector DB
 - **Consumer** Python app: consumes CDC, embeds text, upserts to Qdrant
 - **Kafka UI** for inspection
-- **Producer (dev only)** optional seeding tool, disabled by default
 
 ### Key design choices
 - **Event-driven**: Mongo writes automatically flow to Qdrant via Kafka.
@@ -20,7 +19,7 @@ This stack streams MongoDB changes to Kafka via the MongoDB Kafka Source Connect
 
 ## Quick start
 
-1) Build and start the stack (without dev producer):
+1) Build and start the stack:
 ```bash
 docker compose up -d --build
 ```
@@ -53,28 +52,6 @@ You should see the inserted text appear in search results within a few seconds.
 
 ---
 
-## Using the producer (optional, dev only)
-The producer is disabled by default (uses a compose profile) so normal runs don’t build or start it. To use it:
-
-- Start ONLY the producer (with the rest of the stack already up):
-```bash
-docker compose --profile devtools up -d producer
-```
-
-- Or include it when bringing everything up:
-```bash
-docker compose --profile devtools up -d --build
-```
-
-- Build the producer image explicitly (without running):
-```bash
-docker compose --profile devtools build producer
-```
-
-This separation avoids unnecessary builds and startup time in normal operation.
-
----
-
 ## Configuration
 Most defaults are production-sane for local dev. Useful envs (see docker-compose.yml):
 - **Kafka**: `KAFKA_BOOTSTRAP_SERVERS` (internal: `kafka:9092`)
@@ -82,8 +59,8 @@ Most defaults are production-sane for local dev. Useful envs (see docker-compose
 - **Consumer**:
   - `KAFKA_TOPIC` (default: `data-sync.documents`)
   - `QDRANT_URL` (default: `http://qdrant:6333`)
-  - `QDRANT_COLLECTION` (default: `documents`)
-  - `EMBEDDING_MODEL` (default: `BAAI/bge-small-en-v1.5`)
+  - `QDRANT_COLLECTION` (default: `pms_collection`)
+  - `EMBEDDING_MODEL` (default: `google/embeddinggemma-300m`)
   - Batch: `BATCH_MAX_MESSAGES`, `BATCH_MAX_SECONDS`
 - **Connect**: MongoDB source installs automatically; sink to Qdrant is intentionally disabled.
 
@@ -141,11 +118,8 @@ Most defaults are production-sane for local dev. Useful envs (see docker-compose
 
 ## Common commands
 ```bash
-# Bring core stack up (no producer)
+# Bring the stack up
 docker compose up -d --build
-
-# Include producer (dev only)
-docker compose --profile devtools up -d --build
 
 # Tail logs
 docker compose logs -f consumer
