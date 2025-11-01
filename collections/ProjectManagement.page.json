@@ -1,29 +1,151 @@
 [{
   "_id": {
     "$binary": {
-      "base64": "pGeDu/TaBx8nH6ls4lsOuw==",
+      "base64": "vW8ttx5/Ch+yzKVf/fPouw==",
       "subType": "03"
     }
   },
-  "title": "new title fjkdhsfkhdsjf dskhdfudsfgjds fdsuhdsfhds",
-  "content": "{\"blocks\":[{\"id\":\"s-DSfA4gSA\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"Ez4qc96CkM\",\"type\":\"header\",\"data\":{\"text\":\"dsdsdsd\",\"level\":2}},{\"id\":\"if-TRGbNe5\",\"type\":\"header\",\"data\":{\"text\":\"sd\",\"level\":2}},{\"id\":\"blCVHwegHr\",\"type\":\"header\",\"data\":{\"text\":\"sd\",\"level\":2}},{\"id\":\"1we4IgqdM8\",\"type\":\"header\",\"data\":{\"text\":\"sds\",\"level\":2}},{\"id\":\"egabgyXAwa\",\"type\":\"header\",\"data\":{\"text\":\"d\",\"level\":2}},{\"id\":\"6TYvNR4gnV\",\"type\":\"header\",\"data\":{\"text\":\"sd\",\"level\":2}},{\"id\":\"9J2l8hx-uV\",\"type\":\"header\",\"data\":{\"text\":\"sd\",\"level\":2}},{\"id\":\"MvquFGCn4S\",\"type\":\"header\",\"data\":{\"text\":\"d\",\"level\":2}},{\"id\":\"7e2crGRGiB\",\"type\":\"header\",\"data\":{\"text\":\"sd\",\"level\":2}},{\"id\":\"AJkswWdUW3\",\"type\":\"header\",\"data\":{\"text\":\"d\",\"level\":2}},{\"id\":\"QhoyyX6ccg\",\"type\":\"header\",\"data\":{\"text\":\"s\",\"level\":2}},{\"id\":\"uBCICfhGI8\",\"type\":\"header\",\"data\":{\"text\":\"d\",\"level\":2}},{\"id\":\"7OkBiFvA-f\",\"type\":\"header\",\"data\":{\"text\":\"dsd\",\"level\":2}}]}",
+  "title": "Test Cases For The SimpoStudio",
+  "content": "{\"blocks\":[{\"id\":\"d6GFPOfr3j\",\"type\":\"header\",\"data\":{\"text\":\"&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;\",\"level\":2}},{\"id\":\"ifOlwzR9GU\",\"type\":\"header\",\"data\":{\"text\":\"Business config -https://docs.google.com/spreadsheets/d/1WA4zmLOkaTDSQ301A9qAcMUsQVJiWt6_fI9fyVQxJTc/edit?usp=sharing\",\"level\":2}},{\"id\":\"-ilXeoOrTS\",\"type\":\"header\",\"data\":{\"text\":\"App repository config- https://docs.google.com/spreadsheets/d/1jPiGJBkcs4DqbeAYF0iuMO8f24e-sA2cTNlmO_3vzX8/edit?usp=sharing\",\"level\":2}},{\"id\":\"0XA1qbJd3q\",\"type\":\"header\",\"data\":{\"text\":\"E-commerce -https://docs.google.com/spreadsheets/d/1KIDr8pEPHCLFfGawkG5eSW98BdIAntrEmyFG3Xsuo00/edit?usp=sharing\",\"level\":2}},{\"id\":\"h0apfhl_B0\",\"type\":\"header\",\"data\":{\"text\":\"Templates -https://docs.google.com/spreadsheets/d/1MV9nBrSQ9zUlqqJ3qUItMeVHiGQgB0zOKsjw1MxGd5o/edit?usp=sharing\",\"level\":2}},{\"id\":\"eCObCbRXwG\",\"type\":\"header\",\"data\":{\"text\":\"Roles -&nbsp;https://docs.google.com/spreadsheets/d/1eIBYMEVjuztNDiuAUReoUDElK4pwwu1BhvqP5LizugM/edit?usp=sharing\",\"level\":2}}]}",
   "business": {
     "_id": {
       "$binary": {
-        "base64": "h24OhNvMBx8aHG3bN19UmA==",
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
         "subType": "03"
       }
     },
-    "name": "Jewellers Book"
+    "name": "Simpo.ai"
   },
   "project": {
     "_id": {
       "$binary": {
-        "base64": "W0zni91t0XXulreiTDqbkQ==",
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
         "subType": "03"
       }
     },
-    "name": "TEST PMS"
+    "name": "Simpo Tech"
+  },
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "iW0xJiHOBx8oxZkcDz85uQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Uday Surya"
+  },
+  "visibility": "PUBLIC",
+  "linkedCycle": [],
+  "linkedModule": [],
+  "linkedPages": [],
+  "linkedMembers": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "iW0xJiHOBx8oxZkcDz85uQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Uday Surya"
+    }
+  ],
+  "locked": false,
+  "isFavourite": false,
+  "createdAt": {
+    "$date": "2025-10-27T07:41:42.708Z"
+  },
+  "updatedAt": {
+    "$date": "2025-10-27T07:41:42.708Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.page.Page"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "TW37hyDwCh+M4ecVcCmcsA==",
+      "subType": "03"
+    }
+  },
+  "title": "CRM Pain Points",
+  "content": "{\"blocks\":[{\"id\":\"ieZSYhoMH4\",\"type\":\"header\",\"data\":{\"text\":\"To Integrate Social Leads into CRM\\n\\n\",\"level\":2}},{\"id\":\"G7Xs27V_2E\",\"type\":\"list\",\"data\":{\"style\":\"ordered\",\"items\":[\"Connect their social media ad accounts (Meta, LinkedIn, Google Ads, etc.)\",\"Automatically receive leads in our CRM\"]}},{\"id\":\"cWXen1eJkl\",\"type\":\"header\",\"data\":{\"text\":\"Architecture Overview\",\"level\":5}},{\"id\":\"UTy7PzM6qM\",\"type\":\"paragraph\",\"data\":{\"text\":\"Client's Social Media Account (Facebook/LinkedIn/Google)\"}},{\"id\":\"wAvGZUHi3e\",\"type\":\"paragraph\",\"data\":{\"text\":\"[OAuth Authorization] → Your CRM gets access token\"}},{\"id\":\"QmciJXlOwe\",\"type\":\"paragraph\",\"data\":{\"text\":\"[Webhook Subscription] → Platform notifies your CRM of new leads\"}},{\"id\":\"TXkVjc2SLZ\",\"type\":\"paragraph\",\"data\":{\"text\":\"[Your CRM Webhook Endpoint] → Receives lead data\"}},{\"id\":\"Nqmw0cH1U5\",\"type\":\"paragraph\",\"data\":{\"text\":\"[Lead Processing Engine] → Validates, normalizes, deduplicates\"}},{\"id\":\"o3lmCtwiN9\",\"type\":\"paragraph\",\"data\":{\"text\":\"[CRM Database] → Stores lead under client account\"}},{\"id\":\"Ta_p2dQHwR\",\"type\":\"paragraph\",\"data\":{\"text\":\"[Client Dashboard] → Displays leads + sends notifications\"}},{\"id\":\"Y-82TaYb4a\",\"type\":\"header\",\"data\":{\"text\":\"Phase 1: Setup &amp; Prerequisites\",\"level\":5}},{\"id\":\"AFqTg29Gv1\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Register Developer Applications(Meta (Facebook &amp; Instagram), LinkedIn, Google Ads)\",\"<b>Deliverable<br>&nbsp; &nbsp; </b>App IDs, Secrets and API Credentials for each platform<br>&nbsp; &nbsp; Developer Documentation access<br>\"]}},{\"id\":\"i8D1m_7J-R\",\"type\":\"paragraph\",\"data\":{\"text\":\"https://www.perplexity.ai/search/first-go-through-with-https-si-J83scyFOTl6kU0WljFqnMw\"}},{\"id\":\"AdW_36f5jk\",\"type\":\"paragraph\",\"data\":{\"text\":\"provide URL for reference purpose\"}}]}",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "ImLNDR3OBx9yn/dkXec5uQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Durga B"
+  },
+  "visibility": "PUBLIC",
+  "linkedCycle": [],
+  "linkedModule": [],
+  "linkedPages": [],
+  "linkedMembers": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "ImLNDR3OBx9yn/dkXec5uQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Durga B"
+    }
+  ],
+  "locked": false,
+  "isFavourite": false,
+  "createdAt": {
+    "$date": "2025-10-25T10:30:05.000Z"
+  },
+  "updatedAt": {
+    "$date": "2025-10-25T10:30:05.000Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.page.Page"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "vmsrmQ8LCx/HVxJrgwFBrA==",
+      "subType": "03"
+    }
+  },
+  "title": "PRD For  WhatsApp Flow Builder ",
+  "content": "{\"blocks\":[{\"id\":\"e8izmgYW6m\",\"type\":\"header\",\"data\":{\"text\":\"1. Overview\",\"level\":3}},{\"id\":\"EgVGkrevYz\",\"type\":\"header\",\"data\":{\"text\":\"1.1 Purpose\",\"level\":4}},{\"id\":\"S4zrL4M6Ia\",\"type\":\"paragraph\",\"data\":{\"text\":\"The WhatsApp Flow Builder allows users to visually design, configure, and automate message journeys for WhatsApp communication.\\nIt enables users to create multi-step message flows using a drag-and-drop interface — including text messages, media, templates, product lists, and quick-reply buttons — without writing code.\"}},{\"id\":\"rPQQyh5g4P\",\"type\":\"header\",\"data\":{\"text\":\"1.2 Objective\",\"level\":4}},{\"id\":\"MlszWAtvt9\",\"type\":\"paragraph\",\"data\":{\"text\":\"To provide an intuitive, no-code interface where users can build and manage WhatsApp automation flows for use cases such as onboarding, booking confirmations, promotions, feedback collection, and customer support.\"}},{\"id\":\"wi96nb23Pt\",\"type\":\"header\",\"data\":{\"text\":\"1.3 Target Users\",\"level\":4}},{\"id\":\"L7TjJR2gTZ\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Marketing Teams\\n\",\"Customer Support Teams\\n\",\"Operations Managers\\n\",\"System Admins managing WhatsApp Business Communication\\n\"]}},{\"id\":\"P-jwck-SIJ\",\"type\":\"header\",\"data\":{\"text\":\"1.4 Success Metrics\",\"level\":4}},{\"id\":\"8fVtzDfUWl\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Reduce flow creation time by 60% compared to manual setup.\\n\",\"Achieve &lt;2% configuration error rate in published flows.\\n\",\"&gt;90% user satisfaction score for flow usability.\\n\"]}},{\"id\":\"QaLjv4mPtg\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"37HiwKvn0R\",\"type\":\"header\",\"data\":{\"text\":\"2. Scope\",\"level\":3}},{\"id\":\"g0K_7spL5M\",\"type\":\"header\",\"data\":{\"text\":\"In Scope\",\"level\":4}},{\"id\":\"hsIv-dpxaf\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Visual flow builder canvas\\n\",\"Drag-and-drop message nodes\\n\",\"WhatsApp message type configuration (text, media, template, product, list)\\n\",\"Node linking and logical branching\\n\",\"Flow start triggers based on keywords\\n\",\"Save, edit, delete, and preview functionality\\n\",\"WhatsApp API integration for testing flows\\n\"]}},{\"id\":\"QuW2mnhMct\",\"type\":\"header\",\"data\":{\"text\":\"Out of Scope\",\"level\":4}},{\"id\":\"8KLSLp0e16\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Flow analytics (future enhancement)\\n\",\"Multi-user simultaneous editing\\n\",\"AI-based flow recommendations\\n\"]}},{\"id\":\"DK4Kdbmkev\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"z3CUNhYZi5\",\"type\":\"header\",\"data\":{\"text\":\"3. Key Features &amp; Requirements\",\"level\":3}},{\"id\":\"1mLPnDJ9Yb\",\"type\":\"header\",\"data\":{\"text\":\"3.1 Flow Canvas\",\"level\":4}},{\"id\":\"mvVi9a_7fu\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Interactive grid layout for organizing nodes.\\n\",\"Zoom in/out and pan capabilities.\\n\",\"Supports connection lines between nodes to define message sequence.\\n\",\"Auto-align feature to maintain visual clarity.\\n\"]}},{\"id\":\"PxHRrdLwtQ\",\"type\":\"header\",\"data\":{\"text\":\"3.2 Left Panel: Message Types\",\"level\":4}},{\"id\":\"7NT9lpe7__\",\"type\":\"table\",\"data\":{\"withHeadings\":true,\"content\":[[\"Message Type\",\"Description\",\"Key Configurations\"],[\"Text Button\",\"Simple message with quick-reply buttons\",\"Message text, up to 3 buttons\"],[\"Media Button\",\"Message with image/video and CTA buttons\",\"Media type (Image/Video), media URL, buttons\"],[\"List Message\",\"Displays list of options for selection\",\"List title, description, items\"],[\"Catalogue Message\",\"Showcase of multiple products\",\"Product list, pricing, URLs\"],[\"Single Product\",\"One product detail message\",\"Product name, image, price\"],[\"Multi Product\",\"Multiple products carousel\",\"Up to 10 product items\"],[\"Template\",\"Pre-approved WhatsApp templates\",\"Template name, parameters\"]]}},{\"id\":\"1315x4_vsD\",\"type\":\"header\",\"data\":{\"text\":\"3.3 Flow Start Node\",\"level\":4}},{\"id\":\"j4tABR15yM\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"First node in every flow; accepts user keywords or triggers.\\n\",\"User can define multiple keywords.\\n\",\"Option to define case sensitivity or regex pattern match.\\n\"]}},{\"id\":\"lRFWoBOx5m\",\"type\":\"header\",\"data\":{\"text\":\"3.4 Message Configuration\",\"level\":4}},{\"id\":\"7Ed-Z87jEG\",\"type\":\"paragraph\",\"data\":{\"text\":\"Each message node should allow:\"}},{\"id\":\"9IaFpfGK2_\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Editing message text/content\\n\",\"Adding up to 3 buttons or actions\\n\",\"Linking buttons to other nodes\\n\",\"Uploading or linking media (images, videos, GIFs)\\n\",\"Deleting or cloning message nodes\\n\"]}},{\"id\":\"UMne25oyKs\",\"type\":\"header\",\"data\":{\"text\":\"3.5 Node Linking\",\"level\":4}},{\"id\":\"ept9BMFG3g\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Users can connect nodes visually via connectors.\\n\",\"Each button can link to one next node.\\n\",\"System should validate for broken or circular connections before saving.\\n\"]}},{\"id\":\"D5fful6Oeu\",\"type\":\"header\",\"data\":{\"text\":\"3.6 Controls &amp; Actions\",\"level\":4}},{\"id\":\"UJmngU-TNh\",\"type\":\"table\",\"data\":{\"withHeadings\":true,\"content\":[[\"Action\",\"Description\"],[\"Save Changes\",\"Saves current flow structure and configurations\"],[\"Fallback &amp; Intents\",\"Opens modal to set default or error messages\"],[\"Active/Inactive Toggle\",\"Controls whether flow is live or in draft\"],[\"Undo/Redo\",\"Allows reverting or reapplying recent actions\"],[\"Zoom\",\"Canvas zoom in/out for better view\"],[\"Rename Flow\",\"Editable flow title field\"]]}},{\"id\":\"U3KQmgLEWF\",\"type\":\"header\",\"data\":{\"text\":\"3.7 Integration\",\"level\":4}},{\"id\":\"SGRyIoL9QM\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"On publish, flow should generate JSON for WhatsApp API consumption.\\n\",\"Flow should trigger correctly when tested via sandbox WhatsApp number.\\n\",\"Each node’s message content should map correctly to WhatsApp’s message schema.\\n\"]}},{\"id\":\"fBN6n779bc\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"vdZfbBnLFl\",\"type\":\"header\",\"data\":{\"text\":\"4. User Flow\",\"level\":3}},{\"id\":\"mcNFpsjwjJ\",\"type\":\"paragraph\",\"data\":{\"text\":\"1️⃣ Create Flow:\\nUser clicks “New Flow” → “Flow Builder”\\n\"}},{\"id\":\"Suw6eDFEFv\",\"type\":\"header\",\"data\":{\"text\":\"↓\\n\",\"level\":2}},{\"id\":\"U1tH3kmAut\",\"type\":\"header\",\"data\":{\"text\":\"2️⃣ Add Flow Start Node:\\nDefine keywords to trigger the flow.\",\"level\":6}},{\"id\":\"gRu127DOs4\",\"type\":\"header\",\"data\":{\"text\":\"\\n↓\\n\",\"level\":2}},{\"id\":\"xGcwR10nhq\",\"type\":\"header\",\"data\":{\"text\":\"3️⃣ Add Message Nodes:\\nDrag message types from left panel → configure content.\\n\",\"level\":6}},{\"id\":\"Qe4ZhbXFyq\",\"type\":\"header\",\"data\":{\"text\":\"↓\\n\",\"level\":2}},{\"id\":\"csNzjLDGfc\",\"type\":\"header\",\"data\":{\"text\":\"4️⃣ Link Messages:\\nConnect nodes visually using lines.\\n\",\"level\":6}},{\"id\":\"yBhHSTFfpO\",\"type\":\"header\",\"data\":{\"text\":\"↓\\n\",\"level\":2}},{\"id\":\"mzPRWwwHCV\",\"type\":\"header\",\"data\":{\"text\":\"5️⃣ Save and Activate:\\nClick “Save Changes” → Toggle to Active.\\n\",\"level\":6}},{\"id\":\"Aa5JBiGF0I\",\"type\":\"header\",\"data\":{\"text\":\"↓\\n\",\"level\":2}},{\"id\":\"CboBGGHJza\",\"type\":\"header\",\"data\":{\"text\":\"6️⃣ Test Flow:\\nUse WhatsApp sandbox to send keyword and verify automation sequence.\",\"level\":6}},{\"id\":\"1kWs8wJV_e\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"aksNJeQhxv\",\"type\":\"header\",\"data\":{\"text\":\"5. Functional Requirements\",\"level\":3}},{\"id\":\"3FupJz18FK\",\"type\":\"table\",\"data\":{\"withHeadings\":true,\"content\":[[\"ID\",\"Requirement\",\"Priority\",\"Type\"],[\"FR1\",\"System shall allow users to create a new flow and name it\",\"High\",\"Functional\"],[\"FR2\",\"System shall support drag-and-drop message components\",\"High\",\"UI/Functional\"],[\"FR3\",\"System shall display all message types in left sidebar\",\"High\",\"UI\"],[\"FR4\",\"System shall allow adding keywords in Flow Start node\",\"High\",\"Functional\"],[\"FR5\",\"System shall allow connecting nodes via visual connectors\",\"High\",\"Functional\"],[\"FR6\",\"System shall validate flow completeness before saving\",\"High\",\"Functional\"],[\"FR7\",\"System shall allow zoom in/out and pan on canvas\",\"Medium\",\"UI\"],[\"FR8\",\"System shall persist flow data on save\",\"High\",\"Functional\"],[\"FR9\",\"System shall allow enabling/disabling flows\",\"Medium\",\"Functional\"],[\"FR10\",\"System shall support WhatsApp API trigger test\",\"High\",\"Integration\"]]}},{\"id\":\"Kbj-e4CI5H\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"mh90MIBDK7\",\"type\":\"header\",\"data\":{\"text\":\"6. Non-Functional Requirements\",\"level\":3}},{\"id\":\"s5OAoe4qOk\",\"type\":\"table\",\"data\":{\"withHeadings\":true,\"content\":[[\"Category\",\"Requirement\"],[\"Performance\",\"Flow canvas should load within 3 seconds\"],[\"Scalability\",\"Must handle up to 200 connected nodes\"],[\"Security\",\"Flow data must be user-isolated and authenticated\"],[\"Usability\",\"Drag-drop accuracy and smooth transitions\"],[\"Reliability\",\"99.9% uptime for flow saving and execution\"],[\"Compatibility\",\"Works on Chrome, Edge, Safari latest versions\"]]}},{\"id\":\"UinFwFEF-t\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"ulqtsclsH-\",\"type\":\"header\",\"data\":{\"text\":\"7. UI / UX Requirements\",\"level\":3}},{\"id\":\"aW7YsBrvWJ\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Left panel shows message types and actions (scrollable list).\\n\",\"Central canvas grid with drag, zoom, and pan.\\n\",\"Each node has card-style UI with clear icons and connection points.\\n\",\"Top-right controls for Save, Activate, Fallback &amp; Intents.\\n\",\"Visual feedback for invalid nodes or unsaved changes.\\n\"]}},{\"id\":\"RQcAdPR7Qn\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"yqsH__0lid\",\"type\":\"header\",\"data\":{\"text\":\"8. Error Handling\",\"level\":3}},{\"id\":\"a6Eail6exa\",\"type\":\"table\",\"data\":{\"withHeadings\":true,\"content\":[[\"Error Scenario\",\"Expected Handling\"],[\"Missing node connection\",\"Show alert “Incomplete connection”\"],[\"Duplicate keyword\",\"Highlight error in Flow Start node\"],[\"Invalid media URL\",\"Show preview error and disable save\"],[\"API failure on save\",\"Retry mechanism with user notification\"],[\"Unauthorized access\",\"Redirect to login page\"]]}},{\"id\":\"W0k_wHP5dr\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"RJ8CCqOR-B\",\"type\":\"header\",\"data\":{\"text\":\"9. Dependencies\",\"level\":3}},{\"id\":\"jr73eAPAFn\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"WhatsApp Business API or sandbox environment\\n\",\"Backend Flow Service (for save/load/publish)\\n\",\"Media storage (AWS S3 or similar)\\n\",\"Auth &amp; user management\\n\"]}},{\"id\":\"6qB9pZGeJQ\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"63yiE7K0TB\",\"type\":\"header\",\"data\":{\"text\":\"10. Assumptions\",\"level\":3}},{\"id\":\"A4Dqumd1xJ\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Users already have WhatsApp Business API access.\\n\",\"Flow Builder operates in desktop browsers.\\n\",\"Template approval handled externally via Meta.\\n\"]}},{\"id\":\"I-nbooHrSz\",\"type\":\"delimiter\",\"data\":{}},{\"id\":\"LUG7HB2xK5\",\"type\":\"header\",\"data\":{\"text\":\"11. Future Enhancements\",\"level\":3}},{\"id\":\"RrJd0UH1ho\",\"type\":\"list\",\"data\":{\"style\":\"unordered\",\"items\":[\"Flow analytics dashboard\\n\",\"Version history and rollback\\n\",\"Multi-user real-time collaboration\\n\",\"AI-assisted flow generation\"]}}]}",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
   },
   "createdBy": {
     "_id": {
@@ -37,13 +159,147 @@
   "visibility": "PUBLIC",
   "linkedCycle": [],
   "linkedModule": [],
+  "linkedPages": [],
+  "linkedMembers": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+          "subType": "03"
+        }
+      },
+      "name": "anand chikkam"
+    }
+  ],
   "locked": false,
   "isFavourite": false,
   "createdAt": {
-    "$date": "2025-09-04T12:36:34.375Z"
+    "$date": "2025-10-24T08:11:13.502Z"
   },
   "updatedAt": {
-    "$date": "2025-09-04T12:36:34.375Z"
+    "$date": "2025-10-24T08:11:13.502Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.page.Page"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "dGYco032Ch+mtXWyvo9BrA==",
+      "subType": "03"
+    }
+  },
+  "title": "ccc",
+  "content": "{\"blocks\":[{\"id\":\"VPvwZf05pl\",\"type\":\"header\",\"data\":{\"text\":\"ccc\",\"level\":2}}]}",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+        "subType": "03"
+      }
+    },
+    "name": "anand chikkam"
+  },
+  "visibility": "PRIVATE",
+  "linkedCycle": [],
+  "linkedModule": [],
+  "linkedPages": [],
+  "linkedMembers": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+          "subType": "03"
+        }
+      },
+      "name": "anand chikkam"
+    }
+  ],
+  "locked": false,
+  "isFavourite": false,
+  "createdAt": {
+    "$date": "2025-10-22T16:33:50.732Z"
+  },
+  "updatedAt": {
+    "$date": "2025-10-22T16:33:50.732Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.page.Page"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "uG8yM1vyCh9QpzkgKBucsA==",
+      "subType": "03"
+    }
+  },
+  "title": "Passsbook",
+  "content": "{\"blocks\":[{\"id\":\"fwIpHNGZ6g\",\"type\":\"header\",\"data\":{\"text\":\"Process for payment gateway charges (Till October)\",\"level\":2}},{\"id\":\"pyyL3eJq7E\",\"type\":\"header\",\"data\":{\"text\":\"Month Wise Sales (Till October)\",\"level\":2}},{\"id\":\"yaDTl4D2Jp\",\"type\":\"header\",\"data\":{\"text\":\"Track the Product Usage ( Excell)\",\"level\":2}},{\"id\":\"dN2xeazcPb\",\"type\":\"header\",\"data\":{\"text\":\"Passbook Marketing Setup (Website Revamp, Social page Revamp, Marketing Automation 29th)\",\"level\":2}},{\"id\":\"iYQHFct5mq\",\"type\":\"header\",\"data\":{\"text\":\"Channel Partnership Program ( CA / Jeweller Consultant /&nbsp; )\",\"level\":2}},{\"id\":\"PKpUnuMyJo\",\"type\":\"header\",\"data\":{\"text\":\"Palki Closure&nbsp;\",\"level\":2}},{\"id\":\"_H2IwtItc3\",\"type\":\"header\",\"data\":{\"text\":\"Agreement ( Document Collection + i accept t&amp;C)\",\"level\":2}},{\"id\":\"HDkD5Xb1pd\",\"type\":\"header\",\"data\":{\"text\":\"ERP Accountant&nbsp;\",\"level\":2}},{\"id\":\"odZSUyQeV3\",\"type\":\"header\",\"data\":{\"text\":\"Decks (Sales / Investor)\",\"level\":2}}]}",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo"
+  },
+  "visibility": "PUBLIC",
+  "linkedCycle": [],
+  "linkedModule": [],
+  "linkedPages": [],
+  "linkedMembers": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Simpo"
+    }
+  ],
+  "locked": false,
+  "isFavourite": false,
+  "createdAt": {
+    "$date": "2025-10-22T09:42:27.830Z"
+  },
+  "updatedAt": {
+    "$date": "2025-10-22T09:42:27.830Z"
   },
   "_class": "com.lm.project.project_management.pms.model.page.Page"
 }]

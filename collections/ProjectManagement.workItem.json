@@ -1,7 +1,7 @@
 [{
   "_id": {
     "$binary": {
-      "base64": "Pk8tWX6bYmYMdf4bNfOVjQ==",
+      "base64": "d0sKO7lX5sM0QGVQeFcfpQ==",
       "subType": "03"
     }
   },
@@ -14,41 +14,520 @@
     },
     "name": "Simpo Tech"
   },
-  "displayBugNo": "SIMPO-3553",
+  "displayBugNo": "SIMPO-5028",
   "status": "ACCEPTED",
   "createdBy": {
     "_id": {
       "$binary": {
-        "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
+        "base64": "l2+zgG4XCB9p7mmZchc5uQ==",
         "subType": "03"
       }
     },
-    "name": "Vijayakumar"
+    "name": "sravani"
+  },
+  "createdTimeStamp": {
+    "$date": "2025-11-01T07:59:05.189Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-11-01T07:59:05.189Z"
+  },
+  "title": "Verifying discount module testcases ",
+  "description": "<div>check all conditions </div>",
+  "startDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "stateMaster": {
+    "_id": {
+      "$binary": {
+        "base64": "Pm9JOIg4Bx+l4guUZKEanQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Started"
+  },
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "P29JOIg4Bx+Khh01ug8anQ==",
+        "subType": "03"
+      }
+    },
+    "name": "In-Progress"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "priority": "NONE",
+  "assignee": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "l2+zgG4XCB9p7mmZchc5uQ==",
+          "subType": "03"
+        }
+      },
+      "name": "sravani"
+    }
+  ],
+  "label": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "MWLo6goWCR8AqUL9eZ+kig==",
+          "subType": "03"
+        }
+      },
+      "name": "Task",
+      "color": "#FF6B9D"
+    }
+  ],
+  "cycle": {
+    "_id": {
+      "$binary": {
+        "base64": "ykyPm+mnOjrfunXnAVJ4ng==",
+        "subType": "03"
+      }
+    },
+    "name": "27th oct to 1st nov"
+  },
+  "estimateSystem": "TIME",
+  "estimate": {
+    "hr": "1",
+    "min": "00"
+  },
+  "_class": "com.lm.project.project_management.pms.model.WorkItem"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "7U6ZPMtfsH0Uitgawg0BiA==",
+      "subType": "03"
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "displayBugNo": "SIMPO-5027",
+  "status": "ACCEPTED",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "ZWPtXFdoBx+nRFXdzzU0tQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Manish Chhabra"
   },
   "updatedBy": [
     {
       "_id": {
         "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
+          "base64": "ZWPtXFdoBx+nRFXdzzU0tQ==",
           "subType": "03"
         }
       },
-      "name": "Vijayakumar"
+      "name": "Manish Chhabra"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "ZWPtXFdoBx+nRFXdzzU0tQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Manish Chhabra"
     }
   ],
   "createdTimeStamp": {
-    "$date": "2025-10-13T18:13:49.255Z"
+    "$date": "2025-11-01T07:58:32.049Z"
   },
   "updatedTimeStamp": {
-    "$date": "2025-10-13T18:13:49.255Z"
+    "$date": "2025-11-01T07:58:32.049Z"
   },
-  "title": "Resume upload  parsing json to  storage db",
-  "description": "Implement POST /api/resumes (multipart). Accept pdf/docx/txt.\nImplement simple parser: pdf → text (pdfbox or tika) and regex-based extraction (email/phone/skills headings).\nSave file to local storage (or S3 presigned for future).\nPersist parsed JSON in resumes.parsed_json.\nCheckpoint: Upload a resume and see parsed JSON in DB.",
+  "title": "Integrate API for Scheduling Interview in Job Opening Module",
+  "description": "<div>Implement the <strong>Schedule Interview API integration</strong> within the Job Opening → Interview section.</div><div> When the recruiter schedules a new interview (by selecting candidate, date, time, and interviewer), the system should send a request to the backend API to create the interview record.</div>",
   "startDate": {
-    "$date": "2025-10-14T00:00:00.000Z"
+    "$date": "2025-11-05T00:00:00.000Z"
   },
   "endDate": {
-    "$date": "2025-10-14T00:00:00.000Z"
+    "$date": "2025-11-05T00:00:00.000Z"
+  },
+  "stateMaster": {
+    "_id": {
+      "$binary": {
+        "base64": "GmFFOIg4Bx+uVO8Aaj0anQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Backlog"
+  },
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "G2FFOIg4Bx+wsCRzPw0anQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Backlog"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "priority": "MEDIUM",
+  "assignee": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "ZWPtXFdoBx+nRFXdzzU0tQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Manish Chhabra"
+    }
+  ],
+  "label": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "1WX8spRBBx/SZ2VHjL84sg==",
+          "subType": "03"
+        }
+      },
+      "name": "WEB ",
+      "color": "#FF6B9D"
+    }
+  ],
+  "cycle": {
+    "_id": {
+      "$binary": {
+        "base64": "6UkxYPjhN9WPIhEn4sCRuw==",
+        "subType": "03"
+      }
+    },
+    "name": "Oct 3rd - Oct 8th"
+  },
+  "modules": {
+    "_id": {
+      "$binary": {
+        "base64": "uE02A8LEA0+6ZsTOIC2TrQ==",
+        "subType": "03"
+      }
+    },
+    "name": "People Manager"
+  },
+  "estimateSystem": "TIME",
+  "estimate": {
+    "hr": "1",
+    "min": "00"
+  },
+  "_class": "com.lm.project.project_management.pms.model.WorkItem"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "o0amia9yhPNQzOZ0/T5Rmw==",
+      "subType": "03"
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "displayBugNo": "SIMPO-5026",
+  "status": "ACCEPTED",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "l2+zgG4XCB9p7mmZchc5uQ==",
+        "subType": "03"
+      }
+    },
+    "name": "sravani"
+  },
+  "createdTimeStamp": {
+    "$date": "2025-11-01T07:57:30.120Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-11-01T07:57:30.120Z"
+  },
+  "title": " Testing Discount module ",
+  "description": "<div>checking conditions like</div><div>1.Discounts not apply for specific products</div><div>2.specific customers....etc</div><div><br></div>",
+  "startDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "stateMaster": {
+    "_id": {
+      "$binary": {
+        "base64": "Pm9JOIg4Bx+l4guUZKEanQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Started"
+  },
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "P29JOIg4Bx+Khh01ug8anQ==",
+        "subType": "03"
+      }
+    },
+    "name": "In-Progress"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "priority": "NONE",
+  "assignee": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "l2+zgG4XCB9p7mmZchc5uQ==",
+          "subType": "03"
+        }
+      },
+      "name": "sravani"
+    }
+  ],
+  "label": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "MWLo6goWCR8AqUL9eZ+kig==",
+          "subType": "03"
+        }
+      },
+      "name": "Task",
+      "color": "#FF6B9D"
+    }
+  ],
+  "cycle": {
+    "_id": {
+      "$binary": {
+        "base64": "ykyPm+mnOjrfunXnAVJ4ng==",
+        "subType": "03"
+      }
+    },
+    "name": "27th oct to 1st nov"
+  },
+  "estimateSystem": "TIME",
+  "estimate": {
+    "hr": "1",
+    "min": "00"
+  },
+  "_class": "com.lm.project.project_management.pms.model.WorkItem"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "OEsLsw4fb7L2pUbpXbO2iA==",
+      "subType": "03"
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "displayBugNo": "SIMPO-5003",
+  "status": "ACCEPTED",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "UWh5wn+QBB+mIDcsS4OiiQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Prince"
+  },
+  "updatedBy": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UWh5wn+QBB+mIDcsS4OiiQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Prince"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UWh5wn+QBB+mIDcsS4OiiQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Prince"
+    }
+  ],
+  "createdTimeStamp": {
+    "$date": "2025-11-01T07:55:58.338Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-11-01T07:55:58.338Z"
+  },
+  "title": "Redesign Filter Section to Match PlanBoard Design",
+  "description": "<div>Revamp the filter UI across all modules to align with the <strong>PlanBoard filter design</strong> — consistent spacing, layout and tag representation.</div><div><br></div><div><br></div><div><br></div>",
+  "startDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "P29JOIg4Bx+Khh01ug8anQ==",
+        "subType": "03"
+      }
+    },
+    "name": "In-Progress"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "priority": "MEDIUM",
+  "assignee": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UWh5wn+QBB+mIDcsS4OiiQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Prince"
+    }
+  ],
+  "label": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "1WX8spRBBx/SZ2VHjL84sg==",
+          "subType": "03"
+        }
+      },
+      "name": "WEB ",
+      "color": "#FF6B9D"
+    }
+  ],
+  "cycle": {
+    "_id": {
+      "$binary": {
+        "base64": "ykyPm+mnOjrfunXnAVJ4ng==",
+        "subType": "03"
+      }
+    },
+    "name": "27th oct to 1st nov"
+  },
+  "modules": {
+    "_id": {
+      "$binary": {
+        "base64": "4EYE1C6wqdfdR4nN0/vptw==",
+        "subType": "03"
+      }
+    },
+    "name": "CRM"
+  },
+  "estimateSystem": "TIME",
+  "estimate": {
+    "hr": "3",
+    "min": "00"
+  },
+  "_class": "com.lm.project.project_management.pms.model.WorkItem"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "CU9+chkFAb559TokSy4RgA==",
+      "subType": "03"
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "displayBugNo": "SIMPO-5025",
+  "status": "ACCEPTED",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "pWcPPKTE/x4W0appQzfQmQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Jothisha"
+  },
+  "createdTimeStamp": {
+    "$date": "2025-11-01T07:49:12.211Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-11-01T07:49:12.211Z"
+  },
+  "title": "Need to improve user story UI",
+  "description": "<div>Need to improve ui for user story edit and view</div>",
+  "startDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-11-01T00:00:00.000Z"
+  },
+  "stateMaster": {
+    "_id": {
+      "$binary": {
+        "base64": "LGhHOIg4Bx/7dWXeThEanQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Unstarted"
   },
   "state": {
     "_id": {
@@ -73,400 +552,32 @@
     {
       "_id": {
         "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
+          "base64": "pWcPPKTE/x4W0appQzfQmQ==",
           "subType": "03"
         }
       },
-      "name": "Vijayakumar"
+      "name": "Jothisha"
     }
   ],
-  "label": [
-    {
-      "_id": {
-        "$binary": {
-          "base64": "nWY8JZVBBx94STt034U4sg==",
-          "subType": "03"
-        }
-      },
-      "name": "Backend",
-      "color": "#FF6B9D"
-    }
-  ],
+  "label": [],
   "cycle": {
     "_id": {
       "$binary": {
-        "base64": "tEYniCfpq7h8TB4DRe+xnA==",
+        "base64": "ykyPm+mnOjrfunXnAVJ4ng==",
         "subType": "03"
       }
     },
-    "name": "oct 13th to oct 18th (third week of october)"
+    "name": "27th oct to 1st nov"
   },
   "modules": {
     "_id": {
       "$binary": {
-        "base64": "uE02A8LEA0+6ZsTOIC2TrQ==",
+        "base64": "v0NbpsDbxHJVLuQtNwcgnQ==",
         "subType": "03"
       }
     },
-    "name": "People Manager"
+    "name": "Work Management"
   },
-  "estimateSystem": "TIME",
-  "estimate": {
-    "hr": "3",
-    "min": "00"
-  },
-  "_class": "com.lm.project.project_management.pms.model.WorkItem"
-},
-{
-  "_id": {
-    "$binary": {
-      "base64": "qEfDhqnkNoFpRy0rATSdqg==",
-      "subType": "03"
-    }
-  },
-  "project": {
-    "_id": {
-      "$binary": {
-        "base64": "gEhAby2IUhRLhfLyr3iclA==",
-        "subType": "03"
-      }
-    },
-    "name": "Simpo Tech"
-  },
-  "displayBugNo": "SIMPO-3646",
-  "status": "ACCEPTED",
-  "createdBy": {
-    "_id": {
-      "$binary": {
-        "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
-        "subType": "03"
-      }
-    },
-    "name": "Gaurav Sharma"
-  },
-  "updatedBy": [
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    }
-  ],
-  "createdTimeStamp": {
-    "$date": "2025-10-13T17:45:03.259Z"
-  },
-  "updatedTimeStamp": {
-    "$date": "2025-10-13T17:45:03.259Z"
-  },
-  "title": "Total working hours of an a employee are calculating wrong in multiple checkin's scenario.",
-  "description": "Second time check in in not validating by the backend \nSteps to reproduce-\nFirst checkin at 9 am and check out at 9:30 am and then again checkin at 10 o clock and checkout at 10:30 then the total hours working should be 1 hour but now total hours is showing 1.5 hours it is not",
-  "startDate": {
-    "$date": "2025-10-13T00:00:00.000Z"
-  },
-  "endDate": {
-    "$date": "2025-10-13T00:00:00.000Z"
-  },
-  "state": {
-    "_id": {
-      "$binary": {
-        "base64": "YW1OOIg4Bx9NahUySNEanQ==",
-        "subType": "03"
-      }
-    },
-    "name": "Done"
-  },
-  "business": {
-    "_id": {
-      "$binary": {
-        "base64": "img60ibL7R4pstoZnVdjvQ==",
-        "subType": "03"
-      }
-    },
-    "name": "Simpo.ai"
-  },
-  "priority": "HIGH",
-  "assignee": [
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    }
-  ],
-  "label": [
-    {
-      "_id": {
-        "$binary": {
-          "base64": "nWY8JZVBBx94STt034U4sg==",
-          "subType": "03"
-        }
-      },
-      "name": "Backend",
-      "color": "#FF6B9D"
-    }
-  ],
-  "cycle": {
-    "_id": {
-      "$binary": {
-        "base64": "tEYniCfpq7h8TB4DRe+xnA==",
-        "subType": "03"
-      }
-    },
-    "name": "oct 13th to oct 18th (third week of october)"
-  },
-  "modules": {
-    "_id": {
-      "$binary": {
-        "base64": "uE02A8LEA0+6ZsTOIC2TrQ==",
-        "subType": "03"
-      }
-    },
-    "name": "People Manager"
-  },
-  "workLogs": [
-    {
-      "user": {
-        "_id": {
-          "$binary": {
-            "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-            "subType": "03"
-          }
-        },
-        "name": "Vijayakumar"
-      },
-      "hours": 1,
-      "minutes": 10,
-      "description": "Second time check in in not validating by the backend \nSteps to reproduce-\nFirst checkin at 9 am and check out at 9:30 am and then again checkin at 10 o clock and checkout at 10:30 then the total hours working should be 1 hour but now total hours is showing 1.5 hours it is not",
-      "loggedAt": {
-        "$date": "2025-10-13T17:45:24.766Z"
-      }
-    }
-  ],
-  "estimateSystem": "TIME",
-  "estimate": {
-    "hr": "2",
-    "min": "00"
-  },
-  "_class": "com.lm.project.project_management.pms.model.WorkItem"
-},
-{
-  "_id": {
-    "$binary": {
-      "base64": "9Er22ccWpX5blq/OEg9BkQ==",
-      "subType": "03"
-    }
-  },
-  "project": {
-    "_id": {
-      "$binary": {
-        "base64": "gEhAby2IUhRLhfLyr3iclA==",
-        "subType": "03"
-      }
-    },
-    "name": "Simpo Tech"
-  },
-  "displayBugNo": "SIMPO-2826",
-  "status": "ACCEPTED",
-  "createdBy": {
-    "_id": {
-      "$binary": {
-        "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-        "subType": "03"
-      }
-    },
-    "name": "Vijay Kumar"
-  },
-  "updatedBy": [
-    {
-      "_id": {
-        "$binary": {
-          "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Simpo"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    },
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    }
-  ],
-  "createdTimeStamp": {
-    "$date": "2025-10-13T17:16:17.450Z"
-  },
-  "updatedTimeStamp": {
-    "$date": "2025-10-13T17:16:17.450Z"
-  },
-  "title": "Update Employee Leave Balance API ",
-  "description": "rovide an option for administrators or HR to manually update an employee’s leave balance, either adding or correcting the count.",
-  "startDate": {
-    "$date": "2025-10-14T00:00:00.000Z"
-  },
-  "endDate": {
-    "$date": "2025-10-14T00:00:00.000Z"
-  },
-  "state": {
-    "_id": {
-      "$binary": {
-        "base64": "YW1OOIg4Bx9NahUySNEanQ==",
-        "subType": "03"
-      }
-    },
-    "name": "Done"
-  },
-  "business": {
-    "_id": {
-      "$binary": {
-        "base64": "img60ibL7R4pstoZnVdjvQ==",
-        "subType": "03"
-      }
-    },
-    "name": "Simpo.ai"
-  },
-  "priority": "NONE",
-  "assignee": [
-    {
-      "_id": {
-        "$binary": {
-          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-          "subType": "03"
-        }
-      },
-      "name": "Vijayakumar"
-    }
-  ],
-  "label": [
-    {
-      "_id": {
-        "$binary": {
-          "base64": "nWY8JZVBBx94STt034U4sg==",
-          "subType": "03"
-        }
-      },
-      "name": "Backend",
-      "color": "#FF6B9D"
-    }
-  ],
-  "cycle": {
-    "_id": {
-      "$binary": {
-        "base64": "tEYniCfpq7h8TB4DRe+xnA==",
-        "subType": "03"
-      }
-    },
-    "name": "oct 13th to oct 18th (third week of october)"
-  },
-  "modules": {
-    "_id": {
-      "$binary": {
-        "base64": "uE02A8LEA0+6ZsTOIC2TrQ==",
-        "subType": "03"
-      }
-    },
-    "name": "People Manager"
-  },
-  "workLogs": [
-    {
-      "user": {
-        "_id": {
-          "$binary": {
-            "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
-            "subType": "03"
-          }
-        },
-        "name": "Vijayakumar"
-      },
-      "hours": 0,
-      "minutes": 40,
-      "description": "provide an option for administrators or HR to manually update an employee’s leave balance, either adding or correcting the count.",
-      "loggedAt": {
-        "$date": "2025-10-13T17:16:36.371Z"
-      }
-    }
-  ],
   "estimateSystem": "TIME",
   "estimate": {
     "hr": "1",

@@ -1,61 +1,271 @@
-{
+[{
   "_id": {
     "$binary": {
-      "base64": "GERBNxWW/9lPeQtYn4LUpA==",
+      "base64": "JU7uFRoTKFIYbZTdCaqdkA==",
       "subType": "03"
     }
   },
-  "projectDisplayId": "GGGG",
+  "projectDisplayId": "DESIG",
   "business": {
     "_id": {
       "$binary": {
-        "base64": "TmBkxQU5Bx9oX+NCZRljrA==",
+        "base64": "AW83DttE+R7pVJ/RTSE6lA==",
         "subType": "03"
       }
     },
-    "name": "Simpo.ai"
+    "name": "Passbookapp"
   },
-  "name": "gggg",
+  "name": "Designing",
+  "description": "Passbook related designing related will be here",
   "imageUrl": "https://d2yx15pncgmu63.cloudfront.net/prod-images/524681c1750191737292Website-Design-Background-Feb-09-2022-03-13-55-73-AM.webp",
-  "icon": "",
+  "icon": "😊",
   "access": "PUBLIC",
   "lead": {
     "_id": {
       "$binary": {
-        "base64": "HGm3S+9pBx8TR97O1mE0tQ==",
+        "base64": "bGX0NZcYCx/NZD2WF8mwuQ==",
         "subType": "03"
       }
     },
-    "name": "vihan"
+    "name": "Raj"
   },
-  "leadMail": "v@gmail.com",
+  "leadMail": "raj.k@tejsoft.com",
   "defaultAsignee": {
     "_id": {
       "$binary": {
-        "base64": "HGm3S+9pBx8TR97O1mE0tQ==",
+        "base64": "bGX0NZcYCx/NZD2WF8mwuQ==",
         "subType": "03"
       }
     },
-    "name": "vihan"
+    "name": "Raj"
   },
   "createdBy": {
     "_id": {
       "$binary": {
-        "base64": "umg/7ek1Bx8lVC+tVS80tQ==",
+        "base64": "qWgg1ryqBx+oLnNj2numnw==",
         "subType": "03"
       }
     },
-    "name": "sharanya"
+    "name": "Akhil"
   },
   "isActive": true,
   "status": "NOT_STARTED",
   "favourite": false,
   "isArchived": false,
   "createdTimeStamp": {
-    "$date": "2025-08-11T12:17:10.300Z"
+    "$date": "2025-10-31T08:32:09.550Z"
   },
   "updatedTimeStamp": {
-    "$date": "2025-08-11T12:17:10.300Z"
+    "$date": "2025-10-31T08:32:09.550Z"
   },
   "_class": "com.lm.project.project_management.pms.model.Project"
-}
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "Y0SIMTHkycFhXkXnd1E5vQ==",
+      "subType": "03"
+    }
+  },
+  "projectDisplayId": "MARKE",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "AW83DttE+R7pVJ/RTSE6lA==",
+        "subType": "03"
+      }
+    },
+    "name": "Passbookapp"
+  },
+  "name": "Marketing",
+  "description": "This Project is about all marketing related work",
+  "imageUrl": "https://d2yx15pncgmu63.cloudfront.net/prod-images/524681c1750191737292Website-Design-Background-Feb-09-2022-03-13-55-73-AM.webp",
+  "icon": "😊",
+  "access": "PUBLIC",
+  "lead": {
+    "_id": {
+      "$binary": {
+        "base64": "0GHMdrxqBx+ujyOTVEc0tQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Amol"
+  },
+  "leadMail": "amol@tejsoft.com",
+  "defaultAsignee": {
+    "_id": {
+      "$binary": {
+        "base64": "0GHMdrxqBx+ujyOTVEc0tQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Amol"
+  },
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo"
+  },
+  "isActive": true,
+  "status": "NOT_STARTED",
+  "favourite": false,
+  "isArchived": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-31T07:53:46.265Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-31T07:53:46.265Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Project"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "gUPaJ9e01Wdb1BCN/Hlymg==",
+      "subType": "03"
+    }
+  },
+  "projectDisplayId": "SEWA",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "name": "SEWA ",
+  "imageUrl": "https://d2yx15pncgmu63.cloudfront.net/prod-images/524681c1750191737292Website-Design-Background-Feb-09-2022-03-13-55-73-AM.webp",
+  "icon": "😊",
+  "access": "PUBLIC",
+  "lead": {
+    "_id": {
+      "$binary": {
+        "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+        "subType": "03"
+      }
+    },
+    "name": "anand chikkam"
+  },
+  "leadMail": "anand@tejsoft.com",
+  "defaultAsignee": {
+    "_id": {
+      "$binary": {
+        "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+        "subType": "03"
+      }
+    },
+    "name": "anand chikkam"
+  },
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+        "subType": "03"
+      }
+    },
+    "name": "anand chikkam"
+  },
+  "isActive": true,
+  "status": "NOT_STARTED",
+  "favourite": false,
+  "isArchived": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-30T05:37:48.203Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-30T05:37:48.203Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Project"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "A0enn5+jKBmEM/oJX8e6tA==",
+      "subType": "03"
+    }
+  },
+  "projectDisplayId": "ORRA",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "name": "ORRA",
+  "description": "Orra Fine Jewellery App",
+  "imageUrl": "https://d2yx15pncgmu63.cloudfront.net/prod-images/524681c1750191737292Website-Design-Background-Feb-09-2022-03-13-55-73-AM.webp",
+  "icon": "💍",
+  "access": "PUBLIC",
+  "lead": {
+    "_id": {
+      "$binary": {
+        "base64": "Ememn9HOBx/SIlvnq7s5uQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Shiva Sangepu"
+  },
+  "isActive": false,
+  "status": "NOT_STARTED",
+  "favourite": false,
+  "isArchived": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-29T04:07:55.954Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-29T04:07:55.954Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Project"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "Tk5i0RK7bqtTgQ7+g5gVuA==",
+      "subType": "03"
+    }
+  },
+  "projectDisplayId": "SIMPO",
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "name": "Marketing",
+  "description": "Workspace for all marketing related ",
+  "imageUrl": "https://d2yx15pncgmu63.cloudfront.net/prod-images/524681c1750191737292Website-Design-Background-Feb-09-2022-03-13-55-73-AM.webp",
+  "icon": "📢",
+  "access": "PUBLIC",
+  "lead": {
+    "_id": {
+      "$binary": {
+        "base64": "Ememn9HOBx/SIlvnq7s5uQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Shiva Sangepu"
+  },
+  "isActive": false,
+  "status": "STARTED",
+  "favourite": false,
+  "isArchived": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-29T04:07:01.496Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-29T04:07:01.496Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Project"
+}]

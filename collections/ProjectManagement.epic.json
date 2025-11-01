@@ -1,0 +1,373 @@
+[{
+  "_id": {
+    "$binary": {
+      "base64": "PkdvlsymPtm/4I8YxElLtw==",
+      "subType": "03"
+    }
+  },
+  "title": "November 15 Client Release",
+  "startDate": {
+    "$date": "2025-10-20T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-11-14T00:00:00.000Z"
+  },
+  "stateMaster": {
+    "_id": {
+      "$binary": {
+        "base64": "NmXJGClVCx8e1EQ9m6N3hw==",
+        "subType": "03"
+      }
+    },
+    "name": "Started"
+  },
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "N2XJGClVCx/9ZV+jn2V3hw==",
+        "subType": "03"
+      }
+    },
+    "name": "Started"
+  },
+  "priority": "URGENT",
+  "assignee": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "DW4EebxVCx/SqYYgM20NiQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Gaurav Sahoo"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "KmWFt6y/9B4bRS0VY0/Jow==",
+          "subType": "03"
+        }
+      },
+      "name": "Gaurav Sharma"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UGQziGovAx/w2cmb8YfelQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Raghav"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+          "subType": "03"
+        }
+      },
+      "name": "anand chikkam"
+    }
+  ],
+  "label": [],
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gUPaJ9e01Wdb1BCN/Hlymg==",
+        "subType": "03"
+      }
+    },
+    "name": "SEWA "
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "bugNo": "SEWA-1",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+        "subType": "03"
+      }
+    },
+    "name": "anand chikkam"
+  },
+  "createdTimeStamp": {
+    "$date": "2025-10-30T06:50:27.535Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-30T06:50:27.535Z"
+  },
+  "customProperties": [],
+  "_class": "com.lm.project.project_management.pms.model.Epic"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "i0G7O6KANnNBZzko6acHgA==",
+      "subType": "03"
+    }
+  },
+  "title": "Passbook Relaunch",
+  "description": "<div>Social Account - FB, Insta, Linkedin, Youtube - 5oo on each platform</div><div>Website &amp; Landing Page , Google Analytics, Search console, Meta Pixel</div><div>SEO - Keywords &amp; Search volume (100 Visit Perday), </div><div>Organic Funnel Setup - </div><div>Audience Discovery, Social Out reach (300 Outreach - Daily 20)</div><div>Appointment booking (Demo)</div><div>Product Onboarding SOP</div><div>Community Building - Discovery Channels &amp; community program structure</div><div>Paid Ads - 100 MQL - 30k Marketing Budget</div><div>WhatsApp Automation - Awareness - Nurture - Demo Appointment</div><div>Telesales - 60 calls per day - 12k</div><div>Newsletter - Weekly</div><div>Inbound Content Creations - 4-5 Reels per week, 1 YouTube videos pw, 1 blog per week, 3 Linkedin / Medium Post per week.</div><div><br></div>",
+  "startDate": {
+    "$date": "2025-10-27T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-11-15T00:00:00.000Z"
+  },
+  "priority": "NONE",
+  "assignee": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "0GHMdrxqBx+ujyOTVEc0tQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Amol"
+    }
+  ],
+  "label": [],
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "Tk5i0RK7bqtTgQ7+g5gVuA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Marketing"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "bugNo": "SIMPO-4567",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo"
+  },
+  "createdTimeStamp": {
+    "$date": "2025-10-27T10:23:17.595Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-27T10:23:17.595Z"
+  },
+  "customProperties": [],
+  "_class": "com.lm.project.project_management.pms.model.Epic"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "xUXfIBp/qXjTxlno8P17hQ==",
+      "subType": "03"
+    }
+  },
+  "title": "HCM / HRMS Suite",
+  "description": "<div>Overview</div><div><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">The HRMS suite is an integrated collection of software applications designed to automate and streamline all core HR processes, from employee lifecycle management to payroll, time tracking, learning, and analytics. It delivers a unified experience for HR teams, managers, and employees, enabling data‑driven decision‑making and compliance.</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">1. Employee Records (People Manager)</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Centralized database of employee information with document management, compliance tracking, and role-based access.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">AI data extraction from resumes &amp; ID proofs, anomaly detection in records, auto-reminder for expiry (PAN, Aadhar, etc.)</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">2. Onboarding &amp; Offboarding</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Workflow to onboard new hires and manage exits. Customizable by org.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">AI-driven onboarding checklist generation, sentiment capture in exit feedback, auto task allocation</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">3. Attendance &amp; Leave Management</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Tracks attendance, leaves, holidays, shifts, and work hours.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">AI anomaly detection (attendance irregularities), predictive leave planning, policy automation</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">4. Payroll &amp; Compliance</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Salary management, TDS, PF/ESI, bonuses, and reimbursements.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Auto-calculated payroll validation, compliance assistant, salary prediction based on performance</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">5. Recruitment &amp; ATS</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">End-to-end hiring: job posting, candidate tracking, interview management.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">AI Resume Parsing, Auto-shortlisting, Interview Question Generator, Candidate Fit Score</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">6. Performance Management</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">OKR/KPI setting, 360° feedback, reviews, and goals.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">AI Goal Suggestion, Auto Summary of Reviews, Predictive Performance Insights</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">7. Learning &amp; Development (LMS)</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Internal courses, skill paths, and training tracking.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">AI Skill Gap Analysis, Personalized Learning Pathways, Content Generator</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">8. Engagement &amp; Surveys</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Employee NPS, pulse surveys, recognition programs.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">AI Sentiment Analysis, Burnout Predictor, Mood Insights Dashboard</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">9. Organization Chart &amp; Roles</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Dynamic org visualization with reporting structure.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Auto org-chart creation, change impact simulation</span></div><div><br></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">10. HR Analytics &amp; Insights</strong></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Description: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Central analytics dashboard for workforce metrics.</span></div><div><strong style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Key AI Capabilities: </strong><span style=\"background-color: rgb(255, 255, 255); color: rgb(33, 37, 41);\">Natural Language Query (e.g., “Show attrition by department last 6 months”)</span></div><div><br></div>",
+  "startDate": {
+    "$date": "2025-06-10T00:00:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-11-30T00:00:00.000Z"
+  },
+  "stateMaster": {
+    "_id": {
+      "$binary": {
+        "base64": "LGhHOIg4Bx/7dWXeThEanQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Unstarted"
+  },
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "LWhHOIg4Bx+lOLY5uAEanQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Todo"
+  },
+  "priority": "URGENT",
+  "assignee": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "ZWPtXFdoBx+nRFXdzzU0tQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Manish Chhabra"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "oW+PldjOBx+W1Vkr5lE5uQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Vijayakumar"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "92A9OYzhCB+FAlnLqEmCtQ==",
+          "subType": "03"
+        }
+      },
+      "name": "Dhruv"
+    }
+  ],
+  "label": [],
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo Tech"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo.ai"
+  },
+  "bugNo": "SIMPO-4261",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo"
+  },
+  "updatedBy": [
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+          "subType": "03"
+        }
+      },
+      "name": "anand chikkam"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+          "subType": "03"
+        }
+      },
+      "name": "anand chikkam"
+    },
+    {
+      "_id": {
+        "$binary": {
+          "base64": "UmafdC6Y/x70KFEN+6HQmQ==",
+          "subType": "03"
+        }
+      },
+      "name": "anand chikkam"
+    }
+  ],
+  "createdTimeStamp": {
+    "$date": "2025-10-24T05:12:17.578Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-24T05:12:17.578Z"
+  },
+  "customProperties": [],
+  "_class": "com.lm.project.project_management.pms.model.Epic"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "EESNdhjqIB+9RjbIM2EIuw==",
+      "subType": "03"
+    }
+  },
+  "title": "MVP",
+  "endDate": {
+    "$date": "2025-11-15T00:00:00.000Z"
+  },
+  "stateMaster": {
+    "_id": {
+      "$binary": {
+        "base64": "NWu5eZz9Ch/CyXc00adBrA==",
+        "subType": "03"
+      }
+    },
+    "name": "Backlog"
+  },
+  "state": {
+    "_id": {
+      "$binary": {
+        "base64": "Nmu5eZz9Ch+zfYiMlYNBrA==",
+        "subType": "03"
+      }
+    },
+    "name": "Backlog"
+  },
+  "priority": "NONE",
+  "assignee": [],
+  "label": [],
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "qkRNC4sqFuPuXSnHb8t9hA==",
+        "subType": "03"
+      }
+    },
+    "name": "DealCircle"
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "4WNjXZL9Ch+JZPqulhl2pQ==",
+        "subType": "03"
+      }
+    },
+    "name": "DealCircle.Ai"
+  },
+  "bugNo": "DEALC-1",
+  "createdBy": {
+    "_id": {
+      "$binary": {
+        "base64": "ZmP00CbL7R7jYR/J2tudrQ==",
+        "subType": "03"
+      }
+    },
+    "name": "Simpo"
+  },
+  "createdTimeStamp": {
+    "$date": "2025-10-23T06:32:12.091Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-23T06:32:12.091Z"
+  },
+  "customProperties": [],
+  "_class": "com.lm.project.project_management.pms.model.Epic"
+}]

@@ -1,14 +1,14 @@
 [{
   "_id": {
     "$binary": {
-      "base64": "s0S6Uo63Ns/S+amqMWC4hQ==",
+      "base64": "6UkxYPjhN9WPIhEn4sCRuw==",
       "subType": "03"
     }
   },
   "business": {
     "_id": {
       "$binary": {
-        "base64": "hGPYgkBwBh81c31fbpn8oQ==",
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
         "subType": "03"
       }
     }
@@ -16,27 +16,195 @@
   "project": {
     "_id": {
       "$binary": {
-        "base64": "Z0h0P0SlfZzjN4fUdrU4nw==",
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
         "subType": "03"
       }
     }
   },
-  "title": "test",
-  "description": "test",
+  "title": "Oct 3rd - Oct 8th",
+  "description": "Next week Cycle Oct 3rd - Oct 8th",
   "startDate": {
-    "$date": "2025-08-24T18:30:00.000Z"
+    "$date": "2025-10-31T18:30:00.000Z"
   },
   "endDate": {
-    "$date": "2025-08-25T18:30:00.000Z"
+    "$date": "2025-11-08T18:30:00.000Z"
   },
   "status": "ACTIVE",
   "isDefault": false,
   "isFavourite": false,
   "createdTimeStamp": {
-    "$date": "2025-08-25T14:16:48.035Z"
+    "$date": "2025-11-01T06:59:34.973Z"
   },
   "updatedTimeStamp": {
-    "$date": "2025-08-25T14:16:48.035Z"
+    "$date": "2025-11-01T06:59:34.973Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Cycle"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "jE/9i4Tf6J9qB4kL6b5Kmw==",
+      "subType": "03"
+    }
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "T00Z1x/ofe6+0uMei4mWpw==",
+        "subType": "03"
+      }
+    }
+  },
+  "title": "OCT-WEEK-5",
+  "description": "",
+  "startDate": {
+    "$date": "2025-10-26T18:30:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-10-30T18:30:00.000Z"
+  },
+  "status": "COMPLETED",
+  "isDefault": false,
+  "isFavourite": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-27T06:03:55.263Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-27T06:03:55.263Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Cycle"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "ykyPm+mnOjrfunXnAVJ4ng==",
+      "subType": "03"
+    }
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    }
+  },
+  "title": "27th oct to 1st nov",
+  "description": "",
+  "startDate": {
+    "$date": "2025-10-26T18:30:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-10-31T18:30:00.000Z"
+  },
+  "status": "ACTIVE",
+  "isDefault": false,
+  "isFavourite": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-25T06:00:30.792Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-25T06:00:30.792Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Cycle"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "z0dBLrSdhwwce7VSIJdhlg==",
+      "subType": "03"
+    }
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "gEhAby2IUhRLhfLyr3iclA==",
+        "subType": "03"
+      }
+    }
+  },
+  "title": "21st oct to 25th oct ",
+  "description": "release plan 2nd last week of october",
+  "startDate": {
+    "$date": "2025-10-20T18:30:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-10-24T18:30:00.000Z"
+  },
+  "status": "COMPLETED",
+  "isDefault": false,
+  "isFavourite": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-21T05:11:17.423Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-21T05:11:17.423Z"
+  },
+  "_class": "com.lm.project.project_management.pms.model.Cycle"
+},
+{
+  "_id": {
+    "$binary": {
+      "base64": "E0fDBf3/B19VMEqPoxmxlA==",
+      "subType": "03"
+    }
+  },
+  "business": {
+    "_id": {
+      "$binary": {
+        "base64": "img60ibL7R4pstoZnVdjvQ==",
+        "subType": "03"
+      }
+    }
+  },
+  "project": {
+    "_id": {
+      "$binary": {
+        "base64": "T00Z1x/ofe6+0uMei4mWpw==",
+        "subType": "03"
+      }
+    }
+  },
+  "title": "OCT-WEEK-4",
+  "description": "",
+  "startDate": {
+    "$date": "2025-10-19T18:30:00.000Z"
+  },
+  "endDate": {
+    "$date": "2025-10-24T18:30:00.000Z"
+  },
+  "status": "COMPLETED",
+  "isDefault": false,
+  "isFavourite": false,
+  "createdTimeStamp": {
+    "$date": "2025-10-13T11:39:21.001Z"
+  },
+  "updatedTimeStamp": {
+    "$date": "2025-10-13T11:39:21.001Z"
   },
   "_class": "com.lm.project.project_management.pms.model.Cycle"
 }]
