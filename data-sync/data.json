@@ -1,0 +1,42 @@
+[
+  {
+    "id": "doc-1",
+    "text": "MongoDB is a popular NoSQL database that provides high performance, high availability, and easy scalability.",
+    "payload": {
+      "category": "database",
+      "tags": ["mongodb", "nosql", "database"],
+      "author": "system",
+      "created_at": "2025-01-29"
+    }
+  },
+  {
+    "id": "doc-2",
+    "text": "Vector databases are designed to store and query high-dimensional vectors efficiently, making them ideal for semantic search and recommendation systems.",
+    "payload": {
+      "category": "ai",
+      "tags": ["vector-database", "embeddings", "semantic-search"],
+      "author": "system",
+      "created_at": "2025-01-29"
+    }
+  },
+  {
+    "id": "doc-3",
+    "text": "Kafka is a distributed event streaming platform that allows you to publish and subscribe to streams of records.",
+    "payload": {
+      "category": "streaming",
+      "tags": ["kafka", "event-streaming", "pub-sub"],
+      "author": "system",
+      "created_at": "2025-01-29"
+    }
+  },
+  {
+    "id": "doc-4",
+    "text": "Qdrant is an open-source vector similarity search engine that provides fast and scalable vector search capabilities.",
+    "payload": {
+      "category": "search",
+      "tags": ["qdrant", "vector-search", "similarity-search"],
+      "author": "system",
+      "created_at": "2025-01-29"
+    }
+  }
+]
