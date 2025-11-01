@@ -1,0 +1,6 @@
+fastembed>=0.3.2
+qdrant-client>=1.9.1
+kafka-python>=2.0.2
+loguru>=0.7.2
+numpy>=1.26.4
+python-dotenv>=1.0.1
