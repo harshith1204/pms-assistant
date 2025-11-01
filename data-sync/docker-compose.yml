@@ -149,28 +149,6 @@ services:
     networks:
       - vector-net
 
-  producer:
-    build:
-      context: ./producer
-      dockerfile: Dockerfile
-    container_name: kafka-producer
-    environment:
-      - MONGODB_URI=${MONGODB_URI:-mongodb://localhost:27017/?replicaSet=rs0&directConnection=true}
-      - MONGODB_DATABASE=${MONGODB_DATABASE:-data_sync}
-      - MONGODB_COLLECTION=${MONGODB_COLLECTION:-documents}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
-      - KAFKA_TOPIC=${KAFKA_TOPIC:-data-sync.documents}
-    volumes:
-      - ./data.json:/app/data.json
-    depends_on:
-      kafka:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-    profiles: ["devtools"]
-    networks:
-      - vector-net
-
 volumes:
   mongodb_data:
   mongodb_config:
