@@ -1,464 +1,250 @@
 {
   "work_item": [
     {
-      "id": "work-item-bug-report",
-      "name": "Bug Report",
-      "description": "Report and track software bugs or issues",
-      "title": "🐛 Bug: [Bug Title]",
-      "content": "## Description\n\n## Steps to Reproduce\n\n## Expected Behavior\n\n## Actual Behavior\n\n## Environment\n\n## Severity\n\n## Priority\n\n## Attachments\n",
+      "id": "bug-fix",
+      "name": "Bug Fix",
+      "description": "Report and track software bugs and issues",
+      "title": "🐛 Bug Fix: [Brief Description]",
+      "content": "## Bug Description\n\n## Steps to Reproduce\n\n## Expected Behavior\n\n## Actual Behavior\n\n## Additional Information\n",
       "priority": "High"
     },
     {
-      "id": "work-item-feature-request",
+      "id": "feature-request",
       "name": "Feature Request",
-      "description": "Request new features or enhancements",
-      "title": "✨ Feature: [Feature Name]",
-      "content": "## Problem Statement\n\n## Proposed Solution\n\n## User Stories\n\n## Acceptance Criteria\n\n## Dependencies\n\n## Estimated Effort\n\n## Business Value\n",
+      "description": "Request new features or functionality",
+      "title": "✨ Feature Request: [Feature Name]",
+      "content": "## Feature Description\n\n## Business Value\n\n## User Experience\n\n## Technical Requirements\n\n## Acceptance Criteria\n",
       "priority": "Medium"
     },
     {
-      "id": "work-item-research-task",
-      "name": "Research Task",
-      "description": "Conduct research and analysis tasks",
-      "title": "🔍 Research: [Topic]",
-      "content": "## Objective\n\n## Research Questions\n\n## Methodology\n\n## Data Sources\n\n## Timeline\n\n## Deliverables\n\n## Success Criteria\n",
+      "id": "general-task",
+      "name": "General Task",
+      "description": "General work items and tasks",
+      "title": "📝 Task: [Task Description]",
+      "content": "## Task Description\n\n## Requirements\n\n## Deliverables\n\n## Notes\n",
       "priority": "Medium"
     },
     {
-      "id": "work-item-code-review",
-      "name": "Code Review",
-      "description": "Track code review requests and feedback",
-      "title": "👁️ Code Review: [PR Title]",
-      "content": "## PR Details\n\n## Review Checklist\n\n## Key Changes\n\n## Testing Notes\n\n## Concerns\n\n## Approval Status\n\n## Follow-up Actions\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "work-item-meeting-prep",
-      "name": "Meeting Preparation",
-      "description": "Prepare agendas and materials for meetings",
-      "title": "📅 Meeting: [Meeting Title]",
-      "content": "## Purpose\n\n## Attendees\n\n## Agenda\n\n## Materials Needed\n\n## Expected Outcomes\n\n## Follow-up Actions\n\n## Duration\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "work-item-documentation",
-      "name": "Documentation Task",
-      "description": "Create or update documentation",
-      "title": "📚 Docs: [Document Title]",
-      "content": "## Document Purpose\n\n## Target Audience\n\n## Key Sections\n\n## References\n\n## Review Process\n\n## Publication Plan\n\n## Maintenance Schedule\n",
+      "id": "documentation",
+      "name": "Documentation",
+      "description": "Documentation and knowledge base updates",
+      "title": "📚 Documentation: [Document Title]",
+      "content": "## Document Title\n\n## Purpose\n\n## Content Outline\n\n## Target Audience\n\n## Review Requirements\n",
       "priority": "Low"
     },
     {
-      "id": "work-item-testing-task",
-      "name": "Testing Task",
-      "description": "Plan and execute testing activities",
-      "title": "🧪 Testing: [Test Type]",
-      "content": "## Test Objective\n\n## Test Cases\n\n## Test Environment\n\n## Test Data\n\n## Expected Results\n\n## Test Execution\n\n## Bug Reports\n",
-      "priority": "High"
+      "id": "research-task",
+      "name": "Research Task",
+      "description": "Research and investigation tasks",
+      "title": "🔍 Research: [Research Topic]",
+      "content": "## Research Topic\n\n## Research Questions\n\n## Methodology\n\n## Expected Findings\n\n## Resources Needed\n",
+      "priority": "Medium"
     },
     {
-      "id": "work-item-maintenance",
-      "name": "Maintenance Task",
-      "description": "System maintenance and upkeep activities",
-      "title": "🔧 Maintenance: [Task Name]",
-      "content": "## Maintenance Scope\n\n## Impact Assessment\n\n## Backup Plan\n\n## Execution Steps\n\n## Rollback Plan\n\n## Monitoring\n\n## Completion Checklist\n",
+      "id": "code-review",
+      "name": "Code Review",
+      "description": "Code review and feedback",
+      "title": "👀 Code Review: [Component/Module]",
+      "content": "## Code Location\n\n## Review Focus Areas\n\n## Code Quality\n\n## Best Practices\n\n## Security Considerations\n",
       "priority": "Medium"
+    },
+    {
+      "id": "meeting-notes",
+      "name": "Meeting Notes",
+      "description": "Meeting notes and action items",
+      "title": "📅 Meeting: [Meeting Purpose]",
+      "content": "## Meeting Purpose\n\n## Attendees\n\n## Discussion Points\n\n## Action Items\n\n## Follow-up\n",
+      "priority": "Low"
+    },
+    {
+      "id": "technical-spike",
+      "name": "Technical Spike",
+      "description": "Technical investigation and prototyping",
+      "title": "🔬 Technical Spike: [Investigation Topic]",
+      "content": "## Investigation Topic\n\n## Technical Questions\n\n## Approach\n\n## Expected Outcomes\n\n## Time Constraint\n",
+      "priority": "High"
     }
   ],
   "page": [
     {
-      "id": "page-feature-spec",
-      "name": "Feature Specification",
-      "description": "Detailed documentation of a planned feature",
-      "title": "📘 Feature Spec: [Feature Name]",
-      "content": "## Feature Overview\n\n## Problem Statement\n\n## Solution Design\n\n## User Stories\n\n## Requirements\n\n## Acceptance Criteria\n\n## Technical Design\n\n## Testing Strategy\n\n## Risks & Mitigations\n\n## Timeline\n",
-      "priority": "High"
+      "id": "project_status",
+      "name": "Project Status",
+      "pageType": "PROJECT",
+      "description": "Executive summary with KPIs, milestones, risks"
     },
     {
-      "id": "page-meeting-notes",
+      "id": "task_spec",
+      "name": "Task Spec",
+      "pageType": "TASK",
+      "description": "Detailed task breakdown, acceptance criteria, next steps"
+    },
+    {
+      "id": "meeting_notes",
       "name": "Meeting Notes",
-      "description": "Structured notes from meetings and discussions",
-      "title": "📝 Meeting Notes: [Meeting Title]",
-      "content": "## Meeting Details\n\n## Attendees\n\n## Agenda\n\n## Discussion Points\n\n## Decisions Made\n\n## Action Items\n\n## Follow-up Tasks\n\n## Next Steps\n\n## Key Takeaways\n",
-      "priority": "Low"
+      "pageType": "MEETING",
+      "description": "Agenda, decisions, action items, owners, due dates"
     },
     {
-      "id": "page-project-plan",
-      "name": "Project Plan",
-      "description": "Comprehensive project planning document",
-      "title": "📋 Project Plan: [Project Name]",
-      "content": "## Executive Summary\n\n## Objectives\n\n## Scope\n\n## Deliverables\n\n## Timeline\n\n## Resources\n\n## Budget\n\n## Risks\n\n## Success Metrics\n\n## Communication Plan\n",
-      "priority": "High"
+      "id": "documentation",
+      "name": "Documentation",
+      "pageType": "DOCUMENTATION",
+      "description": "How-to, concepts, references for internal knowledge"
     },
     {
-      "id": "page-api-documentation",
-      "name": "API Documentation",
-      "description": "Technical documentation for APIs",
-      "title": "🔌 API Docs: [API Name]",
-      "content": "## Overview\n\n## Authentication\n\n## Endpoints\n\n## Request/Response Formats\n\n## Error Handling\n\n## Examples\n\n## Rate Limiting\n\n## Changelog\n\n## Support\n",
-      "priority": "Medium"
+      "id": "knowledge_base",
+      "name": "Knowledge Base",
+      "pageType": "KB",
+      "description": "FAQ, troubleshooting, guides for quick answers"
     },
     {
-      "id": "page-user-guide",
-      "name": "User Guide",
-      "description": "User-facing documentation and guides",
-      "title": "📖 User Guide: [Feature/Topic]",
-      "content": "## Introduction\n\n## Getting Started\n\n## Key Features\n\n## Step-by-Step Instructions\n\n## Troubleshooting\n\n## FAQs\n\n## Best Practices\n\n## Support Resources\n",
-      "priority": "Medium"
+      "id": "release_notes",
+      "name": "Release Notes",
+      "pageType": "DOCUMENTATION",
+      "description": "Version highlights, changes, fixes, known issues"
     },
     {
-      "id": "page-requirements-doc",
-      "name": "Requirements Document",
-      "description": "Gather and document project requirements",
-      "title": "📋 Requirements: [Project Name]",
-      "content": "## Business Requirements\n\n## Functional Requirements\n\n## Non-Functional Requirements\n\n## User Stories\n\n## Acceptance Criteria\n\n## Constraints\n\n## Assumptions\n\n## Dependencies\n\n## Validation Criteria\n",
-      "priority": "High"
+      "id": "risk_register",
+      "name": "Risk Register",
+      "pageType": "PROJECT",
+      "description": "Risks, likelihood, impact, owner, mitigation"
     },
     {
-      "id": "page-status-report",
-      "name": "Status Report",
-      "description": "Regular project or team status updates",
-      "title": "📊 Status Report: [Period]",
-      "content": "## Period Covered\n\n## Accomplishments\n\n## Challenges\n\n## Risks & Issues\n\n## Next Steps\n\n## Metrics\n\n## Resource Utilization\n\n## Budget Status\n\n## Key Decisions\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "page-onboarding-guide",
-      "name": "Onboarding Guide",
-      "description": "Guide for new team members or users",
-      "title": "👋 Onboarding: [Role/Position]",
-      "content": "## Welcome\n\n## Getting Started\n\n## Key Resources\n\n## Team Introduction\n\n## Tools & Access\n\n## First Tasks\n\n## Training Plan\n\n## Support Contacts\n\n## Success Checklist\n",
-      "priority": "Medium"
+      "id": "okr_summary",
+      "name": "OKR Summary",
+      "pageType": "PROJECT",
+      "description": "Objectives, key results, progress, next steps"
     }
   ],
   "cycle": [
     {
-      "id": "cycle-sprint-planning",
-      "name": "Sprint Planning",
-      "description": "Plan work for an upcoming sprint",
-      "title": "🏃 Sprint Planning: Sprint [Number]",
-      "content": "## Sprint Goals\n\n## Sprint Duration\n\n## Capacity Planning\n\n## Backlog Items\n\n## Sprint Backlog\n\n## Definition of Done\n\n## Sprint Risks\n\n## Daily Standup Plan\n\n## Sprint Review Plan\n\n## Sprint Retrospective Plan\n",
-      "priority": "High"
+      "id": "sprint-cycle",
+      "name": "Sprint Cycle",
+      "description": "Standard 2-week development sprint",
+      "title": "Sprint [Number]: [Goal]",
+      "content": "## Sprint Goal\n\n## Key Objectives\n\n## User Stories\n\n## Definition of Done\n\n## Sprint Capacity\n\n## Risks and Dependencies\n"
     },
     {
-      "id": "cycle-release-planning",
-      "name": "Release Planning",
-      "description": "Plan a software release or product launch",
-      "title": "🚢 Release Planning: [Version]",
-      "content": "## Release Objectives\n\n## Release Scope\n\n## Timeline\n\n## Dependencies\n\n## Testing Plan\n\n## Deployment Plan\n\n## Rollback Plan\n\n## Communication Plan\n\n## Success Criteria\n\n## Go/No-Go Checklist\n",
-      "priority": "High"
+      "id": "release-cycle",
+      "name": "Release Cycle",
+      "description": "Major product release cycle",
+      "title": "Release [Version]: [Release Name]",
+      "content": "## Release Overview\n\n## Release Scope\n\n## Key Features\n\n## Testing Strategy\n\n## Deployment Plan\n\n## Rollback Plan\n"
     },
     {
-      "id": "cycle-quarterly-review",
-      "name": "Quarterly Review",
-      "description": "Review progress and plan for the next quarter",
-      "title": "📊 Q[Quarter] Review: [Year]",
-      "content": "## Quarter Overview\n\n## Key Accomplishments\n\n## Metrics Review\n\n## Challenges & Lessons\n\n## Next Quarter Goals\n\n## Resource Planning\n\n## Budget Review\n\n## Risk Assessment\n\n## Action Items\n",
-      "priority": "High"
+      "id": "maintenance-cycle",
+      "name": "Maintenance Cycle",
+      "description": "Bug fixes and maintenance cycle",
+      "title": "Maintenance: [Focus Area]",
+      "content": "## Maintenance Focus\n\n## Bug Fixes\n\n## Performance Improvements\n\n## Security Updates\n\n## Infrastructure Updates\n\n## Monitoring\n"
     },
     {
-      "id": "cycle-performance-review",
-      "name": "Performance Review",
-      "description": "Conduct performance evaluations and feedback",
-      "title": "🎯 Performance Review: [Period]",
-      "content": "## Review Period\n\n## Self Assessment\n\n## Achievements\n\n## Areas for Improvement\n\n## Goals Review\n\n## Skill Development\n\n## Feedback\n\n## Development Plan\n\n## Next Review Date\n",
-      "priority": "Medium"
+      "id": "research-cycle",
+      "name": "Research Cycle",
+      "description": "Research and prototyping cycle",
+      "title": "Research: [Topic]",
+      "content": "## Research Objectives\n\n## Methodology\n\n## Success Criteria\n\n## Deliverables\n\n## Timeline\n\n## Resources Required\n"
     },
     {
-      "id": "cycle-audit-process",
-      "name": "Audit Process",
-      "description": "Conduct compliance and quality audits",
-      "title": "🔍 Audit: [Audit Type]",
-      "content": "## Audit Scope\n\n## Audit Criteria\n\n## Audit Team\n\n## Audit Schedule\n\n## Data Collection\n\n## Findings\n\n## Recommendations\n\n## Action Plan\n\n## Follow-up Review\n",
-      "priority": "High"
+      "id": "design-cycle",
+      "name": "Design Cycle",
+      "description": "UI/UX design and prototyping",
+      "title": "Design: [Feature/Section]",
+      "content": "## Design Scope\n\n## User Research\n\n## Design Requirements\n\n## Wireframes\n\n## Mockups\n\n## Design System Updates\n"
     },
     {
-      "id": "cycle-beta-testing",
-      "name": "Beta Testing Cycle",
-      "description": "Manage beta testing phases",
-      "title": "🧪 Beta Testing: [Feature/Product]",
-      "content": "## Beta Objectives\n\n## Target Users\n\n## Testing Criteria\n\n## Timeline\n\n## Feedback Collection\n\n## Bug Tracking\n\n## Feature Requests\n\n## Success Metrics\n\n## Launch Readiness\n",
-      "priority": "High"
-    },
-    {
-      "id": "cycle-content-calendar",
-      "name": "Content Calendar",
-      "description": "Plan and track content creation cycles",
-      "title": "📅 Content Calendar: [Month/Quarter]",
-      "content": "## Content Themes\n\n## Editorial Calendar\n\n## Content Types\n\n## Publishing Schedule\n\n## Content Pipeline\n\n## Review Process\n\n## Content Audit\n\n## Future Planning\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "cycle-maintenance-window",
-      "name": "Maintenance Window",
-      "description": "Plan system maintenance and updates",
-      "title": "🔧 Maintenance Window: [Date]",
-      "content": "## Maintenance Scope\n\n## Scheduled Date/Time\n\n## Impact Assessment\n\n## User Communication\n\n## Backup Procedures\n\n## Rollback Plan\n\n## Testing Plan\n\n## Post-Maintenance Validation\n\n## Incident Response\n",
-      "priority": "High"
+      "id": "integration-cycle",
+      "name": "Integration Cycle",
+      "description": "Third-party integrations and APIs",
+      "title": "Integration: [Service/Provider]",
+      "content": "## Integration Scope\n\n## API Specifications\n\n## Data Mapping\n\n## Authentication\n\n## Error Handling\n\n## Testing\n"
     }
   ],
   "module": [
     {
-      "id": "module-core-component",
-      "name": "Core Component",
-      "description": "Design a core system component",
-      "title": "🧱 Core Component: [Component Name]",
-      "content": "## Component Overview\n\n## Purpose & Responsibilities\n\n## Architecture\n\n## Interfaces\n\n## Dependencies\n\n## Configuration\n\n## Error Handling\n\n## Testing Strategy\n\n## Performance Considerations\n\n## Maintenance Plan\n",
-      "priority": "High"
+      "id": "frontend-module",
+      "name": "Frontend Module",
+      "description": "User interface and client-side functionality",
+      "title": "Frontend: [Feature/Area]",
+      "content": "## Module Overview\n\n## UI Components\n\n## User Interactions\n\n## Responsive Design\n\n## Accessibility\n\n## Browser Compatibility\n"
     },
     {
-      "id": "module-api-gateway",
-      "name": "API Gateway",
-      "description": "Design an API gateway component",
-      "title": "🌐 API Gateway: [Service Name]",
-      "content": "## Gateway Purpose\n\n## API Routes\n\n## Authentication\n\n## Rate Limiting\n\n## Request Transformation\n\n## Response Caching\n\n## Monitoring\n\n## Security\n\n## Scalability\n\n## Documentation\n",
-      "priority": "High"
+      "id": "backend-module",
+      "name": "Backend Module",
+      "description": "Server-side logic and API development",
+      "title": "Backend: [Service/API]",
+      "content": "## Module Overview\n\n## API Endpoints\n\n## Data Models\n\n## Business Logic\n\n## Security\n\n## Performance\n"
     },
     {
-      "id": "module-database-layer",
-      "name": "Database Layer",
-      "description": "Design database access and management layer",
-      "title": "💾 Database Layer: [Data Domain]",
-      "content": "## Data Model\n\n## Schema Design\n\n## Query Patterns\n\n## Indexing Strategy\n\n## Connection Management\n\n## Migration Strategy\n\n## Backup & Recovery\n\n## Security Measures\n\n## Monitoring & Alerting\n\n## Performance Optimization\n",
-      "priority": "High"
+      "id": "database-module",
+      "name": "Database Module",
+      "description": "Data storage and management systems",
+      "title": "Database: [Schema/Service]",
+      "content": "## Database Design\n\n## Schema Definition\n\n## Data Relationships\n\n## Indexing Strategy\n\n## Migration Plan\n\n## Backup Strategy\n"
     },
     {
-      "id": "module-ui-component",
-      "name": "UI Component",
-      "description": "Design user interface components",
-      "title": "🎨 UI Component: [Component Name]",
-      "content": "## Component Purpose\n\n## Design Specifications\n\n## Props & State\n\n## User Interactions\n\n## Accessibility\n\n## Responsive Design\n\n## Browser Support\n\n## Testing\n\n## Documentation\n\n## Usage Examples\n",
-      "priority": "Medium"
+      "id": "api-module",
+      "name": "API Module",
+      "description": "RESTful APIs and integrations",
+      "title": "API: [Service Name]",
+      "content": "## API Specification\n\n## Endpoints\n\n## Request/Response Format\n\n## Authentication\n\n## Rate Limiting\n\n## Documentation\n"
     },
     {
-      "id": "module-integration-service",
-      "name": "Integration Service",
-      "description": "Design third-party integrations",
-      "title": "🔗 Integration: [Service Name]",
-      "content": "## Integration Purpose\n\n## Target System\n\n## Authentication Method\n\n## Data Mapping\n\n## Error Handling\n\n## Retry Logic\n\n## Monitoring\n\n## Security\n\n## Testing Strategy\n\n## Documentation\n",
-      "priority": "High"
+      "id": "testing-module",
+      "name": "Testing Module",
+      "description": "Quality assurance and testing frameworks",
+      "title": "Testing: [Component]",
+      "content": "## Test Strategy\n\n## Test Cases\n\n## Automation Framework\n\n## Coverage Goals\n\n## CI/CD Integration\n\n## Performance Testing\n"
     },
     {
-      "id": "module-caching-layer",
-      "name": "Caching Layer",
-      "description": "Design caching and performance optimization",
-      "title": "⚡ Caching Layer: [Cache Type]",
-      "content": "## Caching Strategy\n\n## Cache Keys\n\n## TTL Settings\n\n## Invalidation Rules\n\n## Cache Warming\n\n## Monitoring\n\n## Fallback Strategy\n\n## Performance Impact\n\n## Cost Analysis\n\n## Scaling Considerations\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "module-notification-system",
-      "name": "Notification System",
-      "description": "Design notification and messaging systems",
-      "title": "📬 Notification System: [Type]",
-      "content": "## Notification Types\n\n## Delivery Channels\n\n## User Preferences\n\n## Queue Management\n\n## Template System\n\n## Delivery Tracking\n\n## Error Handling\n\n## Rate Limiting\n\n## Analytics\n\n## Compliance\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "module-analytics-module",
-      "name": "Analytics Module",
-      "description": "Design analytics and reporting components",
-      "title": "📊 Analytics Module: [Domain]",
-      "content": "## Analytics Goals\n\n## Data Sources\n\n## Metrics Definition\n\n## Data Processing\n\n## Storage Strategy\n\n## Query Interface\n\n## Visualization\n\n## Privacy & Security\n\n## Performance\n\n## Maintenance\n",
-      "priority": "Medium"
+      "id": "infrastructure-module",
+      "name": "Infrastructure Module",
+      "description": "DevOps and deployment infrastructure",
+      "title": "Infrastructure: [Component]",
+      "content": "## Infrastructure Requirements\n\n## Deployment Strategy\n\n## Monitoring\n\n## Scaling\n\n## Security\n\n## Maintenance\n"
     }
   ],
   "epic": [
     {
-      "id": "epic-product-roadmap",
-      "name": "Product Roadmap",
-      "description": "Plan and track product goals, milestones, and releases",
-      "title": "🚀 Product Roadmap: [Product Name]",
-      "content": "## Vision & Mission\n\n## Strategic Objectives\n\n## Target Audience\n\n## Key Features\n\n## Release Milestones\n\n## Dependencies\n\n## Success Metrics\n\n## Resource Requirements\n\n## Risk Assessment\n\n## Timeline\n\n## Budget\n\n## Stakeholder Alignment\n",
-      "priority": "High"
+      "id": "epic-feature",
+      "name": "Feature Epic",
+      "description": "Major feature development with multiple work items",
+      "title": "🚀 Feature: [Feature Name]",
+      "content": "## Epic Overview\n\n## Business Value\n\n## User Stories\n\n## Acceptance Criteria\n\n## Technical Requirements\n\n## Success Metrics\n"
     },
     {
-      "id": "epic-platform-migration",
-      "name": "Platform Migration",
-      "description": "Plan and execute platform or technology migrations",
-      "title": "🔄 Platform Migration: [From] → [To]",
-      "content": "## Migration Objectives\n\n## Current State Analysis\n\n## Target Architecture\n\n## Migration Strategy\n\n## Risk Assessment\n\n## Timeline & Phases\n\n## Resource Planning\n\n## Testing Strategy\n\n## Rollback Plan\n\n## Success Criteria\n\n## Communication Plan\n\n## Budget Impact\n",
-      "priority": "High"
+      "id": "epic-platform",
+      "name": "Platform Epic",
+      "description": "Platform-wide improvements and changes",
+      "title": "🏗️ Platform: [Platform Initiative]",
+      "content": "## Platform Initiative\n\n## Scope\n\n## Impact Areas\n\n## Migration Strategy\n\n## Rollout Plan\n\n## Success Criteria\n"
     },
     {
-      "id": "epic-market-expansion",
-      "name": "Market Expansion",
-      "description": "Plan market expansion and growth initiatives",
-      "title": "🌍 Market Expansion: [Region/Market]",
-      "content": "## Market Analysis\n\n## Expansion Strategy\n\n## Target Segments\n\n## Go-to-Market Plan\n\n## Competitive Analysis\n\n## Resource Requirements\n\n## Timeline\n\n## Success Metrics\n\n## Risk Mitigation\n\n## Budget Allocation\n\n## Success Criteria\n\n## Contingency Plans\n",
-      "priority": "High"
+      "id": "epic-integration",
+      "name": "Integration Epic",
+      "description": "Third-party integrations and API work",
+      "title": "🔗 Integration: [Integration Name]",
+      "content": "## Integration Overview\n\n## API Requirements\n\n## Data Mapping\n\n## Authentication\n\n## Error Handling\n\n## Testing Strategy\n"
     },
     {
-      "id": "epic-digital-transformation",
-      "name": "Digital Transformation",
-      "description": "Plan comprehensive digital transformation initiatives",
-      "title": "💡 Digital Transformation: [Initiative Name]",
-      "content": "## Current State Assessment\n\n## Transformation Vision\n\n## Key Initiatives\n\n## Technology Strategy\n\n## Process Changes\n\n## Organizational Impact\n\n## Change Management\n\n## Timeline & Roadmap\n\n## Success Metrics\n\n## Risk Management\n\n## Budget & Resources\n\n## Governance Structure\n",
-      "priority": "High"
+      "id": "epic-ux",
+      "name": "UX/UI Epic",
+      "description": "User experience and interface improvements",
+      "title": "🎨 UX/UI: [UX Initiative]",
+      "content": "## UX Initiative\n\n## User Research\n\n## Design Requirements\n\n## Wireframes/Mockups\n\n## Accessibility\n\n## User Testing\n"
     },
     {
-      "id": "epic-compliance-initiative",
-      "name": "Compliance Initiative",
-      "description": "Address regulatory compliance and security requirements",
-      "title": "🛡️ Compliance Initiative: [Regulation/Standard]",
-      "content": "## Regulatory Requirements\n\n## Current Compliance Status\n\n## Gap Analysis\n\n## Implementation Plan\n\n## Resource Allocation\n\n## Timeline\n\n## Risk Assessment\n\n## Testing & Validation\n\n## Documentation\n\n## Training Requirements\n\n## Monitoring & Auditing\n\n## Budget Impact\n",
-      "priority": "High"
+      "id": "epic-security",
+      "name": "Security Epic",
+      "description": "Security enhancements and compliance",
+      "title": "🔒 Security: [Security Initiative]",
+      "content": "## Security Initiative\n\n## Security Requirements\n\n## Compliance Standards\n\n## Risk Assessment\n\n## Implementation Plan\n\n## Audit Requirements\n"
     },
     {
-      "id": "epic-customer-experience",
-      "name": "Customer Experience Initiative",
-      "description": "Improve customer experience and satisfaction",
-      "title": "👥 Customer Experience: [Initiative Name]",
-      "content": "## Current Experience Analysis\n\n## Customer Journey Mapping\n\n## Pain Points\n\n## Improvement Opportunities\n\n## Implementation Plan\n\n## Success Metrics\n\n## Timeline\n\n## Resource Requirements\n\n## Change Management\n\n## Training Plan\n\n## Budget Allocation\n\n## Measurement & Reporting\n",
-      "priority": "High"
-    },
-    {
-      "id": "epic-innovation-program",
-      "name": "Innovation Program",
-      "description": "Establish innovation and R&D programs",
-      "title": "💡 Innovation Program: [Focus Area]",
-      "content": "## Innovation Objectives\n\n## Research Areas\n\n## Methodology\n\n## Resource Allocation\n\n## Timeline\n\n## Success Criteria\n\n## Risk Assessment\n\n## Intellectual Property\n\n## Collaboration Strategy\n\n## Budget Planning\n\n## Measurement Framework\n\n## Scaling Strategy\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "epic-talent-development",
-      "name": "Talent Development Program",
-      "description": "Develop organizational talent and capabilities",
-      "title": "🌟 Talent Development: [Program Name]",
-      "content": "## Skills Assessment\n\n## Development Objectives\n\n## Learning Programs\n\n## Career Development\n\n## Leadership Pipeline\n\n## Resource Planning\n\n## Timeline\n\n## Success Metrics\n\n## Budget Allocation\n\n## Change Management\n\n## Evaluation Framework\n\n## Sustainability Plan\n",
-      "priority": "Medium"
-    }
-  ],
-  "user_story": [
-    {
-      "id": "user-story-login",
-      "name": "User Authentication",
-      "description": "Enable users to securely access their accounts",
-      "title": "👤 User Story: [User Action]",
-      "content": "## User Persona\n\n## Current Behavior\n\n## Desired Behavior\n\n## Acceptance Criteria\n\n## Definition of Done\n\n## Edge Cases\n",
-      "priority": "High"
-    },
-    {
-      "id": "user-story-search",
-      "name": "Search Functionality",
-      "description": "Allow users to find content quickly and efficiently",
-      "title": "🔍 User Story: [Search Feature]",
-      "content": "## User Persona\n\n## Search Context\n\n## Search Requirements\n\n## Expected Results\n\n## Acceptance Criteria\n\n## Performance Expectations\n",
-      "priority": "High"
-    },
-    {
-      "id": "user-story-profile",
-      "name": "User Profile Management",
-      "description": "Enable users to manage their personal information and preferences",
-      "title": "👤 User Story: [Profile Action]",
-      "content": "## User Persona\n\n## Current Profile State\n\n## Desired Profile Features\n\n## Privacy Considerations\n\n## Acceptance Criteria\n\n## Validation Rules\n",
-      "priority": "High"
-    },
-    {
-      "id": "user-story-notifications",
-      "name": "Notification Preferences",
-      "description": "Allow users to customize how and when they receive notifications",
-      "title": "🔔 User Story: [Notification Type]",
-      "content": "## User Persona\n\n## Current Notification Experience\n\n## Desired Notification Control\n\n## Notification Channels\n\n## Acceptance Criteria\n\n## Opt-out Options\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "user-story-sharing",
-      "name": "Content Sharing",
-      "description": "Enable users to share content with others",
-      "title": "📤 User Story: [Sharing Feature]",
-      "content": "## User Persona\n\n## Sharing Context\n\n## Sharing Recipients\n\n## Privacy Controls\n\n## Acceptance Criteria\n\n## Social Features\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "user-story-mobile",
-      "name": "Mobile Experience",
-      "description": "Optimize user experience for mobile devices",
-      "title": "📱 User Story: [Mobile Feature]",
-      "content": "## User Persona\n\n## Mobile Context\n\n## Touch Interactions\n\n## Responsive Design\n\n## Acceptance Criteria\n\n## Performance Requirements\n",
-      "priority": "High"
-    },
-    {
-      "id": "user-story-accessibility",
-      "name": "Accessibility Features",
-      "description": "Ensure the application is usable by people with disabilities",
-      "title": "♿ User Story: [Accessibility Feature]",
-      "content": "## User Persona\n\n## Accessibility Needs\n\n## Current Barriers\n\n## Desired Accessibility\n\n## Acceptance Criteria\n\n## Testing Requirements\n",
-      "priority": "High"
-    },
-    {
-      "id": "user-story-customization",
-      "name": "Personalization",
-      "description": "Allow users to customize their experience and preferences",
-      "title": "🎨 User Story: [Customization Feature]",
-      "content": "## User Persona\n\n## Customization Options\n\n## User Preferences\n\n## Default Settings\n\n## Acceptance Criteria\n\n## Data Persistence\n",
-      "priority": "Medium"
-    }
-  ],
-  "feature": [
-    {
-      "id": "feature-realtime-collaboration",
-      "name": "Real-time Collaboration",
-      "description": "Enable multiple users to work together simultaneously",
-      "title": "🤝 Feature: [Collaboration Feature]",
-      "content": "## Feature Overview\n\n## Target Users\n\n## Collaboration Scenarios\n\n## Key Capabilities\n\n## Business Value\n\n## Success Metrics\n\n## Technical Considerations\n",
-      "priority": "High"
-    },
-    {
-      "id": "feature-ai-assistance",
-      "name": "AI-Powered Assistance",
-      "description": "Provide intelligent assistance and automation features",
-      "title": "🤖 Feature: [AI Feature]",
-      "content": "## Feature Overview\n\n## AI Capabilities\n\n## User Interactions\n\n## Accuracy Requirements\n\n## Business Value\n\n## Success Metrics\n\n## Ethical Considerations\n",
-      "priority": "High"
-    },
-    {
-      "id": "feature-advanced-analytics",
-      "name": "Advanced Analytics",
-      "description": "Provide comprehensive data analysis and insights",
-      "title": "📊 Feature: [Analytics Feature]",
-      "content": "## Feature Overview\n\n## Data Sources\n\n## Analysis Types\n\n## Visualization Options\n\n## Business Value\n\n## Success Metrics\n\n## Performance Requirements\n",
-      "priority": "High"
-    },
-    {
-      "id": "feature-integrations",
-      "name": "Third-party Integrations",
-      "description": "Connect with external services and platforms",
-      "title": "🔗 Feature: [Integration Feature]",
-      "content": "## Feature Overview\n\n## Target Platforms\n\n## Integration Types\n\n## Authentication Methods\n\n## Business Value\n\n## Success Metrics\n\n## Security Requirements\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "feature-workflow-automation",
-      "name": "Workflow Automation",
-      "description": "Automate repetitive tasks and processes",
-      "title": "⚙️ Feature: [Automation Feature]",
-      "content": "## Feature Overview\n\n## Automation Scenarios\n\n## Workflow Types\n\n## Customization Options\n\n## Business Value\n\n## Success Metrics\n\n## Reliability Requirements\n",
-      "priority": "High"
-    },
-    {
-      "id": "feature-security-enhancement",
-      "name": "Enhanced Security",
-      "description": "Improve security and compliance features",
-      "title": "🔒 Feature: [Security Feature]",
-      "content": "## Feature Overview\n\n## Security Requirements\n\n## Compliance Standards\n\n## User Impact\n\n## Business Value\n\n## Success Metrics\n\n## Implementation Timeline\n",
-      "priority": "High"
-    },
-    {
-      "id": "feature-mobile-app",
-      "name": "Mobile Application",
-      "description": "Native mobile app for enhanced user experience",
-      "title": "📱 Feature: [Mobile Feature]",
-      "content": "## Feature Overview\n\n## Platform Support\n\n## Core Functionality\n\n## Offline Capabilities\n\n## Business Value\n\n## Success Metrics\n\n## Development Timeline\n",
-      "priority": "High"
-    },
-    {
-      "id": "feature-custom-reporting",
-      "name": "Custom Reporting",
-      "description": "Flexible reporting and dashboard capabilities",
-      "title": "📈 Feature: [Reporting Feature]",
-      "content": "## Feature Overview\n\n## Report Types\n\n## Customization Options\n\n## Data Sources\n\n## Business Value\n\n## Success Metrics\n\n## Performance Requirements\n",
-      "priority": "Medium"
+      "id": "epic-performance",
+      "name": "Performance Epic",
+      "description": "Performance optimization and scaling",
+      "title": "⚡ Performance: [Performance Goal]",
+      "content": "## Performance Goal\n\n## Current Metrics\n\n## Target Metrics\n\n## Optimization Areas\n\n## Testing Strategy\n\n## Monitoring\n"
     }
   ]
 }
