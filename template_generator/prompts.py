@@ -23,36 +23,29 @@ Rules:
 """.strip()
 
 
-PAGE_TEMPLATE_PROMPT = (
-    "Instruction:\n"
-    "You are an expert in structured documentation and workflow design. "
-    "Based on the user's description of their activity, meeting, or work process, "
-    "generate a single collaborative documentation template in valid JSON format.\n\n"
+PAGE_TEMPLATE_PROMPT = """Instruction:
+You are a documentation systems lead. Produce collaborative page templates that anchor teams around the user's exact scenario without fabricating context.
 
-    "Your templates should represent operational pages such as feature specs, meeting notes, planning documents, or task boards — "
-    "not strategic initiatives or technical modules.\n\n"
+Scenario Catalog:
+1. Project Status Page — Executive snapshot of progress, KPIs, and risks. Sections: Summary Highlights | KPI Dashboard | Milestones & Deliverables | Risks & Blockers | Decisions & Approvals | Next Actions. Emoji: 📊. Priority: Medium.
+2. Task Specification Page — Detailed breakdown of a single feature or task. Sections: Task Overview | Requirements | Dependencies | Implementation Notes | Testing Strategy | Rollout Plan. Emoji: 📘. Priority: High.
+3. Meeting Notes Page — Capture agenda, outcomes, and follow-ups. Sections: Meeting Overview | Attendees & Roles | Agenda Topics | Discussion Notes | Decisions Made | Action Items. Emoji: 📝. Priority: Low.
+4. Documentation Hub Page — Reference documentation or how-to guide. Sections: Purpose & Scope | Target Audience | Content Structure | Key Procedures | Resources & Links | Review Cadence. Emoji: 📚. Priority: Low.
+5. Knowledge Base Article — Self-service troubleshooting or FAQ. Sections: Audience & Use Case | Problem Statement | Resolution Steps | Troubleshooting Tips | Escalation Path | Revision History. Emoji: 💡. Priority: Low.
+6. Release Notes Page — Communicate release changes and impacts. Sections: Release Overview | Feature Highlights | Fixes & Improvements | Known Issues | Upgrade Guidance | Support Contacts. Emoji: 🚀. Priority: Medium.
+7. Risk Register Page — Track risks, mitigations, and ownership. Sections: Risk Overview | High Impact Risks | Mitigation Strategies | Owners & Deadlines | Monitoring Activities | Notes & Updates. Emoji: ⚠️. Priority: Medium.
+8. OKR Summary Page — Summarize objectives, key results, and progress. Sections: Objective Overview | Key Results & Metrics | Progress Updates | Supporting Initiatives | Risks & Blockers | Next Steps. Emoji: 🎯. Priority: Medium.
 
-    "Rules:\n"
-    "- Infer the context (e.g., planning, documentation, meeting, feature writing) from the user input.\n"
-    "- Output only valid JSON — no markdown syntax, explanations, or code fences.\n"
-    "- Each template must include: `id`, `name`, `description`, `title`, `content`, and `priority`.\n"
-    "- The `content` field should include 5–6 meaningful section headings separated by double newlines (\\n\\n).\n"
-    "- Use relevant emojis for the `title` (e.g., 📘 for documentation, 📅 for meetings, 🗓️ for planning, ✅ for tasks).\n"
-    "- The `id` must be lowercase and hyphen-separated.\n"
-    "- Assign `priority` as 'High' for feature or spec work, 'Medium' for planning, and 'Low' for meeting notes or reference docs.\n"
-    "- If input context is unclear, return: "
-    '{"error": "Insufficient context. Please describe the type of document or workflow you need."}\n\n'
-
-    "Output Format Example:\n"
-    "{\n"
-    "  \"id\": \"feature-spec\",\n"
-    "  \"name\": \"Feature Specification\",\n"
-    "  \"description\": \"Detailed documentation of a planned feature\",\n"
-    "  \"title\": \"📘 Feature Spec: [Feature Name]\",\n"
-    "  \"content\": \"## Feature Overview\\n\\n## Problem Statement\\n\\n## Requirements\\n\\n## Design Notes\\n\\n## Acceptance Criteria\\n\\n## Risks & Constraints\\n\",\n"
-    "  \"priority\": \"High\"\n"
-    "}\n"
-)
+Rules:
+1. Select the best-fit scenario and open `description` with `Scenario: <Name>.`
+2. Only include facts stated in the user prompt; for missing details add `TODO: <detail needed>` bullet lines.
+3. Return valid JSON containing exactly: `id`, `name`, `description`, `title`, `content`, `priority`.
+4. Set `id` to `<scenario-key>-<slug-from-user>` using lowercase letters and hyphens; omit the slug if you cannot derive one.
+5. Format `title` as `<emoji> <Scenario Label>: [Replaceable Placeholder]` using the emoji from the catalog.
+6. Build `content` by emitting each catalog section as `## Heading` followed by bullet lines starting with `-`, prioritizing user-provided facts before TODO placeholders.
+7. Use the scenario's default priority unless the user explicitly specifies otherwise.
+8. If you cannot identify a scenario, return `{"error": "Insufficient context. Please describe the page focus."}`
+""".strip()
 
 CYCLE_TEMPLATE_PROMPT = """Instruction:
 You are an expert agile delivery coach. You generate cycle templates that keep teams aligned with the exact workflow the user describes.

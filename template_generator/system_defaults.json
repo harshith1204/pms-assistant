@@ -67,52 +67,68 @@
   ],
   "page": [
     {
-      "id": "project_status",
-      "name": "Project Status",
-      "pageType": "PROJECT",
-      "description": "Executive summary with KPIs, milestones, risks"
+      "id": "page-project-status",
+      "name": "Project Status Page",
+      "description": "Scenario: Project Status Page. Executive snapshot of progress, KPIs, and risks.",
+      "title": "📊 Project Status: [Project or Program]",
+      "content": "## Summary Highlights\n- TODO: Capture overall status and headline updates\n\n## KPI Dashboard\n- TODO: List critical metrics and current values\n\n## Milestones & Deliverables\n- TODO: Detail upcoming and completed milestones\n\n## Risks & Blockers\n- TODO: Document risks, blockers, and mitigation owners\n\n## Decisions & Approvals\n- TODO: Record pending or completed decisions\n\n## Next Actions\n- TODO: Outline immediate follow-ups and owners\n",
+      "priority": "Medium"
     },
     {
-      "id": "task_spec",
-      "name": "Task Spec",
-      "pageType": "TASK",
-      "description": "Detailed task breakdown, acceptance criteria, next steps"
+      "id": "page-task-specification",
+      "name": "Task Specification Page",
+      "description": "Scenario: Task Specification Page. Detailed breakdown of a single feature or task.",
+      "title": "📘 Task Specification: [Task or Feature]",
+      "content": "## Task Overview\n- TODO: Describe the purpose and scope\n\n## Requirements\n- TODO: List functional and non-functional needs\n\n## Dependencies\n- TODO: Identify cross-team or technical dependencies\n\n## Implementation Notes\n- TODO: Capture design, architecture, or constraints\n\n## Testing Strategy\n- TODO: Define validation approach and coverage\n\n## Rollout Plan\n- TODO: Outline release plan, comms, and guardrails\n",
+      "priority": "High"
     },
     {
-      "id": "meeting_notes",
-      "name": "Meeting Notes",
-      "pageType": "MEETING",
-      "description": "Agenda, decisions, action items, owners, due dates"
+      "id": "page-meeting-notes",
+      "name": "Meeting Notes Page",
+      "description": "Scenario: Meeting Notes Page. Capture agenda, outcomes, and follow-ups.",
+      "title": "📝 Meeting Notes: [Meeting Name]",
+      "content": "## Meeting Overview\n- TODO: State purpose, date, and facilitator\n\n## Attendees & Roles\n- TODO: List participants and responsibilities\n\n## Agenda Topics\n- TODO: Record topics covered\n\n## Discussion Notes\n- TODO: Summarize key points and insights\n\n## Decisions Made\n- TODO: Capture outcomes and rationales\n\n## Action Items\n- TODO: Log tasks, owners, and due dates\n",
+      "priority": "Low"
     },
     {
-      "id": "documentation",
-      "name": "Documentation",
-      "pageType": "DOCUMENTATION",
-      "description": "How-to, concepts, references for internal knowledge"
+      "id": "page-documentation-hub",
+      "name": "Documentation Hub Page",
+      "description": "Scenario: Documentation Hub Page. Reference documentation or how-to guide.",
+      "title": "📚 Documentation Hub: [Topic or System]",
+      "content": "## Purpose & Scope\n- TODO: Explain what this documentation covers\n\n## Target Audience\n- TODO: Describe who should use this resource\n\n## Content Structure\n- TODO: Outline sections or navigation\n\n## Key Procedures\n- TODO: Detail critical processes or steps\n\n## Resources & Links\n- TODO: List supporting materials and references\n\n## Review Cadence\n- TODO: Define update frequency and owners\n",
+      "priority": "Low"
     },
     {
-      "id": "knowledge_base",
-      "name": "Knowledge Base",
-      "pageType": "KB",
-      "description": "FAQ, troubleshooting, guides for quick answers"
+      "id": "page-knowledge-base",
+      "name": "Knowledge Base Article",
+      "description": "Scenario: Knowledge Base Article. Self-service troubleshooting or FAQ.",
+      "title": "💡 Knowledge Base: [Topic or Issue]",
+      "content": "## Audience & Use Case\n- TODO: Identify who encounters this issue\n\n## Problem Statement\n- TODO: Describe symptoms or triggers\n\n## Resolution Steps\n- TODO: Enumerate steps to resolve the issue\n\n## Troubleshooting Tips\n- TODO: Provide variations, warnings, or checks\n\n## Escalation Path\n- TODO: Define next steps if unresolved\n\n## Revision History\n- TODO: Track updates and authors\n",
+      "priority": "Low"
     },
     {
-      "id": "release_notes",
-      "name": "Release Notes",
-      "pageType": "DOCUMENTATION",
-      "description": "Version highlights, changes, fixes, known issues"
+      "id": "page-release-notes",
+      "name": "Release Notes Page",
+      "description": "Scenario: Release Notes Page. Communicate release changes and impacts.",
+      "title": "🚀 Release Notes: [Version or Date]",
+      "content": "## Release Overview\n- TODO: Summarize release scope and goals\n\n## Feature Highlights\n- TODO: Highlight marquee additions\n\n## Fixes & Improvements\n- TODO: List resolved issues or enhancements\n\n## Known Issues\n- TODO: Document existing limitations\n\n## Upgrade Guidance\n- TODO: Provide rollout or upgrade instructions\n\n## Support Contacts\n- TODO: Note support channels and ownership\n",
+      "priority": "Medium"
     },
     {
-      "id": "risk_register",
-      "name": "Risk Register",
-      "pageType": "PROJECT",
-      "description": "Risks, likelihood, impact, owner, mitigation"
+      "id": "page-risk-register",
+      "name": "Risk Register Page",
+      "description": "Scenario: Risk Register Page. Track risks, mitigations, and ownership.",
+      "title": "⚠️ Risk Register: [Program or Team]",
+      "content": "## Risk Overview\n- TODO: Summarize risk posture and scope\n\n## High Impact Risks\n- TODO: List top risks with impact ratings\n\n## Mitigation Strategies\n- TODO: Capture plans to reduce likelihood or impact\n\n## Owners & Deadlines\n- TODO: Assign responsibilities and timelines\n\n## Monitoring Activities\n- TODO: Describe tracking, triggers, and reviews\n\n## Notes & Updates\n- TODO: Record latest updates or decisions\n",
+      "priority": "Medium"
     },
     {
-      "id": "okr_summary",
-      "name": "OKR Summary",
-      "pageType": "PROJECT",
-      "description": "Objectives, key results, progress, next steps"
+      "id": "page-okr-summary",
+      "name": "OKR Summary Page",
+      "description": "Scenario: OKR Summary Page. Summarize objectives, key results, and progress.",
+      "title": "🎯 OKR Summary: [Cycle or Team]",
+      "content": "## Objective Overview\n- TODO: Describe the objective and intent\n\n## Key Results & Metrics\n- TODO: List KRs with targets and actuals\n\n## Progress Updates\n- TODO: Highlight achievements and blockers\n\n## Supporting Initiatives\n- TODO: Outline projects contributing to the KRs\n\n## Risks & Blockers\n- TODO: Call out threats to completion\n\n## Next Steps\n- TODO: Detail upcoming work and owners\n",
+      "priority": "Medium"
     }
   ],
   "cycle": [
