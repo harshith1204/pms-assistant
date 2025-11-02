@@ -18,9 +18,7 @@ from .prompts import (
     PAGE_TEMPLATE_PROMPT,
     CYCLE_TEMPLATE_PROMPT,
     MODULE_TEMPLATE_PROMPT,
-    EPIC_TEMPLATE_PROMPT,
-    USER_STORY_TEMPLATE_PROMPT,
-    FEATURE_TEMPLATE_PROMPT
+    EPIC_TEMPLATE_PROMPT
 )
 
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -35,8 +33,6 @@ def get_prompt_for_type(prompt_type: str) -> str:
         "cycle": CYCLE_TEMPLATE_PROMPT,
         "module": MODULE_TEMPLATE_PROMPT,
         "epic": EPIC_TEMPLATE_PROMPT,
-        "user_story": USER_STORY_TEMPLATE_PROMPT,
-        "feature": FEATURE_TEMPLATE_PROMPT,
     }
 
     # Default to work_item if type not found

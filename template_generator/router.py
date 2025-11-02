@@ -174,7 +174,7 @@ async def get_templates(
     Query Parameters:
       - project_id (optional): Filter templates by project ID
       - business_id (optional): Filter templates by business ID
-      - template_type (optional): Filter by template type (work_item, page, cycle, module, epic, user_story, feature)
+      - template_type (optional): Filter by template type (work_item, page, cycle, module, epic)
       - limit (optional): Maximum number of templates to return (1-100, default: 50)
       - skip (optional): Number of templates to skip for pagination (default: 0)
       - include_defaults (optional): Include system default templates if no user templates found (default: true)
@@ -303,8 +303,6 @@ async def get_default_templates_by_type(template_type: str):
       - cycle: Iterative processes and workflows
       - module: Software components and integrations
       - epic: Strategic initiatives and roadmaps
-      - user_story: User-centric requirements and acceptance criteria
-      - feature: Product features and capabilities
 
     Parameters:
       - template_type: The type of templates to retrieve
