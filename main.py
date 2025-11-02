@@ -132,79 +132,6 @@ class EpicCreateResponse(BaseModel):
     link: Optional[str] = None
 
 
-# Smart Filter API Models
-class SmartFilterRequest(BaseModel):
-    query: str
-    limit: Optional[int] = 50
-
-
-class WorkItemState(BaseModel):
-    id: str
-    name: str
-
-
-class WorkItemAssignee(BaseModel):
-    id: str
-    name: str
-
-
-class WorkItemLabel(BaseModel):
-    id: str
-    name: str
-    color: Optional[str] = None
-
-
-class WorkItemModules(BaseModel):
-    id: str
-    name: str
-
-
-class WorkItemCycle(BaseModel):
-    id: str
-    name: str
-    title: Optional[str] = None
-
-
-class WorkItemCreatedBy(BaseModel):
-    id: str
-    name: str
-
-
-class WorkItem(BaseModel):
-    id: str
-    displayBugNo: str
-    title: str
-    description: Optional[str] = None
-    state: WorkItemState
-    priority: str
-    assignee: List[WorkItemAssignee]
-    label: List[WorkItemLabel]
-    modules: Optional[WorkItemModules] = None
-    cycle: Optional[WorkItemCycle] = None
-    startDate: Optional[str] = None
-    endDate: Optional[str] = None
-    dueDate: Optional[str] = None
-    createdOn: Optional[str] = None
-    updatedOn: Optional[str] = None
-    releaseDate: Optional[str] = None
-    createdBy: Optional[WorkItemCreatedBy] = None
-    subWorkItem: Optional[List[Any]] = None
-    attachment: Optional[List[Any]] = None
-
-
-class SmartFilterResponse(BaseModel):
-    data: List[WorkItem]
-    total_count: int
-    query: str
-
-
-class CreateTemplateRequest(BaseModel):
-    user_input: str
-    project_id : str
-    business_id : str
-
-class GenerateTemplateResponse(BaseModel):
-    template: Dict[str, Any]
 
 # Global agent instances
 mongodb_agent = None
@@ -232,10 +159,12 @@ async def lifespan(app: FastAPI):
     # Initialize Smart Filter Agent after RAGTool
     from smart_filter.agent import SmartFilterAgent
     smart_filter_agent = SmartFilterAgent()
+    set_smart_filter_agent_instance(smart_filter_agent)
     print("Smart Filter Agent initialized successfully!")
     
     from template_generator.generator import TemplateGenerator
     template_generator = TemplateGenerator()
+    set_template_generator_instance(template_generator)
     print("Template Generator initialized sucessfully")
     # Ensure conversation DB connection pool is ready
     try:
@@ -276,6 +205,14 @@ app.add_middleware(
 
 # Include generation-related API routes
 app.include_router(generate_router)
+
+# Include template generator API routes
+from template_generator.router import router as template_router, set_template_generator as set_template_generator_instance
+app.include_router(template_router)
+
+# Include smart filter API routes
+from smart_filter.router import router as smart_filter_router, set_smart_filter_agent as set_smart_filter_agent_instance
+app.include_router(smart_filter_router)
 
 @app.get("/")
 async def root():
@@ -680,111 +617,7 @@ async def set_reaction(req: ReactionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/smart-filter/work-items", response_model=SmartFilterResponse)
-async def smart_filter_work_items(req: SmartFilterRequest):
-    """Smart filter work items using RAG + MongoDB queries based on natural language.
 
-    This endpoint combines retrieval-augmented generation (RAG) with MongoDB aggregation
-    pipelines to intelligently filter work items based on natural language queries.
-
-    The process:
-    1. Uses RAG to find relevant documents and extract work item references
-    2. Parses the natural language query to extract filtering criteria
-    3. Builds and executes optimized MongoDB aggregation pipeline
-    4. Returns work items in the exact API response structure
-
-    Example queries:
-    - "high priority bugs assigned to John"
-    - "tasks due this week in the authentication module"
-    - "completed features in sprint 3"
-    - "work items with 'login' in the title"
-    """
-    try:
-        if smart_filter_agent is None:
-            raise HTTPException(status_code=500, detail="Smart filter agent not initialized")
-
-        result = await smart_filter_agent.smart_filter_work_items(
-            query=req.query,
-            limit=req.limit or 50
-        )
-
-        return SmartFilterResponse(
-            data=result.work_items,
-            total_count=result.total_count,
-            query=req.query
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-    # (Duplicate endpoint removed)
-@app.post("/create_template", response_model=GenerateTemplateResponse)
-async def create_template(req: CreateTemplateRequest):
-    """
-    Generate a structured task template in JSON format based on a user's role, domain, or task description.
-
-    The function analyzes the user's input (e.g., their job role or activity) and infers
-    a relevant task structure, including title, content sections, and priority level.
-    It is useful for dynamically creating templates that match a user’s workflow,
-    such as bug reports, research tasks, feature requests, or documentation updates.
-
-    The returned template always includes:
-      - id (str): Lowercase, hyphen-separated unique identifier.
-      - name (str): Human-readable name of the template.
-      - description (str): Short summary of the template’s purpose.
-      - title (str): Formatted title with an emoji and placeholder.
-      - content (str): Markdown-formatted sections (4–6 headings).
-      - priority (str): One of "High", "Medium", or "Low" based on task urgency.
-
-    If insufficient context is provided in the input, an error JSON is returned:
-        {"error": "Insufficient context. Please describe your role or task type."}
-
-    Example Usage:
-        Input:  
-        {
-            "user_input": "I’m a data scientist running model experiments."
-        }
-
-        Expected Output:
-        {
-          "id": "model-experiment",
-          "name": "Model Experiment",
-          "description": "Template for running and documenting machine learning experiments",
-          "title": "🤖 Model Experiment: [Model Name]",
-          "content": "## Objective\\n\\n## Hypothesis\\n\\n## Dataset and Features\\n\\n## Model Configuration\\n\\n## Evaluation Metrics\\n\\n## Results and Insights\\n",
-          "priority": "High"
-        }
-
-    Returns:
-        dict: A structured JSON-like dictionary representing the generated task template.
-    """
-    try:
-        if template_generator is None:
-            raise HTTPException(status_code=500, detail="Template generator not initialized")
-
-        result = await template_generator.generate_template(
-            user_input=req.user_input
-        )
-        coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, TEMPLATES_COLLECTION_NAME)
-        if result:
-            await coll.insert_one(
-                {
-                    "project_id": req.project_id,
-                    "business_id": req.business_id,
-                    "template": result
-                }
-            )
-        return GenerateTemplateResponse(
-            template = result
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
