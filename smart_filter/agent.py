@@ -11,8 +11,10 @@ from datetime import datetime
 from qdrant.retrieval import ChunkAwareRetriever
 from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from .tools import smart_filter_tools
+# Import the actual tools that are available
+from tools import mongo_query, rag_search
 # Orchestration utilities
 from orchestrator import Orchestrator
 from bson import ObjectId

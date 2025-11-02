@@ -10,14 +10,13 @@ import json
 import asyncio
 from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass
-from orchestrator import Orchestrator, StepSpec, as_async
+from langchain_core.tools import tool
 from .planner import plan_and_execute_query
 # Import the existing tools
 try:
-    from tools import mongo_query, rag_search
+    from tools import  rag_search
 except ImportError:
     # Fallback for testing
-    mongo_query = None
     rag_search = None
 
 # Import necessary modules for RAG and MongoDB operations
