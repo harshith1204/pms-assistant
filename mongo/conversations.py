@@ -81,6 +81,7 @@ conversation_mongo_client = ConversationMongoClient(CONVERSATIONS_CONNECTION_STR
 
 CONVERSATIONS_DB_NAME = "SimpoAssist"
 CONVERSATIONS_COLLECTION_NAME = "conversations"
+TEMPLATES_COLLECTION_NAME = "Templates"
 
 
 async def ensure_conversation_client_connected():
