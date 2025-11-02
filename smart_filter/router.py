@@ -1,0 +1,118 @@
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+
+# Smart Filter API Models
+class SmartFilterRequest(BaseModel):
+    query: str
+    limit: Optional[int] = 50
+
+
+class WorkItemState(BaseModel):
+    id: str
+    name: str
+
+
+class WorkItemAssignee(BaseModel):
+    id: str
+    name: str
+
+
+class WorkItemLabel(BaseModel):
+    id: str
+    name: str
+    color: Optional[str] = None
+
+
+class WorkItemModules(BaseModel):
+    id: str
+    name: str
+
+
+class WorkItemCycle(BaseModel):
+    id: str
+    name: str
+    title: Optional[str] = None
+
+
+class WorkItemCreatedBy(BaseModel):
+    id: str
+    name: str
+
+
+class WorkItem(BaseModel):
+    id: str
+    displayBugNo: str
+    title: str
+    description: Optional[str] = None
+    state: WorkItemState
+    priority: str
+    assignee: List[WorkItemAssignee]
+    label: List[WorkItemLabel]
+    modules: Optional[WorkItemModules] = None
+    cycle: Optional[WorkItemCycle] = None
+    startDate: Optional[str] = None
+    endDate: Optional[str] = None
+    dueDate: Optional[str] = None
+    createdOn: Optional[str] = None
+    updatedOn: Optional[str] = None
+    releaseDate: Optional[str] = None
+    createdBy: Optional[WorkItemCreatedBy] = None
+    subWorkItem: Optional[List[Any]] = None
+    attachment: Optional[List[Any]] = None
+
+
+class SmartFilterResponse(BaseModel):
+    data: List[WorkItem]
+    total_count: int
+    query: str
+
+# Global smart filter agent instance
+smart_filter_agent = None
+
+def set_smart_filter_agent(agent):
+    """Set the smart filter agent instance from the main app"""
+    global smart_filter_agent
+    smart_filter_agent = agent
+
+router = APIRouter(prefix="/smart-filter", tags=["smart-filter"])
+
+@router.post("/work-items", response_model=SmartFilterResponse)
+async def smart_filter_work_items(req: SmartFilterRequest):
+    """Smart filter work items using RAG + MongoDB queries based on natural language.
+
+    This endpoint combines retrieval-augmented generation (RAG) with MongoDB aggregation
+    pipelines to intelligently filter work items based on natural language queries.
+
+    The process:
+    1. Uses RAG to find relevant documents and extract work item references
+    2. Parses the natural language query to extract filtering criteria
+    3. Builds and executes optimized MongoDB aggregation pipeline
+    4. Returns work items in the exact API response structure
+
+    Example queries:
+    - "high priority bugs assigned to John"
+    - "tasks due this week in the authentication module"
+    - "completed features in sprint 3"
+    - "work items with 'login' in the title"
+    """
+    try:
+        if smart_filter_agent is None:
+            raise HTTPException(status_code=500, detail="Smart filter agent not initialized")
+
+        result = await smart_filter_agent.smart_filter_work_items(
+            query=req.query,
+            limit=req.limit or 50
+        )
+
+        return SmartFilterResponse(
+            data=result.work_items,
+            total_count=result.total_count,
+            query=req.query
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
