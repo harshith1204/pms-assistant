@@ -1,7 +1,9 @@
 import json
 import os
+import uuid
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Dict, Any, List, Optional
 from bson import ObjectId
 from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, TEMPLATES_COLLECTION_NAME
@@ -59,9 +61,73 @@ class TemplateDocument(BaseModel):
     is_default: bool = False
     created_at: Optional[str] = None
 
+class CreateTemplateDirectRequest(BaseModel):
+    """Request model for directly creating a template."""
+    name: str
+    description: str
+    title: str
+    content: str
+    priority: str = "Medium"  # Default priority
+    template_type: str = "work_item"  # Default template type
+    project_id: str
+    business_id: str
+    is_default: bool = False
+
+    @field_validator('priority')
+    @classmethod
+    def validate_priority(cls, v):
+        allowed_priorities = ['High', 'Medium', 'Low']
+        if v not in allowed_priorities:
+            raise ValueError(f'Priority must be one of: {", ".join(allowed_priorities)}')
+        return v
+
+    @field_validator('template_type')
+    @classmethod
+    def validate_template_type(cls, v):
+        allowed_types = ['work_item', 'page', 'cycle', 'module', 'epic']
+        if v not in allowed_types:
+            raise ValueError(f'Template type must be one of: {", ".join(allowed_types)}')
+        return v
+
+class UpdateTemplateRequest(BaseModel):
+    """Request model for updating a template."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    title: Optional[str] = None
+    content: Optional[str] = None
+    priority: Optional[str] = None
+    template_type: Optional[str] = None
+    is_default: Optional[bool] = None
+
+    @field_validator('priority')
+    @classmethod
+    def validate_priority(cls, v):
+        if v is None:
+            return v
+        allowed_priorities = ['High', 'Medium', 'Low']
+        if v not in allowed_priorities:
+            raise ValueError(f'Priority must be one of: {", ".join(allowed_priorities)}')
+        return v
+
+    @field_validator('template_type')
+    @classmethod
+    def validate_template_type(cls, v):
+        if v is None:
+            return v
+        allowed_types = ['work_item', 'page', 'cycle', 'module', 'epic']
+        if v not in allowed_types:
+            raise ValueError(f'Template type must be one of: {", ".join(allowed_types)}')
+        return v
+
 class GetTemplatesResponse(BaseModel):
     templates: List[TemplateDocument]
     total_count: int
+
+class CreateTemplateDirectResponse(BaseModel):
+    """Response model for direct template creation."""
+    template_id: str
+    template: Dict[str, Any]
+    created_at: str
 
 # Global template generator instance
 template_generator = None
@@ -151,6 +217,84 @@ async def create_template(req: CreateTemplateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/", response_model=CreateTemplateDirectResponse)
+async def create_template_direct(req: CreateTemplateDirectRequest):
+    """
+    Create a new template directly without AI generation.
+
+    This endpoint allows direct creation of templates with user-provided content.
+    The template will be stored in the database and can be retrieved later.
+
+    Parameters:
+      - name: Human-readable name of the template
+      - description: Short summary of the template's purpose
+      - title: Formatted title with emoji and placeholder
+      - content: Markdown-formatted content sections
+      - priority: Priority level (High, Medium, Low)
+      - template_type: Type of template (work_item, page, cycle, module, epic)
+      - project_id: Associated project ID
+      - business_id: Associated business ID
+      - is_default: Whether this is a default template
+
+    Returns:
+        CreateTemplateDirectResponse: Object containing the created template ID and data
+
+    Example:
+        POST /templates
+        {
+            "name": "Custom Bug Report",
+            "description": "Template for reporting bugs",
+            "title": "🐛 Bug Report: [Issue Title]",
+            "content": "## Description\\n\\n## Steps to Reproduce\\n\\n## Expected Behavior\\n",
+            "priority": "High",
+            "template_type": "work_item",
+            "project_id": "proj123",
+            "business_id": "biz456",
+            "is_default": false
+        }
+    """
+    try:
+        # Generate a unique ID for the template
+        template_id = str(uuid.uuid4())
+
+        # Create the template structure
+        template_data = {
+            "id": f"{req.template_type}-{template_id[:8]}",  # Create a readable ID
+            "name": req.name,
+            "description": req.description,
+            "title": req.title,
+            "content": req.content,
+            "priority": req.priority
+        }
+
+        # Prepare the document for MongoDB
+        document = {
+            "project_id": req.project_id,
+            "business_id": req.business_id,
+            "template": template_data,
+            "is_default": req.is_default,
+            "created_at": datetime.utcnow().isoformat()
+        }
+
+        # Insert into database
+        coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, TEMPLATES_COLLECTION_NAME)
+        result = await coll.insert_one(document)
+
+        if not result.inserted_id:
+            raise HTTPException(status_code=500, detail="Failed to create template")
+
+        return CreateTemplateDirectResponse(
+            template_id=str(result.inserted_id),
+            template=template_data,
+            created_at=document["created_at"]
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/", response_model=GetTemplatesResponse)
 async def get_templates(
     project_id: Optional[str] = Query(None, description="Filter by project ID"),
@@ -158,14 +302,14 @@ async def get_templates(
     template_type: Optional[str] = Query(None, description="Filter by template type (work_item, page, cycle, module, epic)"),
     limit: int = Query(50, description="Maximum number of templates to return", ge=1, le=100),
     skip: int = Query(0, description="Number of templates to skip", ge=0),
-    include_defaults: bool = Query(True, description="Include default templates if no user templates found")
+    include_defaults: bool = Query(True, description="Include system default templates if no user templates exist")
 ):
     """
     Retrieve templates using intelligent priority logic with embedded system defaults.
 
     Template Priority System:
     1. If user has templates marked as is_default=true → Return user default templates
-    2. If user has templates but none marked as default → Return system default templates (from code)
+    2. If user has templates but none marked as default → Return user's templates
     3. If user has no templates → Return system default templates (from code)
 
     System defaults are embedded in the application code (40 templates total: 8 per category).
@@ -229,17 +373,10 @@ async def get_templates(
                 templates_docs = await cursor.to_list(length=None)
                 total_count = user_default_count
             else:
-                # User has templates but none marked as default, return system defaults
-                if include_defaults:
-                    system_templates, total_count = get_system_defaults(template_type, skip, limit)
-                    # Convert system templates to the same format as database documents
-                    templates_docs = [{
-                        "_id": f"system_{i}",
-                        "template": template,
-                        "is_default": True,
-                        "project_id": "system",
-                        "business_id": "system"
-                    } for i, template in enumerate(system_templates)]
+                # User has templates but none marked as default, return user's templates
+                cursor = coll.find(user_base_filter).sort("_id", -1).skip(skip).limit(limit)
+                templates_docs = await cursor.to_list(length=None)
+                total_count = user_total_count
         else:
             # User has no templates at all, return system defaults
             if include_defaults:
@@ -321,4 +458,102 @@ async def get_default_templates_by_type(template_type: str):
         )
 
     return SYSTEM_DEFAULT_TEMPLATES[template_type]
+
+
+@router.put("/{template_id}", response_model=CreateTemplateDirectResponse)
+async def update_template(template_id: str, req: UpdateTemplateRequest):
+    """
+    Update an existing template.
+
+    This endpoint allows updating template properties. Only provided fields will be updated.
+
+    Parameters:
+      - template_id: The MongoDB ObjectId of the template to update
+      - name: Human-readable name of the template (optional)
+      - description: Short summary of the template's purpose (optional)
+      - title: Formatted title with emoji and placeholder (optional)
+      - content: Markdown-formatted content sections (optional)
+      - priority: Priority level (High, Medium, Low) (optional)
+      - template_type: Type of template (work_item, page, cycle, module, epic) (optional)
+      - is_default: Whether this is a default template (optional)
+
+    Returns:
+        CreateTemplateDirectResponse: Object containing the updated template ID and data
+
+    Example:
+        PUT /templates/507f1f77bcf86cd799439011
+        {
+            "name": "Updated Bug Report",
+            "priority": "Low"
+        }
+    """
+    try:
+        # Validate that template_id is a valid ObjectId
+        try:
+            object_id = ObjectId(template_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid template ID format")
+
+        # Get the collection
+        coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, TEMPLATES_COLLECTION_NAME)
+
+        # Find the existing template
+        existing_doc = await coll.find_one({"_id": object_id})
+        if not existing_doc:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # Prepare update document
+        update_data = {}
+        template_update = {}
+
+        # Only update fields that are provided
+        if req.name is not None:
+            template_update["name"] = req.name
+        if req.description is not None:
+            template_update["description"] = req.description
+        if req.title is not None:
+            template_update["title"] = req.title
+        if req.content is not None:
+            template_update["content"] = req.content
+        if req.priority is not None:
+            template_update["priority"] = req.priority
+        if req.template_type is not None:
+            # Update the template ID prefix if template_type changed
+            template_update["id"] = f"{req.template_type}-{str(uuid.uuid4())[:8]}"
+        if req.is_default is not None:
+            update_data["is_default"] = req.is_default
+
+        # Add updated_at timestamp
+        update_data["updated_at"] = datetime.utcnow().isoformat()
+
+        # Build the full update document
+        if template_update:
+            update_data["template"] = {**existing_doc["template"], **template_update}
+        else:
+            update_data["template"] = existing_doc["template"]
+
+        # Update the document
+        result = await coll.update_one(
+            {"_id": object_id},
+            {"$set": update_data}
+        )
+
+        if result.modified_count == 0:
+            raise HTTPException(status_code=500, detail="Failed to update template")
+
+        # Return the updated template
+        updated_doc = await coll.find_one({"_id": object_id})
+        if not updated_doc:
+            raise HTTPException(status_code=500, detail="Failed to retrieve updated template")
+
+        return CreateTemplateDirectResponse(
+            template_id=str(updated_doc["_id"]),
+            template=updated_doc["template"],
+            created_at=updated_doc.get("created_at", updated_doc.get("updated_at"))
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
