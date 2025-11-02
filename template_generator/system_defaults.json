@@ -1,250 +1,332 @@
 {
   "work_item": [
     {
-      "id": "bug-fix",
-      "name": "Bug Fix",
-      "description": "Report and track software bugs and issues",
-      "title": "🐛 Bug Fix: [Brief Description]",
-      "content": "## Bug Description\n\n## Steps to Reproduce\n\n## Expected Behavior\n\n## Actual Behavior\n\n## Additional Information\n",
+      "id": "work-item-legacy-refactor",
+      "name": "Legacy Refactor Work Item",
+      "description": "Scenario: Legacy Refactor Work Item. Modernize outdated code paths without introducing regressions.",
+      "title": "🧹 Legacy Refactor: [Component or Domain]",
+      "content": "## Scope Baseline\n- TODO: Identify legacy components to refactor\n\n## Impacted Areas\n- TODO: List services, modules, or user flows affected\n\n## Refactor Checklist\n- TODO: Outline modernization tasks and acceptance criteria\n\n## Risk Controls\n- TODO: Document safeguards, backups, and review steps\n\n## Validation Steps\n- TODO: Specify tests, benchmarks, and approval gates\n",
       "priority": "High"
     },
     {
-      "id": "feature-request",
-      "name": "Feature Request",
-      "description": "Request new features or functionality",
-      "title": "✨ Feature Request: [Feature Name]",
-      "content": "## Feature Description\n\n## Business Value\n\n## User Experience\n\n## Technical Requirements\n\n## Acceptance Criteria\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "general-task",
-      "name": "General Task",
-      "description": "General work items and tasks",
-      "title": "📝 Task: [Task Description]",
-      "content": "## Task Description\n\n## Requirements\n\n## Deliverables\n\n## Notes\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "documentation",
-      "name": "Documentation",
-      "description": "Documentation and knowledge base updates",
-      "title": "📚 Documentation: [Document Title]",
-      "content": "## Document Title\n\n## Purpose\n\n## Content Outline\n\n## Target Audience\n\n## Review Requirements\n",
-      "priority": "Low"
-    },
-    {
-      "id": "research-task",
-      "name": "Research Task",
-      "description": "Research and investigation tasks",
-      "title": "🔍 Research: [Research Topic]",
-      "content": "## Research Topic\n\n## Research Questions\n\n## Methodology\n\n## Expected Findings\n\n## Resources Needed\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "code-review",
-      "name": "Code Review",
-      "description": "Code review and feedback",
-      "title": "👀 Code Review: [Component/Module]",
-      "content": "## Code Location\n\n## Review Focus Areas\n\n## Code Quality\n\n## Best Practices\n\n## Security Considerations\n",
-      "priority": "Medium"
-    },
-    {
-      "id": "meeting-notes",
-      "name": "Meeting Notes",
-      "description": "Meeting notes and action items",
-      "title": "📅 Meeting: [Meeting Purpose]",
-      "content": "## Meeting Purpose\n\n## Attendees\n\n## Discussion Points\n\n## Action Items\n\n## Follow-up\n",
-      "priority": "Low"
-    },
-    {
-      "id": "technical-spike",
-      "name": "Technical Spike",
-      "description": "Technical investigation and prototyping",
-      "title": "🔬 Technical Spike: [Investigation Topic]",
-      "content": "## Investigation Topic\n\n## Technical Questions\n\n## Approach\n\n## Expected Outcomes\n\n## Time Constraint\n",
+      "id": "work-item-performance-optimization",
+      "name": "Performance Optimization Work Item",
+      "description": "Scenario: Performance Optimization Work Item. Reduce latency or resource usage for a targeted capability.",
+      "title": "⚡ Performance Optimization: [Service or Flow]",
+      "content": "## Performance Issue Summary\n- TODO: Capture baseline metrics and pain points\n\n## Target Metrics\n- TODO: Define desired performance thresholds\n\n## Optimization Plan\n- TODO: List tuning or refactor activities\n\n## Benchmark Strategy\n- TODO: Describe measurement approach and tools\n\n## Rollout & Monitoring\n- TODO: Plan deployment, observation, and rollback cues\n",
       "priority": "High"
+    },
+    {
+      "id": "work-item-test-coverage",
+      "name": "Test Coverage Expansion Work Item",
+      "description": "Scenario: Test Coverage Expansion Work Item. Increase automated confidence in risky areas of the codebase.",
+      "title": "🧪 Test Coverage Expansion: [Area or Suite]",
+      "content": "## Coverage Gap\n- TODO: Document current gaps and defect history\n\n## Test Design\n- TODO: Outline planned test types and scenarios\n\n## Environments & Data\n- TODO: Specify datasets, fixtures, and platform needs\n\n## Success Criteria\n- TODO: Define pass thresholds and reporting expectations\n\n## Follow-up Tasks\n- TODO: Capture ownership, timelines, and next checks\n",
+      "priority": "Medium"
+    },
+    {
+      "id": "work-item-security-hardening",
+      "name": "Security Hardening Work Item",
+      "description": "Scenario: Security Hardening Work Item. Patch vulnerabilities and reinforce defenses for sensitive surfaces.",
+      "title": "🔒 Security Hardening: [Surface or Service]",
+      "content": "## Vulnerability Summary\n- TODO: Record issues, CVEs, or audit findings\n\n## Attack Surface\n- TODO: Map affected components and entry points\n\n## Mitigation Actions\n- TODO: Detail fixes, configuration changes, or tooling updates\n\n## Validation Steps\n- TODO: Describe testing, scanning, and sign-off procedures\n\n## Compliance Notes\n- TODO: Capture regulatory, policy, or documentation needs\n",
+      "priority": "High"
+    },
+    {
+      "id": "work-item-dependency-upgrade",
+      "name": "Dependency Upgrade Work Item",
+      "description": "Scenario: Dependency Upgrade Work Item. Update libraries, frameworks, or tooling safely.",
+      "title": "📦 Dependency Upgrade: [Package or Stack]",
+      "content": "## Upgrade Scope\n- TODO: List dependencies and versions to change\n\n## Breaking Changes\n- TODO: Note incompatibilities and mitigation steps\n\n## Validation Plan\n- TODO: Plan automated and manual testing coverage\n\n## Deployment Steps\n- TODO: Outline rollout approach and sequencing\n\n## Post-Upgrade Monitoring\n- TODO: Define dashboards, alerts, and rollback triggers\n",
+      "priority": "Medium"
+    },
+    {
+      "id": "work-item-database-optimization",
+      "name": "Database Optimization Work Item",
+      "description": "Scenario: Database Optimization Work Item. Improve data access patterns and storage performance.",
+      "title": "🗄️ Database Optimization: [Table or Query]",
+      "content": "## Current Bottleneck\n- TODO: Describe slow queries or capacity constraints\n\n## Target Improvement\n- TODO: Define measurable goals and SLAs\n\n## Planned Changes\n- TODO: Detail schema, index, or query adjustments\n\n## Testing Strategy\n- TODO: Plan sampling, load testing, and validation steps\n\n## Monitoring Signals\n- TODO: Track metrics, alerts, and follow-up reviews\n",
+      "priority": "Medium"
+    },
+    {
+      "id": "work-item-documentation-cleanup",
+      "name": "Documentation Cleanup Work Item",
+      "description": "Scenario: Documentation Cleanup Work Item. Refresh onboarding or operational knowledge bases.",
+      "title": "📝 Documentation Cleanup: [Guide or Area]",
+      "content": "## Current Issues\n- TODO: List outdated sections and known gaps\n\n## Target Audience\n- TODO: Describe who relies on this documentation\n\n## Update Tasks\n- TODO: Outline rewrite, review, and approval steps\n\n## Review & Approval\n- TODO: Assign reviewers and acceptance criteria\n\n## Publishing Plan\n- TODO: Plan release, communication, and follow-ups\n",
+      "priority": "Low"
+    },
+    {
+      "id": "work-item-pipeline-maintenance",
+      "name": "Build Pipeline Maintenance Work Item",
+      "description": "Scenario: Build Pipeline Maintenance Work Item. Stabilize CI/CD workflows and supporting tooling.",
+      "title": "🛠️ Pipeline Maintenance: [Pipeline or Stage]",
+      "content": "## Pipeline Baseline\n- TODO: Capture current state, failures, and SLAs\n\n## Pain Points\n- TODO: Detail flakiness, bottlenecks, or missing guardrails\n\n## Remediation Tasks\n- TODO: List fixes, improvements, or tooling updates\n\n## Verification Strategy\n- TODO: Define dry runs, test plans, and validation gates\n\n## Success Signals\n- TODO: Track metrics, alerts, and follow-up checkpoints\n",
+      "priority": "Medium"
     }
   ],
   "page": [
     {
-      "id": "project_status",
-      "name": "Project Status",
-      "pageType": "PROJECT",
-      "description": "Executive summary with KPIs, milestones, risks"
+      "id": "page-project-status",
+      "name": "Project Status Page",
+      "description": "Scenario: Project Status Page. Executive snapshot of progress, KPIs, and risks.",
+      "title": "📊 Project Status: [Project or Program]",
+      "content": "## Summary Highlights\n- TODO: Capture overall status and headline updates\n\n## KPI Dashboard\n- TODO: List critical metrics and current values\n\n## Milestones & Deliverables\n- TODO: Detail upcoming and completed milestones\n\n## Risks & Blockers\n- TODO: Document risks, blockers, and mitigation owners\n\n## Decisions & Approvals\n- TODO: Record pending or completed decisions\n\n## Next Actions\n- TODO: Outline immediate follow-ups and owners\n",
+      "priority": "Medium"
     },
     {
-      "id": "task_spec",
-      "name": "Task Spec",
-      "pageType": "TASK",
-      "description": "Detailed task breakdown, acceptance criteria, next steps"
+      "id": "page-task-specification",
+      "name": "Task Specification Page",
+      "description": "Scenario: Task Specification Page. Detailed breakdown of a single feature or task.",
+      "title": "📘 Task Specification: [Task or Feature]",
+      "content": "## Task Overview\n- TODO: Describe the purpose and scope\n\n## Requirements\n- TODO: List functional and non-functional needs\n\n## Dependencies\n- TODO: Identify cross-team or technical dependencies\n\n## Implementation Notes\n- TODO: Capture design, architecture, or constraints\n\n## Testing Strategy\n- TODO: Define validation approach and coverage\n\n## Rollout Plan\n- TODO: Outline release plan, comms, and guardrails\n",
+      "priority": "High"
     },
     {
-      "id": "meeting_notes",
-      "name": "Meeting Notes",
-      "pageType": "MEETING",
-      "description": "Agenda, decisions, action items, owners, due dates"
+      "id": "page-meeting-notes",
+      "name": "Meeting Notes Page",
+      "description": "Scenario: Meeting Notes Page. Capture agenda, outcomes, and follow-ups.",
+      "title": "📝 Meeting Notes: [Meeting Name]",
+      "content": "## Meeting Overview\n- TODO: State purpose, date, and facilitator\n\n## Attendees & Roles\n- TODO: List participants and responsibilities\n\n## Agenda Topics\n- TODO: Record topics covered\n\n## Discussion Notes\n- TODO: Summarize key points and insights\n\n## Decisions Made\n- TODO: Capture outcomes and rationales\n\n## Action Items\n- TODO: Log tasks, owners, and due dates\n",
+      "priority": "Low"
     },
     {
-      "id": "documentation",
-      "name": "Documentation",
-      "pageType": "DOCUMENTATION",
-      "description": "How-to, concepts, references for internal knowledge"
+      "id": "page-documentation-hub",
+      "name": "Documentation Hub Page",
+      "description": "Scenario: Documentation Hub Page. Reference documentation or how-to guide.",
+      "title": "📚 Documentation Hub: [Topic or System]",
+      "content": "## Purpose & Scope\n- TODO: Explain what this documentation covers\n\n## Target Audience\n- TODO: Describe who should use this resource\n\n## Content Structure\n- TODO: Outline sections or navigation\n\n## Key Procedures\n- TODO: Detail critical processes or steps\n\n## Resources & Links\n- TODO: List supporting materials and references\n\n## Review Cadence\n- TODO: Define update frequency and owners\n",
+      "priority": "Low"
     },
     {
-      "id": "knowledge_base",
-      "name": "Knowledge Base",
-      "pageType": "KB",
-      "description": "FAQ, troubleshooting, guides for quick answers"
+      "id": "page-knowledge-base",
+      "name": "Knowledge Base Article",
+      "description": "Scenario: Knowledge Base Article. Self-service troubleshooting or FAQ.",
+      "title": "💡 Knowledge Base: [Topic or Issue]",
+      "content": "## Audience & Use Case\n- TODO: Identify who encounters this issue\n\n## Problem Statement\n- TODO: Describe symptoms or triggers\n\n## Resolution Steps\n- TODO: Enumerate steps to resolve the issue\n\n## Troubleshooting Tips\n- TODO: Provide variations, warnings, or checks\n\n## Escalation Path\n- TODO: Define next steps if unresolved\n\n## Revision History\n- TODO: Track updates and authors\n",
+      "priority": "Low"
     },
     {
-      "id": "release_notes",
-      "name": "Release Notes",
-      "pageType": "DOCUMENTATION",
-      "description": "Version highlights, changes, fixes, known issues"
+      "id": "page-release-notes",
+      "name": "Release Notes Page",
+      "description": "Scenario: Release Notes Page. Communicate release changes and impacts.",
+      "title": "🚀 Release Notes: [Version or Date]",
+      "content": "## Release Overview\n- TODO: Summarize release scope and goals\n\n## Feature Highlights\n- TODO: Highlight marquee additions\n\n## Fixes & Improvements\n- TODO: List resolved issues or enhancements\n\n## Known Issues\n- TODO: Document existing limitations\n\n## Upgrade Guidance\n- TODO: Provide rollout or upgrade instructions\n\n## Support Contacts\n- TODO: Note support channels and ownership\n",
+      "priority": "Medium"
     },
     {
-      "id": "risk_register",
-      "name": "Risk Register",
-      "pageType": "PROJECT",
-      "description": "Risks, likelihood, impact, owner, mitigation"
+      "id": "page-risk-register",
+      "name": "Risk Register Page",
+      "description": "Scenario: Risk Register Page. Track risks, mitigations, and ownership.",
+      "title": "⚠️ Risk Register: [Program or Team]",
+      "content": "## Risk Overview\n- TODO: Summarize risk posture and scope\n\n## High Impact Risks\n- TODO: List top risks with impact ratings\n\n## Mitigation Strategies\n- TODO: Capture plans to reduce likelihood or impact\n\n## Owners & Deadlines\n- TODO: Assign responsibilities and timelines\n\n## Monitoring Activities\n- TODO: Describe tracking, triggers, and reviews\n\n## Notes & Updates\n- TODO: Record latest updates or decisions\n",
+      "priority": "Medium"
     },
     {
-      "id": "okr_summary",
-      "name": "OKR Summary",
-      "pageType": "PROJECT",
-      "description": "Objectives, key results, progress, next steps"
+      "id": "page-okr-summary",
+      "name": "OKR Summary Page",
+      "description": "Scenario: OKR Summary Page. Summarize objectives, key results, and progress.",
+      "title": "🎯 OKR Summary: [Cycle or Team]",
+      "content": "## Objective Overview\n- TODO: Describe the objective and intent\n\n## Key Results & Metrics\n- TODO: List KRs with targets and actuals\n\n## Progress Updates\n- TODO: Highlight achievements and blockers\n\n## Supporting Initiatives\n- TODO: Outline projects contributing to the KRs\n\n## Risks & Blockers\n- TODO: Call out threats to completion\n\n## Next Steps\n- TODO: Detail upcoming work and owners\n",
+      "priority": "Medium"
     }
   ],
   "cycle": [
     {
-      "id": "sprint-cycle",
-      "name": "Sprint Cycle",
-      "description": "Standard 2-week development sprint",
-      "title": "Sprint [Number]: [Goal]",
-      "content": "## Sprint Goal\n\n## Key Objectives\n\n## User Stories\n\n## Definition of Done\n\n## Sprint Capacity\n\n## Risks and Dependencies\n"
+      "id": "cycle-foundational-development",
+      "name": "Foundational Development Cycle",
+      "description": "Scenario: Foundational Development Cycle. Establish core infrastructure, tooling, and architecture baselines.",
+      "title": "🏗️ Foundational Cycle: [Cycle Name]",
+      "content": "## Cycle Mission\n- TODO: Capture the foundational objectives and scope\n\n## Technical Foundations\n- TODO: List platforms, services, or components to establish\n\n## Environment Setup\n- TODO: Define environments, tooling, and access requirements\n\n## Planned Deliverables\n- TODO: Enumerate artifacts or capabilities due by cycle end\n\n## Risk Watchlist\n- TODO: Surface key risks, blockers, and mitigations\n\n## Exit Criteria\n- TODO: Document measurable completion checks\n",
+      "priority": "High"
     },
     {
-      "id": "release-cycle",
-      "name": "Release Cycle",
-      "description": "Major product release cycle",
-      "title": "Release [Version]: [Release Name]",
-      "content": "## Release Overview\n\n## Release Scope\n\n## Key Features\n\n## Testing Strategy\n\n## Deployment Plan\n\n## Rollback Plan\n"
+      "id": "cycle-feature-delivery",
+      "name": "Feature Delivery Cycle",
+      "description": "Scenario: Feature Delivery Cycle. Deliver scoped user-facing functionality end to end.",
+      "title": "🎯 Feature Cycle: [Cycle Name]",
+      "content": "## Feature Goals\n- TODO: Summarize user problems and desired outcomes\n\n## Backlog Scope\n- TODO: List prioritized work items in scope\n\n## Design Alignment\n- TODO: Note design, product, and stakeholder agreements\n\n## Build Plan\n- TODO: Lay out implementation phases and owners\n\n## QA Strategy\n- TODO: Define testing coverage and acceptance criteria\n\n## Demo & Release Prep\n- TODO: Plan demonstrations, launch tasks, and documentation\n",
+      "priority": "High"
     },
     {
-      "id": "maintenance-cycle",
-      "name": "Maintenance Cycle",
-      "description": "Bug fixes and maintenance cycle",
-      "title": "Maintenance: [Focus Area]",
-      "content": "## Maintenance Focus\n\n## Bug Fixes\n\n## Performance Improvements\n\n## Security Updates\n\n## Infrastructure Updates\n\n## Monitoring\n"
+      "id": "cycle-stabilization-testing",
+      "name": "Stabilization & Testing Cycle",
+      "description": "Scenario: Stabilization & Testing Cycle. Drive quality, regression coverage, and bug resolution.",
+      "title": "🧪 Stabilization Cycle: [Cycle Name]",
+      "content": "## Stability Objectives\n- TODO: Capture quality goals and targeted issue areas\n\n## Regression Scope\n- TODO: List products, flows, or platforms in coverage\n\n## Bug Triage Plan\n- TODO: Define severity handling and prioritization rules\n\n## Test Coverage Plan\n- TODO: Outline manual and automated validation approach\n\n## Release Readiness\n- TODO: Summarize exit gates, sign-offs, and documentation\n\n## Post-Cycle Monitoring\n- TODO: Define follow-up metrics and observation windows\n",
+      "priority": "Medium"
     },
     {
-      "id": "research-cycle",
-      "name": "Research Cycle",
-      "description": "Research and prototyping cycle",
-      "title": "Research: [Topic]",
-      "content": "## Research Objectives\n\n## Methodology\n\n## Success Criteria\n\n## Deliverables\n\n## Timeline\n\n## Resources Required\n"
+      "id": "cycle-performance-optimization",
+      "name": "Performance Optimization Cycle",
+      "description": "Scenario: Performance Optimization Cycle. Improve speed, reliability, and efficiency for target workloads.",
+      "title": "⚡ Performance Cycle: [Cycle Name]",
+      "content": "## Performance Targets\n- TODO: Specify baseline pain points and target metrics\n\n## Profiling Plan\n- TODO: Describe tooling, sampling approach, and owners\n\n## Optimization Tasks\n- TODO: List workstreams and expected impact\n\n## Validation Strategy\n- TODO: Note benchmarks, load tests, and acceptance criteria\n\n## Risk Management\n- TODO: Outline rollback plans and dependency constraints\n\n## Reporting Cadence\n- TODO: Plan status syncs, dashboards, and stakeholders\n",
+      "priority": "High"
     },
     {
-      "id": "design-cycle",
-      "name": "Design Cycle",
-      "description": "UI/UX design and prototyping",
-      "title": "Design: [Feature/Section]",
-      "content": "## Design Scope\n\n## User Research\n\n## Design Requirements\n\n## Wireframes\n\n## Mockups\n\n## Design System Updates\n"
+      "id": "cycle-integration-alignment",
+      "name": "Integration & Alignment Cycle",
+      "description": "Scenario: Integration & Alignment Cycle. Synchronize modules, teams, and code branches.",
+      "title": "🔗 Integration Cycle: [Cycle Name]",
+      "content": "## Integration Goals\n- TODO: Clarify integration outcomes and KPIs\n\n## Stakeholders & Teams\n- TODO: Identify partner teams and communication channels\n\n## Coordination Activities\n- TODO: Plan sync meetings, checkpoints, and tooling\n\n## Merge & Deployment Plan\n- TODO: Outline sequencing, environment usage, and safeguards\n\n## Dependencies & Risks\n- TODO: Capture upstream/downstream constraints\n\n## Communication Plan\n- TODO: Detail update cadence and artifact sharing\n",
+      "priority": "Medium"
     },
     {
-      "id": "integration-cycle",
-      "name": "Integration Cycle",
-      "description": "Third-party integrations and APIs",
-      "title": "Integration: [Service/Provider]",
-      "content": "## Integration Scope\n\n## API Specifications\n\n## Data Mapping\n\n## Authentication\n\n## Error Handling\n\n## Testing\n"
+      "id": "cycle-feedback-iteration",
+      "name": "Feedback & Iteration Cycle",
+      "description": "Scenario: Feedback & Iteration Cycle. Apply stakeholder and user insights to refine deliverables.",
+      "title": "🔁 Iteration Cycle: [Cycle Name]",
+      "content": "## Feedback Sources\n- TODO: List channels, surveys, or research inputs\n\n## Prioritized Insights\n- TODO: Capture themes and decisions for this cycle\n\n## Iteration Plan\n- TODO: Outline updates, owners, and timelines\n\n## Validation Activities\n- TODO: Plan usability tests, pilots, or beta reviews\n\n## Stakeholder Updates\n- TODO: Define update cadence and audiences\n\n## Lessons Learned\n- TODO: Note retrospective focus areas\n",
+      "priority": "Medium"
+    },
+    {
+      "id": "cycle-security-hardening",
+      "name": "Security & Hardening Cycle",
+      "description": "Scenario: Security & Hardening Cycle. Address vulnerabilities and improve defenses.",
+      "title": "🔒 Security Cycle: [Cycle Name]",
+      "content": "## Threat Landscape\n- TODO: Summarize findings, pen-test results, or alerts\n\n## Hardening Tasks\n- TODO: Detail remediations, patches, and configurations\n\n## Validation Tests\n- TODO: Note scans, penetration tests, and code reviews\n\n## Compliance Checks\n- TODO: Map standards, attestations, or documentation\n\n## Incident Preparedness\n- TODO: Outline playbooks, drills, or runbooks\n\n## Sign-off Requirements\n- TODO: Capture approvals and evidence submissions\n",
+      "priority": "High"
+    },
+    {
+      "id": "cycle-release-preparation",
+      "name": "Deployment / Release Preparation Cycle",
+      "description": "Scenario: Deployment / Release Preparation Cycle. Finalize launch readiness with validation and communication.",
+      "title": "🚀 Release Prep Cycle: [Cycle Name]",
+      "content": "## Release Scope\n- TODO: Enumerate features and fixes targeted for launch\n\n## Readiness Checklist\n- TODO: Track docs, training, and approvals needed\n\n## Rollout Plan\n- TODO: Define launch sequencing, environments, and ownership\n\n## Communication Timeline\n- TODO: Plan announcements and stakeholder updates\n\n## Contingency Plan\n- TODO: Describe rollback, hotfix, and support strategies\n\n## Final Validation\n- TODO: List final tests, sign-offs, and monitoring setup\n",
+      "priority": "High"
     }
   ],
   "module": [
     {
-      "id": "frontend-module",
-      "name": "Frontend Module",
-      "description": "User interface and client-side functionality",
-      "title": "Frontend: [Feature/Area]",
-      "content": "## Module Overview\n\n## UI Components\n\n## User Interactions\n\n## Responsive Design\n\n## Accessibility\n\n## Browser Compatibility\n"
+      "id": "module-core-functional",
+      "name": "Core Functional Module",
+      "description": "Scenario: Core Functional Module. Deliver a central capability that powers critical system value.",
+      "title": "🧱 Module: [Core Capability]",
+      "content": "## Mission & Scope\n- TODO: Summarize the core problem this module solves\n\n## Core Capabilities\n- TODO: Enumerate essential features and responsibilities\n\n## Primary Personas\n- TODO: Identify roles or systems depending on this module\n\n## Critical Flows\n- TODO: Describe key user or data journeys\n\n## Dependencies\n- TODO: List upstream/downstream modules or services\n\n## Operational Constraints\n- TODO: Capture SLAs, compliance, or scaling limits\n",
+      "priority": "High"
     },
     {
-      "id": "backend-module",
-      "name": "Backend Module",
-      "description": "Server-side logic and API development",
-      "title": "Backend: [Service/API]",
-      "content": "## Module Overview\n\n## API Endpoints\n\n## Data Models\n\n## Business Logic\n\n## Security\n\n## Performance\n"
+      "id": "module-supportive-utility",
+      "name": "Supportive / Utility Module",
+      "description": "Scenario: Supportive / Utility Module. Provide enabling services that other modules rely on.",
+      "title": "🛠️ Module: [Utility Service]",
+      "content": "## Purpose & Services\n- TODO: Explain the utility offered and primary functions\n\n## Dependent Modules\n- TODO: List consumers and integration expectations\n\n## Integration Points\n- TODO: Detail APIs, hooks, or messaging contracts\n\n## Operational Constraints\n- TODO: Document performance, cost, or scaling limits\n\n## Reliability & SLAs\n- TODO: Capture uptime, alerting, and escalation paths\n\n## Maintenance Tasks\n- TODO: Outline routine upkeep and ownership\n",
+      "priority": "Medium"
     },
     {
-      "id": "database-module",
-      "name": "Database Module",
-      "description": "Data storage and management systems",
-      "title": "Database: [Schema/Service]",
-      "content": "## Database Design\n\n## Schema Definition\n\n## Data Relationships\n\n## Indexing Strategy\n\n## Migration Plan\n\n## Backup Strategy\n"
+      "id": "module-data-management",
+      "name": "Data Management Module",
+      "description": "Scenario: Data Management Module. Govern how data is collected, stored, processed, and surfaced.",
+      "title": "🗄️ Module: [Data Domain]",
+      "content": "## Data Domains\n- TODO: Define datasets and business entities covered\n\n## Sources & Ingestion\n- TODO: Describe inbound feeds, cadence, and validation\n\n## Storage Strategy\n- TODO: Specify databases, schemas, and retention\n\n## Processing Pipelines\n- TODO: Summarize transformations, jobs, and tooling\n\n## Governance & Quality\n- TODO: List stewardship, quality checks, and audits\n\n## Access Patterns\n- TODO: Detail query, API, or analytics consumption\n",
+      "priority": "High"
     },
     {
-      "id": "api-module",
-      "name": "API Module",
-      "description": "RESTful APIs and integrations",
-      "title": "API: [Service Name]",
-      "content": "## API Specification\n\n## Endpoints\n\n## Request/Response Format\n\n## Authentication\n\n## Rate Limiting\n\n## Documentation\n"
+      "id": "module-configuration-settings",
+      "name": "Configuration & Settings Module",
+      "description": "Scenario: Configuration & Settings Module. Manage customization, preferences, and policy controls.",
+      "title": "⚙️ Module: [Configuration Area]",
+      "content": "## Personalization Goals\n- TODO: Capture why users need configuration flexibility\n\n## Configurable Elements\n- TODO: List settings, toggles, or feature flags\n\n## Permission Model\n- TODO: Describe roles, scopes, and constraints\n\n## UX Touchpoints\n- TODO: Note interfaces where configuration is applied\n\n## Audit & Rollback\n- TODO: Document change history and rollback strategy\n\n## Dependencies\n- TODO: Highlight services reacting to configuration changes\n",
+      "priority": "Medium"
     },
     {
-      "id": "testing-module",
-      "name": "Testing Module",
-      "description": "Quality assurance and testing frameworks",
-      "title": "Testing: [Component]",
-      "content": "## Test Strategy\n\n## Test Cases\n\n## Automation Framework\n\n## Coverage Goals\n\n## CI/CD Integration\n\n## Performance Testing\n"
+      "id": "module-communication-interaction",
+      "name": "Communication / Interaction Module",
+      "description": "Scenario: Communication / Interaction Module. Support user-to-system and user-to-user messaging flows.",
+      "title": "💬 Module: [Channel or Interface]",
+      "content": "## Interaction Goals\n- TODO: State the communication outcomes or objectives\n\n## Channels & Interfaces\n- TODO: List UI surfaces, APIs, or connectors\n\n## Message Lifecycle\n- TODO: Describe drafting, delivery, and archival steps\n\n## Triggers & Events\n- TODO: Capture events initiating notifications or messages\n\n## Compliance & Privacy\n- TODO: Note regulatory needs and data retention\n\n## Success Metrics\n- TODO: Define engagement or reliability measures\n",
+      "priority": "Medium"
     },
     {
-      "id": "infrastructure-module",
-      "name": "Infrastructure Module",
-      "description": "DevOps and deployment infrastructure",
-      "title": "Infrastructure: [Component]",
-      "content": "## Infrastructure Requirements\n\n## Deployment Strategy\n\n## Monitoring\n\n## Scaling\n\n## Security\n\n## Maintenance\n"
+      "id": "module-automation-workflow",
+      "name": "Automation / Workflow Module",
+      "description": "Scenario: Automation / Workflow Module. Orchestrate processes that streamline operational steps.",
+      "title": "🤖 Module: [Workflow Name]",
+      "content": "## Workflow Overview\n- TODO: Summarize the process and desired outcome\n\n## Triggers & Inputs\n- TODO: List events or data starting the workflow\n\n## Task Orchestration\n- TODO: Describe automation steps and decision points\n\n## Exception Handling\n- TODO: Document fallback paths and manual interventions\n\n## Audit & Logging\n- TODO: Capture traceability, logging, and storage\n\n## Success Metrics\n- TODO: Define throughput, accuracy, or time savings\n",
+      "priority": "High"
+    },
+    {
+      "id": "module-monitoring-analytics",
+      "name": "Monitoring / Analytics Module",
+      "description": "Scenario: Monitoring / Analytics Module. Provide visibility into system and business performance.",
+      "title": "📊 Module: [Monitoring Scope]",
+      "content": "## Observability Scope\n- TODO: Highlight domains and KPIs tracked\n\n## Data Sources\n- TODO: Enumerate telemetry, logs, and integrations\n\n## Visualization Strategy\n- TODO: Describe dashboards, reports, or alerts\n\n## Alerting & Thresholds\n- TODO: Capture alert logic, severity, and routing\n\n## KPIs\n- TODO: List metrics, formulas, and targets\n\n## Continuous Improvement\n- TODO: Plan reviews, backlog, and evolution cadence\n",
+      "priority": "Medium"
+    },
+    {
+      "id": "module-security-compliance",
+      "name": "Security / Compliance Module",
+      "description": "Scenario: Security / Compliance Module. Protect data, enforce policies, and support audits.",
+      "title": "🔒 Module: [Protection Scope]",
+      "content": "## Security Objectives\n- TODO: State confidentiality, integrity, or availability goals\n\n## Control Framework\n- TODO: Map required standards and control families\n\n## Access Model\n- TODO: Define authentication, authorization, and roles\n\n## Monitoring & Alerts\n- TODO: Describe threat detection and response tooling\n\n## Incident Response\n- TODO: Outline escalation paths and playbooks\n\n## Compliance Evidence\n- TODO: List reports, attestations, and audit artifacts\n",
+      "priority": "High"
     }
   ],
   "epic": [
     {
-      "id": "epic-feature",
-      "name": "Feature Epic",
-      "description": "Major feature development with multiple work items",
-      "title": "🚀 Feature: [Feature Name]",
-      "content": "## Epic Overview\n\n## Business Value\n\n## User Stories\n\n## Acceptance Criteria\n\n## Technical Requirements\n\n## Success Metrics\n"
+      "id": "epic-foundational-system",
+      "name": "Foundational System Epic",
+      "description": "Scenario: Foundational System Epic. Build or refactor platform foundations to unlock future capabilities.",
+      "title": "🏗️ Epic: [Foundation Initiative]",
+      "content": "## Vision Statement\n- TODO: Describe the long-term platform vision\n\n## Strategic Outcomes\n- TODO: List measurable results this epic will enable\n\n## Architecture Scope\n- TODO: Outline systems, services, or layers impacted\n\n## Milestones & Phases\n- TODO: Break down phases with target timelines\n\n## Risk Mitigation\n- TODO: Capture technical, resource, and timeline risks\n\n## Success Metrics\n- TODO: Define signals that prove the foundation is working\n",
+      "priority": "High"
     },
     {
-      "id": "epic-platform",
-      "name": "Platform Epic",
-      "description": "Platform-wide improvements and changes",
-      "title": "🏗️ Platform: [Platform Initiative]",
-      "content": "## Platform Initiative\n\n## Scope\n\n## Impact Areas\n\n## Migration Strategy\n\n## Rollout Plan\n\n## Success Criteria\n"
+      "id": "epic-experience-improvement",
+      "name": "Experience Improvement Epic",
+      "description": "Scenario: Experience Improvement Epic. Elevate usability, accessibility, and overall satisfaction.",
+      "title": "✨ Epic: [Experience Initiative]",
+      "content": "## Experience Goals\n- TODO: Summarize desired user outcomes\n\n## Target Segments\n- TODO: Identify personas or user cohorts affected\n\n## Journey Pain Points\n- TODO: Document issues discovered in research or feedback\n\n## Design & Content Strategy\n- TODO: Outline UX, UI, and messaging approaches\n\n## Launch Plan\n- TODO: Capture beta, rollout, and training plans\n\n## Measurement Framework\n- TODO: Define KPIs, surveys, or analytics dashboards\n",
+      "priority": "Medium"
     },
     {
-      "id": "epic-integration",
-      "name": "Integration Epic",
-      "description": "Third-party integrations and API work",
-      "title": "🔗 Integration: [Integration Name]",
-      "content": "## Integration Overview\n\n## API Requirements\n\n## Data Mapping\n\n## Authentication\n\n## Error Handling\n\n## Testing Strategy\n"
+      "id": "epic-scalability-performance",
+      "name": "Scalability & Performance Epic",
+      "description": "Scenario: Scalability & Performance Epic. Improve system capacity, responsiveness, and stability.",
+      "title": "⚡ Epic: [Performance Initiative]",
+      "content": "## Capacity Challenges\n- TODO: Describe growth signals or performance incidents\n\n## Performance Targets\n- TODO: Set target SLAs, throughput, or latency\n\n## Technical Approach\n- TODO: Summarize architecture, refactors, or tooling\n\n## Workstreams\n- TODO: Break down coordinated engineering tracks\n\n## Risk Management\n- TODO: Capture mitigation plans and constraints\n\n## Validation Plan\n- TODO: Outline benchmarking, load, and resiliency tests\n",
+      "priority": "High"
     },
     {
-      "id": "epic-ux",
-      "name": "UX/UI Epic",
-      "description": "User experience and interface improvements",
-      "title": "🎨 UX/UI: [UX Initiative]",
-      "content": "## UX Initiative\n\n## User Research\n\n## Design Requirements\n\n## Wireframes/Mockups\n\n## Accessibility\n\n## User Testing\n"
+      "id": "epic-security-compliance",
+      "name": "Security & Compliance Epic",
+      "description": "Scenario: Security & Compliance Epic. Address risk mitigation, policy enforcement, and regulatory adherence.",
+      "title": "🔐 Epic: [Security or Compliance Goal]",
+      "content": "## Compliance Drivers\n- TODO: List regulations, standards, or commitments\n\n## Scope & Controls\n- TODO: Define systems, data, and control families\n\n## Implementation Plan\n- TODO: Outline workstreams, owners, and timelines\n\n## Risk Register\n- TODO: Capture threats, impacts, and mitigation owners\n\n## Audit Evidence\n- TODO: Document artifacts, reports, or attestations\n\n## Ongoing Monitoring\n- TODO: Describe continuous assurance and alerting\n",
+      "priority": "High"
     },
     {
-      "id": "epic-security",
-      "name": "Security Epic",
-      "description": "Security enhancements and compliance",
-      "title": "🔒 Security: [Security Initiative]",
-      "content": "## Security Initiative\n\n## Security Requirements\n\n## Compliance Standards\n\n## Risk Assessment\n\n## Implementation Plan\n\n## Audit Requirements\n"
+      "id": "epic-operational-efficiency",
+      "name": "Operational Efficiency Epic",
+      "description": "Scenario: Operational Efficiency Epic. Streamline processes and drive automation across teams.",
+      "title": "🛠️ Epic: [Efficiency Initiative]",
+      "content": "## Current Inefficiencies\n- TODO: Summarize bottlenecks and waste\n\n## Automation Opportunities\n- TODO: Highlight processes to automate or simplify\n\n## Process Changes\n- TODO: Detail new flows, RACI updates, or policies\n\n## Change Management\n- TODO: Plan training, communication, and adoption support\n\n## Success Metrics\n- TODO: Define productivity, quality, or cost targets\n\n## Rollout Plan\n- TODO: Map pilot phases and full deployment\n",
+      "priority": "Medium"
     },
     {
-      "id": "epic-performance",
-      "name": "Performance Epic",
-      "description": "Performance optimization and scaling",
-      "title": "⚡ Performance: [Performance Goal]",
-      "content": "## Performance Goal\n\n## Current Metrics\n\n## Target Metrics\n\n## Optimization Areas\n\n## Testing Strategy\n\n## Monitoring\n"
+      "id": "epic-data-insights",
+      "name": "Data & Insights Epic",
+      "description": "Scenario: Data & Insights Epic. Deliver reporting, data quality, or business intelligence improvements.",
+      "title": "📈 Epic: [Insights Initiative]",
+      "content": "## Intelligence Goals\n- TODO: Describe the decisions or insights to unlock\n\n## Data Sources\n- TODO: List systems, pipelines, and ownership\n\n## Analytics Deliverables\n- TODO: Detail dashboards, models, or self-serve tools\n\n## Enablement Plan\n- TODO: Plan training, documentation, and adoption\n\n## Governance & Quality\n- TODO: Note stewardship, validation, and SLAs\n\n## KPIs\n- TODO: Define metrics to measure insight effectiveness\n",
+      "priority": "Medium"
+    },
+    {
+      "id": "epic-integration-connectivity",
+      "name": "Integration & Connectivity Epic",
+      "description": "Scenario: Integration & Connectivity Epic. Expand interoperability through APIs and connectors.",
+      "title": "🔗 Epic: [Integration Initiative]",
+      "content": "## Integration Vision\n- TODO: Explain the cross-system experience to enable\n\n## Systems Involved\n- TODO: List upstream, downstream, and third-party systems\n\n## API Strategy\n- TODO: Outline standards, versioning, and security\n\n## Data Contracts\n- TODO: Define schemas, mappings, and validation\n\n## Testing & Validation\n- TODO: Plan integration, contract, and end-to-end tests\n\n## Adoption Strategy\n- TODO: Capture rollout, partner enablement, and support\n",
+      "priority": "Medium"
+    },
+    {
+      "id": "epic-user-engagement",
+      "name": "User Engagement Epic",
+      "description": "Scenario: User Engagement Epic. Drive retention, onboarding, or personalized interaction strategies.",
+      "title": "🎯 Epic: [Engagement Initiative]",
+      "content": "## Engagement Objectives\n- TODO: Define the behavior or sentiment shift desired\n\n## Audience Segments\n- TODO: Identify cohorts and targeting criteria\n\n## Program/Feature Ideas\n- TODO: List campaigns, features, or experiments\n\n## Personalization Strategy\n- TODO: Describe data signals and tailored experiences\n\n## Experiment Plan\n- TODO: Outline testing approach, cadence, and owners\n\n## Success Metrics\n- TODO: Capture activation, retention, or satisfaction KPIs\n",
+      "priority": "Medium"
     }
   ]
 }
