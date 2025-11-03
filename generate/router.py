@@ -30,10 +30,10 @@ except Exception:  # pragma: no cover - optional dependency
     Groq = None  # type: ignore
 
 
-router = APIRouter()
+router = APIRouter(prefix="/generate", tags=["generate"])
 
 
-@router.post("/generate-work-item", response_model=GenerateResponse)
+@router.post("/work-item", response_model=GenerateResponse)
 def generate_work_item(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -90,7 +90,7 @@ def generate_work_item(req: GenerateRequest) -> GenerateResponse:
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
-@router.post("/generate-work-item-surprise-me", response_model=GenerateResponse)
+@router.post("/work-item-surprise-me", response_model=GenerateResponse)
 def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -214,7 +214,7 @@ async def generate_page_content(request: Request):
         raise HTTPException(status_code=502, detail=f"Groq API error: {e}")
 
 
-@router.post("/generate-cycle", response_model=GenerateResponse)
+@router.post("/cycle", response_model=GenerateResponse)
 def generate_cycle(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -269,7 +269,7 @@ def generate_cycle(req: GenerateRequest) -> GenerateResponse:
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
-@router.post("/generate-cycle-surprise-me", response_model=GenerateResponse)
+@router.post("/cycle-surprise-me", response_model=GenerateResponse)
 def generate_cycle_surprise_me(req: CycleSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -311,7 +311,7 @@ def generate_cycle_surprise_me(req: CycleSurpriseMeRequest) -> GenerateResponse:
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 
-@router.post("/generate-epic", response_model=GenerateResponse)
+@router.post("/epic", response_model=GenerateResponse)
 def generate_epic(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -365,7 +365,7 @@ def generate_epic(req: GenerateRequest) -> GenerateResponse:
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
-@router.post("/generate-epic-surprise-me", response_model=GenerateResponse)
+@router.post("/epic-surprise-me", response_model=GenerateResponse)
 def generate_epic_surprise_me(req: EpicSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -405,7 +405,7 @@ def generate_epic_surprise_me(req: EpicSurpriseMeRequest) -> GenerateResponse:
 
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
-@router.post("/generate-module", response_model=GenerateResponse)
+@router.post("/module", response_model=GenerateResponse)
 def generate_module(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -460,7 +460,7 @@ def generate_module(req: GenerateRequest) -> GenerateResponse:
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
-@router.post("/generate-module-surprise-me", response_model=GenerateResponse)
+@router.post("/module-surprise-me", response_model=GenerateResponse)
 def generate_module_surprise_me(req: ModuleSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:

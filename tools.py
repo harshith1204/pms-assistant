@@ -1144,7 +1144,7 @@ async def generate_content(
         
         if content_type == "work_item":
             # Call work item generation endpoint
-            url = f"{api_base}/generate-work-item"
+            url = f"{api_base}/generate/work-item"
             payload = {
                 "prompt": prompt,
                 "template": {
@@ -1195,7 +1195,7 @@ async def generate_content(
             
         elif content_type == "cycle":
             # Call cycle generation endpoint
-            url = f"{api_base}/generate-cycle"
+            url = f"{api_base}/generate/cycle"
             payload = {
                 "prompt": prompt,
                 "template": {
@@ -1242,7 +1242,7 @@ async def generate_content(
             
         elif content_type == "module":
             # Call module generation endpoint
-            url = f"{api_base}/generate-module"
+            url = f"{api_base}/generate/module"
             payload = {
                 "prompt": prompt,
                 "template": {
@@ -1289,7 +1289,7 @@ async def generate_content(
 
         elif content_type == "epic":
             # Call epic generation endpoint
-            url = f"{api_base}/generate-epic"
+            url = f"{api_base}/generate/epic"
             payload = {
                 "prompt": prompt,
                 "template": {
