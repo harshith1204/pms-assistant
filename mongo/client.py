@@ -7,7 +7,7 @@ import os
 import contextlib
 import asyncio
 from dotenv import load_dotenv
-
+from mongo_to_uuid import mongo_uuid_converter
 load_dotenv()
 
 try:
@@ -208,6 +208,57 @@ class DirectMongoClient:
                 pass
                 raise
 
+    async def aggregate_smart(self, database: str, collection: str, pipeline: List[Dict[str, Any]], project_id: str) -> List[Dict[str, Any]]:
+        """Execute MongoDB aggregation pipeline directly
+        
+        This replaces mongodb_tools.execute_tool("aggregate", {...})
+        
+        Args:
+            database: Database name
+            collection: Collection name
+            pipeline: MongoDB aggregation pipeline
+            project_id: Project UUID for RBAC scoping
+        Returns:
+            List of result documents
+        """
+        span_cm = contextlib.nullcontext()
+        with span_cm as span:
+            pass
+        injected_stages: List[Dict[str, Any]] = []
+        try:    
+            # Motor maintains persistent connection pool automatically
+            # No need to check connection status on every query - massive latency savings!
+            if not self.client:
+                raise RuntimeError("MongoDB client not initialized. Call connect() first.")
+            
+            if project_id:
+                try:
+                    pr_id = mongo_uuid_converter(project_id)
+                    
+                    injected_stages.append({"$match": {"project._id": pr_id}})
+                except ValueError as e:
+                        # Invalid UUID format - log and skip project filter
+                        print(f"⚠️  Invalid PROJECT_UUID format '{project_id}': {e}")
+                        print(f"   Skipping project filter for {collection}")
+                except Exception as e:
+                    # Other errors - log and skip project filter
+                    print(f"⚠️  Error applying project filter for {collection}: {e}")
+                        
+                    
+
+            # Execute aggregation - Motor uses persistent connection pool
+            db = self.client[database]
+            coll = db[collection]
+            effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
+            cursor = coll.aggregate(effective_pipeline)
+            results = await cursor.to_list(length=None)
+                
+            return results
+        
+        except Exception as e:
+                pass
+                raise
+
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Compatibility wrapper matching MongoDB MCP interface
         
@@ -219,6 +270,12 @@ class DirectMongoClient:
             collection = arguments["collection"]
             pipeline = arguments["pipeline"]
             return await self.aggregate(database, collection, pipeline)
+        elif tool_name == "aggregate_smart":
+            database = arguments.get("database", DATABASE_NAME)
+            collection = arguments["collection"]
+            pipeline = arguments["pipeline"]
+            project_id = arguments.get("project_id")
+            return await self.aggregate_smart(database, collection, pipeline, project_id)
         else:
             raise ValueError(f"Tool '{tool_name}' not supported by direct client. Only 'aggregate' is implemented.")
 

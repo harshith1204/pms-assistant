@@ -6,6 +6,7 @@ from datetime import datetime
 # Smart Filter API Models
 class SmartFilterRequest(BaseModel):
     query: str
+    project_id: str
     limit: Optional[int] = 50
 
 
@@ -103,6 +104,7 @@ async def smart_filter_work_items(req: SmartFilterRequest):
 
         result = await smart_filter_agent.smart_filter_work_items(
             query=req.query,
+            project_id=req.project_id,
             limit=req.limit or 50
         )
 
