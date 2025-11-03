@@ -264,7 +264,8 @@ async def create_template_direct(req: CreateTemplateDirectRequest):
             "description": req.description,
             "title": req.title,
             "content": req.content,
-            "priority": req.priority
+            "priority": req.priority,
+            "template_type": req.template_type
         }
 
         # Prepare the document for MongoDB
@@ -520,6 +521,7 @@ async def update_template(template_id: str, req: UpdateTemplateRequest):
         if req.template_type is not None:
             # Update the template ID prefix if template_type changed
             template_update["id"] = f"{req.template_type}-{str(uuid.uuid4())[:8]}"
+            template_update["template_type"] = req.template_type
         if req.is_default is not None:
             update_data["is_default"] = req.is_default
 
