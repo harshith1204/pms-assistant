@@ -12,7 +12,7 @@ from qdrant.retrieval import ChunkAwareRetriever
 from mongo.constants import mongodb_tools, DATABASE_NAME
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
-from .tools import smart_filter_tools
+from .tools import SmartFilterTools
 # Import the actual tools that are available
 from tools import mongo_query, rag_search
 # Orchestration utilities
@@ -161,30 +161,30 @@ class SmartFilterAgent:
         from mongo.constants import QDRANT_COLLECTION_NAME
         self.rag_tool = RAGTool.get_instance()
         self.collection_name = QDRANT_COLLECTION_NAME
-        self.retriever = ChunkAwareRetriever(
+        self.retriever = SmartFilterTools(
             qdrant_client=self.rag_tool.qdrant_client,
             embedding_model=self.rag_tool.embedding_model
         )
         # Initialize RAG components
         self.orchestrator = Orchestrator(tracer_name="smart_filter_agent", max_parallel=3)
-
-    async def smart_filter_work_items(self, query: str, limit: int = 50) -> SmartFilterResult:
+    
+    async def smart_filter_work_items(self, query: str, project_id: str ,limit: int = 50) -> SmartFilterResult:
         """Route query to the appropriate retrieval path and normalize results."""
 
         normalized_query = (query or "").strip()
         if not normalized_query:
             raise ValueError("Query must be a non-empty string")
 
-        await smart_filter_tools.ensure_mongodb_connection()
+        await self.retriever.ensure_mongodb_connection()
 
         tool_choice, tool_query = await self._determine_tool(normalized_query)
 
         if tool_choice == "rag_search":
-            rag_result = await self._handle_rag_flow(tool_query, limit)
+            rag_result = await self._handle_rag_flow(tool_query, project_id, limit)
             if rag_result.work_items:
                 return rag_result
 
-        return await self._handle_mongo_flow(tool_query, limit)
+        return await self._handle_mongo_flow(tool_query, project_id, limit)
 
     async def _determine_tool(self, query: str) -> tuple[str, str]:
         """Use router model (with heuristics fallback) to choose execution path and get refined query."""
@@ -208,8 +208,8 @@ class SmartFilterAgent:
         except Exception:
             pass
 
-    async def _handle_mongo_flow(self, query: str, limit: int) -> SmartFilterResult:
-        mongo_result = await smart_filter_tools.execute_mongo_query(query, limit=limit)
+    async def _handle_mongo_flow(self, query: str, project_id: str, limit: int) -> SmartFilterResult:
+        mongo_result = await self.retriever.execute_mongo_query(query, project_id=project_id, limit=limit)
         formatted_items = self._format_work_items(mongo_result.work_items)
 
         metadata: Dict[str, Any] = {}
@@ -230,8 +230,8 @@ class SmartFilterAgent:
             mongo_query=metadata,
         )
 
-    async def _handle_rag_flow(self, query: str, limit: int) -> SmartFilterResult:
-        rag_result = await smart_filter_tools.execute_rag_search(query, limit=limit)
+    async def _handle_rag_flow(self, query: str, project_id: str, limit: int) -> SmartFilterResult:
+        rag_result = await self.retriever.execute_rag_search(query, project_id=project_id, limit=limit)
 
         priority = self._build_rag_identifier_priority(rag_result)
         object_id_pairs, display_ids = self._separate_identifiers(priority)

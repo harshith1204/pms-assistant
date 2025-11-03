@@ -771,7 +771,7 @@ class LLMIntentParser:
     async def _aggregate_count(self, collection: str, match_filter: Dict[str, Any]) -> int:
         """Run a count via aggregation to avoid needing a dedicated count tool."""
         try:
-            result = await mongodb_tools.execute_tool("aggregate", {
+            result = await mongodb_tools.execute_tool("aggregate_smart", {
                 "database": DATABASE_NAME,
                 "collection": collection,
                 "pipeline": [{"$match": match_filter}, {"$count": "total"}]
@@ -1343,7 +1343,7 @@ class Planner:
         self.llm_parser = LLMIntentParser()
         self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
-    async def plan_and_execute(self, query: str) -> Dict[str, Any]:
+    async def plan_and_execute(self, query: str, project_id: str) -> Dict[str, Any]:
         """Plan and execute a natural language query using the Orchestrator."""
         try:
             # Define step coroutines as closures to capture self
@@ -1366,8 +1366,9 @@ class Planner:
                     "database": DATABASE_NAME,
                     "collection": intent.primary_entity,
                     "pipeline": ctx["pipeline"],
+                    "project_id": project_id,
                 }
-                return await mongodb_tools.execute_tool("aggregate", args)
+                return await mongodb_tools.execute_tool("aggregate_smart", args)
 
             steps: List[StepSpec] = [
                 StepSpec(
@@ -1433,6 +1434,6 @@ class Planner:
 # Global instance
 query_planner = Planner()
 
-async def plan_and_execute_query(query: str) -> Dict[str, Any]:
+async def plan_and_execute_query(query: str, project_id: str) -> Dict[str, Any]:
     """Convenience function to plan and execute queries"""
-    return await query_planner.plan_and_execute(query)
+    return await query_planner.plan_and_execute(query, project_id=project_id)
