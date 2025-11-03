@@ -233,8 +233,8 @@ class DirectMongoClient:
             
             if project_id:
                 try:
-                    pr_id = mongo_uuid_converter(project_id)
-                    
+                    pr_id = uuid_str_to_mongo_binary(project_id)
+
                     injected_stages.append({"$match": {"project._id": pr_id}})
                 except ValueError as e:
                         # Invalid UUID format - log and skip project filter

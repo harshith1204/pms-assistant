@@ -8,7 +8,7 @@ import copy
 from dotenv import load_dotenv
 load_dotenv()
 
-from mongo.constants import mongodb_tools, DATABASE_NAME
+from mongo.constants import mongodb_tools, DATABASE_NAME, uuid_str_to_mongo_binary, BUSINESS_UUID, MEMBER_UUID, COLLECTIONS_WITH_DIRECT_BUSINESS
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
  
@@ -795,6 +795,14 @@ class PipelineGenerator:
         # Start with the primary collection
         collection = intent.primary_entity
 
+        # Add business scoping for collections that require it
+        if collection in COLLECTIONS_WITH_DIRECT_BUSINESS:
+            business_uuid = BUSINESS_UUID()
+            if business_uuid:
+                business_filter = {"business._id": uuid_str_to_mongo_binary(business_uuid)}
+                # Add business filter as the first match stage
+                pipeline.append({"$match": business_filter})
+
         # Build sanitized filters once
         primary_filters = self._extract_primary_filters(intent.filters, collection) if intent.filters else {}
         secondary_filters = self._extract_secondary_filters(intent.filters, collection) if intent.filters else {}
@@ -803,6 +811,11 @@ class PipelineGenerator:
         if (("count" in intent.aggregations) or intent.wants_count) and not intent.group_by and not intent.wants_details:
             # Combine all filters for optimal count query
             all_filters = {}
+
+            # Include business scoping if added to pipeline
+            if pipeline and pipeline[0].get("$match"):
+                all_filters.update(pipeline[0]["$match"])
+
             if primary_filters:
                 all_filters.update(primary_filters)
             if secondary_filters:
