@@ -81,6 +81,7 @@ class TemplateGenerator:
                 scenario,
                 slug_hint,
                 priority_override,
+                prompt_key,
             )
             return template
         except json.JSONDecodeError:
@@ -196,6 +197,7 @@ class TemplateGenerator:
         scenario: Optional[Dict[str, Any]],
         slug_hint: Optional[str],
         priority_override: Optional[str],
+        prompt_key: str,
     ) -> Dict[str, Any]:
         if template.get("error") or not scenario:
             return template
@@ -207,6 +209,7 @@ class TemplateGenerator:
             template.get("priority"), scenario, priority_override
         )
         template["content"] = self._ensure_content_sections(template.get("content"), scenario)
+        template["template_type"] = prompt_key
         return template
 
     def _normalize_id(self, existing_id: Optional[str], prefix: str, slug_hint: Optional[str]) -> str:
