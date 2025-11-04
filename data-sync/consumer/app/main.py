@@ -1,17 +1,74 @@
 import json
 import os
+import re
+import sys
 import time
-import uuid
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from loguru import logger
+from dotenv import load_dotenv
+from huggingface_hub import login
 from kafka import KafkaConsumer
 from kafka.errors import NoBrokersAvailable
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
-from fastembed import TextEmbedding
-from dotenv import load_dotenv
-load_dotenv()
+from sentence_transformers import SentenceTransformer
+
+
+# Ensure repo-root packages (qdrant, etc.) are importable when running locally
+if not any("qdrant" in p for p in sys.path):
+    try:
+        REPO_ROOT = Path(__file__).resolve().parents[3]
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.append(str(REPO_ROOT))
+    except IndexError:
+        pass
+
+from qdrant.encoder import get_splade_encoder  # noqa: E402
+from qdrant.indexing_shared import (  # noqa: E402
+    PROJECT_COLLECTIONS,
+    canonicalize_collection_name,
+    chunk_prepared_document,
+    ensure_collection_with_hybrid,
+    generate_points,
+    normalize_mongo_id,
+    prepare_document,
+)
+
+
+# Updated to match setup-connectors.sh exactly
+RELEVANT_COLLECTIONS = frozenset(PROJECT_COLLECTIONS.keys())
+
+
+@dataclass
+class ChangeEvent:
+    operation: str
+    collection: Optional[str]
+    full_document: Optional[Dict[str, Any]]
+    document_key: Optional[Dict[str, Any]]
+
+
+def load_env_and_login() -> None:
+    load_dotenv()
+    token = os.getenv("HuggingFace_API_KEY")
+    if not token:
+        return
+    try:
+        login(token)
+    except Exception as exc:
+        pass
+
+
+def load_embedder() -> SentenceTransformer:
+    primary_model = os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m")
+    fallback_model = os.getenv(
+        "FALLBACK_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    )
+    try:
+        return SentenceTransformer(primary_model)
+    except Exception as exc:
+        return SentenceTransformer(fallback_model)
 
 
 def get_env(name: str, default: Optional[str] = None) -> str:
@@ -21,266 +78,196 @@ def get_env(name: str, default: Optional[str] = None) -> str:
     return value
 
 
-def normalize_point_id(doc_id: Any) -> Union[int, str]:
-    """
-    Convert document ID to a valid Qdrant point ID.
-    Qdrant accepts either integers or UUIDs (as strings).
-    """
-    if doc_id is None:
-        return str(uuid.uuid4())
-    
-    # If it's already an int, return as-is
-    if isinstance(doc_id, int):
-        return doc_id
-    
-    # If it's a string that looks like an integer, convert it
-    if isinstance(doc_id, str):
-        # Try to parse as integer
-        try:
-            return int(doc_id)
-        except ValueError:
-            pass
-        
-        # Check if it's already a valid UUID
-        try:
-            uuid.UUID(doc_id)
-            return doc_id
-        except ValueError:
-            pass
-        
-        # Not an integer or UUID, generate a UUID
-        return str(uuid.uuid4())
-    
-    # For any other type, generate a UUID
-    return str(uuid.uuid4())
-
-
-def ensure_qdrant_collection(client: QdrantClient, collection: str, embedder: TextEmbedding) -> int:
-    """Ensure the Qdrant collection exists with the expected vector size.
-
-    Handles both single-vector and named-vector configurations returned by Qdrant.
-    """
-    # Determine vector dimension by embedding a single token
-    dim = len(next(embedder.embed(["dim-probe"])))
-    try:
-        info = client.get_collection(collection_name=collection)
-
-        # qdrant-client returns CollectionInfo with config.params.vectors that can be either:
-        # - VectorParams (single vector)
-        # - Dict[str, VectorParams] (named vectors)
-        existing_dim: Optional[int] = None
-        try:
-            vectors_cfg = info.config.params.vectors  # type: ignore[attr-defined]
-        except AttributeError:
-            # Fallback for older client shapes
-            vectors_cfg = getattr(info, "vectors_config", None)
-
-        if isinstance(vectors_cfg, qmodels.VectorParams):
-            existing_dim = vectors_cfg.size
-        elif isinstance(vectors_cfg, dict):
-            for _, vp in vectors_cfg.items():
-                if isinstance(vp, qmodels.VectorParams):
-                    existing_dim = vp.size
-                    break
-
-        if existing_dim is None:
-            logger.warning(
-                "Could not determine existing vector size for collection '{}' — proceeding without check",
-                collection,
-            )
-        elif existing_dim != dim:
-            logger.warning(
-                "Collection exists with dim={}, but embedder dim={} — consider recreating",
-                existing_dim,
-                dim,
-            )
-        else:
-            logger.info("Qdrant collection '{}' exists with dim {}", collection, existing_dim)
-    except Exception:
-        logger.info("Creating Qdrant collection '{}' with dim {}", collection, dim)
-        client.create_collection(
-            collection_name=collection,
-            vectors_config=qmodels.VectorParams(size=dim, distance=qmodels.Distance.COSINE),
-        )
-    return dim
-
-
-def parse_message_value(raw: bytes) -> List[Dict[str, Any]]:
-    text: Optional[str] = None
+def flatten_payload(raw: bytes) -> Optional[Any]:
     try:
         decoded = raw.decode("utf-8")
-    except Exception:
-        # Fallback: keep as-is
-        decoded = ''
+    except Exception as exc:
+        return None
+
+    # Handle double-escaped JSON strings from MongoDB connector
     try:
-        data = json.loads(decoded)
-    except Exception:
-        text = decoded
-        data = None
+        # First parse: might be a quoted JSON string
+        first_parse = json.loads(decoded)
 
-    docs: List[Dict[str, Any]] = []
+        # If it's a string, parse again (double-escaped case)
+        if isinstance(first_parse, str):
+            envelope = json.loads(first_parse)
+        else:
+            envelope = first_parse
+    except Exception as exc:
+        return None
 
-    # Handle Kafka Connect message format: { "schema": {...}, "payload": "json_string" }
-    if isinstance(data, dict) and "payload" in data:
-        payload_data = data.get("payload")
-        if isinstance(payload_data, str):
+    # Handle nested payload structure
+    if isinstance(envelope, dict) and "payload" in envelope:
+        payload = envelope.get("payload")
+        if isinstance(payload, str):
             try:
-                data = json.loads(payload_data)
-                logger.info(f"Parsed Kafka payload: has _id={data.get('_id') is not None}, has text={data.get('text') is not None}, has vector={data.get('vector') is not None}")
-            except Exception:
-                data = payload_data
+                return json.loads(payload)
+            except Exception as exc:
+                return None
+        return payload
 
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                docs.append(item)
-            elif isinstance(item, str):
-                docs.append({"text": item})
-    elif isinstance(data, dict):
-        # Handle MongoDB CDC messages
-        if "fullDocument" in data and "operationType" in data:
-            # This is a MongoDB CDC message
-            operation_type = data.get("operationType")
-            if operation_type in ["insert", "update", "replace"]:
-                full_doc = data["fullDocument"]
-                if isinstance(full_doc, dict):
-                    docs.append(full_doc)
-            # Skip delete operations or operations without fullDocument
-        # Support Qdrant points batch envelope: { "points": [ ... ] }
-        elif "points" in data and isinstance(data["points"], list):
-            for p in data["points"]:
-                if isinstance(p, dict):
-                    docs.append(p)
-        elif "_id" in data:
-            # This is a MongoDB document (CDC with publish.full.document.only=true)
-            docs.append(data)
-        else:
-            # Regular document (backward compatibility)
-            docs.append(data)
-    else:
-        if text:
-            docs.append({"text": text})
-    return docs
+    return envelope
 
 
-def build_points(
-    docs: List[Dict[str, Any]],
-    embedder: TextEmbedding,
-) -> Tuple[List[qmodels.PointStruct], int]:
-    texts_to_embed: List[str] = []
-    text_indices: List[int] = []
-    payloads: List[Dict[str, Any]] = []
-    ids: List[Union[int, str]] = []
-    vectors: List[Optional[List[float]]] = []
+def parse_change_events(raw: bytes) -> List[ChangeEvent]:
+    payload = flatten_payload(raw)
+    if payload is None:
+        return []
 
-    for d in docs:
-        # Normalize the ID to be valid for Qdrant
-        raw_id: Any = d.get("id")
+    if isinstance(payload, list):
+        events: List[ChangeEvent] = []
+        for item in payload:
+            if isinstance(item, (dict, list)):
+                events.extend(parse_change_events(json.dumps(item).encode("utf-8")))
+        return events
+
+    if not isinstance(payload, dict):
+        return []
+
+    op = payload.get("operationType") or payload.get("op") or "insert"
+    op = str(op).lower()
+    if op == "read":
+        op = "insert"
+
+    namespace = payload.get("ns") or {}
+    collection = namespace.get("coll") or payload.get("collection") or payload.get("collectionName")
+
+    full_document = payload.get("fullDocument")
+    if isinstance(full_document, list) and full_document:
+        events: List[ChangeEvent] = []
+        for doc in full_document:
+            if isinstance(doc, dict):
+                events.append(
+                    ChangeEvent(
+                        operation=op,
+                        collection=collection,
+                        full_document=doc,
+                        document_key=payload.get("documentKey"),
+                    )
+                )
+        return events
+
+    if op not in {"insert", "update", "replace", "delete"}:
+        return []
+
+    document_key = payload.get("documentKey")
+    if not isinstance(document_key, dict):
+        document_key = {"_id": payload.get("_id")}
+
+    document = None
+    if isinstance(full_document, dict):
+        document = full_document
+    elif op in {"insert", "replace"}:
+        document = payload if payload.get("_id") else None
+
+    return [ChangeEvent(operation=op, collection=collection, full_document=document, document_key=document_key)]
+
+
+def delete_points_for_parent(client: QdrantClient, collection: str, parent_id: str) -> None:
+    if not parent_id:
+        return
+    try:
+        client.delete(
+            collection_name=collection,
+            points_selector=qmodels.FilterSelector(
+                filter=qmodels.Filter(
+                    must=[
+                        qmodels.FieldCondition(
+                            key="parent_id",
+                            match=qmodels.MatchValue(value=parent_id),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
+    except Exception as exc:
+        pass
+
+
+def process_event(
+    event: ChangeEvent,
+    client: QdrantClient,
+    collection_name: str,
+    embedder: SentenceTransformer,
+    splade_encoder: Any,
+) -> None:
+    canonical_collection = canonicalize_collection_name(event.collection)
+    if not canonical_collection or canonical_collection not in RELEVANT_COLLECTIONS:
+        return
+
+    if event.operation == "delete":
+        raw_id = (event.document_key or {}).get("_id")
         if raw_id is None:
-            # Fall back to Mongo's _id which may be a nested Extended JSON object
-            mongo_id = d.get("_id")
-            if isinstance(mongo_id, dict):
-                # Handle common shapes like {"$oid": "..."} or {"oid": "..."}
-                raw_id = mongo_id.get("$oid") or mongo_id.get("oid") or json.dumps(mongo_id, sort_keys=True)
-            else:
-                raw_id = mongo_id
-        doc_id = normalize_point_id(raw_id)
-        
-        vector = d.get("vector")
-        # Accept both 'metadata' and 'payload' like Qdrant docs
-        metadata = d.get("metadata") or d.get("payload") or {}
-        if not isinstance(metadata, dict):
-            metadata = {"metadata": metadata}
-        # Prefer top-level text, else try common payload keys
-        text = d.get("text")
-        if text is None and isinstance(metadata, dict):
-            text = metadata.get("text") or metadata.get("content")
+            return
+        mongo_id = normalize_mongo_id(raw_id)
+        if not mongo_id:
+            return
+        delete_points_for_parent(client, collection_name, mongo_id)
+        return
 
-        if vector is not None:
-            # Accept provided vector and optional text
-            if text is None:
-                text = ""
-            if isinstance(vector, list):
-                ids.append(doc_id)
-                payloads.append({"text": text, **metadata})
-                vectors.append([float(x) for x in vector])
-            else:
-                logger.warning("Skipping doc due to invalid vector type for id={}.", doc_id)
-        else:
-            if not text:
-                logger.warning("Skipping doc without 'text' or 'vector', id={}", doc_id)
-                continue
-            ids.append(doc_id)
-            payloads.append({"text": text, **metadata})
-            vectors.append(None)
-            text_indices.append(len(vectors) - 1)
-            texts_to_embed.append(text)
+    if not event.full_document:
+        return
 
-    # Embed texts and place vectors back into the original positions
-    if texts_to_embed:
-        for idx, emb in zip(text_indices, embedder.embed(texts_to_embed)):
-            vectors[idx] = [float(x) for x in emb]
+    prepared, messages = prepare_document(canonical_collection, event.full_document)
+    for message in messages:
+        print(message)
+    if not prepared:
+        return
 
-    # Build points preserving original order and skipping any unresolved vectors
-    points: List[qmodels.PointStruct] = []
-    embedded_count = 0
-    for i in range(len(ids)):
-        vec = vectors[i]
-        if vec is None:
-            # Should not happen, but be defensive
-            logger.warning("Vector missing for id={}, skipping", ids[i])
-            continue
-        if i in text_indices:
-            embedded_count += 1
-        points.append(qmodels.PointStruct(id=ids[i], vector=vec, payload=payloads[i]))
+    chunks = chunk_prepared_document(prepared)
+    mongo_id = prepared.mongo_id
+    if not mongo_id:
+        return
 
-    return points, embedded_count
+    delete_points_for_parent(client, collection_name, mongo_id)
+
+    if not chunks:
+        return
+
+    points = generate_points(prepared, chunks, embedder, splade_encoder)
+    if not points:
+        return
+
+    try:
+        client.upsert(collection_name=collection_name, points=points, wait=True)
+    except Exception as exc:
+        raise
 
 
 def main() -> None:
+    load_env_and_login()
+
+    embedder = load_embedder()
+    splade_encoder = get_splade_encoder()
+    embedding_dim = embedder.get_sentence_embedding_dimension()
     log_level = get_env("LOG_LEVEL", "INFO")
-    logger.remove()
-    logger.add(lambda msg: print(msg, end=""), level=log_level)
 
     bootstrap = get_env("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-    topic = get_env("KAFKA_TOPIC", "documents")
+    topic_pattern = get_env("KAFKA_TOPIC", "ProjectManagement\..*")
     group_id = get_env("KAFKA_GROUP_ID", "qdrant-consumer")
     qdrant_url = get_env("QDRANT_URL", "http://qdrant:6333")
-    collection = get_env("QDRANT_COLLECTION", "documents")
-    embedding_model = get_env("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-    batch_max_messages = int(get_env("BATCH_MAX_MESSAGES", "256"))
+    collection = get_env("QDRANT_COLLECTION", "ProjectManagement")
+    batch_max_messages = int(get_env("BATCH_MAX_MESSAGES", "128"))
     batch_max_seconds = float(get_env("BATCH_MAX_SECONDS", "2"))
-
-    # Initialize dependencies with retries
-    embedder = None
-    max_retries = 30  # Allow up to 30 retries (about 5 minutes with 10s sleep)
-    retry_count = 0
-    while embedder is None and retry_count < max_retries:
-        try:
-            embedder = TextEmbedding(model_name=embedding_model)
-        except Exception as e:
-            retry_count += 1
-            if retry_count >= max_retries:
-                raise
-            # Exponential backoff with jitter
-            sleep_time = min(10, 2 ** min(retry_count // 5, 3)) + (retry_count % 3)
-            time.sleep(sleep_time)
 
     client = None
     while client is None:
         try:
             client = QdrantClient(url=qdrant_url)
-        except Exception as e:
-            logger.warning("Waiting for Qdrant: {}", e)
+        except Exception as exc:
             time.sleep(2)
 
-    ensure_qdrant_collection(client, collection, embedder)
+    ensure_collection_with_hybrid(client, collection, vector_size=embedding_dim)
 
+    # Convert regex pattern to actual regex for subscription
+    topic_regex = re.compile(topic_pattern)
+    
     consumer: Optional[KafkaConsumer] = None
     while consumer is None:
         try:
             consumer = KafkaConsumer(
-                topic,
                 bootstrap_servers=[s.strip() for s in bootstrap.split(",") if s.strip()],
                 group_id=group_id,
                 enable_auto_commit=False,
@@ -288,67 +275,58 @@ def main() -> None:
                 value_deserializer=lambda m: m,
                 key_deserializer=lambda m: m,
             )
-            print("DEBUG: Kafka consumer created successfully")
-        except Exception as e:
-            print(f"DEBUG: Waiting for Kafka consumer creation: {e}")
+            # Subscribe using pattern
+            consumer.subscribe(pattern=topic_regex)
+        except Exception as exc:
             time.sleep(2)
 
-    logger.info("Started consumer on topic '{}'", topic)
-
-    # Poll in batches and upsert
-    batch_docs: List[Dict[str, Any]] = []
+    batch_events: List[ChangeEvent] = []
     last_flush_ts = time.monotonic()
+    processed_count = 0
+    error_count = 0
 
     while True:
         try:
             now = time.monotonic()
-            remaining_capacity = max(0, batch_max_messages - len(batch_docs))
+            remaining_capacity = max(0, batch_max_messages - len(batch_events))
             poll_timeout_ms = 500
             max_records = remaining_capacity if remaining_capacity > 0 else None
 
             records_map = consumer.poll(timeout_ms=poll_timeout_ms, max_records=max_records)
-            logger.info(f"Polled {len(records_map) if records_map else 0} partitions with messages")
-            total_polled = 0
-            for tp, records in (records_map or {}).items():
-                total_polled += len(records)
+            total_polled = sum(len(records) for records in (records_map or {}).values())
+
+            for topic_partition, records in (records_map or {}).items():
                 for msg in records:
-                    docs = parse_message_value(msg.value)
-                    logger.info("Parsed {} docs from message", len(docs) if docs else 0)
-                    if docs:
-                        for doc in docs:
-                            logger.info("Parsed doc ID: {}, has text: {}, has vector: {}",
-                                       doc.get('id', 'unknown'), 'text' in doc, 'vector' in doc)
-                        batch_docs.extend(docs)
+                    events = parse_change_events(msg.value)
+                    if events:
+                        batch_events.extend(events)
 
             should_flush = False
-            if len(batch_docs) >= batch_max_messages:
+            if len(batch_events) >= batch_max_messages:
                 should_flush = True
-            elif (now - last_flush_ts) >= batch_max_seconds and batch_docs:
+            elif (now - last_flush_ts) >= batch_max_seconds and batch_events:
                 should_flush = True
 
             if should_flush:
-                try:
-                    points, embedded_count = build_points(batch_docs, embedder)
-                    logger.info("Built {} points from {} docs ({} embedded)", len(points), len(batch_docs), embedded_count)
-                    if points:
-                        client.upsert(collection_name=collection, points=points, wait=True)
-                        logger.info("Upserted {} points to collection '{}'", len(points), collection)
-                    else:
-                        logger.info("No points to upsert this batch; committing offsets")
-                    consumer.commit()
-                    batch_docs.clear()
-                    last_flush_ts = time.monotonic()
-                except Exception as e:
-                    logger.exception("Batch processing failed: {}", e)
-                    # Do not commit; retry on next loop
-                    time.sleep(0.5)
+                batch_errors = 0
+                for idx, event in enumerate(batch_events):
+                    try:
+                        process_event(event, client, collection, embedder, splade_encoder)
+                        processed_count += 1
+                    except Exception as exc:
+                        batch_errors += 1
+                        error_count += 1
 
-            # If no records and no flush, small sleep to avoid tight loop
+                if batch_errors == 0:
+                    consumer.commit()
+                
+                batch_events.clear()
+                last_flush_ts = time.monotonic()
+
             if total_polled == 0 and not should_flush:
                 time.sleep(0.1)
-        except Exception as e:
-            logger.exception("Consumer loop error: {}", e)
-            logger.warning("Recreating consumer in 5 seconds...")
+
+        except Exception as exc:
             time.sleep(5)
             try:
                 consumer.close()
@@ -358,7 +336,6 @@ def main() -> None:
             while consumer is None:
                 try:
                     consumer = KafkaConsumer(
-                        topic,
                         bootstrap_servers=[s.strip() for s in bootstrap.split(",") if s.strip()],
                         group_id=group_id,
                         enable_auto_commit=False,
@@ -366,8 +343,8 @@ def main() -> None:
                         value_deserializer=lambda m: m,
                         key_deserializer=lambda m: m,
                     )
-                except NoBrokersAvailable as e:
-                    logger.warning("Waiting for Kafka broker during recovery: {}", e)
+                    consumer.subscribe(pattern=topic_regex)
+                except NoBrokersAvailable as broker_exc:
                     time.sleep(2)
 
 
