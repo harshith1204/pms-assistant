@@ -243,6 +243,60 @@ def normalize_mongo_id(mongo_id: Any) -> str:
     return str(mongo_id)
 
 
+def _is_id_like_key(key: Any) -> bool:
+    if not isinstance(key, str):
+        return False
+    if key == "_id":
+        return True
+    lowered = key.lower()
+    if lowered == "id":
+        return True
+    if lowered.endswith("_id"):
+        return True
+    if key.endswith("Id") or key.endswith("ID"):
+        return True
+    if lowered.endswith("uuid"):
+        return True
+    return False
+
+
+def _looks_like_extended_id(value: Dict[str, Any]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    lowered_keys = {str(k).lower() for k in value.keys()}
+    if {"$oid", "oid"} & lowered_keys:
+        return True
+    if {"$uuid", "uuid"} & lowered_keys:
+        return True
+    binary_entry = value.get("$binary") or value.get("binary")
+    if isinstance(binary_entry, dict):
+        inner_keys = {str(k).lower() for k in binary_entry.keys()}
+        if "base64" in inner_keys or "$base64" in inner_keys:
+            return True
+    return False
+
+
+def normalize_document_ids(obj: Any) -> Any:
+    if isinstance(obj, (ObjectId, Binary)):
+        return normalize_mongo_id(obj)
+
+    if isinstance(obj, dict):
+        if _looks_like_extended_id(obj):
+            return normalize_mongo_id(obj)
+        normalized: Dict[str, Any] = {}
+        for key, value in obj.items():
+            if _is_id_like_key(key):
+                normalized[key] = normalize_mongo_id(value)
+            else:
+                normalized[key] = normalize_document_ids(value)
+        return normalized
+
+    if isinstance(obj, list):
+        return [normalize_document_ids(item) for item in obj]
+
+    return obj
+
+
 def html_to_text(html: str) -> str:
     if not html:
         return ""
@@ -388,6 +442,8 @@ def prepare_document(collection_name: str, doc: Dict[str, Any]) -> Tuple[Optiona
 
     if not doc:
         return None, ["WARN: received empty document"]
+
+    doc = normalize_document_ids(doc)
 
     canonical_collection = canonicalize_collection_name(collection_name)
     if canonical_collection is None:
