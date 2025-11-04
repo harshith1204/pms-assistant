@@ -426,41 +426,6 @@ async def get_templates(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/defaults/{template_type}", response_model=List[Dict[str, Any]])
-async def get_default_templates_by_type(template_type: str):
-    """
-    Get system default templates for a specific content type.
-
-    Returns all 8 default templates for the specified template type.
-    This endpoint provides direct access to system defaults without any
-    user template logic or filtering.
-
-    Supported template types:
-      - work_item: Individual tasks and activities
-      - page: Documentation pages and specifications
-      - cycle: Iterative processes and workflows
-      - module: Software components and integrations
-      - epic: Strategic initiatives and roadmaps
-
-    Parameters:
-      - template_type: The type of templates to retrieve
-
-    Returns:
-        List[Dict]: Array of default templates for the specified type
-
-    Example:
-        GET /templates/defaults/work_item
-        Returns: [{"id": "work-item-bug-report", "name": "Bug Report", ...}, ...]
-    """
-    if template_type not in SYSTEM_DEFAULT_TEMPLATES:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Template type '{template_type}' not found. Available types: {', '.join(SYSTEM_DEFAULT_TEMPLATES.keys())}"
-        )
-
-    return SYSTEM_DEFAULT_TEMPLATES[template_type]
-
-
 @router.put("/{template_id}", response_model=CreateTemplateDirectResponse)
 async def update_template(template_id: str, req: UpdateTemplateRequest):
     """
