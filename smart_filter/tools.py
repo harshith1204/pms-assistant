@@ -534,7 +534,7 @@ class SmartFilterTools:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
 
         if project_id:
-            must_conditions.append(FieldCondition(key="project_id", match=MatchValue(value=mongo_uuid_converter(project_id))))
+            must_conditions.append(FieldCondition(key="project_id", match=MatchValue(value=uuid_str_to_mongo_binary(project_id))))
 
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
