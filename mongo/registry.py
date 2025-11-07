@@ -167,6 +167,38 @@ REL: Dict[str, Dict[str, dict]] = {
             "as": "project",
             "many": False
         }
+    },
+    "features":{
+        "project":{
+             "target": "project",
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "project",
+            "many": False
+        },
+        "cycles": {
+            "target": "cycle",
+            "localField": "cycle._id",
+            "foreignField": "_id",
+            "as": "linkedCyclefeatures",
+            "many": True
+        },
+        "modules": {
+            "target": "module",
+            "localField": "modules._id",
+            "foreignField": "_id",
+            "as": "modules",
+            "many": True
+        },
+    },
+    "userStory":{
+        "project":{
+             "target": "project",
+            "localField": "project._id",
+            "foreignField": "_id",
+            "as": "project",
+            "many": False
+        }
     }
 }
 
@@ -252,6 +284,28 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "createdBy._id", "createdBy.name",
         "createdTimeStamp", "updatedTimeStamp", "dueDate",
         "assignee", "assignee._id", "assignee.name", "label.name"
+    },
+    "features":{
+        "basicInfo.title","basicInfo.description","basicInfo.epicId","basicInfo.moduleId","basicInfo.status",
+        "problemInfo.statement","problemInfo.objective","problemInfo.sucessCriteria","displayBugNo","requirements.functionalRequirements",
+        "requirements.nonFunctionalRequirements","riskAndDependencies.dependencies","riskAndDependencies.risks",
+        "createdBy._id", "createdBy.name","project._id","project.name","createdTimeStamp","scope.inScope","scope.OutOfScope",
+        "updatedTimeStamp","workItems","userStories","addLink","goals","painPoints","title","description",
+        "endDate","startDate","releaseDate","state._id","state.name","business._id","business.name","lead._id","lead.name",
+        "priority","assignee._id","assignee.name","label._id","label.name","cycle._id", "cycle.name",
+        "modules._id", "modules.name","parent._id","parent.name","estimateSystem", "estimate", "estimate.hr", "estimate.min",
+        "workLogs", "workLogs.user", "workLogs.user.name", "workLogs.hours", 
+        "workLogs.minutes", "workLogs.description", "workLogs.loggedAt"
+    },
+    "userStory":{
+        "_id","title", "description","stateMaster._id","stateMaster.name",
+        "state._id","state.name","priority","assignee",
+        "label","project._id","business._id","displayBugNo",
+        "createdBy._id", "createdBy.name",
+        "createdTimeStamp", "updatedTimeStamp", "dueDate","startDate",
+        "assignee", "assignee._id", "assignee.name", "label.name","userGoal",
+        "persona","demographics","acceptanceCriteria","epic._id","epic.name",
+        "feature._id","feature.name"
     }
 }
 
