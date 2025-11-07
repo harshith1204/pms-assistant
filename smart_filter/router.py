@@ -15,6 +15,11 @@ class WorkItemState(BaseModel):
     name: str
 
 
+class WorkItemStateMaster(BaseModel):
+    id: str
+    name: str
+
+
 class WorkItemAssignee(BaseModel):
     id: str
     name: str
@@ -37,37 +42,75 @@ class WorkItemCycle(BaseModel):
     title: Optional[str] = None
 
 
+class WorkItemBusiness(BaseModel):
+    id: str
+    name: str
+
+
+class WorkItemLead(BaseModel):
+    id: str
+    name: str
+
+
+class WorkItemProject(BaseModel):
+    id: str
+    name: str
+
+
 class WorkItemCreatedBy(BaseModel):
     id: str
     name: str
 
 
-class WorkItem(BaseModel):
+class WorkItemUpdatedBy(BaseModel):
     id: str
-    displayBugNo: str
+    name: str
+
+
+class WorkItemParent(BaseModel):
+    id: str
+    name: str
+
+
+class WorkItem(BaseModel):
     title: str
     description: Optional[str] = None
+    startDate: Optional[str] = None
+    endDate: Optional[str] = None
+    releaseDate: Optional[str] = None
+    stateMaster: WorkItemStateMaster
     state: WorkItemState
+    business: WorkItemBusiness
+    lead: Optional[WorkItemLead] = None
     priority: str
     assignee: List[WorkItemAssignee]
     label: List[WorkItemLabel]
-    modules: Optional[WorkItemModules] = None
     cycle: Optional[WorkItemCycle] = None
-    startDate: Optional[str] = None
-    endDate: Optional[str] = None
-    dueDate: Optional[str] = None
-    createdOn: Optional[str] = None
-    updatedOn: Optional[str] = None
-    releaseDate: Optional[str] = None
-    createdBy: Optional[WorkItemCreatedBy] = None
-    subWorkItem: Optional[List[Any]] = None
-    attachment: Optional[List[Any]] = None
+    modules: Optional[WorkItemModules] = None
+    parent: Optional[WorkItemParent] = None
+    workLogs: Optional[List[Any]] = None
+    estimateSystem: Optional[str] = None
+    estimate: Optional[str] = None
+    id: str
+    project: WorkItemProject
+    view: Optional[str] = None
+    displayBugNo: str
+    status: str
+    createdBy: WorkItemCreatedBy
+    updatedBy: Optional[WorkItemUpdatedBy] = None
+    attachmentUrl: Optional[str] = None
+    link: Optional[str] = None
+    userStory: Optional[str] = None
+    feature: Optional[str] = None
+    epic: Optional[str] = None
+    createdTimeStamp: str
+    updatedTimeStamp: str
+    subWorkItems: Optional[List[Any]] = None
+    timeline: Optional[List[Any]] = None
 
 
 class SmartFilterResponse(BaseModel):
     data: List[WorkItem]
-    total_count: int
-    query: str
 
 # Global smart filter agent instance
 smart_filter_agent = None
@@ -109,9 +152,7 @@ async def smart_filter_work_items(req: SmartFilterRequest):
         )
 
         return SmartFilterResponse(
-            data=result.work_items,
-            total_count=result.total_count,
-            query=req.query
+            data=result.work_items
         )
 
     except HTTPException:

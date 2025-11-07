@@ -412,26 +412,47 @@ class SmartFilterAgent:
                 or "",
         }
 
+        state_master_doc = doc.get("stateMaster") or {}
+        state_master = {
+            "id": self._stringify_id(state_master_doc.get("id") or state_master_doc.get("_id")) or "",
+            "name": state_master_doc.get("name") or "",
+        }
+
         formatted = {
-            "id": self._stringify_id(doc.get("_id") or doc.get("id")) or "",
-            "displayBugNo": doc.get("displayBugNo") or doc.get("bugNo") or "",
             "title": doc.get("title") or doc.get("name") or "",
             "description": doc.get("description"),
+            "startDate": self._serialize_datetime(doc.get("startDate")),
+            "endDate": self._serialize_datetime(doc.get("endDate")),
+            "releaseDate": self._serialize_datetime(doc.get("releaseDate")),
+            "stateMaster": state_master,
             "state": state,
+            "business": self._format_reference(doc.get("business")),
+            "lead": self._format_reference(doc.get("lead")),
             "priority": doc.get("priority") or "",
             "assignee": self._format_assignees(doc.get("assignee")),
             "label": self._format_labels(doc.get("label")),
-            "modules": self._format_reference(doc.get("modules")),
             "cycle": self._format_reference(doc.get("cycle"), include_title=True),
-            "startDate": self._serialize_datetime(doc.get("startDate")),
-            "endDate": self._serialize_datetime(doc.get("endDate")),
-            "dueDate": self._serialize_datetime(doc.get("dueDate")),
-            "createdOn": self._serialize_datetime(doc.get("createdOn") or doc.get("createdTimeStamp")),
-            "updatedOn": self._serialize_datetime(doc.get("updatedOn") or doc.get("updatedTimeStamp")),
-            "releaseDate": self._serialize_datetime(doc.get("releaseDate")),
+            "modules": self._format_reference(doc.get("modules")),
+            "parent": self._format_reference(doc.get("parent")),
+            "workLogs": doc.get("workLogs") if isinstance(doc.get("workLogs"), list) else None,
+            "estimateSystem": doc.get("estimateSystem"),
+            "estimate": doc.get("estimate"),
+            "id": self._stringify_id(doc.get("_id") or doc.get("id")) or "",
+            "project": self._format_reference(doc.get("project")),
+            "view": doc.get("view"),
+            "displayBugNo": doc.get("displayBugNo") or doc.get("bugNo") or "",
+            "status": doc.get("status") or "ACCEPTED",  # Default to ACCEPTED if not provided
             "createdBy": self._format_reference(doc.get("createdBy")),
-            "subWorkItem": doc.get("subWorkItem") if isinstance(doc.get("subWorkItem"), list) else None,
-            "attachment": doc.get("attachment") if isinstance(doc.get("attachment"), list) else None,
+            "updatedBy": self._format_reference(doc.get("updatedBy")),
+            "attachmentUrl": doc.get("attachmentUrl"),
+            "link": doc.get("link"),
+            "userStory": doc.get("userStory"),
+            "feature": doc.get("feature"),
+            "epic": doc.get("epic"),
+            "createdTimeStamp": self._serialize_datetime(doc.get("createdTimeStamp")) or self._serialize_datetime(doc.get("createdOn")),
+            "updatedTimeStamp": self._serialize_datetime(doc.get("updatedTimeStamp")) or self._serialize_datetime(doc.get("updatedOn")),
+            "subWorkItems": doc.get("subWorkItems") if isinstance(doc.get("subWorkItems"), list) else None,
+            "timeline": doc.get("timeline") if isinstance(doc.get("timeline"), list) else None,
         }
 
         return formatted
