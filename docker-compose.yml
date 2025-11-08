@@ -9,7 +9,7 @@ services:
       EMBEDDING_SERVICE_URL: http://embedding:8080
       SPLADE_SERVICE_URL: http://splade:8080
     ports:
-      - "${APP_PORT:-7000}:7000"
+      - "${APP_PORT:-8000}:8000"
     depends_on:
       embedding:
         condition: service_healthy
@@ -53,10 +53,10 @@ services:
       - hf_cache:/app/.cache/huggingface
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 60s
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
     deploy:
       resources:
         limits:
@@ -82,10 +82,10 @@ services:
       - hf_cache:/app/.cache/huggingface
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 60s
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
     deploy:
       resources:
         limits:
