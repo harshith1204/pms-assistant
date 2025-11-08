@@ -55,13 +55,11 @@ class MongoDBBackfill:
     def connect_mongodb(self) -> bool:
         """Connect to MongoDB."""
         try:
-            print(f"Connecting to MongoDB: {MONGODB_URI}")
             self.mongo_client = pymongo.MongoClient(MONGODB_URI)
             self.database = self.mongo_client[DATABASE_NAME]
 
             # Test connection
             self.mongo_client.admin.command('ping')
-            print("✓ MongoDB connection successful")
             return True
         except Exception as e:
             logger.error(f"MongoDB connection failed: {e}")
@@ -70,7 +68,6 @@ class MongoDBBackfill:
     def connect_kafka(self) -> bool:
         """Connect to Kafka."""
         try:
-            print(f"Connecting to Kafka: {KAFKA_BOOTSTRAP_SERVERS}")
             conf = {
                 'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
                 'acks': 'all',
@@ -80,7 +77,6 @@ class MongoDBBackfill:
                 'request.timeout.ms': 10000
             }
             self.kafka_producer = Producer(conf)
-            print("✓ Kafka connection successful")
             return True
         except Exception as e:
             logger.error(f"Kafka connection failed: {e}")
@@ -114,14 +110,10 @@ class MongoDBBackfill:
         collection = self.database[collection_name]
         topic_name = f"{KAFKA_TOPIC_PREFIX}{collection_name}"
 
-        print(f"\n{'[DRY RUN] ' if dry_run else ''}Processing collection: {collection_name}")
-        print(f"Target topic: {topic_name}")
-
         total_count = self.get_collection_count(collection_name)
-        print(f"Total documents: {total_count}")
 
         if total_count == 0:
-            print("No documents to process")
+            logger.error(f"No documents to process for collection {collection_name}")
             return 0
 
         processed = 0
@@ -149,15 +141,10 @@ class MongoDBBackfill:
                             logger.error(f"Kafka error sending to {topic_name}: {e}")
                             errors += 1
                             continue
-                    else:
-                        # Just print what would be sent
-                        print(f"Would send: {json.dumps(change_event, default=str)[:200]}...")
-
                     processed += 1
 
                     # Progress reporting
                     if (i + 1) % BATCH_SIZE == 0:
-                        print(f"Processed {i + 1}/{total_count} documents...")
                         time.sleep(SLEEP_BETWEEN_BATCHES)
 
                 except Exception as e:
@@ -180,8 +167,6 @@ class MongoDBBackfill:
 
         results = {}
 
-        print(f"\n{'DRY RUN MODE - ' if dry_run else ''}Starting backfill for collections: {', '.join(collections)}")
-
         for collection_name in collections:
             try:
                 processed = self.backfill_collection(collection_name, dry_run=dry_run)
@@ -195,7 +180,7 @@ class MongoDBBackfill:
             # Wait for all messages to be delivered (timeout: 30 seconds)
             remaining = self.kafka_producer.flush(30)
             if remaining > 0:
-                logger.warning(f"{remaining} messages may not have been delivered")
+                logger.error(f"{remaining} messages may not have been delivered")
 
         return results
 
@@ -233,14 +218,6 @@ def main():
     # Determine collections to process
     collections = args.collections if args.collections else COLLECTIONS_TO_BACKFILL
 
-    print("🚀 Starting MongoDB backfill process...")
-    print(f"Collections: {', '.join(collections)}")
-    print(f"Batch size: {BATCH_SIZE}")
-    print(f"Sleep between batches: {SLEEP_BETWEEN_BATCHES}s")
-    print(f"Mode: {'DRY RUN' if dry_run else 'PRODUCTION'}")
-    print(f"MongoDB: {MONGODB_URI}")
-    print(f"Kafka: {KAFKA_BOOTSTRAP_SERVERS}")
-
     backfill = MongoDBBackfill()
 
     try:
@@ -256,23 +233,13 @@ def main():
 
         # Summary
         total_processed = sum(results.values())
-        print("\n📊 Backfill Summary:")
-        print(f"{'Dry run mode' if dry_run else 'Production mode'}")
-        print(f"Total documents processed: {total_processed}")
-        print("\nPer-collection results:")
-        for collection, count in results.items():
-            print(f"  {collection}: {count}")
-
-        # Exit with success/failure based on results
         if total_processed == 0:
-            print("\n⚠️  Warning: No documents were processed!")
+            logger.error("No documents were processed.")
             sys.exit(1)
-        else:
-            print("\n✅ Backfill completed successfully!")
-            sys.exit(0)
+        sys.exit(0)
 
     except KeyboardInterrupt:
-        print("\n⏹️  Interrupted by user")
+        logger.error("Backfill interrupted by user.")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")

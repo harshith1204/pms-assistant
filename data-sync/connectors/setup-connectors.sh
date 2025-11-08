@@ -82,12 +82,6 @@ topic_namespace_map = {}
 for coll in collections:
     topic_namespace_map[f"{database}.{coll}"] = f"{database}.{coll}"
 
-print(
-    "Configuring MongoDB source connector for database='{}'".format(database)
-)
-print("Watching collections: {}".format(", ".join(collections)))
-print("Topic mappings: {}".format(topic_namespace_map))
-
 config = {
     "name": "mongodb-source-connector",
     "config": {

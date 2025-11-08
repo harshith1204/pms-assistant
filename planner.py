@@ -493,7 +493,6 @@ class LLMIntentParser:
         try:
             ai = await self.llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
             content = ai.content.strip()
-            logger.debug(f"LLM response: {content}")
             import re
             content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
             content = re.sub(r'<think>.*', '', content, flags=re.DOTALL)  # Handle incomplete tags
@@ -515,7 +514,7 @@ class LLMIntentParser:
 
             data = json.loads(content)
         except Exception as e:
-            logger.debug(f"LLM parsing exception: {e}")
+            logger.error(f"LLM parsing exception: {e}")
             return None
 
         try:

@@ -36,8 +36,6 @@ import re
 import html as html_lib
 from qdrant.encoder import get_splade_encoder
 
-# ------------------ Setup ------------------
-
 # Load .env file and authenticate HuggingFace
 load_dotenv()
 
@@ -49,7 +47,7 @@ try:
     if hf_token:
         login(hf_token)
 except Exception as e:
-    logger.warning(f"HuggingFace login failed: {e}")
+    logger.error(f"HuggingFace login failed: {e}")
 
 # Load embedding model once, with fallback to a public model
 try:
@@ -57,8 +55,6 @@ try:
     EMBEDDING_DIMENSION = embedder.get_dimension()
 except (EmbeddingServiceError, ValueError) as exc:
     raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
-
-# ------------------ Chunking Statistics ------------------
 
 class ChunkingStats:
     """Track and display chunking statistics during indexing."""
@@ -96,8 +92,6 @@ class ChunkingStats:
 # Global stats instance
 _stats = ChunkingStats()
 
-# ------------------ Helpers ------------------
-
 def ensure_collection_with_hybrid(
     collection_name: str,
     vector_size: int = 768,
@@ -118,7 +112,7 @@ def ensure_collection_with_hybrid(
             should_create = collection_name not in existing_names
         except Exception as e:
             # If listing fails, fallback to creation attempt path
-            logger.warning(f"Could not list collections: {e}")
+            logger.error(f"Could not list collections: {e}")
             should_create = True
 
         if force_recreate:
@@ -142,16 +136,14 @@ def ensure_collection_with_hybrid(
                 },
             )
 
-        # Ensure optimizer is set for immediate indexing (idempotent)
         try:
             qdrant_client.update_collection(
                 collection_name=collection_name,
                 optimizer_config=OptimizersConfigDiff(indexing_threshold=1),
             )
         except Exception as e:
-            logger.warning(f"Failed to update optimizer config: {e}")
+            logger.error(f"Failed to update optimizer config: {e}")
 
-        # Ensure keyword and text payload indexes exist (idempotent)
         try:
             qdrant_client.create_payload_index(
                 collection_name=collection_name,
@@ -160,9 +152,8 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                logger.warning(f"Failed to ensure index on 'content_type': {e}")
+                logger.error(f"Failed to ensure index on 'content_type': {e}")
 
-        # Business scoping index
         try:
             qdrant_client.create_payload_index(
                 collection_name=collection_name,
@@ -171,7 +162,7 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                logger.warning(f"Failed to ensure index on 'business_id': {e}")
+                logger.error(f"Failed to ensure index on 'business_id': {e}")
 
         try:
             qdrant_client.create_payload_index(
@@ -181,7 +172,7 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                logger.warning(f"Failed to ensure index on 'project_name': {e}")
+                logger.error(f"Failed to ensure index on 'project_name': {e}")
 
         for text_field in ["title", "full_text"]:
             try:
@@ -192,9 +183,8 @@ def ensure_collection_with_hybrid(
                 )
             except Exception as e:
                 if "already exists" not in str(e):
-                    logger.warning(f"Failed to ensure text index on '{text_field}': {e}")
+                    logger.error(f"Failed to ensure text index on '{text_field}': {e}")
 
-        # Chunk index for efficient adjacent chunk retrieval
         try:
             qdrant_client.create_payload_index(
                 collection_name=collection_name,
@@ -203,9 +193,8 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                logger.warning(f"Failed to ensure index on 'chunk_index': {e}")
+                logger.error(f"Failed to ensure index on 'chunk_index': {e}")
 
-        # Additional indexes for filtering operations
         for field_name in ["parent_id", "project_id", "mongo_id"]:
             try:
                 qdrant_client.create_payload_index(
@@ -215,7 +204,7 @@ def ensure_collection_with_hybrid(
                 )
             except Exception as e:
                 if "already exists" not in str(e):
-                    logger.warning(f"Failed to ensure index on '{field_name}': {e}")
+                    logger.error(f"Failed to ensure index on '{field_name}': {e}")
     except Exception as e:
         logger.error(f"Error ensuring collection '{collection_name}': {e}")
 
@@ -316,14 +305,12 @@ def parse_editorjs_blocks(content_str: str):
         combined_text = "\n\n".join([t for t in extracted if t]).strip()
         return blocks, combined_text
     except Exception as e:
-        logger.warning(f"Failed to parse content: {e}")
+        logger.error(f"Failed to parse content: {e}")
         return [], ""
 
 def point_id_from_seed(seed: str) -> str:
     """Create a deterministic UUID from a seed string for Qdrant point IDs."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
-
-# ------------------ Chunking Configuration ------------------
 
 # Chunking settings per content type
 # Adjust these values to control chunking behavior
@@ -423,10 +410,9 @@ def batch_iterable(iterable, batch_size):
         yield batch
 
 def upload_in_batches(points, collection_name, batch_size=20):
-    """Upload list of points to Qdrant in smaller batches with debug prints."""
+    """Upload list of points to Qdrant in smaller batches."""
     total_indexed = 0
     for batch in batch_iterable(points, batch_size):
-        print(f"🔹 Uploading batch of {len(batch)} points to {collection_name}...")
         try:
             qdrant_client.upsert(collection_name=collection_name, points=batch)
             total_indexed += len(batch)
@@ -434,11 +420,8 @@ def upload_in_batches(points, collection_name, batch_size=20):
             logger.error(f"Failed to upload batch: {e}")
     return total_indexed
 
-# ------------------ Indexing Functions ------------------
-
 def index_pages_to_qdrant():
     try:
-        print("🔄 Indexing pages from MongoDB to Qdrant...")
 
         # Ensure collection and indexes for hybrid search
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
@@ -450,12 +433,11 @@ def index_pages_to_qdrant():
                 field_name="content_type",
                 field_schema=PayloadSchemaType.KEYWORD
             )
-            print("✅ Ensured payload index on 'content_type'")
         except Exception as e:
             if "already exists" in str(e):
-                print("ℹ️ Index on 'content_type' already exists, skipping.")
+                pass
             else:
-                logger.warning(f"Failed to ensure index: {e}")
+                logger.error(f"Failed to ensure index: {e}")
 
         # Fetch pages with rich metadata
         documents = page_collection.find({}, {
@@ -480,15 +462,11 @@ def index_pages_to_qdrant():
                         and len(field_value.strip()) > 20):  # Only substantial text
                         combined_text += " " + field_value.strip()
 
-            # Use title as fallback content if no content is available
-            # This ensures pages are searchable even if they have minimal content
             if not combined_text and title:
                 combined_text = title
-                print(f"⚠️ Page '{title}' has no content, using title as fallback")
 
-            # Skip only if both content AND title are empty
             if not combined_text:
-                print(f"⚠️ Skipping page {mongo_id} - no title or content")
+                logger.error(f"Skipping page {mongo_id} - no title or content")
                 continue
 
             # Extract metadata for filtering/grouping
@@ -564,39 +542,32 @@ def index_pages_to_qdrant():
                 points.append(point)
 
         if not points:
-            print("⚠️ No valid pages to index.")
+            logger.error("No valid pages to index.")
             return {"status": "warning", "message": "No valid pages found to index."}
 
         total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-        print(f"✅ Indexed {total_indexed} pages to Qdrant.")
         return {"status": "success", "indexed_documents": total_indexed}
 
     except Exception as e:
-        print(f"❌ Error during page indexing: {e}")
+        logger.error(f"Error during page indexing: {e}")
         return {"status": "error", "message": str(e)}
 
 def index_workitems_to_qdrant():
     try:
-        print("🔄 Indexing work items from MongoDB to Qdrant...")
-
-        # Ensure collection and indexes for hybrid search
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
-        # Ensure payload index exists
         try:
             qdrant_client.create_payload_index(
                 collection_name=QDRANT_COLLECTION,
                 field_name="content_type",
                 field_schema=PayloadSchemaType.KEYWORD
             )
-            print("✅ Ensured payload index on 'content_type'")
         except Exception as e:
             if "already exists" in str(e):
-                print("ℹ️ Index on 'content_type' already exists, skipping.")
+                pass
             else:
-                logger.warning(f"Failed to ensure index: {e}")
+                logger.error(f"Failed to ensure index: {e}")
 
-        # Fetch work items with rich metadata
         documents = workitem_collection.find({}, {
             "_id": 1, "title": 1, "description": 1, "displayBugNo": 1,
             "priority": 1, "status": 1, "state": 1, "assignee": 1,
@@ -621,7 +592,7 @@ def index_workitems_to_qdrant():
             worklogs_description = " ".join(worklogs_descriptions)
             combined_text = " ".join(filter(None, [title_clean, desc_clean, worklogs_description])).strip()
             if not combined_text:
-                print(f"⚠️ Skipping work item {mongo_id} - no substantial text content found")
+                logger.error(f"Skipping work item {mongo_id} - no substantial text content found")
                 continue
 
             # Extract metadata for filtering/grouping
@@ -718,21 +689,18 @@ def index_workitems_to_qdrant():
                 points.append(point)
 
         if not points:
-            print("⚠️ No valid work items to index.")
+            logger.error("No valid work items to index.")
             return {"status": "warning", "message": "No valid work items found to index."}
 
         total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-        print(f"✅ Indexed {total_indexed} work items to Qdrant.")
         return {"status": "success", "indexed_documents": total_indexed}
 
     except Exception as e:
-        print(f"❌ Error during work item indexing: {e}")
+        logger.error(f"Error during work item indexing: {e}")
         return {"status": "error", "message": str(e)}
 
 def index_projects_to_qdrant():
     try:
-        print("🔄 Indexing projects to Qdrant...")
-
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         documents = project_collection.find({}, {"_id": 1, "name": 1, "description": 1, "business": 1})
@@ -762,10 +730,10 @@ def index_projects_to_qdrant():
                     and len(field_value.strip()) > 20):  # Only substantial text
                     text_parts.append(field_value.strip())
 
-            combined_text = " ".join(text_parts).strip()
-            if not combined_text:
-                print(f"⚠️ Skipping project {mongo_id} - no substantial text content found")
-                continue
+        combined_text = " ".join(text_parts).strip()
+        if not combined_text:
+            logger.error(f"Skipping project {mongo_id} - no substantial text content found")
+            continue
 
             # Build metadata
             metadata = {}
@@ -819,21 +787,18 @@ def index_projects_to_qdrant():
                 point = PointStruct(**point_kwargs)
                 points.append(point)
 
-        if not points:
-            print("ℹ️ No projects with descriptions to index.")
-            return {"status": "warning", "message": "No projects to index."}
+    if not points:
+        logger.error("No projects with descriptions to index.")
+        return {"status": "warning", "message": "No projects to index."}
 
-        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-        print(f"✅ Indexed {total_indexed} projects to Qdrant.")
-        return {"status": "success", "indexed_documents": total_indexed}
-    except Exception as e:
-        print(f"❌ Error during project indexing: {e}")
-        return {"status": "error", "message": str(e)}
+    total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+    return {"status": "success", "indexed_documents": total_indexed}
+except Exception as e:
+    logger.error(f"Error during project indexing: {e}")
+    return {"status": "error", "message": str(e)}
 
 def index_cycles_to_qdrant():
     try:
-        print("🔄 Indexing cycles to Qdrant...")
-
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         documents = cycle_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
@@ -863,10 +828,10 @@ def index_cycles_to_qdrant():
                     and len(field_value.strip()) > 20):  # Only substantial text
                     text_parts.append(field_value.strip())
 
-            combined_text = " ".join(text_parts).strip()
-            if not combined_text:
-                print(f"⚠️ Skipping cycle {mongo_id} - no substantial text content found")
-                continue
+        combined_text = " ".join(text_parts).strip()
+        if not combined_text:
+            logger.error(f"Skipping cycle {mongo_id} - no substantial text content found")
+            continue
 
             # Build metadata
             metadata = {}
@@ -920,21 +885,18 @@ def index_cycles_to_qdrant():
                 point = PointStruct(**point_kwargs)
                 points.append(point)
 
-        if not points:
-            print("ℹ️ No cycles with descriptions to index.")
-            return {"status": "warning", "message": "No cycles to index."}
+    if not points:
+        logger.error("No cycles with descriptions to index.")
+        return {"status": "warning", "message": "No cycles to index."}
 
-        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-        print(f"✅ Indexed {total_indexed} cycles to Qdrant.")
-        return {"status": "success", "indexed_documents": total_indexed}
-    except Exception as e:
-        print(f"❌ Error during cycle indexing: {e}")
-        return {"status": "error", "message": str(e)}
+    total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+    return {"status": "success", "indexed_documents": total_indexed}
+except Exception as e:
+    logger.error(f"Error during cycle indexing: {e}")
+    return {"status": "error", "message": str(e)}
 
 def index_modules_to_qdrant():
     try:
-        print("🔄 Indexing modules to Qdrant...")
-
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         documents = module_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
@@ -964,10 +926,10 @@ def index_modules_to_qdrant():
                     and len(field_value.strip()) > 20):  # Only substantial text
                     text_parts.append(field_value.strip())
 
-            combined_text = " ".join(text_parts).strip()
-            if not combined_text:
-                print(f"⚠️ Skipping module {mongo_id} - no substantial text content found")
-                continue
+        combined_text = " ".join(text_parts).strip()
+        if not combined_text:
+            logger.error(f"Skipping module {mongo_id} - no substantial text content found")
+            continue
 
             # Build metadata
             metadata = {}
@@ -1021,22 +983,18 @@ def index_modules_to_qdrant():
                 point = PointStruct(**point_kwargs)
                 points.append(point)
 
-        if not points:
-            print("ℹ️ No modules with descriptions to index.")
-            return {"status": "warning", "message": "No modules to index."}
+    if not points:
+        logger.error("No modules with descriptions to index.")
+        return {"status": "warning", "message": "No modules to index."}
 
-        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-        print(f"✅ Indexed {total_indexed} modules to Qdrant.")
-        return {"status": "success", "indexed_documents": total_indexed}
-    except Exception as e:
-        print(f"❌ Error during module indexing: {e}")
-        return {"status": "error", "message": str(e)}
+    total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+    return {"status": "success", "indexed_documents": total_indexed}
+except Exception as e:
+    logger.error(f"Error during module indexing: {e}")
+    return {"status": "error", "message": str(e)}
 
-# New function to index epic
 def index_epic_to_qdrant():
     try:
-        print("🔄 Indexing epic from MongoDB to Qdrant...")
-
         ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         try:
@@ -1045,12 +1003,11 @@ def index_epic_to_qdrant():
                 field_name="content_type",
                 field_schema=PayloadSchemaType.KEYWORD
             )
-            print("✅ Ensured payload index on 'content_type'")
         except Exception as e:
             if "already exists" in str(e):
-                print("ℹ️ Index on 'content_type' already exists, skipping.")
+                pass
             else:
-                logger.warning(f"Failed to ensure index: {e}")
+                logger.error(f"Failed to ensure index: {e}")
 
         documents = epic_collection.find({}, {
             "_id": 1,
@@ -1078,7 +1035,7 @@ def index_epic_to_qdrant():
             desc_clean = html_to_text(doc.get("description", ""))
             combined_text = " ".join(filter(None, [title_clean, desc_clean])).strip()
             if not combined_text:
-                print(f"⚠️ Skipping epic {mongo_id} - no substantial text content found")
+                logger.error(f"Skipping epic {mongo_id} - no substantial text content found")
                 continue
 
             metadata = {
@@ -1164,44 +1121,20 @@ def index_epic_to_qdrant():
                 points.append(point)
 
         if not points:
-            print("⚠️ No valid epics to index.")
+            logger.error("No valid epics to index.")
             return {"status": "warning", "message": "No valid epics found to index."}
 
         total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-        print(f"✅ Indexed {total_indexed} epics to Qdrant.")
         return {"status": "success", "indexed_documents": total_indexed}
 
     except Exception as e:
-        print(f"❌ Error during epic indexing: {e}")
+        logger.error(f"Error during epic indexing: {e}")
         return {"status": "error", "message": str(e)}
 
-# ------------------ Usage ------------------
 if __name__ == "__main__":
-    print("=" * 80)
-    print("🚀 STARTING QDRANT INDEXING WITH CONFIGURABLE CHUNKING")
-    print("=" * 80)
-    
-    print("\n📋 Active Chunking Configuration:")
-    for content_type, config in CHUNKING_CONFIG.items():
-        print(f"  • {content_type.upper()}:")
-        print(f"      - Chunk size: {config['max_words']} words")
-        print(f"      - Overlap: {config['overlap_words']} words")
-        print(f"      - Min to chunk: {config.get('min_words_to_chunk', config['max_words'])} words")
-    
-    print(f"\n💡 TIP: To change chunking behavior, edit CHUNKING_CONFIG in {__file__}")
-    print("    Uncomment the aggressive config for more granular chunks.\n")
-    
-    print("─" * 80)
     index_pages_to_qdrant()
     index_workitems_to_qdrant()
     index_projects_to_qdrant()
     index_cycles_to_qdrant()
     index_modules_to_qdrant()
-    
-    # Print comprehensive statistics
-    _stats.print_summary()
-    
-    print("✅ Qdrant indexing complete!")
-    print("🚀 All documents have chunk metadata (parent_id, chunk_index, chunk_count)")
-    print("🚀 Chunk-aware retrieval is ready to use!")
-    print("=" * 80)
+    index_epic_to_qdrant()
