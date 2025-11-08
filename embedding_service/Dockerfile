@@ -19,7 +19,7 @@ COPY requirements.txt /tmp/requirements.txt
 COPY embedding_service/requirements.txt /tmp/embedding-requirements.txt
 
 RUN python -m pip install --upgrade pip \
-    && pip install --no-cache-dir torch==2.3.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r /tmp/requirements.txt \
     && pip install --no-cache-dir -r /tmp/embedding-requirements.txt \
     && rm -rf /root/.cache
