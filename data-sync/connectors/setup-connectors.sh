@@ -50,7 +50,7 @@ config_path = os.environ.get("CONFIG_PATH", "/tmp/mongodb-source-connector.json"
 
 uri = os.environ.get(
     "MONGODB_URI",
-    "mongodb://mongo:27017/ProjectManagement?authSource=admin",
+    "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0",
 )
 database = os.environ.get("MONGODB_DATABASE", "ProjectManagement")
 topic_prefix = os.environ.get("KAFKA_TOPIC_PREFIX", "ProjectManagement.")
