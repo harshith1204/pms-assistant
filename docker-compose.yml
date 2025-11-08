@@ -166,8 +166,8 @@ services:
 
   backfill:
     build:
-      context: ./data-sync
-      dockerfile: consumer/Dockerfile
+      context: .
+      dockerfile: data-sync/consumer/Dockerfile
     container_name: mongodb-backfill
     env_file:
       - .env
@@ -197,8 +197,8 @@ services:
 
   consumer:
     build:
-      context: ./data-sync
-      dockerfile: consumer/Dockerfile
+      context: .
+      dockerfile: data-sync/consumer/Dockerfile
     container_name: qdrant-consumer
     env_file:
       - .env
