@@ -1,9 +1,93 @@
+version: "3.9"
+
 services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-7000}:7000"
+    depends_on:
+      qdrant:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_HTTP_URL: ${VITE_API_HTTP_URL:-http://backend:7000}
+        VITE_API_WS_URL: ${VITE_API_WS_URL:-ws://backend:7000/ws/chat}
+        VITE_STAGE_API_BASE_URL: ${VITE_STAGE_API_BASE_URL:-https://stage-project.simpo.ai}
+    env_file:
+      - .env
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - app-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: ["redis-server", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - app-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.8.0
+    container_name: kafka
+    ports:
+      - "${KAFKA_EXTERNAL_PORT:-9094}:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://host.docker.internal:${KAFKA_EXTERNAL_PORT:-9094}
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - app-net
+
   kafka-connect:
     image: confluentinc/cp-kafka-connect:7.8.0
     container_name: kafka-connect
-    ports:
-      - "8083:8083"
+    env_file:
+      - .env
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:9092
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
@@ -23,15 +107,14 @@ services:
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/ProjectManagement?authSource=admin}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-ProjectManagement}
       KAFKA_TOPIC_PREFIX: ${KAFKA_TOPIC_PREFIX:-ProjectManagement.}
+    ports:
+      - "8083:8083"
     volumes:
-      - ./connectors:/connectors
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Essential for host access
+      - ./data-sync/connectors:/connectors
     command:
       - bash
       - -c
       - |
-        # YES - This is still needed for external MongoDB!
         if [ ! -d "/usr/share/confluent-hub-components/mongodb-kafka-connect-mongodb" ]; then
           confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:1.13.0
         fi
@@ -42,97 +125,55 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    restart: unless-stopped
     networks:
-      - vector-net
-
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: qdrant
-    ports:
-      - "6333:6333" # HTTP
-      - "6334:6334" # gRPC
-    volumes:
-      - qdrant_data:/qdrant/storage
-    # Healthcheck removed; the consumer waits for Qdrant readiness internally
-
-    restart: unless-stopped
-    networks:
-      - vector-net
-
-  kafka:
-    image: confluentinc/cp-kafka:7.8.0
-    container_name: kafka
-    ports:
-      - "9094:9094"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://host.docker.internal:9094
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
-    restart: unless-stopped
-    networks:
-      - vector-net
+      - app-net
 
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka-ui
-    ports:
-      - "8080:8080"
     environment:
       - KAFKA_CLUSTERS_0_NAME=local
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    ports:
+      - "8080:8080"
     depends_on:
       kafka:
         condition: service_healthy
-    restart: unless-stopped
     networks:
-      - vector-net
+      - app-net
 
   backfill:
     build:
-      context: .
+      context: ./data-sync
       dockerfile: consumer/Dockerfile
     container_name: mongodb-backfill
+    env_file:
+      - .env
     environment:
       - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/ProjectManagement?authSource=admin}
-      - MONGODB_DATABASE=${MONGODB_DATABASE:-ProjectManagement}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       - KAFKA_TOPIC_PREFIX=${KAFKA_TOPIC_PREFIX:-ProjectManagement.}
       - BACKFILL_COLLECTIONS=${BACKFILL_COLLECTIONS:-epic,features,cycle,module,members,workItem,userStory,page}
       - BACKFILL_BATCH_SIZE=${BACKFILL_BATCH_SIZE:-1000}
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
+    command: ["python", "/app/backfill_mongodb.py"]
+    volumes:
+      - ./data-sync/backfill_mongodb.py:/app/backfill_mongodb.py:ro
     depends_on:
       kafka:
         condition: service_healthy
       kafka-connect:
         condition: service_started
-    restart: "no"  # Run once and exit
-    command: ["python", "/app/backfill_mongodb.py"]
-    volumes:
-      - ./backfill_mongodb.py:/app/backfill_mongodb.py:ro
     networks:
-      - vector-net
+      - app-net
 
   consumer:
     build:
-      context: .
+      context: ./data-sync
       dockerfile: consumer/Dockerfile
     container_name: qdrant-consumer
+    env_file:
+      - .env
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       - KAFKA_TOPIC=${KAFKA_TOPIC:-ProjectManagement\..*}
@@ -148,21 +189,19 @@ services:
       - BATCH_MAX_SECONDS=${BATCH_MAX_SECONDS:-2}
       - HuggingFace_API_KEY=${HuggingFace_API_KEY:-}
     depends_on:
-      backfill:
-        condition: service_completed_successfully  # Wait for backfill to complete
       kafka:
         condition: service_healthy
       qdrant:
         condition: service_started
-    restart: unless-stopped
+      backfill:
+        condition: service_completed_successfully
     networks:
-      - vector-net
+      - app-net
 
 volumes:
-#  mongodb_data:
-#  mongodb_config:
   qdrant_data:
+  redis_data:
 
 networks:
-  vector-net:
+  app-net:
     driver: bridge

@@ -3,17 +3,26 @@ from pymongo import MongoClient
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, OptimizersConfigDiff, SparseVectorParams
 from dotenv import load_dotenv
-# from tools import rag_content_search
 
 # Load environment variables
 load_dotenv()
-qdrant_api_key = os.getenv("QDRANT_API_KEY")
-qdrant_url = os.getenv("QDRANT_URL")  
 
 # --- Connect to MongoDB ---
+mongo_uri = os.getenv("MONGODB_URI", "mongodb://mongo:27017/?authSource=admin")
+mongo_database = os.getenv("MONGODB_DATABASE", "ProjectManagement")
+
+mongo_client = None
+db = None
+page_collection = None
+workitem_collection = None
+cycle_collection = None
+module_collection = None
+project_collection = None
+epic_collection = None
+
 try:
     mongo_client = MongoClient(
-        "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin",
+        mongo_uri,
         directConnection=True,
         serverSelectionTimeoutMS=5000
     )
@@ -23,31 +32,35 @@ try:
     print("✅ MongoDB connected successfully!")
 
     # Access your specific collections
-    db = mongo_client["ProjectManagement"]
-    page_collection = db["page"]
-    workitem_collection = db["workItem"]
-    cycle_collection = db["cycle"]
-    module_collection = db["module"]
-    project_collection = db["project"]
-    epic_collection = db["epic"]
+    db = mongo_client[mongo_database]
+    page_collection = db.get_collection("page")
+    workitem_collection = db.get_collection("workItem")
+    cycle_collection = db.get_collection("cycle")
+    module_collection = db.get_collection("module")
+    project_collection = db.get_collection("project")
+    epic_collection = db.get_collection("epic")
 
 except Exception as e:
     print("❌ MongoDB connection failed:", e)
 
 # --- Connect to Qdrant ---
+qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
+qdrant_api_key = os.getenv("QDRANT_API_KEY", "")
+qdrant_collection = os.getenv("QDRANT_COLLECTION", "pms_collection")
+
 try:
     qdrant_client = QdrantClient(
         url=qdrant_url,
-        api_key=qdrant_api_key,
+        api_key=qdrant_api_key or None,
         timeout=60 
     )
 
-    QDRANT_COLLECTION= "pms_collection"
-
     # Check if collection exists, if not, create with named vectors + sparse for hybrid search
-    if QDRANT_COLLECTION not in [col.name for col in qdrant_client.get_collections().collections]:
+    existing_collections = qdrant_client.get_collections()
+    existing_names = [col.name for col in getattr(existing_collections, "collections", [])]
+    if qdrant_collection not in existing_names:
         qdrant_client.create_collection(
-            collection_name=QDRANT_COLLECTION,
+            collection_name=qdrant_collection,
             vectors_config={
                 "dense": VectorParams(size=768, distance=Distance.COSINE),
             },
@@ -59,20 +72,12 @@ try:
     # Force immediate indexing on this collection
     try:
         qdrant_client.update_collection(
-            collection_name=QDRANT_COLLECTION,
+            collection_name=qdrant_collection,
             optimizer_config=OptimizersConfigDiff(indexing_threshold=1)
         )
         print("✅ Qdrant optimizer indexing_threshold set to 1")
     except Exception as e:
         print(f"⚠️ Failed to set optimizer config: {e}")
-    # if QDRANT_COLLECTION_WORKITEM not in [col.name for col in qdrant_client.get_collections().collections]:
-    #     qdrant_client.recreate_collection(
-    #         collection_name=QDRANT_COLLECTION_WORKITEM,
-    #         vectors_config=VectorParams(
-    #             size=768, 
-    #             distance=Distance.COSINE
-    #         )
-    #     )
 
     # Try listing collections to confirm connection
     print("Qdrant Collections:", qdrant_client.get_collections())
