@@ -3,11 +3,14 @@ set -e
 
 # Use QDRANT_URL if provided, otherwise use the docker service name 'qdrant'
 QDRANT_URL="${QDRANT_URL:-http://qdrant:6333}"
+EMBEDDING_SERVICE_URL="${EMBEDDING_SERVICE_URL:-http://embedding:8080}"
 
 # Remove trailing slash for safety
 QDRANT_URL=$(echo "$QDRANT_URL" | sed 's:/*$::')
+EMBEDDING_SERVICE_URL=$(echo "$EMBEDDING_SERVICE_URL" | sed 's:/*$::')
 
 echo "Waiting for Qdrant at ${QDRANT_URL} ..."
+echo "Waiting for embedding service at ${EMBEDDING_SERVICE_URL} ..."
 
 attempt=0
 max_attempts=12
@@ -16,8 +19,19 @@ sleep_secs=2
 while [ $attempt -lt $max_attempts ]; do
   attempt=$((attempt+1))
   if command -v curl >/dev/null 2>&1; then
+    qdrant_ok=false
+    embedding_ok=false
+
     if curl -fsS "${QDRANT_URL}/collections" >/dev/null 2>&1; then
-      echo "Qdrant ready at ${QDRANT_URL}"
+      qdrant_ok=true
+    fi
+
+    if curl -fsS "${EMBEDDING_SERVICE_URL}/health" >/dev/null 2>&1; then
+      embedding_ok=true
+    fi
+
+    if [ "$qdrant_ok" = true ] && [ "$embedding_ok" = true ]; then
+      echo "Qdrant and embedding service ready"
       exec "$@"
     fi
   else
@@ -25,8 +39,12 @@ while [ $attempt -lt $max_attempts ]; do
     host=$(echo "$QDRANT_URL" | sed -n 's|^[a-z]*://\([^:/]*\).*|\1|p')
     port=$(echo "$QDRANT_URL" | sed -n 's|^[a-z]*://[^:/]*:\?\([0-9]*\).*|\1|p')
     if [ -z "$port" ]; then port=6333; fi
-    if nc -z "$host" "$port" >/dev/null 2>&1; then
+    emb_host=$(echo "$EMBEDDING_SERVICE_URL" | sed -n 's|^[a-z]*://\([^:/]*\).*|\1|p')
+    emb_port=$(echo "$EMBEDDING_SERVICE_URL" | sed -n 's|^[a-z]*://[^:/]*:\?\([0-9]*\).*|\1|p')
+    if [ -z "$emb_port" ]; then emb_port=8080; fi
+    if nc -z "$host" "$port" >/dev/null 2>&1 && nc -z "$emb_host" "$emb_port" >/dev/null 2>&1; then
       echo "Qdrant ready (tcp) at ${host}:${port}"
+      echo "Embedding service ready (tcp) at ${emb_host}:${emb_port}"
       exec "$@"
     fi
   fi
@@ -37,9 +55,9 @@ while [ $attempt -lt $max_attempts ]; do
   else
     wait_secs=$((sleep_secs * (1 << attempt)))
   fi
-  echo "Attempt ${attempt}: Qdrant not ready yet, waiting ${wait_secs}s..."
+  echo "Attempt ${attempt}: services not ready yet, waiting ${wait_secs}s..."
   sleep "$wait_secs"
 done
 
-echo "Timed out waiting for Qdrant at ${QDRANT_URL}" >&2
+echo "Timed out waiting for Qdrant (${QDRANT_URL}) or embedding service (${EMBEDDING_SERVICE_URL})" >&2
 exit 1

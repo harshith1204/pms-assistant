@@ -40,8 +40,8 @@ except ImportError:
     ChunkAwareRetriever = None
     RAGTool = None
     mongodb_tools = None
-    DATABASE_NAME = "ProjectManagement"
-    QDRANT_COLLECTION_NAME = "pms_collection"
+    DATABASE_NAME = os.getenv("MONGODB_DATABASE", "ProjectManagement")
+    QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "pms_collection")
     build_lookup_stage = None
     REL = None
 
@@ -151,9 +151,9 @@ class SmartFilterTools:
             cls._instance.rag_available = False
         return cls._instance
 
-    def __init__(self, qdrant_client=None, embedding_model=None):
+    def __init__(self, qdrant_client=None, embedding_client=None):
         self.qdrant_client = qdrant_client
-        self.embedding_model = embedding_model
+        self.embedding_client = embedding_client
         # Minimal English stopword list for lightweight keyword-overlap filtering
         self._STOPWORDS: Set[str] = {
             "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
@@ -229,7 +229,7 @@ class SmartFilterTools:
             if self.rag_tool and self.rag_tool.connected:
                 self.retriever = ChunkAwareRetriever(
                     qdrant_client=self.rag_tool.qdrant_client,
-                    embedding_model=self.rag_tool.embedding_model
+                    embedding_client=self.rag_tool.embedding_client
                 )
                 self.rag_available = True
                 # Only log on first initialization
@@ -526,7 +526,10 @@ class SmartFilterTools:
         from qdrant_client.models import Filter, FieldCondition, MatchValue
         
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
-        query_embedding = self.embedding_model.encode(query).tolist()
+        vectors = self.embedding_client.encode([query])
+        if not vectors:
+            raise RuntimeError("Embedding service returned empty vector")
+        query_embedding = vectors[0]
         
         # Build filter with optional content_type and global business scoping
         must_conditions = []
