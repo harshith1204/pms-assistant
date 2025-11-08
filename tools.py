@@ -930,7 +930,7 @@ async def rag_search(
             
             retriever = ChunkAwareRetriever(
                 qdrant_client=rag_tool.qdrant_client,
-                embedding_model=rag_tool.embedding_model
+                embedding_client=rag_tool.embedding_client
             )
             
             from mongo.constants import QDRANT_COLLECTION_NAME

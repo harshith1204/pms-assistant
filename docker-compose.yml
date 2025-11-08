@@ -10,6 +10,8 @@ services:
     ports:
       - "${APP_PORT:-7000}:7000"
     depends_on:
+      embedding:
+        condition: service_started
       qdrant:
         condition: service_started
       kafka:
@@ -43,6 +45,21 @@ services:
     command: ["redis-server", "--save", "60", "1"]
     volumes:
       - redis_data:/data
+    networks:
+      - app-net
+
+  embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    container_name: embedding
+    env_file:
+      - .env
+    environment:
+      MODEL_ID: ${EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      HF_TOKEN: ${HuggingFace_API_KEY:-}
+    ports:
+      - "${EMBEDDING_PORT:-8080}:8080"
+    volumes:
+      - hf_cache:/data
     networks:
       - app-net
 
@@ -164,6 +181,8 @@ services:
         condition: service_healthy
       kafka-connect:
         condition: service_started
+      embedding:
+        condition: service_started
     networks:
       - app-net
 
@@ -193,6 +212,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      embedding:
+        condition: service_started
       backfill:
         condition: service_completed_successfully
     networks:
@@ -201,6 +222,7 @@ services:
 volumes:
   qdrant_data:
   redis_data:
+  hf_cache:
 
 networks:
   app-net:
