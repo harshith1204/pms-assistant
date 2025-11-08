@@ -18,7 +18,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
  
 from langchain_groq import ChatGroq
 # Orchestration utilities
-from orchestrator import Orchestrator, StepSpec, as_async
+from agent.orchestrator import Orchestrator, StepSpec, as_async
 
 # OpenInference semantic conventions (optional)
 try:
