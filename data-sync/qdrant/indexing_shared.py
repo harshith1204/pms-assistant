@@ -9,11 +9,15 @@ import html as html_lib
 import json
 import re
 import uuid
+import logging
 from datetime import datetime, timezone
 
 from bson.binary import Binary
 from bson.objectid import ObjectId
 from qdrant_client.http import models as qmodels
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +132,7 @@ def ensure_collection_with_hybrid(
             existing_names = [c.name for c in client.get_collections().collections]
             should_create = collection_name not in existing_names
         except Exception as exc:  # pragma: no cover - defensive logging
-            print(f"WARN: could not list collections: {exc}")
+            logger.warning(f"Could not list collections: {exc}")
             should_create = True
 
         if force_recreate:
@@ -175,7 +179,7 @@ def ensure_collection_with_hybrid(
             )
             print("INFO: indexing_threshold set to 1 for faster ingestion.")
         except Exception as exc:
-            print(f"WARN: failed to update optimizer config: {exc}")
+            logger.warning(f"Failed to update optimizer config: {exc}")
 
         indexed_fields = [
             ("content_type", qmodels.PayloadSchemaType.KEYWORD),
@@ -198,10 +202,10 @@ def ensure_collection_with_hybrid(
                 )
             except Exception as exc:
                 if "already exists" not in str(exc):
-                    print(f"WARN: failed to ensure index on '{field_name}': {exc}")
+                    logger.warning(f"Failed to ensure index on '{field_name}': {exc}")
 
     except Exception as exc:  # pragma: no cover - top-level guard
-        print(f"ERROR: could not ensure collection '{collection_name}': {exc}")
+        logger.error(f"Could not ensure collection '{collection_name}': {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +423,7 @@ def parse_editorjs_blocks(content_str: str) -> Tuple[List[Dict[str, Any]], str]:
         content_json = json.loads(content_str)
         blocks = content_json.get("blocks", [])
     except Exception as exc:
-        print(f"WARN: failed to parse EditorJS content: {exc}")
+        logger.warning(f"Failed to parse EditorJS content: {exc}")
         return [], ""
 
     extracted: List[str] = []

@@ -1,4 +1,5 @@
 import sys
+import logging
 from langchain_core.tools import tool
 from typing import Optional, Dict, List, Any, Union
 import mongo.constants
@@ -9,6 +10,9 @@ from glob import glob
 from datetime import datetime
 from orchestrator import Orchestrator, StepSpec, as_async
 from qdrant.initializer import RAGTool
+
+# Configure logging
+logger = logging.getLogger(__name__)
 # Qdrant and RAG dependencies
 # try:
 #     from qdrant_client import QdrantClient
@@ -769,7 +773,6 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                 response += f"Found total {int(total_minutes)} min\n"
                             else:
                                 response += f"Found {total_items} items\n"
-                        print(response)
                         return response
 
                     # Handle list of documents - show summary instead of raw JSON
@@ -834,7 +837,6 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             except Exception:
                 pass
             response += formatted_result
-            print(response)
             return response
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
@@ -1171,7 +1173,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    print(f"Warning: Could not send to websocket: {e}")
+                    logger.warning(f"Could not send to websocket: {e}")
 
             # Persist generated artifact as a conversation message (best-effort)
             try:
@@ -1190,7 +1192,7 @@ async def generate_content(
                     })
             except Exception as e:
                 # Non-fatal
-                print(f"Warning: failed to persist generated work item to conversation: {e}")
+                logger.warning(f"Failed to persist generated work item to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1222,7 +1224,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    print(f"Warning: Could not send to websocket: {e}")
+                    logger.warning(f"Could not send to websocket: {e}")
 
             # Persist generated artifact as a conversation message (best-effort)
             try:
@@ -1237,7 +1239,7 @@ async def generate_content(
                     })
             except Exception as e:
                 # Non-fatal
-                print(f"Warning: failed to persist generated cycle to conversation: {e}")
+                logger.warning(f"Failed to persist generated cycle to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1269,7 +1271,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    print(f"Warning: Could not send to websocket: {e}")
+                    logger.warning(f"Could not send to websocket: {e}")
 
             # Persist generated artifact as a conversation message (best-effort)
             try:
@@ -1284,7 +1286,7 @@ async def generate_content(
                     })
             except Exception as e:
                 # Non-fatal
-                print(f"Warning: failed to persist generated module to conversation: {e}")
+                logger.warning(f"Failed to persist generated module to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1316,7 +1318,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    print(f"Warning: Could not send to websocket: {e}")
+                    logger.warning(f"Could not send to websocket: {e}")
 
             # Persist generated epic as a conversation message (best-effort)
             try:
@@ -1340,7 +1342,7 @@ async def generate_content(
                     await save_generated_epic(conv_id, epic_payload)
             except Exception as e:
                 # Non-fatal
-                print(f"Warning: failed to persist generated epic to conversation: {e}")
+                logger.warning(f"Failed to persist generated epic to conversation: {e}")
 
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1390,7 +1392,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    print(f"Warning: Could not send to websocket: {e}")
+                    logger.warning(f"Could not send to websocket: {e}")
 
             # Persist generated page as a conversation message (best-effort)
             try:
@@ -1407,7 +1409,7 @@ async def generate_content(
                         "blocks": blocks
                     })
             except Exception as e:
-                print(f"Warning: failed to persist generated page to conversation: {e}")
+                logger.warning(f"Failed to persist generated page to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1474,18 +1476,5 @@ tools = [
 #             if question.lower() in ['exit', 'quit']:
 #                 break
 
-#             print("\n🎯 Testing intelligent_query...")
-
-#             print("🔍 Testing rag_content_search...")
-#             result1 = await rag_content_search.ainvoke({
-#                 "query": question,   # rag_content_search expects `query`
-#             })
-#             print(result1)
-
-#             print("\n📖 Testing rag_answer_question...")
-#             result2 = await rag_answer_question.ainvoke({
-#                 "question": question,   # rag_answer_question expects `question`
-#             })
-#             print(result2)
 
 #     asyncio.run(main())

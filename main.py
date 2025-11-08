@@ -6,10 +6,15 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
+import logging
 from generate.router import router as generate_router
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 from agent import MongoDBAgent
 import os
@@ -144,44 +149,35 @@ async def lifespan(app: FastAPI):
     global mongodb_agent, smart_filter_agent , template_generator
 
     # Startup
-    print("Starting MongoDB Agent...")
     mongodb_agent = MongoDBAgent()
     await mongodb_agent.connect()
-    print("MongoDB Agent connected successfully!")
     await RAGTool.initialize()
-    print("RAGTool initialized successfully!")
 
     # Initialize Smart Filter Tools (singleton)
     from smart_filter import tools as smart_filter_tools_module
     await smart_filter_tools_module.SmartFilterTools.initialize()
-    print("Smart Filter Tools initialized successfully!")
 
     # Initialize Smart Filter Agent after RAGTool
     from smart_filter.agent import SmartFilterAgent
     smart_filter_agent = SmartFilterAgent()
     set_smart_filter_agent_instance(smart_filter_agent)
-    print("Smart Filter Agent initialized successfully!")
-    
+
     from template_generator.generator import TemplateGenerator
     template_generator = TemplateGenerator()
     set_template_generator_instance(template_generator)
-    print("Template Generator initialized sucessfully")
     # Ensure conversation DB connection pool is ready
     try:
         await ensure_conversation_client_connected()
     except Exception as e:
-        print(f"Warning: Conversations DB not connected: {e}")
+        logger.error(f"Conversations DB not connected: {e}")
     yield
 
     # Shutdown
-    print("Shutting down MongoDB Agent...")
     await mongodb_agent.disconnect()
-    print("MongoDB Agent disconnected.")
-    
+
     # Close Redis conversation memory
     from memory import conversation_memory
     await conversation_memory.close()
-    print("Redis conversation memory closed.")
 
 # Create FastAPI app
 app = FastAPI(
@@ -626,7 +622,6 @@ async def websocket_chat(websocket: WebSocket):
 
     # Initialize agent if not already done (for testing/development)
     if not mongodb_agent:
-        print("Initializing MongoDB Agent for WebSocket...")
         mongodb_agent = MongoDBAgent()
         await mongodb_agent.connect()
 
