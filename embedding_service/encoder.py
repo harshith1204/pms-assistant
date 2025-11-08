@@ -5,6 +5,7 @@ from functools import lru_cache
 from typing import Any, List, Sequence
 
 import torch
+import transformers
 from huggingface_hub import login
 from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
@@ -121,7 +122,18 @@ class EmbeddingEncoder:
         if attn_impl:
             model_kwargs["attn_implementation"] = attn_impl
 
-        self.model = AutoModel.from_pretrained(name, **model_kwargs)
+        try:
+            self.model = AutoModel.from_pretrained(name, **model_kwargs)
+        except ValueError as model_exc:
+            message = str(model_exc)
+            if "model type" in message and "not recognize" in message:
+                raise RuntimeError(
+                    "The installed transformers version "
+                    f"({getattr(transformers, '__version__', 'unknown')}) "
+                    f"does not support the model type required by '{name}'. "
+                    "Upgrade transformers to >=4.46.2 (see embedding_service/requirements.txt)."
+                ) from model_exc
+            raise
         self.model.eval()
         self.model.to(self.device)
 
