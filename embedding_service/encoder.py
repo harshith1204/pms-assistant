@@ -7,6 +7,7 @@ from typing import Any, List, Sequence
 import torch
 from huggingface_hub import login
 from transformers import AutoModel, AutoTokenizer
+from sentence_transformers import SentenceTransformer
 
 DEFAULT_MODEL_NAME = "google/embeddinggemma-300m"
 
@@ -68,20 +69,57 @@ class EmbeddingEncoder:
             requested_threads = 0
         torch.set_num_threads(max(requested_threads, 1))
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            name,
-            use_fast=True,
-            trust_remote_code=trust_remote,
-        )
-        self.model = AutoModel.from_pretrained(
-            name,
-            trust_remote_code=trust_remote,
-            torch_dtype=torch.float32,
-        )
+        backend_preference = os.getenv("EMBEDDING_BACKEND", "auto").lower()
+        self.backend = "transformers"
+        self.sentence_transformer: SentenceTransformer | None = None
+
+        tokenizer_kwargs: dict[str, Any] = {
+            "use_fast": True,
+            "trust_remote_code": trust_remote,
+        }
+        tokenizer_revision = os.getenv("EMBEDDING_TOKENIZER_REVISION")
+        if tokenizer_revision:
+            tokenizer_kwargs["revision"] = tokenizer_revision
+
+        if backend_preference in {"sentence-transformers", "auto"}:
+            try:
+                sentence_transformer_kwargs: dict[str, Any] = {
+                    "trust_remote_code": trust_remote,
+                    "device": str(self.device),
+                }
+                if tokenizer_revision:
+                    sentence_transformer_kwargs["revision"] = tokenizer_revision
+                self.sentence_transformer = SentenceTransformer(name, **sentence_transformer_kwargs)
+                self.backend = "sentence-transformers"
+                self.dimension = int(self.sentence_transformer.get_sentence_embedding_dimension())
+                return
+            except Exception:
+                self.sentence_transformer = None
+                if backend_preference == "sentence-transformers":
+                    raise
+
+        self.tokenizer = AutoTokenizer.from_pretrained(name, **tokenizer_kwargs)
+
+        model_kwargs: dict[str, Any] = {
+            "trust_remote_code": trust_remote,
+            "torch_dtype": torch.float32,
+            "low_cpu_mem_usage": True,
+        }
+        model_revision = os.getenv("EMBEDDING_MODEL_REVISION")
+        if model_revision:
+            model_kwargs["revision"] = model_revision
+        attn_impl = os.getenv("EMBEDDING_ATTN_IMPLEMENTATION")
+        if attn_impl:
+            model_kwargs["attn_implementation"] = attn_impl
+
+        self.model = AutoModel.from_pretrained(name, **model_kwargs)
         self.model.eval()
         self.model.to(self.device)
 
-        probe = self.encode(["dimension probe"], normalize=False)
+        try:
+            probe = self.encode(["dimension probe"], normalize=False, batch_size=1)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to warm up embedding model '{name}': {exc}") from exc
         if not probe or not probe[0]:
             raise RuntimeError("Failed to determine embedding dimension from model output")
         self.dimension = len(probe[0])
@@ -99,6 +137,15 @@ class EmbeddingEncoder:
         normalize_flag = self.normalize if normalize is None else normalize
         max_length = int(os.getenv("EMBEDDING_MAX_LENGTH", "512"))
         eff_batch_size = batch_size or int(os.getenv("EMBEDDING_BATCH_SIZE", "16"))
+
+        if self.backend == "sentence-transformers" and self.sentence_transformer is not None:
+            embeddings = self.sentence_transformer.encode(
+                list(texts),
+                batch_size=eff_batch_size,
+                normalize_embeddings=normalize_flag,
+                convert_to_numpy=False,
+            )
+            return [embedding.tolist() if hasattr(embedding, "tolist") else list(embedding) for embedding in embeddings]
 
         outputs: List[List[float]] = []
         with torch.inference_mode():

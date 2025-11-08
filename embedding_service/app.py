@@ -37,7 +37,10 @@ async def embed(request: EmbedRequest) -> EmbedResponse:
     if not request.inputs:
         return EmbedResponse(embeddings=[])
 
-    vectors = encoder.encode(request.inputs, normalize=request.normalize)
+    try:
+        vectors = encoder.encode(request.inputs, normalize=request.normalize)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to compute embeddings: {exc}") from exc
     if any(not isinstance(vec, list) for vec in vectors):
         raise HTTPException(status_code=500, detail="Invalid embedding output format")
     return EmbedResponse(embeddings=vectors)
