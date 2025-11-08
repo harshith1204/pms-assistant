@@ -6,7 +6,7 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .encoder import get_encoder
+from encoder import get_encoder
 
 
 MAX_TERMS_DEFAULT = int(os.getenv("SPLADE_MAX_TERMS", "200"))
