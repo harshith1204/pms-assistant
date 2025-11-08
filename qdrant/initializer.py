@@ -80,7 +80,7 @@ class RAGTool:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
                 # If call succeeds, we assume sparse config exists as we create it during indexing
             except Exception as e:
-                logger.warning(f"Could not verify collection config: {e}")
+                logger.error(f"Could not verify collection config: {e}")
         except Exception as e:
             logger.error(f"Failed to connect RAGTool components: {e}")
             raise
@@ -135,7 +135,7 @@ class RAGTool:
                             must_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
                 except Exception as e:
                     # Error getting member projects - log and skip member filter
-                    logger.warning(f"Error getting member projects for '{member_uuid}': {e}")
+                    logger.error(f"Error getting member projects for '{member_uuid}': {e}")
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
@@ -244,7 +244,6 @@ class RAGTool:
 
         # Format context
         context_parts = []
-        # print(all_results)
         for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
             chunk_info = ""
             if result.get("chunk_index") is not None and result.get("chunk_count"):

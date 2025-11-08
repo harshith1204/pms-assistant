@@ -32,10 +32,6 @@ websockets  # For WebSocket testing
 qdrant-client
 numpy
 
-# SPLADE (sparse) dependencies
-transformers
-torch
-
 # Redis for conversation memory cache
 redis
 redis[hiredis]
