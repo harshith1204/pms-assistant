@@ -1,8 +1,26 @@
-export const API_HTTP_URL = import.meta.env.VITE_API_HTTP_URL || "http://localhost:8000";
-export const API_WS_URL = import.meta.env.VITE_API_WS_URL || `${API_HTTP_URL.replace(/^http/, "ws")}/ws/chat`;
+const inferHttpFallback = () => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.location.origin;
+};
+
+const httpFallback = inferHttpFallback();
+
+export const API_HTTP_URL =
+  import.meta.env.VITE_API_HTTP_URL ?? httpFallback;
+
+const inferWsFallback = () => {
+  if (!API_HTTP_URL) return "";
+  return `${API_HTTP_URL.replace(/^http/, "ws")}/ws/chat`;
+};
+
+export const API_WS_URL =
+  import.meta.env.VITE_API_WS_URL ?? inferWsFallback();
 
 // Stage Project API Configuration
-export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://stage-project.simpo.ai";
+export const STAGE_API_BASE_URL =
+  import.meta.env.VITE_STAGE_API_BASE_URL ?? "";
 
 // Get staff and business details dynamically from postMessage/localStorage (set by parent wrapper)
 // Note: Hardcoded fallbacks are intentionally commented out to avoid accidental misuse
