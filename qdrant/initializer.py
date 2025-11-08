@@ -9,9 +9,17 @@ from bson import ObjectId, Binary
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter,
+    FieldCondition,
+    MatchValue,
+    MatchAny,
+    Prefetch,
+    NearestQuery,
+    FusionQuery,
+    Fusion,
+    SparseVector,
 )
-from sentence_transformers import SentenceTransformer
+from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
 print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
 
 class RAGTool:
@@ -31,7 +39,7 @@ class RAGTool:
             # Create the instance and connect it
             instance = cls.__new__(cls)
             instance.qdrant_client = None
-            instance.embedding_model = None
+            instance.embedding_client = None
             instance.connected = False
             
             await instance.connect()
@@ -58,11 +66,16 @@ class RAGTool:
         if self.connected:
             return
         try:
-            self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL, api_key=mongo.constants.QDRANT_API_KEY)
+            self.qdrant_client = QdrantClient(
+                url=mongo.constants.QDRANT_URL,
+                api_key=mongo.constants.QDRANT_API_KEY,
+            )
+            self.embedding_client = EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
             try:
-                self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
-            except Exception as e:
-                print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
+                dimension = self.embedding_client.get_dimension()
+                print(f"Embedding service dimension: {dimension}")
+            except EmbeddingServiceError as exc:
+                raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
             self.connected = True
             print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
             # Lightweight verification that sparse vectors are configured and present
@@ -84,7 +97,10 @@ class RAGTool:
 
         try:
             # Generate embedding for the query
-            query_embedding = self.embedding_model.encode(query).tolist()
+            query_vectors = self.embedding_client.encode([query])
+            if not query_vectors:
+                return []
+            query_embedding = query_vectors[0]
             # Build filter if content_type is specified
             from mongo.constants import BUSINESS_UUID, MEMBER_UUID
             must_conditions = []

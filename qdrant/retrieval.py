@@ -52,9 +52,9 @@ class ReconstructedDocument:
 class ChunkAwareRetriever:
     """Enhanced RAG retrieval with chunk awareness and context reconstruction"""
     
-    def __init__(self, qdrant_client, embedding_model):
+    def __init__(self, qdrant_client, embedding_client):
         self.qdrant_client = qdrant_client
-        self.embedding_model = embedding_model
+        self.embedding_client = embedding_client
         # Minimal English stopword list for lightweight keyword-overlap filtering
         self._STOPWORDS: Set[str] = {
             "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
@@ -109,7 +109,10 @@ class ChunkAwareRetriever:
         from qdrant_client.models import Filter, FieldCondition, MatchValue
         
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
-        query_embedding = self.embedding_model.encode(query).tolist()
+        vectors = self.embedding_client.encode([query])
+        if not vectors:
+            raise RuntimeError("Embedding service returned empty vector")
+        query_embedding = vectors[0]
         
         # Build filter with optional content_type and global business scoping
         must_conditions = []

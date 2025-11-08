@@ -4,18 +4,16 @@ from typing import Dict
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
-from sentence_transformers import SentenceTransformer
+from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
 
 from qdrant.encoder import get_splade_encoder
 
 
-def _load_embedder() -> SentenceTransformer:
-    model_name = os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m")
-    fallback_name = os.getenv("FALLBACK_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+def _load_embedder() -> EmbeddingServiceClient:
     try:
-        return SentenceTransformer(model_name)
-    except Exception:
-        return SentenceTransformer(fallback_name)
+        return EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
+    except ValueError as exc:
+        raise RuntimeError("EMBEDDING_SERVICE_URL must be set to use embedding search") from exc
 
 
 EMBEDDER = _load_embedder()
@@ -23,7 +21,10 @@ SPLADE_ENCODER = get_splade_encoder()
 
 
 def build_query_vector(text: str) -> Dict[str, qmodels.NamedVectorStruct]:
-    dense_vector = EMBEDDER.encode(text).tolist()
+    vectors = EMBEDDER.encode([text])
+    if not vectors:
+        raise EmbeddingServiceError("Embedding service returned empty embedding")
+    dense_vector = vectors[0]
     sparse_raw = SPLADE_ENCODER.encode_text(text)
     query: Dict[str, qmodels.NamedVectorStruct] = {
         "dense": qmodels.NamedVectorStruct(name="dense", vector=dense_vector)
