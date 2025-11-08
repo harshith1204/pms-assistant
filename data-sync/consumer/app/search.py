@@ -1,5 +1,6 @@
 import argparse
 import os
+import logging
 from typing import Dict
 
 from qdrant_client import QdrantClient
@@ -18,6 +19,9 @@ def _load_embedder() -> EmbeddingServiceClient:
 
 EMBEDDER = _load_embedder()
 SPLADE_ENCODER = get_splade_encoder()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def build_query_vector(text: str) -> Dict[str, qmodels.NamedVectorStruct]:
@@ -63,7 +67,7 @@ def main() -> None:
         title = payload.get("title")
         content_type = payload.get("content_type")
         score = point.score
-        print(f"{idx}. score={score:.4f} type={content_type} title={title}")
+        logger.info(f"{idx}. score={score:.4f} type={content_type} title={title}")
 
 
 if __name__ == "__main__":

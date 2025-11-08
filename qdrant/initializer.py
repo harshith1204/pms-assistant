@@ -5,6 +5,7 @@ import os
 import json
 import re
 import uuid
+import logging
 from bson import ObjectId, Binary
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
@@ -20,7 +21,9 @@ from qdrant_client.models import (
     SparseVector,
 )
 from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
-print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class RAGTool:
     """
@@ -35,18 +38,14 @@ class RAGTool:
         This should be called once at server startup.
         """
         if cls._instance is None:
-            print("Initializing RAGTool for the first time...")
             # Create the instance and connect it
             instance = cls.__new__(cls)
             instance.qdrant_client = None
             instance.embedding_client = None
             instance.connected = False
-            
+
             await instance.connect()
             cls._instance = instance
-            print("RAGTool successfully initialized and connected.")
-        else:
-            print("RAGTool is already initialized.")
 
     @classmethod
     def get_instance(cls):
@@ -73,20 +72,17 @@ class RAGTool:
             self.embedding_client = EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
             try:
                 dimension = self.embedding_client.get_dimension()
-                print(f"Embedding service dimension: {dimension}")
             except EmbeddingServiceError as exc:
                 raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
             self.connected = True
-            print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
             # Lightweight verification that sparse vectors are configured and present
             try:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
                 # If call succeeds, we assume sparse config exists as we create it during indexing
-                print(f"ℹ️ Collection loaded: {getattr(col, 'name', mongo.constants.QDRANT_COLLECTION_NAME)}")
             except Exception as e:
-                print(f"⚠️ Could not verify collection config: {e}")
+                logger.warning(f"Could not verify collection config: {e}")
         except Exception as e:
-            print(f"Failed to connect RAGTool components: {e}")
+            logger.error(f"Failed to connect RAGTool components: {e}")
             raise
     
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
@@ -139,8 +135,7 @@ class RAGTool:
                             must_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
                 except Exception as e:
                     # Error getting member projects - log and skip member filter
-                    print(f"⚠️  Error getting member projects for '{member_uuid}': {e}")
-                    print(f"   Skipping member filter for search")
+                    logger.warning(f"Error getting member projects for '{member_uuid}': {e}")
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
@@ -231,7 +226,7 @@ class RAGTool:
             return results[:limit]
 
         except Exception as e:
-            print(f"Error searching Qdrant: {e}")
+            logger.error(f"Error searching Qdrant: {e}")
             return []
 
     async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
@@ -315,5 +310,5 @@ class RAGTool:
             return project_ids
 
         except Exception as e:
-            print(f"Error querying member projects: {e}")
+            logger.error(f"Error querying member projects: {e}")
             return [] 

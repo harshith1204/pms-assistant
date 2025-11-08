@@ -11,6 +11,7 @@ Improves context quality by:
 from typing import List, Dict, Any, Optional, Set, Tuple
 import re
 import uuid
+import logging
 from bson import ObjectId, Binary
 from mongo.constants import BUSINESS_UUID, MEMBER_UUID, uuid_str_to_mongo_binary
 from collections import defaultdict
@@ -19,6 +20,9 @@ import asyncio
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ChunkResult:
@@ -141,8 +145,7 @@ class ChunkAwareRetriever:
                         must_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
             except Exception as e:
                 # Error getting member projects - log and skip member filter
-                print(f"⚠️  Error getting member projects for '{member_uuid}': {e}")
-                print(f"   Skipping member filter for search")
+                logger.error(f"Error getting member projects for '{member_uuid}': {e}")
 
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
@@ -216,7 +219,7 @@ class ChunkAwareRetriever:
                 limit=initial_limit,
             ).points
         except Exception as e:
-            print(f"❌ Hybrid search failed: {e}")
+            logger.error(f"Hybrid search failed: {e}")
             return []
         
 
@@ -389,8 +392,7 @@ class ChunkAwareRetriever:
                                     filter_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
                         except Exception as e:
                             # Error getting member projects - log and skip member filter
-                            print(f"⚠️  Error getting member projects for adjacent chunks '{member_uuid}': {e}")
-                            print(f"   Skipping member filter for adjacent chunks")
+                            logger.error(f"Error getting member projects for adjacent chunks '{member_uuid}': {e}")
                     
                     # Use scroll to find specific chunk (more efficient than search for exact match)
                     scroll_result = self.qdrant_client.scroll(
@@ -424,7 +426,7 @@ class ChunkAwareRetriever:
                             chunks.append(adjacent_chunk)
                 
                 except Exception as e:
-                    print(f"Warning: Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
+                    logger.warning(f"Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
                     continue
     
     def _reconstruct_documents(
@@ -700,7 +702,7 @@ class ChunkAwareRetriever:
             return project_ids
 
         except Exception as e:
-            print(f"Error querying member projects: {e}")
+            logger.error(f"Error querying member projects: {e}")
             return []
 
 

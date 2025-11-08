@@ -1,8 +1,12 @@
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -496,7 +500,6 @@ class MongoDBAgent:
             self.connected = True
             if span:
                 pass
-            print("MongoDB Agent connected successfully!")
         except Exception as e:
             if span:
                 pass
@@ -694,7 +697,7 @@ class MongoDBAgent:
                         try:
                             await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
                         except Exception as e:
-                            print(f"Warning: failed to save assistant message: {e}")
+                            logger.error(f"Failed to save assistant message: {e}")
                         yield response.content
                         return
                     else:
@@ -722,7 +725,7 @@ class MongoDBAgent:
                             await callback_handler.emit_dynamic_action(action_text)
                     except Exception as e:
                         # Log exception for debugging
-                        print(f"Warning: Failed to generate action statement: {e}")
+                        logger.error(f"Failed to generate action statement: {e}")
                         pass
 
                     # ✅ NEW: Create a clean version of the response for messages (without reasoning)
@@ -733,11 +736,6 @@ class MongoDBAgent:
                     )
                     messages.append(clean_response)
                     did_any_tool = False
-                    
-                    # Log execution info
-                    tool_names = [tc["name"] for tc in response.tool_calls]
-                    execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
-                    print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
                     
                     if self.enable_parallel_tools and len(response.tool_calls) > 1:
                         # Multiple tools called together = LLM determined they're independent
@@ -790,7 +788,7 @@ class MongoDBAgent:
                                 conversation_memory.update_summary_async(conversation_id, self.llm_base)
                             )
                         except Exception as e:
-                            print(f"Warning: Failed to update summary: {e}")
+                            logger.error(f"Failed to update summary: {e}")
                     yield last_response.content
                 else:
                     yield "Reached maximum reasoning steps without a final answer."

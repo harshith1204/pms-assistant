@@ -10,12 +10,16 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Set
 import os
+import logging
 from dataclasses import dataclass
 import copy
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 from mongo.registry import REL, ALLOWED_FIELDS, build_lookup_stage
 from mongo.constants import mongodb_tools, DATABASE_NAME
@@ -489,7 +493,7 @@ class LLMIntentParser:
         try:
             ai = await self.llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
             content = ai.content.strip()
-            print(f"DEBUG: LLM response: {content}")
+            logger.debug(f"LLM response: {content}")
             import re
             content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
             content = re.sub(r'<think>.*', '', content, flags=re.DOTALL)  # Handle incomplete tags
@@ -511,7 +515,7 @@ class LLMIntentParser:
 
             data = json.loads(content)
         except Exception as e:
-            print(f"DEBUG: LLM parsing exception: {e}")
+            logger.debug(f"LLM parsing exception: {e}")
             return None
 
         try:

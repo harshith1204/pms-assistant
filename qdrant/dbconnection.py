@@ -1,4 +1,5 @@
 import os
+import logging
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, OptimizersConfigDiff, SparseVectorParams
@@ -6,6 +7,9 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # --- Connect to MongoDB ---
 mongo_uri = os.getenv("MONGODB_URI", "mongodb://mongo:27017/?authSource=admin")
@@ -28,8 +32,6 @@ try:
     )
 
     # Try listing databases to confirm connection
-    print("MongoDB Databases:", mongo_client.list_database_names())
-    print("✅ MongoDB connected successfully!")
 
     # Access your specific collections
     db = mongo_client[mongo_database]
@@ -41,7 +43,7 @@ try:
     epic_collection = db.get_collection("epic")
 
 except Exception as e:
-    print("❌ MongoDB connection failed:", e)
+    logger.error(f"MongoDB connection failed: {e}")
 
 # --- Connect to Qdrant ---
 qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
@@ -75,16 +77,13 @@ try:
             collection_name=qdrant_collection,
             optimizer_config=OptimizersConfigDiff(indexing_threshold=1)
         )
-        print("✅ Qdrant optimizer indexing_threshold set to 1")
     except Exception as e:
-        print(f"⚠️ Failed to set optimizer config: {e}")
+        logger.warning(f"Failed to set optimizer config: {e}")
 
     # Try listing collections to confirm connection
-    print("Qdrant Collections:", qdrant_client.get_collections())
-    print("✅ Qdrant connected successfully!")
 
 except Exception as e:
-    print("❌ Qdrant connection failed:", e)
+    logger.error(f"Qdrant connection failed: {e}")
 
 import asyncio
 
@@ -92,7 +91,6 @@ if __name__ == "__main__":
     # Test basic connection
     try:
         collections = qdrant_client.get_collections()
-        print(f"✅ Qdrant connected successfully! Collections: {[col.name for col in collections.collections]}")
     except Exception as e:
-        print(f"❌ Qdrant connection failed: {e}")
+        logger.error(f"Qdrant connection failed: {e}")
 
