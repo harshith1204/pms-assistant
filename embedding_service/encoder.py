@@ -98,7 +98,16 @@ class EmbeddingEncoder:
                 if backend_preference == "sentence-transformers":
                     raise
 
-        self.tokenizer = AutoTokenizer.from_pretrained(name, **tokenizer_kwargs)
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(name, **tokenizer_kwargs)
+        except Exception as tokenizer_exc:
+            if tokenizer_kwargs.get("use_fast", True):
+                tokenizer_kwargs["use_fast"] = False
+                self.tokenizer = AutoTokenizer.from_pretrained(name, **tokenizer_kwargs)
+            else:
+                raise RuntimeError(
+                    f"Failed to load tokenizer for model '{name}': {tokenizer_exc}"
+                ) from tokenizer_exc
 
         model_kwargs: dict[str, Any] = {
             "trust_remote_code": trust_remote,

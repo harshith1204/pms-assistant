@@ -7,3 +7,4 @@ numpy==1.26.4
 huggingface-hub==0.24.6
 sentencepiece==0.2.0
 safetensors==0.4.3
+tokenizers>=0.20.0
