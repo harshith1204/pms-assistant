@@ -192,6 +192,10 @@ class LLMIntentParser:
             "tickets": "workItem",
             "ticket": "workItem",
             "epic" : "epic",
+            "features":"features",
+            "feature":"features",
+            "userstory":"userStory",
+            "story":"userStory",
         }
 
     def _is_placeholder(self, v) -> bool:
@@ -343,6 +347,8 @@ class LLMIntentParser:
             "- Projects contain cycles and modules\n"
             "- Cycles and modules belong to projects\n"
             "- Epics contain multiple features and belong to a project lifecycle.\n\n"
+            "- Features are new developments to the product."
+            "- User stories are short, simple descriptions of a feature told from the perspective of the person who desires the new capability, usually a user or customer.\n\n"
 
             "## VERY IMPORTANT\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
@@ -546,7 +552,7 @@ class LLMIntentParser:
 
         # For epic collection, accept 'state_name' as the canonical filter key
         # and also map legacy 'status' to 'state_name' when provided by LLMs/users
-        if primary == "epic":
+        if primary == "epic" or primary == "features" or primary == "userStory":
             if "status" in raw_filters and "state_name" not in raw_filters:
                 raw_filters["state_name"] = raw_filters.pop("status")
             # Some LLMs may emit 'state' for epics; prefer 'state_name'
@@ -560,14 +566,14 @@ class LLMIntentParser:
             if primary == "cycle" and "cycle_status" not in raw_filters:
                 raw_filters["cycle_status"] = raw_filters["status"]
 
-        if primary in ("workItem","epic") and "label" in raw_filters:
+        if primary in ("workItem","epic","features","userStory") and "label" in raw_filters:
             raw_filters["label_name"] = raw_filters["label"]
         # Normalize date filter key synonyms BEFORE validation so they are preserved
         # Examples the LLM might emit: createdAt_from, created_from, date_to, updated_since, etc.
         def _normalize_date_filter_keys(primary_entity: str, rf: Dict[str, Any]) -> Dict[str, Any]:
             normalized: Dict[str, Any] = {}
             # Determine canonical created/updated fields per entity
-            if primary_entity == "page":
+            if primary_entity == "page" or primary_entity == "features" or primary_entity == "userStory":
                 created_field = "createdAt"
                 updated_field = "updatedAt"
             elif primary_entity == "members":
@@ -633,6 +639,8 @@ class LLMIntentParser:
             "defaultAssignee_name", "defaultAsignee_name", "staff_name",
             # members specific
             "role", "type", "joiningDate", "joiningDate_from", "joiningDate_to",
+            #feature_specific
+
         }
 
         # Also accept any allow-listed primary fields directly
@@ -757,7 +765,7 @@ class LLMIntentParser:
         if isinstance(so, dict) and so:
             key, val = next(iter(so.items()))
             # Accept synonyms and normalize
-            if primary == "page":
+            if primary == "page" or primary == "features" or primary == "userStory":
                 key_map = {
                     "created": "createdAt",
                     "createdAt": "createdAt",
@@ -891,7 +899,7 @@ class LLMIntentParser:
                 if primary == "timeline" and "createdTimeStamp" in inferred_sort:
                     dirv = inferred_sort.get("createdTimeStamp", -1)
                     sort_order = {"timestamp": dirv}
-                elif primary == "page" and "createdTimeStamp" in inferred_sort:
+                elif primary in ("page", "userStory", "features") and "createdTimeStamp" in inferred_sort:
                     dirv = inferred_sort.get("createdTimeStamp", -1)
                     sort_order = {"createdAt": dirv}
                 else:
@@ -1004,6 +1012,14 @@ class PipelineGenerator:
             'page': {
                 # Only add project if we're doing complex analysis
                 'project': len(intent.group_by or []) > 1 or intent.wants_details,
+            },
+            'epic': {
+                'project': len(intent.group_by or []) > 1 or intent.wants_details,
+            },
+            'features': {
+                'project': len(intent.group_by or []) > 1 or intent.wants_details,
+                'cycles': self._needs_multi_hop_context(intent, ['cycle']),
+                'modules': self._needs_multi_hop_context(intent, ['module']),
             }
         }
 
@@ -1127,6 +1143,16 @@ class PipelineGenerator:
                 'business': 'project',
             },
             'epic': {
+                'project': 'project',
+                'business': 'project',
+            },
+            'features': {
+                'project': 'project',
+                'business': 'project',
+                'cycle': 'cycles',
+                'module': 'modules',
+            },
+            'userStory': {
                 'project': 'project',
                 'business': 'project',
             }
@@ -1968,6 +1994,15 @@ class PipelineGenerator:
             ],
             "epic": [
                 "title", "priority", "state.name", "createdTimeStamp", "project.name","description","assignee.name","bugNo","label.name"
+            ],
+            "features": [
+                "basicInfo","problemInfo","persona","displayBugNo","requirements","riskAndDependencies","createdBy.name","project.name","createdAt","scope",
+                "workItems","userStories","addLink","goals","painPoints","title","description","startDate","endDate","releaseDate","state.name",
+                "business.name","lead.name","priority","assignee","label","cycle","modules.name","parent.name","workLogs","estimatesystem","estimate"
+            ],
+            "userStory":[
+                "displayBugNo","userGoal","persona","demographics","feature.name","acceptanceCriteria","epic.name","createdBy.name","createdAt","title","description",
+                "state.name","business.name","priority","assignee","label"
             ],
         }
 

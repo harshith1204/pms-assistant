@@ -30,6 +30,8 @@ try:
     module_collection = db["module"]
     project_collection = db["project"]
     epic_collection = db["epic"]
+    userStory_collection = db["userStory"]
+    features_collection = db["features"]
 
 except Exception as e:
     print("❌ MongoDB connection failed:", e)
@@ -42,7 +44,7 @@ try:
         timeout=60 
     )
 
-    QDRANT_COLLECTION= "pms_collection"
+    QDRANT_COLLECTION= "pms_collection_stage"
 
     # Check if collection exists, if not, create with named vectors + sparse for hybrid search
     if QDRANT_COLLECTION not in [col.name for col in qdrant_client.get_collections().collections]:
