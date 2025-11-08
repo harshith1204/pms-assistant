@@ -203,7 +203,6 @@ services:
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
-      - FALLBACK_EMBEDDING_MODEL=${FALLBACK_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-300}
       - HF_HUB_ETAG_TIMEOUT=${HF_HUB_ETAG_TIMEOUT:-300}
