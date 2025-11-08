@@ -730,10 +730,10 @@ def index_projects_to_qdrant():
                     and len(field_value.strip()) > 20):  # Only substantial text
                     text_parts.append(field_value.strip())
 
-        combined_text = " ".join(text_parts).strip()
-        if not combined_text:
-            logger.error(f"Skipping project {mongo_id} - no substantial text content found")
-            continue
+            combined_text = " ".join(text_parts).strip()
+            if not combined_text:
+                logger.error(f"Skipping project {mongo_id} - no substantial text content found")
+                continue
 
             # Build metadata
             metadata = {}
@@ -749,11 +749,11 @@ def index_projects_to_qdrant():
             chunks = get_chunks_for_content(combined_text, "project")
             if not chunks:
                 chunks = [combined_text]
-            
+
             # Record statistics
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("project", mongo_id, name, len(chunks), word_count)
-            
+
             vectors = embedder.encode(chunks)
             if len(vectors) != len(chunks):
                 raise EmbeddingServiceError("Embedding service returned unexpected vector count")
@@ -777,9 +777,9 @@ def index_projects_to_qdrant():
                     "id": point_id_from_seed(f"{mongo_id}/project/{idx}"),
                     "vector": {
                         "dense": vector,
-                    },
-                    "payload": payload,
-                }
+                        },
+                        "payload": payload,
+                    }
                 if splade_vec.get("indices"):
                     point_kwargs["vector"]["sparse"] = SparseVector(
                         indices=splade_vec["indices"], values=splade_vec["values"]
@@ -787,15 +787,15 @@ def index_projects_to_qdrant():
                 point = PointStruct(**point_kwargs)
                 points.append(point)
 
-    if not points:
-        logger.error("No projects with descriptions to index.")
-        return {"status": "warning", "message": "No projects to index."}
+        if not points:
+            logger.error("No projects with descriptions to index.")
+            return {"status": "warning", "message": "No projects to index."}
 
-    total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-    return {"status": "success", "indexed_documents": total_indexed}
-except Exception as e:
-    logger.error(f"Error during project indexing: {e}")
-    return {"status": "error", "message": str(e)}
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        return {"status": "success", "indexed_documents": total_indexed}
+    except Exception as e:
+        logger.error(f"Error during project indexing: {e}")
+        return {"status": "error", "message": str(e)}
 
 def index_cycles_to_qdrant():
     try:
@@ -828,72 +828,72 @@ def index_cycles_to_qdrant():
                     and len(field_value.strip()) > 20):  # Only substantial text
                     text_parts.append(field_value.strip())
 
-        combined_text = " ".join(text_parts).strip()
-        if not combined_text:
-            logger.error(f"Skipping cycle {mongo_id} - no substantial text content found")
-            continue
+            combined_text = " ".join(text_parts).strip()
+            if not combined_text:
+                logger.error(f"Skipping cycle {mongo_id} - no substantial text content found")
+                
 
-            # Build metadata
-            metadata = {}
-            if doc.get("business") and isinstance(doc["business"], dict):
-                metadata["business_name"] = doc["business"].get("name")
-                if doc["business"].get("_id") is not None:
-                    try:
-                        metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
-                    except Exception:
-                        pass
+                # Build metadata
+                metadata = {}
+                if doc.get("business") and isinstance(doc["business"], dict):
+                    metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
 
-            # Chunk cycles with long descriptions
-            chunks = get_chunks_for_content(combined_text, "cycle")
-            if not chunks:
-                chunks = [combined_text]
-            
-            # Record statistics
-            word_count = len(combined_text.split()) if combined_text else 0
-            _stats.record("cycle", mongo_id, name, len(chunks), word_count)
-            
-            vectors = embedder.encode(chunks)
-            if len(vectors) != len(chunks):
-                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+                # Chunk cycles with long descriptions
+                chunks = get_chunks_for_content(combined_text, "cycle")
+                if not chunks:
+                    chunks = [combined_text]
 
-            for idx, chunk in enumerate(chunks):
-                vector = vectors[idx]
-                full_text = f"{name} {chunk}".strip()
-                splade_vec = splade.encode_text(full_text)
-                payload = {
-                    "mongo_id": mongo_id,
-                    "parent_id": mongo_id,
-                    "chunk_index": idx,
-                    "chunk_count": len(chunks),
-                    "title": name,
-                    "content": chunk,
-                    "full_text": full_text,
-                    "content_type": "cycle"
-                }
-                payload.update({k: v for k, v in metadata.items() if v is not None})
-                point_kwargs = {
-                    "id": point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
-                    "vector": {
-                        "dense": vector,
-                    },
-                    "payload": payload,
-                }
-                if splade_vec.get("indices"):
-                    point_kwargs["vector"]["sparse"] = SparseVector(
-                        indices=splade_vec["indices"], values=splade_vec["values"]
-                    )
-                point = PointStruct(**point_kwargs)
-                points.append(point)
+                # Record statistics
+                word_count = len(combined_text.split()) if combined_text else 0
+                _stats.record("cycle", mongo_id, name, len(chunks), word_count)
 
-    if not points:
-        logger.error("No cycles with descriptions to index.")
-        return {"status": "warning", "message": "No cycles to index."}
+                vectors = embedder.encode(chunks)
+                if len(vectors) != len(chunks):
+                    raise EmbeddingServiceError("Embedding service returned unexpected vector count")
 
-    total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-    return {"status": "success", "indexed_documents": total_indexed}
-except Exception as e:
-    logger.error(f"Error during cycle indexing: {e}")
-    return {"status": "error", "message": str(e)}
+                for idx, chunk in enumerate(chunks):
+                    vector = vectors[idx]
+                    full_text = f"{name} {chunk}".strip()
+                    splade_vec = splade.encode_text(full_text)
+                    payload = {
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": name,
+                        "content": chunk,
+                        "full_text": full_text,
+                        "content_type": "cycle"
+                    }
+                    payload.update({k: v for k, v in metadata.items() if v is not None})
+                    point_kwargs = {
+                        "id": point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
+                        "vector": {
+                            "dense": vector,
+                            },
+                            "payload": payload,
+                        }
+                    if splade_vec.get("indices"):
+                        point_kwargs["vector"]["sparse"] = SparseVector(
+                            indices=splade_vec["indices"], values=splade_vec["values"]
+                        )
+                    point = PointStruct(**point_kwargs)
+                    points.append(point)
+
+        if not points:
+            logger.error("No cycles with descriptions to index.")
+            return {"status": "warning", "message": "No cycles to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        return {"status": "success", "indexed_documents": total_indexed}
+    except Exception as e:
+        logger.error(f"Error during cycle indexing: {e}")
+        return {"status": "error", "message": str(e)}
 
 def index_modules_to_qdrant():
     try:
@@ -926,72 +926,72 @@ def index_modules_to_qdrant():
                     and len(field_value.strip()) > 20):  # Only substantial text
                     text_parts.append(field_value.strip())
 
-        combined_text = " ".join(text_parts).strip()
-        if not combined_text:
-            logger.error(f"Skipping module {mongo_id} - no substantial text content found")
-            continue
+            combined_text = " ".join(text_parts).strip()
+            if not combined_text:
+                logger.error(f"Skipping module {mongo_id} - no substantial text content found")
+                continue
 
-            # Build metadata
-            metadata = {}
-            if doc.get("business") and isinstance(doc["business"], dict):
-                metadata["business_name"] = doc["business"].get("name")
-                if doc["business"].get("_id") is not None:
-                    try:
-                        metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
-                    except Exception:
-                        pass
+                # Build metadata
+                metadata = {}
+                if doc.get("business") and isinstance(doc["business"], dict):
+                    metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
 
-            # Chunk modules with long descriptions
-            chunks = get_chunks_for_content(combined_text, "module")
-            if not chunks:
-                chunks = [combined_text]
-            
-            # Record statistics
-            word_count = len(combined_text.split()) if combined_text else 0
-            _stats.record("module", mongo_id, name, len(chunks), word_count)
-            
-            vectors = embedder.encode(chunks)
-            if len(vectors) != len(chunks):
-                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+                # Chunk modules with long descriptions
+                chunks = get_chunks_for_content(combined_text, "module")
+                if not chunks:
+                    chunks = [combined_text]
 
-            for idx, chunk in enumerate(chunks):
-                vector = vectors[idx]
-                full_text = f"{name} {chunk}".strip()
-                splade_vec = splade.encode_text(full_text)
-                payload = {
-                    "mongo_id": mongo_id,
-                    "parent_id": mongo_id,
-                    "chunk_index": idx,
-                    "chunk_count": len(chunks),
-                    "title": name,
-                    "content": chunk,
-                    "full_text": full_text,
-                    "content_type": "module"
-                }
-                payload.update({k: v for k, v in metadata.items() if v is not None})
-                point_kwargs = {
-                    "id": point_id_from_seed(f"{mongo_id}/module/{idx}"),
-                    "vector": {
-                        "dense": vector,
-                    },
-                    "payload": payload,
-                }
-                if splade_vec.get("indices"):
-                    point_kwargs["vector"]["sparse"] = SparseVector(
-                        indices=splade_vec["indices"], values=splade_vec["values"]
-                    )
-                point = PointStruct(**point_kwargs)
-                points.append(point)
+                # Record statistics
+                word_count = len(combined_text.split()) if combined_text else 0
+                _stats.record("module", mongo_id, name, len(chunks), word_count)
 
-    if not points:
-        logger.error("No modules with descriptions to index.")
-        return {"status": "warning", "message": "No modules to index."}
+                vectors = embedder.encode(chunks)
+                if len(vectors) != len(chunks):
+                    raise EmbeddingServiceError("Embedding service returned unexpected vector count")
 
-    total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
-    return {"status": "success", "indexed_documents": total_indexed}
-except Exception as e:
-    logger.error(f"Error during module indexing: {e}")
-    return {"status": "error", "message": str(e)}
+                for idx, chunk in enumerate(chunks):
+                    vector = vectors[idx]
+                    full_text = f"{name} {chunk}".strip()
+                    splade_vec = splade.encode_text(full_text)
+                    payload = {
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": name,
+                        "content": chunk,
+                        "full_text": full_text,
+                        "content_type": "module"
+                    }
+                    payload.update({k: v for k, v in metadata.items() if v is not None})
+                    point_kwargs = {
+                        "id": point_id_from_seed(f"{mongo_id}/module/{idx}"),
+                        "vector": {
+                            "dense": vector,
+                            },
+                            "payload": payload,
+                        }
+                    if splade_vec.get("indices"):
+                        point_kwargs["vector"]["sparse"] = SparseVector(
+                            indices=splade_vec["indices"], values=splade_vec["values"]
+                        )
+                    point = PointStruct(**point_kwargs)
+                    points.append(point)
+
+        if not points:
+            logger.error("No modules with descriptions to index.")
+            return {"status": "warning", "message": "No modules to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        return {"status": "success", "indexed_documents": total_indexed}
+    except Exception as e:
+        logger.error(f"Error during module indexing: {e}")
+        return {"status": "error", "message": str(e)}
 
 def index_epic_to_qdrant():
     try:

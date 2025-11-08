@@ -16,7 +16,7 @@ load_dotenv()
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-from agent import MongoDBAgent
+from agent.agent import MongoDBAgent
 import os
 from websocket_handler import handle_chat_websocket, ws_manager,user_id_global,business_id_global
 from qdrant.initializer import RAGTool
@@ -176,7 +176,7 @@ async def lifespan(app: FastAPI):
     await mongodb_agent.disconnect()
 
     # Close Redis conversation memory
-    from memory import conversation_memory
+    from agent.memory import conversation_memory
     await conversation_memory.close()
 
 # Create FastAPI app
