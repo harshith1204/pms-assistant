@@ -136,6 +136,7 @@ def filter_meaningful_content(data: Any) -> Any:
         'label', 'type', 'access', 'visibility', 'icon', 'imageUrl',
         'business', 'staff', 'createdBy', 'assignee', 'project', 'cycle', 'module',
         'members', 'pages', 'projectStates', 'subStates', 'linkedCycle', 'linkedModule',
+        'cycles','modules',
         # Date fields (but not timestamps)
         'startDate', 'endDate', 'joiningDate', 'createdAt', 'updatedAt',
         # Estimate and work tracking
@@ -706,10 +707,278 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         label_name = get_nested(entity, "label.name")
                         return (
                             f"• {truncate_str(title or 'Epic', 80)} — "
+                            f"description={truncate_str(description, 120)}, "
                             f"state={state or 'N/A'}, priority={priority or 'N/A'}, "
                             f"project={project or 'N/A'}, assignee={assignee or 'N/A'}, "
                             f"bugNo={bug_number or 'N/A'}, label={label_name or 'N/A'}"
                         )
+                    
+                    if e == "userStory":
+                        bug = entity.get("displayBugNo") or entity.get("title") or "Item"
+                        goal = entity.get("userGoal")
+                        persona = entity.get("persona")
+                        demographics = entity.get("demographics")
+                        feature = entity.get("feature.name")
+                        Accept_criteria = entity.get("acceptanceCriteria")
+                        epic = entity.get("epic.name")
+                        business = entity.get("business.name")
+                        title = entity.get("title") or entity.get("name") or ""
+                        description = entity.get("description")
+                        state = entity.get("stateName") or get_nested(entity, "state.name")
+                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        priority = entity.get("priority")
+                        label = entity.get_nested(entity,"label.name")
+                        # Build base line
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={([i for i in assignees] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}, goal={goal or 'N/A'}, feature={feature or 'N/A'}, epic={epic or 'N/A'}, business={business or 'N/A'}, acceptanceCriteria={Accept_criteria or 'N/A'}"
+                        
+                        if description:
+                            base += f", description={truncate_str(description, 120)}"
+                            
+                        # Add persona info if present
+                        if persona and isinstance(persona, dict):
+                            name = persona.get("personaName", "")
+                            role = persona.get("role", "")
+                            techLevel = persona.get("techLevel", "")
+                            base += f", persona=[name: {name}, role: {role}, techLevel: {techLevel}]"
+                            goals = persona.get("goals")
+                            if goals and isinstance(goals, list):
+                                goals_text = "; ".join([str(g) for g in goals if isinstance(g, str) and g.strip()])
+                                base += f", goals=[{goals_text or 'N/A'}]"
+                        elif persona:
+                            base += f", persona={persona or 'N/A'}"
+                            
+                        # Add demographics if present
+                        if demographics:
+                            if isinstance(demographics, dict):
+                                demo_text = ", ".join([f"{k}: {v}" for k, v in demographics.items()])
+                                base += f", demographics=[{demo_text or 'N/A'}]"
+                            else:
+                                base += f", demographics={demographics or 'N/A'}"
+
+                    if e == "features":
+                        bug = entity.get("displayBugNo") or entity.get("title") or "Item"
+                        basicInfo = entity.get("basicInfo")
+                        problemInfo = entity.get("problemInfo")
+                        persona = entity.get("persona")
+                        requirements = entity.get("requirements")
+                        risksAndDependencies = entity.get("risksAndDependencies")
+                        project = entity.get("projectName") or get_nested(entity, "project.name")
+                        scope = entity.get("scope")
+                        workitems = entity.get("workItems")
+                        userStories = entity.get("userStories")
+                        links = entity.get("addLink")
+                        business = entity.get("business.name")
+                        title = entity.get("title") or entity.get("name") or ""
+                        description = entity.get("description")
+                        state = entity.get("stateName") or get_nested(entity, "state.name")
+                        lead = entity.get("leadName") or get_nested(entity, "lead.name")
+                        assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
+                        cycle = entity.get("cycle")
+                        module = entity.get("modules.name")
+                        parent = entity.get("parent.name")
+                        priority = entity.get("priority")
+                        label = entity.get_nested(entity,"label.name")
+                        estimatesystem = entity.get("estimateSystem")
+                        # Build base line
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}, lead={lead or 'N/A'}, cycle={cycle or 'N/A'}, module={module or 'N/A'}, parent={parent or 'N/A'}, business={business or 'N/A'}, estimatesystem={estimatesystem or 'N/A'}, scope={scope or 'N/A'}"
+                        
+                        if description:
+                            base += f", description={truncate_str(description, 120)}"
+                        
+                        # Add userStories if present
+                        if userStories:
+                            if isinstance(userStories, list):
+                                stories_text = "; ".join([str(s.get('title') if isinstance(s, dict) else s) for s in userStories if s])
+                                base += f", userStories=[{stories_text or 'N/A'}]"
+                            else:
+                                base += f", userStories={userStories or 'N/A'}"
+
+                        # Add workitems if present
+                        if workitems:
+                            if isinstance(workitems, list):
+                                items_text = "; ".join([str(w.get('title') if isinstance(w, dict) else w) for w in workitems if w])
+                                base += f", workItems=[{items_text or 'N/A'}]"
+                            else:
+                                base += f", workItems={workitems or 'N/A'}"
+
+                        # Add links if present
+                        if links:
+                            if isinstance(links, list):
+                                links_text = "; ".join([str(l.get('url') if isinstance(l, dict) else l) for l in links if l])
+                                base += f", links=[{links_text or 'N/A'}]"
+                            else:
+                                base += f", links={links or 'N/A'}"
+                        
+                        #Add basic info
+                        if basicInfo and isinstance(basicInfo, dict):
+                            title = basicInfo.get("title","")
+                            status = basicInfo.get("status","")
+                            description = basicInfo.get("description","")
+                            base += f", basicInfo=[title: {title or 'N/A'}, status: {status or 'N/A'}, description: {description or 'N/A'}]"
+                        elif basicInfo:
+                            base += f", basicInfo={basicInfo or 'N/A'}"
+                        
+                        #Add problem info
+                        if problemInfo and isinstance(problemInfo, dict):
+                            statement = problemInfo.get("statement","")
+                            objective = problemInfo.get("objective","")
+                            successCriteria = problemInfo.get("successCriteria")
+                            if successCriteria and isinstance(successCriteria, list):
+                                success_text = "; ".join([str(c) for c in successCriteria if isinstance(c, str) and c.strip()])
+                            base += f", problemInfo=[statement: {statement or 'N/A'}, objective: {objective or 'N/A'}, successCriteria: [{success_text or 'N/A'}]]"
+                        elif problemInfo:
+                            base += f", problemInfo={problemInfo or 'N/A'}"
+                        
+                        #Add persona
+                        if persona and isinstance(persona, dict):
+                            name = persona.get("personaName","")
+                            role = persona.get("role","")
+                            techLevel = persona.get("techLevel","")
+                            base += f", persona=[name: {name or 'N/A'}, role: {role or 'N/A'}, techLevel: {techLevel or 'N/A'}]"
+                            goals = persona.get("goals")
+                            if goals and isinstance(goals, list):
+                                goals_text = "; ".join([str(g) for g in goals if isinstance(g, str) and g.strip()])
+                                base += f", goals=[{goals_text or 'N/A'}]"
+                            painPoints = persona.get("painPoints")
+                            if painPoints and isinstance(painPoints, list):
+                                pain_text = "; ".join([str(p) for p in painPoints if isinstance(p, str) and p.strip()])
+                                base += f", painPoints=[{pain_text or 'N/A'}]"
+                        elif persona:
+                            base += f", persona={persona or 'N/A'}"
+                        
+                        # Add requirements
+                        if requirements and isinstance(requirements, dict):
+                            functionalRequirements = requirements.get("functionalRequirements")
+                            if functionalRequirements and isinstance(functionalRequirements, list):
+                                func_text = "; ".join([str(r) for r in functionalRequirements if isinstance(r, str) and r.strip()])
+                                base += f", functionalRequirements=[{func_text or 'N/A'}]"
+                            nonFunctionalRequirements = requirements.get("nonFunctionalRequirements")
+                            if nonFunctionalRequirements and isinstance(nonFunctionalRequirements, list):
+                                nonfunc_text = "; ".join([str(r) for r in nonFunctionalRequirements if isinstance(r, str) and r.strip()])
+                                base += f", nonFunctionalRequirements=[{nonfunc_text or 'N/A'}]"
+                        elif requirements:
+                            base += f", requirements={requirements or 'N/A'}"
+
+                        # Add risks, dependencies, design links and expectations
+                        if risksAndDependencies and isinstance(risksAndDependencies, dict):
+                            # Risks: list of objects
+                            risks = risksAndDependencies.get("risks")
+                            if risks and isinstance(risks, list):
+                                risk_items: List[str] = []
+                                for r in risks:
+                                    if isinstance(r, dict):
+                                        parts: List[str] = []
+                                        prob = r.get("problemLevel")
+                                        if prob:
+                                            parts.append(f"problem={prob}")
+                                        impact = r.get("impactLevel")
+                                        if impact:
+                                            parts.append(f"impact={impact}")
+                                        owner = r.get("riskOwner")
+                                        if owner:
+                                            parts.append(f"owner={owner}")
+                                        desc = r.get("description")
+                                        if desc:
+                                            parts.append(f"description={truncate_str(desc,120)}")
+                                        strat = r.get("strategy")
+                                        if strat:
+                                            parts.append(f"strategy={truncate_str(strat,120)}")
+                                        if parts:
+                                            risk_items.append("{" + ", ".join(parts) + "}")
+                                    elif isinstance(r, str) and r.strip():
+                                        risk_items.append(r.strip())
+                                if risk_items:
+                                    base += f", risks=[{'; '.join(risk_items) or 'N/A'}]"
+
+                            # Dependencies: simple list of strings or objects
+                            dependencies = risksAndDependencies.get("dependencies")
+                            if dependencies and isinstance(dependencies, list):
+                                dep_text = "; ".join([
+                                    str(d.get("title") if isinstance(d, dict) and d.get("title") else d).strip()
+                                    for d in dependencies
+                                    if (isinstance(d, str) and d.strip()) or (isinstance(d, dict) and (d.get("title") or d.get("id")))
+                                ])
+                                if dep_text:
+                                    base += f", dependencies=[{dep_text or 'N/A'}]"
+
+                            # Design links: list of {title, url, source}
+                            designLinks = risksAndDependencies.get("designLinks")
+                            if designLinks and isinstance(designLinks, list):
+                                links: List[str] = []
+                                for dl in designLinks:
+                                    if isinstance(dl, dict):
+                                        t = dl.get("title") or dl.get("name")
+                                        u = dl.get("url") or dl.get("link")
+                                        s = dl.get("source")
+                                        parts = []
+                                        if t:
+                                            parts.append(str(t))
+                                        if u:
+                                            parts.append(f"{u}")
+                                        if s:
+                                            parts.append(f"{s}")
+                                        if parts:
+                                            links.append("(" + " | ".join(parts) + ")")
+                                    elif isinstance(dl, str) and dl.strip():
+                                        links.append(dl.strip())
+                                if links:
+                                    base += f", designLinks=[{'; '.join(links) or 'N/A'}]"
+
+                            # Expectations: list of {stakeholder: {...}, expectation: str}
+                            expectations = risksAndDependencies.get("expectations")
+                            if expectations and isinstance(expectations, list):
+                                exp_items: List[str] = []
+                                for ex in expectations:
+                                    if isinstance(ex, dict):
+                                        stakeholder = ex.get("stakeholder")
+                                        name = None
+                                        if isinstance(stakeholder, dict):
+                                            name = stakeholder.get("name") or stakeholder.get("title")
+                                        elif isinstance(stakeholder, str) and stakeholder.strip():
+                                            name = stakeholder.strip()
+                                        expect_text = ex.get("expectation") or ex.get("expectations") or ex.get("expectationText")
+                                        parts: List[str] = []
+                                        if name:
+                                            parts.append(f"stakeholder={name}")
+                                        if expect_text:
+                                            parts.append(f"expectation={truncate_str(expect_text,120)}")
+                                        if parts:
+                                            exp_items.append("{" + ", ".join(parts) + "}")
+                                        else:
+                                            # fallback to string representation
+                                            exp_items.append(str(ex))
+                                    elif isinstance(ex, str) and ex.strip():
+                                        exp_items.append(ex.strip())
+                                if exp_items:
+                                    base += f", expectations=[{'; '.join(exp_items)}]"
+
+                        # Add estimate if present
+                        estimate = entity.get("estimate")
+                        if estimate and isinstance(estimate, dict):
+                            hr = estimate.get("hr", "0")
+                            min_val = estimate.get("min", "0")
+                            base += f", estimate={hr}h {min_val}m"
+                        elif estimate:
+                            base += f", estimate={estimate}"
+                        
+                        # Add work logs if present
+                        work_logs = entity.get("workLogs")
+                        if work_logs and isinstance(work_logs, list) and len(work_logs) > 0:
+                            total_hours = sum(log.get("hours", 0) for log in work_logs if isinstance(log, dict))
+                            total_mins = sum(log.get("minutes", 0) for log in work_logs if isinstance(log, dict))
+                            total_hours += total_mins // 60
+                            total_mins = total_mins % 60
+                            base += f", logged={total_hours}h {total_mins}m ({len(work_logs)} logs)"
+                            
+                            descriptions = [
+                                log.get("description", "").strip()
+                                for log in work_logs
+                                if isinstance(log, dict) and log.get("description")
+                            ]
+                            descriptions_text = "; ".join(descriptions) if descriptions else "No descriptions"
+
+                            base += f", descriptions=[{descriptions_text}]"
+                        return base
                     # Default fallback
                     title = entity.get("title") or entity.get("name") or "Item"
                     return f"• {truncate_str(title, 80)}"
