@@ -27,8 +27,7 @@ if not any("qdrant" in p for p in sys.path):
 
 from qdrant.encoder import get_splade_encoder  # noqa: E402
 from qdrant.indexing_shared import (  # noqa: E402
-    PROJECT_COLLECTIONS,
-    canonicalize_collection_name,
+    CHUNKING_CONFIG,
     chunk_prepared_document,
     ensure_collection_with_hybrid,
     generate_points,
@@ -38,7 +37,18 @@ from qdrant.indexing_shared import (  # noqa: E402
 
 
 # Updated to match setup-connectors.sh exactly
-RELEVANT_COLLECTIONS = frozenset(PROJECT_COLLECTIONS.keys())
+RELEVANT_COLLECTIONS = {
+    "page",
+    "workItem",
+    "project",
+    "cycle",
+    "module",
+    "epic",
+    "feature",
+    "features",
+    "userStory",
+    "userStories",
+}
 
 
 @dataclass
@@ -193,8 +203,7 @@ def process_event(
     embedder: SentenceTransformer,
     splade_encoder: Any,
 ) -> None:
-    canonical_collection = canonicalize_collection_name(event.collection)
-    if not canonical_collection or canonical_collection not in RELEVANT_COLLECTIONS:
+    if event.collection not in RELEVANT_COLLECTIONS:
         return
 
     if event.operation == "delete":
@@ -210,9 +219,7 @@ def process_event(
     if not event.full_document:
         return
 
-    prepared, messages = prepare_document(canonical_collection, event.full_document)
-    for message in messages:
-        print(message)
+    prepared, messages = prepare_document(event.collection, event.full_document)
     if not prepared:
         return
 
