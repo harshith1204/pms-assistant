@@ -739,17 +739,17 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                             goals = persona.get("goals")
                             if goals and isinstance(goals, list):
                                 goals_text = "; ".join([str(g) for g in goals if isinstance(g, str) and g.strip()])
-                                base += f", goals=[{goals_text}]"
+                                base += f", goals=[{goals_text or 'N/A'}]"
                         elif persona:
-                            base += f", persona={persona}"
+                            base += f", persona={persona or 'N/A'}"
                             
                         # Add demographics if present
                         if demographics:
                             if isinstance(demographics, dict):
                                 demo_text = ", ".join([f"{k}: {v}" for k, v in demographics.items()])
-                                base += f", demographics=[{demo_text}]"
+                                base += f", demographics=[{demo_text or 'N/A'}]"
                             else:
-                                base += f", demographics={demographics}"
+                                base += f", demographics={demographics or 'N/A'}"
 
                     if e == "features":
                         bug = entity.get("displayBugNo") or entity.get("title") or "Item"
@@ -785,33 +785,34 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         if userStories:
                             if isinstance(userStories, list):
                                 stories_text = "; ".join([str(s.get('title') if isinstance(s, dict) else s) for s in userStories if s])
-                                base += f", userStories=[{stories_text}]"
+                                base += f", userStories=[{stories_text or 'N/A'}]"
                             else:
-                                base += f", userStories={userStories}"
+                                base += f", userStories={userStories or 'N/A'}"
 
                         # Add workitems if present
                         if workitems:
                             if isinstance(workitems, list):
                                 items_text = "; ".join([str(w.get('title') if isinstance(w, dict) else w) for w in workitems if w])
-                                base += f", workItems=[{items_text}]"
+                                base += f", workItems=[{items_text or 'N/A'}]"
                             else:
-                                base += f", workItems={workitems}"
+                                base += f", workItems={workitems or 'N/A'}"
 
                         # Add links if present
                         if links:
                             if isinstance(links, list):
                                 links_text = "; ".join([str(l.get('url') if isinstance(l, dict) else l) for l in links if l])
-                                base += f", links=[{links_text}]"
+                                base += f", links=[{links_text or 'N/A'}]"
                             else:
-                                base += f", links={links}"
+                                base += f", links={links or 'N/A'}"
                         
                         #Add basic info
                         if basicInfo and isinstance(basicInfo, dict):
                             title = basicInfo.get("title","")
                             status = basicInfo.get("status","")
-                            base += f", basicInfo=[title: {title}, status: {status}]"
+                            description = basicInfo.get("description","")
+                            base += f", basicInfo=[title: {title or 'N/A'}, status: {status or 'N/A'}, description: {description or 'N/A'}]"
                         elif basicInfo:
-                            base += f", basicInfo={basicInfo}"
+                            base += f", basicInfo={basicInfo or 'N/A'}"
                         
                         #Add problem info
                         if problemInfo and isinstance(problemInfo, dict):
@@ -820,39 +821,39 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                             successCriteria = problemInfo.get("successCriteria")
                             if successCriteria and isinstance(successCriteria, list):
                                 success_text = "; ".join([str(c) for c in successCriteria if isinstance(c, str) and c.strip()])
-                            base += f", problemInfo=[statement: {statement}, objective: {objective}, successCriteria: [{success_text}]]"
+                            base += f", problemInfo=[statement: {statement or 'N/A'}, objective: {objective or 'N/A'}, successCriteria: [{success_text or 'N/A'}]]"
                         elif problemInfo:
-                            base += f", problemInfo={problemInfo}"
+                            base += f", problemInfo={problemInfo or 'N/A'}"
                         
                         #Add persona
                         if persona and isinstance(persona, dict):
                             name = persona.get("personaName","")
                             role = persona.get("role","")
                             techLevel = persona.get("techLevel","")
-                            base += f", persona=[name: {name}, role: {role}, techLevel: {techLevel}]"
+                            base += f", persona=[name: {name or 'N/A'}, role: {role or 'N/A'}, techLevel: {techLevel or 'N/A'}]"
                             goals = persona.get("goals")
                             if goals and isinstance(goals, list):
                                 goals_text = "; ".join([str(g) for g in goals if isinstance(g, str) and g.strip()])
-                                base += f", goals=[{goals_text}]"
+                                base += f", goals=[{goals_text or 'N/A'}]"
                             painPoints = persona.get("painPoints")
                             if painPoints and isinstance(painPoints, list):
                                 pain_text = "; ".join([str(p) for p in painPoints if isinstance(p, str) and p.strip()])
-                                base += f", painPoints=[{pain_text}]"
+                                base += f", painPoints=[{pain_text or 'N/A'}]"
                         elif persona:
-                            base += f", persona={persona}"
+                            base += f", persona={persona or 'N/A'}"
                         
                         # Add requirements
                         if requirements and isinstance(requirements, dict):
                             functionalRequirements = requirements.get("functionalRequirements")
                             if functionalRequirements and isinstance(functionalRequirements, list):
                                 func_text = "; ".join([str(r) for r in functionalRequirements if isinstance(r, str) and r.strip()])
-                                base += f", functionalRequirements=[{func_text}]"
+                                base += f", functionalRequirements=[{func_text or 'N/A'}]"
                             nonFunctionalRequirements = requirements.get("nonFunctionalRequirements")
                             if nonFunctionalRequirements and isinstance(nonFunctionalRequirements, list):
                                 nonfunc_text = "; ".join([str(r) for r in nonFunctionalRequirements if isinstance(r, str) and r.strip()])
-                                base += f", nonFunctionalRequirements=[{nonfunc_text}]"
+                                base += f", nonFunctionalRequirements=[{nonfunc_text or 'N/A'}]"
                         elif requirements:
-                            base += f", requirements={requirements}"
+                            base += f", requirements={requirements or 'N/A'}"
 
                         # Add risks, dependencies, design links and expectations
                         if risksAndDependencies and isinstance(risksAndDependencies, dict):
@@ -883,7 +884,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                     elif isinstance(r, str) and r.strip():
                                         risk_items.append(r.strip())
                                 if risk_items:
-                                    base += f", risks=[{'; '.join(risk_items)}]"
+                                    base += f", risks=[{'; '.join(risk_items) or 'N/A'}]"
 
                             # Dependencies: simple list of strings or objects
                             dependencies = risksAndDependencies.get("dependencies")
@@ -894,7 +895,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                     if (isinstance(d, str) and d.strip()) or (isinstance(d, dict) and (d.get("title") or d.get("id")))
                                 ])
                                 if dep_text:
-                                    base += f", dependencies=[{dep_text}]"
+                                    base += f", dependencies=[{dep_text or 'N/A'}]"
 
                             # Design links: list of {title, url, source}
                             designLinks = risksAndDependencies.get("designLinks")
@@ -917,7 +918,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                     elif isinstance(dl, str) and dl.strip():
                                         links.append(dl.strip())
                                 if links:
-                                    base += f", designLinks=[{'; '.join(links)}]"
+                                    base += f", designLinks=[{'; '.join(links) or 'N/A'}]"
 
                             # Expectations: list of {stakeholder: {...}, expectation: str}
                             expectations = risksAndDependencies.get("expectations")

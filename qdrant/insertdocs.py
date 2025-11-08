@@ -16,6 +16,7 @@ from qdrant_client.http.models import (
 )
 from sentence_transformers import SentenceTransformer
 from collections import defaultdict
+from typing import List, Dict, Any, Optional
 
 # Add the parent directory to sys.path so we can import from qdrant
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,6 +27,8 @@ from qdrant.dbconnection import (
     module_collection,
     project_collection,
     epic_collection,
+    userStory_collection,
+    features_collection,
     qdrant_client,
     QDRANT_COLLECTION
 )
@@ -480,6 +483,126 @@ def upload_in_batches(points, collection_name, batch_size=20):
         except Exception as e:
             print(f"❌ Failed to upload batch: {e}")
     return total_indexed
+
+def _serialize_text_fields(data: Optional[Dict], prefix_map: Dict[str, str]) -> str:
+    """Serializes a dictionary into a 'Key: Value' string format."""
+    if not data or not isinstance(data, dict):
+        return ""
+    parts = []
+    for key, prefix in prefix_map.items():
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{prefix}: {value.strip()}")
+        elif isinstance(value, list) and value:
+            list_text = "; ".join([str(v) for v in value if v])
+            if list_text:
+                parts.append(f"{prefix}: {list_text}")
+    return ". ".join(parts)
+
+def _serialize_list_of_strings_or_dicts(items: Optional[List], title_key: str = "title") -> str:
+    """Serializes a list of strings or dicts (extracting 'title_key') into a text block."""
+    if not items or not isinstance(items, list):
+        return ""
+    item_texts = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            item_texts.append(item.strip())
+        elif isinstance(item, dict):
+            title = item.get(title_key)
+            if title and isinstance(title, str) and title.strip():
+                item_texts.append(title.strip())
+    return "; ".join(item_texts)
+
+def _get_worklog_text(work_logs: Optional[List]) -> str:
+    """Extracts and concatenates all worklog descriptions."""
+    if not work_logs or not isinstance(work_logs, list):
+        return ""
+    descriptions = [
+        log.get("description", "").strip()
+        for log in work_logs
+        if isinstance(log, dict) and log.get("description")
+    ]
+    return " ".join(descriptions)
+
+def _serialize_risks(risks: Optional[List]) -> str:
+    """Serializes the complex 'risks' list into readable text."""
+    if not risks or not isinstance(risks, list):
+        return ""
+    risk_items: List[str] = []
+    for r in risks:
+        if isinstance(r, dict):
+            parts: List[str] = []
+            if r.get("description"):
+                parts.append(r["description"])
+            if r.get("problemLevel"):
+                parts.append(f"(Problem: {r['problemLevel']}")
+            if r.get("impactLevel"):
+                parts.append(f"Impact: {r['impactLevel']})")
+            if r.get("strategy"):
+                parts.append(f"Strategy: {r['strategy']}")
+            if parts:
+                risk_items.append(" ".join(parts))
+        elif isinstance(r, str) and r.strip():
+            risk_items.append(r.strip())
+    return "Risks: " + "; ".join(risk_items) if risk_items else ""
+
+def _get_nested_val(data: Dict, key_path: str, default: Any = None) -> Any:
+    """Safely get a nested value from a dict using dot notation."""
+    keys = key_path.split('.')
+    current = data
+    for key in keys:
+        if isinstance(current, dict) and key in current:
+            current = current[key]
+        else:
+            return default
+    return current
+
+def _get_common_metadata(doc: Dict) -> Dict:
+    """Extracts common metadata fields from any document."""
+    metadata = {
+        "priority": doc.get("priority"),
+        "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
+        "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+    }
+    
+    if doc.get("state"):
+        if isinstance(doc["state"], dict):
+            metadata["state_name"] = doc["state"].get("name")
+    elif doc.get("stateName"):
+         metadata["state_name"] = doc.get("stateName")
+
+    if doc.get("project"):
+        if isinstance(doc["project"], dict):
+            metadata["project_name"] = doc["project"].get("name")
+            metadata["project_id"] = normalize_mongo_id(doc["project"].get("_id")) if doc["project"].get("_id") else None
+    elif doc.get("projectName"):
+        metadata["project_name"] = doc.get("projectName")
+
+    if doc.get("business"):
+        if isinstance(doc["business"], dict):
+            metadata["business_name"] = doc["business"].get("name")
+            if doc["business"].get("_id") is not None:
+                try:
+                    metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                except Exception:
+                    pass
+    
+    assignee = doc.get("assignees") or doc.get("assignee")
+    if assignee:
+        if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
+            metadata["assignee_name"] = assignee[0].get("name")
+        elif isinstance(assignee, dict):
+            metadata["assignee_name"] = assignee.get("name")
+
+    if doc.get("createdBy"):
+        if isinstance(doc["createdBy"], dict):
+            metadata["created_by_name"] = doc["createdBy"].get("name")
+            
+    if doc.get("label"):
+        if isinstance(doc["label"], dict):
+            metadata["label_name"] = doc["label"].get("name")
+
+    return metadata
 
 # ------------------ Indexing Functions ------------------
 
@@ -1197,6 +1320,256 @@ def index_epic_to_qdrant():
     except Exception as e:
         print(f"❌ Error during epic indexing: {e}")
         return {"status": "error", "message": str(e)}
+    
+#New function to index userStory to qdrant
+def index_userStory_to_qdrant():
+    try:
+        print("🔄 Indexing user stories from MongoDB to Qdrant...")
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
+        projection = {
+            "_id": 1, "title": 1, "name": 1, "description": 1, "displayBugNo": 1,
+            "userGoal": 1, "persona": 1, "demographics": 1, "feature": 1,
+            "acceptanceCriteria": 1, "epic": 1, "business": 1, "stateName": 1,
+            "state": 1, "assignees": 1, "assignee": 1, "priority": 1, "label": 1,
+            "project": 1, "createdAt": 1, "updatedAt": 1
+        }
+        documents = userStory_collection.find({}, projection)
+        points = []
+        splade = get_splade_encoder()
+
+        for doc in documents:
+            mongo_id = normalize_mongo_id(doc["_id"])
+            title = doc.get("title") or doc.get("name") or ""
+            
+            # Aggregate all key text fields for rich content
+            text_parts = [
+                title,
+                html_to_text(doc.get("description", "")),
+                f"User Goal: {doc.get('userGoal', '')}",
+                f"Acceptance Criteria: {doc.get('acceptanceCriteria', '')}",
+            ]
+            
+            # Serialize persona
+            persona = doc.get("persona")
+            if isinstance(persona, dict):
+                persona_text = _serialize_text_fields(persona, {
+                    "personaName": "Persona",
+                    "role": "Role",
+                    "techLevel": "Tech Level"
+                })
+                goals = _serialize_list_of_strings_or_dicts(persona.get("goals"), "title")
+                if goals:
+                    persona_text += f". Goals: {goals}"
+                text_parts.append(persona_text)
+            elif isinstance(persona, str) and persona.strip():
+                text_parts.append(f"Persona: {persona}")
+            
+            # Serialize demographics
+            demographics = doc.get("demographics")
+            if isinstance(demographics, dict):
+                demo_text = ", ".join([f"{k}: {v}" for k, v in demographics.items() if v])
+                if demo_text:
+                    text_parts.append(f"Demographics: {demo_text}")
+            elif isinstance(demographics, str) and demographics.strip():
+                text_parts.append(f"Demographics: {demographics}")
+
+            combined_text = " ".join(filter(None, text_parts)).strip()
+            if not combined_text:
+                print(f"⚠️ Skipping user story {mongo_id} - no substantial text content found")
+                continue
+
+            metadata = _get_common_metadata(doc)
+            metadata["displayBugNo"] = doc.get("displayBugNo")
+            if doc.get("feature") and isinstance(doc["feature"], dict):
+                metadata["feature_name"] = doc["feature"].get("name")
+            if doc.get("epic") and isinstance(doc["epic"], dict):
+                metadata["epic_name"] = doc["epic"].get("name")
+
+            chunks = get_chunks_for_content(combined_text, "user_story")
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("user_story", mongo_id, title, len(chunks), word_count)
+
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                full_text = f"{title} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
+                
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": title,
+                    "content": chunk,
+                    "full_text": full_text,
+                    "content_type": "user_story"
+                }
+                payload.update({k: v for k, v in metadata.items() if v is not None})
+
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/user_story/{idx}"),
+                    "vector": {"dense": vector},
+                    "payload": payload,
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["vector"]["sparse"] = SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )
+                points.append(PointStruct(**point_kwargs))
+
+        if not points:
+            print("⚠️ No valid user stories to index.")
+            return {"status": "warning", "message": "No valid user stories found to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        print(f"✅ Indexed {total_indexed} user story chunks to Qdrant.")
+        return {"status": "success", "indexed_documents": total_indexed}
+
+    except Exception as e:
+        print(f"❌ Error during user story indexing: {e}")
+        return {"status": "error", "message": str(e)}
+
+def index_features_to_qdrant():
+    try:
+        print("🔄 Indexing features from MongoDB to Qdrant...")
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+
+        projection = {
+            "_id": 1, "title": 1, "name": 1, "description": 1, "displayBugNo": 1,
+            "basicInfo": 1, "problemInfo": 1, "persona": 1, "requirements": 1,
+            "risksAndDependencies": 1, "projectName": 1, "project": 1, "scope": 1,
+            "workItems": 1, "userStories": 1, "addLink": 1, "business": 1,
+            "stateName": 1, "state": 1, "leadName": 1, "lead": 1, "assignees": 1,
+            "assignee": 1, "cycle": 1, "modules": 1, "parent": 1, "priority": 1,
+            "label": 1, "estimateSystem": 1, "estimate": 1, "workLogs": 1,
+            "createdAt": 1, "updatedAt": 1
+        }
+        documents = features_collection.find({}, projection)
+        points = []
+        splade = get_splade_encoder()
+
+        for doc in documents:
+            mongo_id = normalize_mongo_id(doc["_id"])
+            title = doc.get("title") or doc.get("name") or ""
+            
+            # Aggregate all key text fields for rich content
+            text_parts = [
+                title,
+                html_to_text(doc.get("description", "")),
+            ]
+            
+            # Serialize structured info
+            text_parts.append(_serialize_text_fields(doc.get("basicInfo"), {
+                "title": "Info", "status": "Status", "description": "Details"
+            }))
+            
+            text_parts.append(_serialize_text_fields(doc.get("problemInfo"), {
+                "statement": "Problem", "objective": "Objective", "successCriteria": "Success Criteria"
+            }))
+            
+            persona = doc.get("persona")
+            if isinstance(persona, dict):
+                persona_text = _serialize_text_fields(persona, {
+                    "personaName": "Persona", "role": "Role", "techLevel": "Tech Level"
+                })
+                goals = _serialize_list_of_strings_or_dicts(persona.get("goals"), "title")
+                if goals: persona_text += f". Goals: {goals}"
+                pains = _serialize_list_of_strings_or_dicts(persona.get("painPoints"), "title")
+                if pains: persona_text += f". Pain Points: {pains}"
+                text_parts.append(persona_text)
+            
+            reqs = doc.get("requirements")
+            if isinstance(reqs, dict):
+                func = _serialize_list_of_strings_or_dicts(reqs.get("functionalRequirements"), "title")
+                if func: text_parts.append(f"Functional Requirements: {func}")
+                nonfunc = _serialize_list_of_strings_or_dicts(reqs.get("nonFunctionalRequirements"), "title")
+                if nonfunc: text_parts.append(f"Non-Functional Requirements: {nonfunc}")
+
+            risks = doc.get("risksAndDependencies")
+            if isinstance(risks, dict):
+                text_parts.append(_serialize_risks(risks.get("risks")))
+                deps = _serialize_list_of_strings_or_dicts(risks.get("dependencies"), "title")
+                if deps: text_parts.append(f"Dependencies: {deps}")
+                # Skipping designLinks and expectations for brevity, can be added if needed
+
+            # Add related item titles
+            stories = _serialize_list_of_strings_or_dicts(doc.get("userStories"), "title")
+            if stories: text_parts.append(f"User Stories: {stories}")
+            items = _serialize_list_of_strings_or_dicts(doc.get("workItems"), "title")
+            if items: text_parts.append(f"Work Items: {items}")
+
+            # Add worklog descriptions
+            text_parts.append(_get_worklog_text(doc.get("workLogs")))
+
+            combined_text = " ".join(filter(None, text_parts)).strip()
+            if not combined_text:
+                print(f"⚠️ Skipping feature {mongo_id} - no substantial text content found")
+                continue
+
+            # --- Metadata ---
+            metadata = _get_common_metadata(doc)
+            metadata["displayBugNo"] = doc.get("displayBugNo")
+            # metadata["scope"] = doc.get("scope")
+            metadata["estimateSystem"] = doc.get("estimateSystem")
+            
+            lead = doc.get("leadName") or _get_nested_val(doc, "lead.name")
+            if lead: metadata["lead_name"] = lead
+            if doc.get("cycle") and isinstance(doc["cycle"], dict):
+                metadata["cycle_name"] = doc["cycle"].get("name")
+            if doc.get("modules") and isinstance(doc["modules"], dict):
+                metadata["module_name"] = doc["modules"].get("name")
+            if doc.get("parent") and isinstance(doc["parent"], dict):
+                metadata["parent_name"] = doc["parent"].get("name")
+
+            estimate = doc.get("estimate")
+            if isinstance(estimate, dict):
+                metadata["estimate_str"] = f"{estimate.get('hr', 0)}h {estimate.get('min', 0)}m"
+            
+            # --- Chunking and Upload ---
+            chunks = get_chunks_for_content(combined_text, "feature")
+            word_count = len(combined_text.split()) if combined_text else 0
+            _stats.record("feature", mongo_id, title, len(chunks), word_count)
+
+            for idx, chunk in enumerate(chunks):
+                vector = embedder.encode(chunk).tolist()
+                full_text = f"{title} {chunk}".strip()
+                splade_vec = splade.encode_text(full_text)
+                
+                payload = {
+                    "mongo_id": mongo_id,
+                    "parent_id": mongo_id,
+                    "chunk_index": idx,
+                    "chunk_count": len(chunks),
+                    "title": title,
+                    "content": chunk,
+                    "full_text": full_text,
+                    "content_type": "feature"
+                }
+                payload.update({k: v for k, v in metadata.items() if v is not None})
+
+                point_kwargs = {
+                    "id": point_id_from_seed(f"{mongo_id}/feature/{idx}"),
+                    "vector": {"dense": vector},
+                    "payload": payload,
+                }
+                if splade_vec.get("indices"):
+                    point_kwargs["vector"]["sparse"] = SparseVector(
+                        indices=splade_vec["indices"], values=splade_vec["values"]
+                    )
+                points.append(PointStruct(**point_kwargs))
+
+        if not points:
+            print("⚠️ No valid features to index.")
+            return {"status": "warning", "message": "No valid features found to index."}
+
+        total_indexed = upload_in_batches(points, QDRANT_COLLECTION)
+        print(f"✅ Indexed {total_indexed} feature chunks to Qdrant.")
+        return {"status": "success", "indexed_documents": total_indexed}
+
+    except Exception as e:
+        print(f"❌ Error during feature indexing: {e}")
+        return {"status": "error", "message": str(e)}
 
 # ------------------ Usage ------------------
 if __name__ == "__main__":
@@ -1220,6 +1593,9 @@ if __name__ == "__main__":
     index_projects_to_qdrant()
     index_cycles_to_qdrant()
     index_modules_to_qdrant()
+    index_epic_to_qdrant()
+    index_userStory_to_qdrant()
+    index_features_to_qdrant()
     
     # Print comprehensive statistics
     _stats.print_summary()
