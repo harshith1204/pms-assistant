@@ -1,0 +1,5 @@
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+transformers==4.40.2
+numpy==1.26.4
+einops==0.7.0

@@ -203,7 +203,7 @@ class SmartFilterTools:
             return True
 
         if not RAGTool:
-            logger.warning("RAGTool not available (import failed)")
+            logger.error("RAGTool not available (import failed)")
             return False
 
         try:
@@ -238,7 +238,7 @@ class SmartFilterTools:
                     self._logged_init = True
                 return True
             else:
-                logger.warning("RAGTool initialized but not connected")
+                logger.error("RAGTool initialized but not connected")
                 return False
         except Exception as e:
             logger.error(f"RAG initialization failed: {e}")
@@ -289,7 +289,7 @@ class SmartFilterTools:
             return results if results else []
 
         except Exception as e:
-            logger.warning(f"Failed to fetch work items by IDs: {e}")
+            logger.error(f"Failed to fetch work items by IDs: {e}")
             return []
     
     # async def execute_mongo_query(
@@ -426,7 +426,7 @@ class SmartFilterTools:
                             if isinstance(parsed_item, dict):
                                 work_items.append(parsed_item)
                         except json.JSONDecodeError:
-                            logger.warning(f"Failed to parse string row: {item}")
+                            logger.error(f"Failed to parse string row: {item}")
                             continue
 
                 # Try to extract total count metadata
@@ -788,7 +788,7 @@ class SmartFilterTools:
                             chunks.append(adjacent_chunk)
                 
                 except Exception as e:
-                    logger.warning(f"Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
+                    logger.error(f"Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
                     continue
     
     def _reconstruct_documents(
@@ -1314,7 +1314,7 @@ class SmartFilterTools:
                                 pass
     
                     except Exception as e:
-                        logger.warning(f"Direct RAG search failed: {e}")
+                        logger.error(f"Direct RAG search failed: {e}")
 
                 # Fallback: use rag_search tool if optimized path failed or no IDs found
                 if not work_item_ids and rag_search:
@@ -1353,7 +1353,7 @@ class SmartFilterTools:
                                     pass
 
                     except Exception as e:
-                        logger.warning(f"Fallback RAG search failed: {e}")
+                        logger.error(f"Fallback RAG search failed: {e}")
 
                 # Fetch complete work item documents by IDs
                 work_items = []

@@ -55,8 +55,6 @@ services:
       - "6334:6334" # gRPC
     volumes:
       - qdrant_data:/qdrant/storage
-    # Healthcheck removed; the consumer waits for Qdrant readiness internally
-
     restart: unless-stopped
     networks:
       - vector-net
@@ -103,6 +101,22 @@ services:
     networks:
       - vector-net
 
+  splade:
+    build:
+      context: ..
+      dockerfile: splade_service/Dockerfile
+    container_name: splade
+    env_file:
+      - ../.env
+    environment:
+      SPLADE_MODEL_NAME: ${SPLADE_MODEL_NAME:-naver/splade-cocondenser-ensembledistil}
+      SPLADE_MAX_TERMS: ${SPLADE_MAX_TERMS:-200}
+    ports:
+      - "8082:8080"
+    restart: unless-stopped
+    networks:
+      - vector-net
+
   backfill:
     build:
       context: .
@@ -120,6 +134,8 @@ services:
       kafka:
         condition: service_healthy
       kafka-connect:
+        condition: service_started
+      splade:
         condition: service_started
     restart: "no"  # Run once and exit
     command: ["python", "/app/backfill_mongodb.py"]
@@ -153,6 +169,8 @@ services:
       kafka:
         condition: service_healthy
       qdrant:
+        condition: service_started
+      splade:
         condition: service_started
     restart: unless-stopped
     networks:
