@@ -33,7 +33,7 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC_PREFIX = os.getenv("KAFKA_TOPIC_PREFIX", "ProjectManagement.")
 
 # Collections to backfill - configurable via environment
-BACKFILL_COLLECTIONS_STR = os.getenv("BACKFILL_COLLECTIONS", "epic,features,cycle,module,members,workItem,userStory,page")
+BACKFILL_COLLECTIONS_STR = os.getenv("BACKFILL_COLLECTIONS", "epic,features,cycle,module,project,members,workItem,userStory,page")
 COLLECTIONS_TO_BACKFILL = [col.strip() for col in BACKFILL_COLLECTIONS_STR.split(",") if col.strip()]
 
 # Batch size for processing
