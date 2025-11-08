@@ -10,6 +10,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         git \
+        curl \
         libgomp1 \
         libstdc++6 \
         ca-certificates \

@@ -22,7 +22,14 @@ app = FastAPI(title="Embedding Service", version="1.0.0")
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    # Ensure encoder is loaded and ready
+    try:
+        encoder = get_encoder()
+        # Verify the model is actually loaded by checking dimension
+        _ = encoder.dimension
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Service not ready: {e}")
 
 
 @app.get("/dimension")
