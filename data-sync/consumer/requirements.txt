@@ -1,5 +1,6 @@
 qdrant-client>=1.9.1
 kafka-python>=2.0.2
+confluent-kafka>=2.3.0
 loguru>=0.7.2
 python-dotenv>=1.0.1
 sentence-transformers>=2.7.0
