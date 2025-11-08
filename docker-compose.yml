@@ -45,6 +45,9 @@ services:
     environment:
       MODEL_ID: ${EMBEDDING_MODEL:-google/embeddinggemma-300m}
       HF_TOKEN: ${HuggingFace_API_KEY:-}
+      HF_HUB_TOKEN: ${HuggingFace_API_KEY:-}
+      HUGGING_FACE_HUB_TOKEN: ${HuggingFace_API_KEY:-}
+      HUGGINGFACEHUB_API_TOKEN: ${HuggingFace_API_KEY:-}
     ports:
       - "${EMBEDDING_PORT:-8081}:8080"
     volumes:
@@ -63,6 +66,9 @@ services:
       SPLADE_MODEL_NAME: ${SPLADE_MODEL_NAME:-naver/splade-cocondenser-ensembledistil}
       SPLADE_MAX_TERMS: ${SPLADE_MAX_TERMS:-200}
       HF_TOKEN: ${HuggingFace_API_KEY:-}
+      HF_HUB_TOKEN: ${HuggingFace_API_KEY:-}
+      HUGGING_FACE_HUB_TOKEN: ${HuggingFace_API_KEY:-}
+      HUGGINGFACEHUB_API_TOKEN: ${HuggingFace_API_KEY:-}
     ports:
       - "${SPLADE_PORT:-8082}:8080"
     networks:
@@ -180,6 +186,11 @@ services:
       - BACKFILL_COLLECTIONS=${BACKFILL_COLLECTIONS:-epic,features,cycle,module,members,workItem,userStory,page}
       - BACKFILL_BATCH_SIZE=${BACKFILL_BATCH_SIZE:-1000}
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
+      - HuggingFace_API_KEY=${HuggingFace_API_KEY:-}
+      - HF_TOKEN=${HuggingFace_API_KEY:-}
+      - HF_HUB_TOKEN=${HuggingFace_API_KEY:-}
+      - HUGGING_FACE_HUB_TOKEN=${HuggingFace_API_KEY:-}
+      - HUGGINGFACEHUB_API_TOKEN=${HuggingFace_API_KEY:-}
     command: ["python", "/app/backfill_mongodb.py"]
     volumes:
       - ./data-sync/backfill_mongodb.py:/app/backfill_mongodb.py:ro
@@ -217,6 +228,10 @@ services:
       - BATCH_MAX_MESSAGES=${BATCH_MAX_MESSAGES:-256}
       - BATCH_MAX_SECONDS=${BATCH_MAX_SECONDS:-2}
       - HuggingFace_API_KEY=${HuggingFace_API_KEY:-}
+      - HF_TOKEN=${HuggingFace_API_KEY:-}
+      - HF_HUB_TOKEN=${HuggingFace_API_KEY:-}
+      - HUGGING_FACE_HUB_TOKEN=${HuggingFace_API_KEY:-}
+      - HUGGINGFACEHUB_API_TOKEN=${HuggingFace_API_KEY:-}
     depends_on:
       kafka:
         condition: service_healthy

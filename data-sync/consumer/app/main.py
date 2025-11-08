@@ -64,11 +64,28 @@ class ChangeEvent:
 
 def load_env_and_login() -> None:
     load_dotenv()
-    token = os.getenv("HuggingFace_API_KEY")
+    token = (
+        os.getenv("HuggingFace_API_KEY")
+        or os.getenv("HF_TOKEN")
+        or os.getenv("HF_HUB_TOKEN")
+        or os.getenv("HUGGING_FACE_HUB_TOKEN")
+        or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    )
     if not token:
         return
     try:
-        login(token)
+        for name in (
+            "HuggingFace_API_KEY",
+            "HF_TOKEN",
+            "HF_HUB_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+            "HUGGINGFACEHUB_API_TOKEN",
+        ):
+            os.environ.setdefault(name, token)
+        try:
+            login(token=token, add_to_git_credential=False)
+        except TypeError:
+            login(token)
     except Exception as exc:
         pass
 
