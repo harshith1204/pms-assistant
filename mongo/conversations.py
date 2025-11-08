@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+from dotenv import load_dotenv
 
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -17,6 +18,10 @@ except Exception:
         ERROR_TYPE = "error.type"
         ERROR_MESSAGE = "error.message"
     OI = _OI()
+
+
+# Ensure environment variables are loaded when running locally
+load_dotenv()
 
 
 class ConversationMongoClient:
@@ -75,13 +80,16 @@ class ConversationMongoClient:
 
 
 # Initialize conversations client with the provided connection string
-CONVERSATIONS_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
+CONVERSATIONS_CONNECTION_STRING = os.getenv(
+    "CONVERSATIONS_MONGODB_URI",
+    os.getenv("MONGODB_URI", "mongodb://mongo:27017/?authSource=admin"),
+)
 conversation_mongo_client = ConversationMongoClient(CONVERSATIONS_CONNECTION_STRING)
 
 
-CONVERSATIONS_DB_NAME = "SimpoAssist"
-CONVERSATIONS_COLLECTION_NAME = "conversations"
-TEMPLATES_COLLECTION_NAME = "Templates"
+CONVERSATIONS_DB_NAME = os.getenv("CONVERSATIONS_DB_NAME", "SimpoAssist")
+CONVERSATIONS_COLLECTION_NAME = os.getenv("CONVERSATIONS_COLLECTION_NAME", "conversations")
+TEMPLATES_COLLECTION_NAME = os.getenv("TEMPLATES_COLLECTION_NAME", "Templates")
 
 
 async def ensure_conversation_client_connected():

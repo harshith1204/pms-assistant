@@ -1139,8 +1139,10 @@ async def generate_content(
         if content_type not in ["work_item", "page", "cycle", "module", "epic"]:
             return "❌ Invalid content type"
         
-        # Get API base URL from environment or use default
-        api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+        # Get API base URL from environment; require explicit configuration to avoid hardcoded defaults
+        api_base = os.getenv("API_BASE_URL") or os.getenv("API_HTTP_URL")
+        if not api_base:
+            raise RuntimeError("API_BASE_URL environment variable is not set")
         
         if content_type == "work_item":
             # Call work item generation endpoint

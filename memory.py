@@ -36,7 +36,8 @@ class RedisConversationMemory:
         self.ttl_seconds = ttl_hours * 3600  # 24 hours = 86400 seconds
         
         # Initialize Redis connection
-        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        default_redis_url = "redis://redis:6379/0"
+        self.redis_url = redis_url or os.getenv("REDIS_URL") or default_redis_url
         self.redis_client: Optional[aioredis.Redis] = None
         self._connection_lock = asyncio.Lock()
         self._connected = False
