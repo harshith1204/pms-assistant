@@ -13,7 +13,7 @@ from kafka import KafkaConsumer
 from kafka.errors import NoBrokersAvailable
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
-from sentence_transformers import SentenceTransformer
+from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
 
 
 # Ensure repo-root packages (qdrant, etc.) are importable when running locally
@@ -70,15 +70,11 @@ def load_env_and_login() -> None:
         pass
 
 
-def load_embedder() -> SentenceTransformer:
-    primary_model = os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m")
-    fallback_model = os.getenv(
-        "FALLBACK_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
-    )
+def create_embedding_client() -> EmbeddingServiceClient:
     try:
-        return SentenceTransformer(primary_model)
-    except Exception as exc:
-        return SentenceTransformer(fallback_model)
+        return EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
+    except ValueError as exc:
+        raise RuntimeError("EMBEDDING_SERVICE_URL is required") from exc
 
 
 def get_env(name: str, default: Optional[str] = None) -> str:
@@ -200,7 +196,7 @@ def process_event(
     event: ChangeEvent,
     client: QdrantClient,
     collection_name: str,
-    embedder: SentenceTransformer,
+    embedder: EmbeddingServiceClient,
     splade_encoder: Any,
 ) -> None:
     if event.collection not in RELEVANT_COLLECTIONS:
@@ -246,9 +242,12 @@ def process_event(
 def main() -> None:
     load_env_and_login()
 
-    embedder = load_embedder()
+    embedder = create_embedding_client()
     splade_encoder = get_splade_encoder()
-    embedding_dim = embedder.get_sentence_embedding_dimension()
+    try:
+        embedding_dim = embedder.get_dimension()
+    except EmbeddingServiceError as exc:
+        raise RuntimeError(f"Failed to determine embedding dimension: {exc}") from exc
     log_level = get_env("LOG_LEVEL", "INFO")
 
     bootstrap = get_env("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")

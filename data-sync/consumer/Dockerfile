@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir --default-timeout=300 --retries=5 -r requirements
 
 # Copy application code and shared qdrant modules
 COPY qdrant ./qdrant
+COPY embedding ./embedding
 COPY consumer/app ./app
 COPY backfill_mongodb.py ./backfill_mongodb.py
 COPY consumer/wait-for-qdrant.sh /usr/local/bin/wait-for-qdrant.sh
