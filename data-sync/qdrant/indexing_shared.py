@@ -9,6 +9,7 @@ import html as html_lib
 import json
 import re
 import uuid
+from datetime import datetime, timezone
 
 from bson.binary import Binary
 from bson.objectid import ObjectId
@@ -48,7 +49,7 @@ CHUNKING_CONFIG: Dict[str, Dict[str, int]] = {
 
 PROJECT_COLLECTIONS: Dict[str, str] = {
     "page": "page",
-    "workitem": "work_item",
+    "workItem": "work_item",
     "project": "project",
     "cycle": "cycle",
     "module": "module",
@@ -208,6 +209,38 @@ def ensure_collection_with_hybrid(
 # ---------------------------------------------------------------------------
 
 
+def _decode_uuid_bytes(data: bytes) -> Optional[str]:
+    if len(data) == 16:
+        try:
+            return str(uuid.UUID(bytes=data))
+        except Exception:
+            return None
+    return None
+
+
+def _coerce_date(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            # Mongo extended JSON stores epoch millis
+            dt = datetime.fromtimestamp(float(value) / 1000.0, tz=timezone.utc)
+            return dt.isoformat().replace("+00:00", "Z")
+        if isinstance(value, str):
+            # Already ISO / RFC3339 string
+            # Attempt to parse to normalise format, fallback to original string
+            try:
+                dt = datetime.fromisoformat(value.rstrip("Z"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.isoformat().replace("+00:00", "Z")
+            except ValueError:
+                return value
+    except Exception:
+        return None
+    return None
+
+
 def normalize_mongo_id(mongo_id: Any) -> str:
     if mongo_id is None:
         return ""
@@ -227,18 +260,66 @@ def normalize_mongo_id(mongo_id: Any) -> str:
                     return str(mongo_id[key])
                 except Exception:
                     continue
-        # Extended JSON binary shape {"$binary": {"base64": "...", "subType": "03"}}
-        binary = mongo_id.get("$binary") if "$binary" in mongo_id else None
-        if isinstance(binary, dict):
-            base64_value = binary.get("base64")
-            subtype = (binary.get("subType") or binary.get("subtype") or "").lower()
-            if base64_value and subtype in {"03", "3", "04", "4"}:
+
+        # Extended JSON binary variations
+        if "$binary" in mongo_id:
+            binary_section = mongo_id.get("$binary")
+            subtype = (
+                mongo_id.get("$type")
+                or mongo_id.get("type")
+                or mongo_id.get("subType")
+                or mongo_id.get("subtype")
+            )
+
+            base64_value: Optional[str] = None
+
+            if isinstance(binary_section, dict):
+                base64_value = (
+                    binary_section.get("base64")
+                    or binary_section.get("$base64")
+                    or binary_section.get("data")
+                )
+                subtype = (
+                    binary_section.get("subType")
+                    or binary_section.get("subtype")
+                    or binary_section.get("$type")
+                    or subtype
+                )
+            elif isinstance(binary_section, str):
+                base64_value = binary_section
+
+            if base64_value:
                 try:
                     data = base64.b64decode(base64_value)
-                    if len(data) == 16:
-                        return str(uuid.UUID(bytes=data))
+                    uuid_str = _decode_uuid_bytes(data)
+                    if uuid_str:
+                        return uuid_str
+                    # For non-UUID binary payloads fall back to hex
+                    return data.hex()
                 except Exception:
                     pass
+
+            if subtype and isinstance(subtype, str):
+                subtype_lower = subtype.lower()
+                if subtype_lower in {"03", "3", "04", "4"} and base64_value:
+                    try:
+                        data = base64.b64decode(base64_value)
+                        uuid_str = _decode_uuid_bytes(data)
+                        if uuid_str:
+                            return uuid_str
+                    except Exception:
+                        pass
+
+        # Legacy Mongo export occasionally uses {"binary": "...", "type": "03"}
+        if "binary" in mongo_id and isinstance(mongo_id["binary"], str):
+            try:
+                data = base64.b64decode(mongo_id["binary"])
+                uuid_str = _decode_uuid_bytes(data)
+                if uuid_str:
+                    return uuid_str
+            except Exception:
+                pass
+
         return json.dumps(mongo_id, sort_keys=True)
     return str(mongo_id)
 
@@ -268,21 +349,45 @@ def _looks_like_extended_id(value: Dict[str, Any]) -> bool:
         return True
     if {"$uuid", "uuid"} & lowered_keys:
         return True
-    binary_entry = value.get("$binary") or value.get("binary")
-    if isinstance(binary_entry, dict):
-        inner_keys = {str(k).lower() for k in binary_entry.keys()}
-        if "base64" in inner_keys or "$base64" in inner_keys:
-            return True
+    if "$binary" in lowered_keys or "binary" in lowered_keys:
+        return True
     return False
 
 
 def normalize_document_ids(obj: Any) -> Any:
     if isinstance(obj, (ObjectId, Binary)):
         return normalize_mongo_id(obj)
+    if isinstance(obj, datetime):
+        # Convert datetime objects to ISO format strings
+        if obj.tzinfo is None:
+            obj = obj.replace(tzinfo=timezone.utc)
+        return obj.isoformat().replace("+00:00", "Z")
 
     if isinstance(obj, dict):
+        # Handle extended JSON date / numeric wrappers
+        if "$date" in obj and len(obj) == 1:
+            normalized_date = _coerce_date(obj.get("$date"))
+            if normalized_date is not None:
+                return normalized_date
+        if "$numberLong" in obj and len(obj) == 1:
+            try:
+                return int(obj.get("$numberLong"))
+            except Exception:
+                pass
+        if "$numberInt" in obj and len(obj) == 1:
+            try:
+                return int(obj.get("$numberInt"))
+            except Exception:
+                pass
+        if "$numberDouble" in obj and len(obj) == 1:
+            try:
+                return float(obj.get("$numberDouble"))
+            except Exception:
+                pass
+
         if _looks_like_extended_id(obj):
             return normalize_mongo_id(obj)
+
         normalized: Dict[str, Any] = {}
         for key, value in obj.items():
             if _is_id_like_key(key):
@@ -1154,4 +1259,3 @@ def _build_metadata_with_business(doc: Dict[str, Any]) -> Dict[str, Any]:
         if business.get("_id") is not None:
             metadata["business_id"] = normalize_mongo_id(business.get("_id"))
     return metadata
-
