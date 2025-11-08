@@ -14,6 +14,7 @@ import json
 import traceback
 import uuid
 import asyncio
+import logging
 from mongo.constants import uuid_str_to_mongo_binary, BUSINESS_UUID, MEMBER_UUID, COLLECTIONS_WITH_DIRECT_BUSINESS
 from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass
@@ -24,6 +25,9 @@ from qdrant_client.models import (
 from mongo_to_uuid import mongo_uuid_converter
 from langchain_core.tools import tool
 from .planner import plan_and_execute_query
+
+# Configure logging
+logger = logging.getLogger(__name__)
 # Import the existing tools
 try:
     from tools import  rag_search
@@ -199,7 +203,7 @@ class SmartFilterTools:
             return True
 
         if not RAGTool:
-            print("⚠️ RAGTool not available (import failed)")
+            logger.warning("RAGTool not available (import failed)")
             return False
 
         try:
@@ -215,14 +219,11 @@ class SmartFilterTools:
                     self.rag_tool = existing_instance
                     # Only log on first initialization
                     if not self.rag_available:
-                        print("ℹ️ RAGTool already initialized, reusing instance")
                 else:
-                    print("ℹ️ Initializing RAGTool...")
                     await RAGTool.initialize()
                     self.rag_tool = RAGTool.get_instance()
             except RuntimeError:
                 # Not initialized yet, initialize it
-                print("ℹ️ Initializing RAGTool...")
                 await RAGTool.initialize()
                 self.rag_tool = RAGTool.get_instance()
 
@@ -234,14 +235,13 @@ class SmartFilterTools:
                 self.rag_available = True
                 # Only log on first initialization
                 if not hasattr(self, '_logged_init'):
-                    print("✅ RAG components initialized successfully")
                     self._logged_init = True
                 return True
             else:
-                print("⚠️ RAGTool initialized but not connected")
+                logger.warning("RAGTool initialized but not connected")
                 return False
         except Exception as e:
-            print(f"❌ RAG initialization failed: {e}")
+            logger.error(f"RAG initialization failed: {e}")
             # Don't set rag_available to False here, let it retry
             return False
 
@@ -289,7 +289,7 @@ class SmartFilterTools:
             return results if results else []
 
         except Exception as e:
-            print(f"Warning: Failed to fetch work items by IDs: {e}")
+            logger.warning(f"Failed to fetch work items by IDs: {e}")
             return []
     
     # async def execute_mongo_query(
@@ -398,7 +398,6 @@ class SmartFilterTools:
         """
         try:
             # 🪵 Debug log: show initial call context
-            print(f"🔍 [execute_mongo_query] Running query='{query}', project_id={project_id}, show_all={show_all}, limit={limit}")
 
             # Execute via planner
             result_payload = await plan_and_execute_query(query, project_id=project_id)
@@ -415,7 +414,6 @@ class SmartFilterTools:
             total_count: int = 0
 
             # 🪵 Debug: show result shape
-            print(f"📦 [Planner Result] Type={type(raw_rows).__name__}, Count={len(raw_rows) if isinstance(raw_rows, list) else 'N/A'}")
 
             # Handle list results
             if isinstance(raw_rows, list):
@@ -428,7 +426,7 @@ class SmartFilterTools:
                             if isinstance(parsed_item, dict):
                                 work_items.append(parsed_item)
                         except json.JSONDecodeError:
-                            print(f"⚠️  [execute_mongo_query] Failed to parse string row: {item}")
+                            logger.warning(f"Failed to parse string row: {item}")
                             continue
 
                 # Try to extract total count metadata
@@ -454,14 +452,12 @@ class SmartFilterTools:
 
             # Apply limit (if not showing all)
             if not show_all and limit is not None and limit > 0:
-                print(f"⏳ [execute_mongo_query] Applying limit: {limit}")
                 work_items = work_items[:limit]
 
             if total_count == 0:
                 total_count = len(work_items)
 
             # 🪵 Debug summary
-            print(f"✅ [execute_mongo_query] Retrieved {len(work_items)} items (total_count={total_count})")
 
             return MongoQueryResult(
                 work_items=work_items,
@@ -471,13 +467,10 @@ class SmartFilterTools:
             )
 
         except Exception as e:
-            # 🪵 Detailed debug info
-            print("❌ [execute_mongo_query] Query execution failed!")
-            print(f"   Query: {query}")
-            print(f"   Project ID: {project_id}")
-            print(f"   Error: {e}")
-            print("   Traceback:")
-            print(traceback.format_exc())
+            # Detailed error logging
+            logger.error(f"Query execution failed: {e}")
+            logger.error(f"Query: {query}, Project ID: {project_id}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise RuntimeError(f"Mongo query execution failed: {str(e)}")
 
     
@@ -611,7 +604,7 @@ class SmartFilterTools:
                 limit=initial_limit,
             ).points
         except Exception as e:
-            print(f"❌ Hybrid search failed: {e}")
+            logger.error(f"Hybrid search failed: {e}")
             return []
         
 
@@ -795,7 +788,7 @@ class SmartFilterTools:
                             chunks.append(adjacent_chunk)
                 
                 except Exception as e:
-                    print(f"Warning: Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
+                    logger.warning(f"Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
                     continue
     
     def _reconstruct_documents(
@@ -1240,7 +1233,7 @@ class SmartFilterTools:
                     show_chunk_details=True
                 ) 
         except:
-            print("RAG Search Failed.")
+            logger.error("RAG Search Failed.")
 
     async def execute_rag_search(
             self,
@@ -1321,7 +1314,7 @@ class SmartFilterTools:
                                 pass
     
                     except Exception as e:
-                        print(f"⚠️ Direct RAG search failed: {e}")
+                        logger.warning(f"Direct RAG search failed: {e}")
 
                 # Fallback: use rag_search tool if optimized path failed or no IDs found
                 if not work_item_ids and rag_search:
@@ -1360,7 +1353,7 @@ class SmartFilterTools:
                                     pass
 
                     except Exception as e:
-                        print(f"Warning: Fallback RAG search failed: {e}")
+                        logger.warning(f"Fallback RAG search failed: {e}")
 
                 # Fetch complete work item documents by IDs
                 work_items = []

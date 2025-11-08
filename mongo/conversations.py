@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import logging
 from dotenv import load_dotenv
 
 try:
@@ -22,6 +23,9 @@ except Exception:
 
 # Ensure environment variables are loaded when running locally
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class ConversationMongoClient:
@@ -59,10 +63,8 @@ class ConversationMongoClient:
 
                     self.connected = True
 
-                    print("✅ Conversations MongoDB connected with persistent connection pool")
-
             except Exception as e:
-                print(f"❌ Failed to connect to Conversations MongoDB: {e}")
+                logger.error(f"Failed to connect to Conversations MongoDB: {e}")
                 raise
 
     async def disconnect(self):

@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import uuid
+import logging
 from itertools import islice
 from bson.binary import Binary
 from bson.objectid import ObjectId
@@ -39,20 +40,21 @@ from qdrant.encoder import get_splade_encoder
 
 # Load .env file and authenticate HuggingFace
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
 hf_token = os.getenv("HuggingFace_API_KEY")
 try:
     if hf_token:
         login(hf_token)
-    else:
-        print("⚠️ No HuggingFace token found; proceeding without login.")
 except Exception as e:
-    print(f"⚠️ HuggingFace login failed: {e}")
+    logger.warning(f"HuggingFace login failed: {e}")
 
 # Load embedding model once, with fallback to a public model
 try:
     embedder = EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
     EMBEDDING_DIMENSION = embedder.get_dimension()
-    print(f"ℹ️ Embedding service connected (dimension={EMBEDDING_DIMENSION})")
 except (EmbeddingServiceError, ValueError) as exc:
     raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
 
@@ -90,50 +92,6 @@ class ChunkingStats:
             stats["max_chunks"] = chunk_count
             stats["max_chunks_doc"] = (doc_id, title[:50])
     
-    def print_summary(self):
-        """Print comprehensive chunking statistics."""
-        print("\n" + "=" * 80)
-        print("📊 CHUNKING STATISTICS SUMMARY")
-        print("=" * 80)
-        
-        total_docs = 0
-        total_chunks = 0
-        
-        for content_type, stats in sorted(self.by_type.items()):
-            total_docs += stats["total_docs"]
-            total_chunks += stats["total_chunks"]
-            
-            if stats["total_docs"] == 0:
-                continue
-            
-            print(f"\n▸ {content_type.upper()}")
-            print(f"  Documents: {stats['total_docs']}")
-            print(f"  Total chunks: {stats['total_chunks']}")
-            print(f"  Avg chunks/doc: {stats['total_chunks'] / stats['total_docs']:.2f}")
-            print(f"  Avg words/doc: {stats['total_words'] / stats['total_docs']:.0f}")
-            print(f"  Single-chunk: {stats['single_chunk']} ({stats['single_chunk']/stats['total_docs']*100:.1f}%)")
-            print(f"  Multi-chunk: {stats['multi_chunk']} ({stats['multi_chunk']/stats['total_docs']*100:.1f}%)")
-            
-            if stats["max_chunks"] > 1:
-                doc_id, title = stats["max_chunks_doc"]
-                print(f"  Max chunks: {stats['max_chunks']} (in '{title}...')")
-            
-            # Show distribution for multi-chunk documents
-            if stats["multi_chunk"] > 0:
-                print(f"  Chunk distribution:")
-                multi_chunks = [k for k in stats["chunk_distribution"].keys() if k > 1]
-                for chunk_count in sorted(multi_chunks)[:5]:  # Show top 5
-                    count = stats["chunk_distribution"][chunk_count]
-                    print(f"    - {chunk_count} chunks: {count} docs")
-        
-        if total_docs > 0:
-            print(f"\n{'─' * 80}")
-            print(f"📈 OVERALL TOTALS:")
-            print(f"  Total documents: {total_docs}")
-            print(f"  Total chunks (points): {total_chunks}")
-            print(f"  Average chunks per document: {total_chunks / total_docs:.2f}")
-            print(f"  Chunking expansion: {(total_chunks / total_docs - 1) * 100:.1f}%")
-        print("=" * 80 + "\n")
 
 # Global stats instance
 _stats = ChunkingStats()
@@ -160,11 +118,10 @@ def ensure_collection_with_hybrid(
             should_create = collection_name not in existing_names
         except Exception as e:
             # If listing fails, fallback to creation attempt path
-            print(f"⚠️ Could not list collections: {e}")
+            logger.warning(f"Could not list collections: {e}")
             should_create = True
 
         if force_recreate:
-            print(f"ℹ️ Force recreating Qdrant collection '{collection_name}' (this will replace data)...")
             qdrant_client.recreate_collection(
                 collection_name=collection_name,
                 vectors_config={
@@ -174,9 +131,7 @@ def ensure_collection_with_hybrid(
                     "sparse": SparseVectorParams(),
                 },
             )
-            print(f"✅ Collection '{collection_name}' recreated for hybrid (dense+sparse)")
         elif should_create:
-            print(f"ℹ️ Creating Qdrant collection '{collection_name}' with dense+sparse configs...")
             qdrant_client.create_collection(
                 collection_name=collection_name,
                 vectors_config={
@@ -186,9 +141,6 @@ def ensure_collection_with_hybrid(
                     "sparse": SparseVectorParams(),
                 },
             )
-            print(f"✅ Collection '{collection_name}' created for hybrid (dense+sparse)")
-        else:
-            print(f"ℹ️ Collection '{collection_name}' already exists; skipping recreation.")
 
         # Ensure optimizer is set for immediate indexing (idempotent)
         try:
@@ -196,9 +148,8 @@ def ensure_collection_with_hybrid(
                 collection_name=collection_name,
                 optimizer_config=OptimizersConfigDiff(indexing_threshold=1),
             )
-            print("✅ Set indexing_threshold=1 for immediate indexing")
         except Exception as e:
-            print(f"⚠️ Failed to update optimizer config: {e}")
+            logger.warning(f"Failed to update optimizer config: {e}")
 
         # Ensure keyword and text payload indexes exist (idempotent)
         try:
@@ -209,7 +160,7 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                print(f"⚠️ Failed to ensure index on 'content_type': {e}")
+                logger.warning(f"Failed to ensure index on 'content_type': {e}")
 
         # Business scoping index
         try:
@@ -220,7 +171,7 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                print(f"⚠️ Failed to ensure index on 'business_id': {e}")
+                logger.warning(f"Failed to ensure index on 'business_id': {e}")
 
         try:
             qdrant_client.create_payload_index(
@@ -230,7 +181,7 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                print(f"⚠ Failed to ensure index on 'project_name': {e}")
+                logger.warning(f"Failed to ensure index on 'project_name': {e}")
 
         for text_field in ["title", "full_text"]:
             try:
@@ -241,7 +192,7 @@ def ensure_collection_with_hybrid(
                 )
             except Exception as e:
                 if "already exists" not in str(e):
-                    print(f"⚠️ Failed to ensure text index on '{text_field}': {e}")
+                    logger.warning(f"Failed to ensure text index on '{text_field}': {e}")
 
         # Chunk index for efficient adjacent chunk retrieval
         try:
@@ -252,7 +203,7 @@ def ensure_collection_with_hybrid(
             )
         except Exception as e:
             if "already exists" not in str(e):
-                print(f"⚠️ Failed to ensure index on 'chunk_index': {e}")
+                logger.warning(f"Failed to ensure index on 'chunk_index': {e}")
 
         # Additional indexes for filtering operations
         for field_name in ["parent_id", "project_id", "mongo_id"]:
@@ -264,9 +215,9 @@ def ensure_collection_with_hybrid(
                 )
             except Exception as e:
                 if "already exists" not in str(e):
-                    print(f"⚠️ Failed to ensure index on '{field_name}': {e}")
+                    logger.warning(f"Failed to ensure index on '{field_name}': {e}")
     except Exception as e:
-        print(f"❌ Error ensuring collection '{collection_name}': {e}")
+        logger.error(f"Error ensuring collection '{collection_name}': {e}")
 
 def normalize_mongo_id(mongo_id) -> str:
     """Convert Mongo _id (ObjectId or Binary UUID) into a safe string."""
@@ -365,7 +316,7 @@ def parse_editorjs_blocks(content_str: str):
         combined_text = "\n\n".join([t for t in extracted if t]).strip()
         return blocks, combined_text
     except Exception as e:
-        print(f"⚠️ Failed to parse content: {e}")
+        logger.warning(f"Failed to parse content: {e}")
         return [], ""
 
 def point_id_from_seed(seed: str) -> str:
@@ -480,7 +431,7 @@ def upload_in_batches(points, collection_name, batch_size=20):
             qdrant_client.upsert(collection_name=collection_name, points=batch)
             total_indexed += len(batch)
         except Exception as e:
-            print(f"❌ Failed to upload batch: {e}")
+            logger.error(f"Failed to upload batch: {e}")
     return total_indexed
 
 # ------------------ Indexing Functions ------------------
@@ -504,7 +455,7 @@ def index_pages_to_qdrant():
             if "already exists" in str(e):
                 print("ℹ️ Index on 'content_type' already exists, skipping.")
             else:
-                print(f"⚠️ Failed to ensure index: {e}")
+                logger.warning(f"Failed to ensure index: {e}")
 
         # Fetch pages with rich metadata
         documents = page_collection.find({}, {
@@ -643,7 +594,7 @@ def index_workitems_to_qdrant():
             if "already exists" in str(e):
                 print("ℹ️ Index on 'content_type' already exists, skipping.")
             else:
-                print(f"⚠️ Failed to ensure index: {e}")
+                logger.warning(f"Failed to ensure index: {e}")
 
         # Fetch work items with rich metadata
         documents = workitem_collection.find({}, {
@@ -1099,7 +1050,7 @@ def index_epic_to_qdrant():
             if "already exists" in str(e):
                 print("ℹ️ Index on 'content_type' already exists, skipping.")
             else:
-                print(f"⚠️ Failed to ensure index: {e}")
+                logger.warning(f"Failed to ensure index: {e}")
 
         documents = epic_collection.find({}, {
             "_id": 1,

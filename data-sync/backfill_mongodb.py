@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import time
+import logging
 from typing import Dict, Any, List, Optional
 
 import pymongo
@@ -19,6 +20,8 @@ from confluent_kafka import KafkaError, KafkaException
 # Import document normalization function from consumer
 from qdrant.indexing_shared import normalize_document_ids
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Configuration - match the connector setup
 MONGODB_URI = os.getenv(
@@ -61,7 +64,7 @@ class MongoDBBackfill:
             print("✓ MongoDB connection successful")
             return True
         except Exception as e:
-            print(f"✗ MongoDB connection failed: {e}")
+            logger.error(f"MongoDB connection failed: {e}")
             return False
 
     def connect_kafka(self) -> bool:
@@ -80,7 +83,7 @@ class MongoDBBackfill:
             print("✓ Kafka connection successful")
             return True
         except Exception as e:
-            print(f"✗ Kafka connection failed: {e}")
+            logger.error(f"Kafka connection failed: {e}")
             return False
 
     def create_change_event(self, collection_name: str, document: Dict[str, Any]) -> Dict[str, Any]:
@@ -103,7 +106,7 @@ class MongoDBBackfill:
             collection = self.database[collection_name]
             return collection.count_documents({})
         except Exception as e:
-            print(f"Error getting count for {collection_name}: {e}")
+            logger.error(f"Error getting count for {collection_name}: {e}")
             return 0
 
     def backfill_collection(self, collection_name: str, dry_run: bool = False) -> int:
@@ -143,7 +146,7 @@ class MongoDBBackfill:
                             # Trigger delivery callback
                             self.kafka_producer.poll(0)
                         except KafkaException as e:
-                            print(f"Kafka error sending to {topic_name}: {e}")
+                            logger.error(f"Kafka error sending to {topic_name}: {e}")
                             errors += 1
                             continue
                     else:
@@ -159,15 +162,13 @@ class MongoDBBackfill:
 
                 except Exception as e:
                     errors += 1
-                    print(f"Error processing document {document.get('_id', 'unknown')}: {e}")
+                    logger.error(f"Error processing document {document.get('_id', 'unknown')}: {e}")
                     if errors > 10:  # Stop if too many errors
-                        print("Too many errors, stopping collection processing")
+                        logger.error("Too many errors, stopping collection processing")
                         break
 
-            print(f"{'[DRY RUN] ' if dry_run else ''}Collection {collection_name} completed: {processed} processed, {errors} errors")
-
         except Exception as e:
-            print(f"Error processing collection {collection_name}: {e}")
+            logger.error(f"Error processing collection {collection_name}: {e}")
             return processed
 
         return processed
@@ -186,18 +187,15 @@ class MongoDBBackfill:
                 processed = self.backfill_collection(collection_name, dry_run=dry_run)
                 results[collection_name] = processed
             except Exception as e:
-                print(f"Failed to process collection {collection_name}: {e}")
+                logger.error(f"Failed to process collection {collection_name}: {e}")
                 results[collection_name] = 0
 
         # Flush producer to ensure all messages are sent
         if not dry_run and self.kafka_producer:
-            print("\nFlushing Kafka producer...")
             # Wait for all messages to be delivered (timeout: 30 seconds)
             remaining = self.kafka_producer.flush(30)
             if remaining > 0:
-                print(f"⚠️  Warning: {remaining} messages may not have been delivered")
-            else:
-                print("✓ All messages sent to Kafka")
+                logger.warning(f"{remaining} messages may not have been delivered")
 
         return results
 
@@ -277,7 +275,7 @@ def main():
         print("\n⏹️  Interrupted by user")
         sys.exit(1)
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}")
         sys.exit(1)
     finally:
         backfill.close()

@@ -6,9 +6,13 @@ from typing import Dict, Any, List
 import os
 import contextlib
 import asyncio
+import logging
 from dotenv import load_dotenv
 from mongo_to_uuid import mongo_uuid_converter
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -45,9 +49,8 @@ class DirectMongoClient:
             try:
                 async with self._connect_lock:
                     if self.connected and self.client:
-                        print("✅ MongoDB already connected (reusing persistent connection)")
                         return
-                    
+
                     # Create Motor client with optimized connection pool settings
                     # Motor maintains persistent connections automatically
                     self.client = AsyncIOMotorClient(
@@ -60,20 +63,14 @@ class DirectMongoClient:
                         connectTimeoutMS=10000,  # Connection timeout
                         socketTimeoutMS=20000,   # Socket timeout
                     )
-                    
+
                     # Test connection
                     await self.client.admin.command('ping')
-                    
+
                     self.connected = True
-                    
-                    pass
-                    
-                    print(f"✅ MongoDB connected with persistent connection pool (50 connections)")
-                    print(f"   Direct connection - no MCP/Smithery overhead!")
-                    
+
             except Exception as e:
-                pass
-                print(f"❌ Failed to connect to MongoDB: {e}")
+                logger.error(f"Failed to connect to MongoDB: {e}")
                 raise
 
     async def disconnect(self):
@@ -150,11 +147,10 @@ class DirectMongoClient:
                             ])
                     except ValueError as e:
                         # Invalid UUID format - log and skip business filter
-                        print(f"⚠️  Invalid BUSINESS_UUID format '{biz_uuid}': {e}")
-                        print(f"   Skipping business filter for {collection}")
+                        logger.error(f"Invalid BUSINESS_UUID format '{biz_uuid}': {e}")
                     except Exception as e:
                         # Other errors - log and skip business filter
-                        print(f"⚠️  Error applying business filter for {collection}: {e}")
+                        logger.error(f"Error applying business filter for {collection}: {e}")
 
                 # 2) Member-level project RBAC scoping
                 if enforce_member and member_uuid:
@@ -187,11 +183,10 @@ class DirectMongoClient:
                         # Other collections: no-op
                     except ValueError as e:
                         # Invalid UUID format - log and skip member filter
-                        print(f"⚠️  Invalid MEMBER_UUID format '{member_uuid}': {e}")
-                        print(f"   Skipping member filter for {collection}")
+                        logger.error(f"Invalid MEMBER_UUID format '{member_uuid}': {e}")
                     except Exception as e:
                         # Other errors - log and skip member filter
-                        print(f"⚠️  Error applying member filter for {collection}: {e}")
+                        logger.error(f"Error applying member filter for {collection}: {e}")
 
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
@@ -238,11 +233,10 @@ class DirectMongoClient:
                     injected_stages.append({"$match": {"project._id": pr_id}})
                 except ValueError as e:
                         # Invalid UUID format - log and skip project filter
-                        print(f"⚠️  Invalid PROJECT_UUID format '{project_id}': {e}")
-                        print(f"   Skipping project filter for {collection}")
+                        logger.error(f"Invalid PROJECT_UUID format '{project_id}': {e}")
                 except Exception as e:
                     # Other errors - log and skip project filter
-                    print(f"⚠️  Error applying project filter for {collection}: {e}")
+                    logger.error(f"Error applying project filter for {collection}: {e}")
                         
                     
 
