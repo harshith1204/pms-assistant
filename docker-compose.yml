@@ -21,24 +21,6 @@ services:
     networks:
       - app-net
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_HTTP_URL: ${VITE_API_HTTP_URL:-http://backend:7000}
-        VITE_API_WS_URL: ${VITE_API_WS_URL:-ws://backend:7000/ws/chat}
-        VITE_STAGE_API_BASE_URL: ${VITE_STAGE_API_BASE_URL:-https://stage-project.simpo.ai}
-    env_file:
-      - .env
-    ports:
-      - "${FRONTEND_PORT:-5173}:80"
-    depends_on:
-      backend:
-        condition: service_started
-    networks:
-      - app-net
-
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -57,7 +39,7 @@ services:
       MODEL_ID: ${EMBEDDING_MODEL:-google/embeddinggemma-300m}
       HF_TOKEN: ${HuggingFace_API_KEY:-}
     ports:
-      - "${EMBEDDING_PORT:-8080}:8080"
+      - "${EMBEDDING_PORT:-8081}:8080"
     volumes:
       - hf_cache:/data
     networks:
