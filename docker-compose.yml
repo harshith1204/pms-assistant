@@ -40,6 +40,7 @@ services:
   embedding:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
     container_name: embedding
+    platform: linux/amd64
     env_file:
       - .env
     environment:
@@ -48,6 +49,7 @@ services:
       HF_HUB_TOKEN: ${HuggingFace_API_KEY:-}
       HUGGING_FACE_HUB_TOKEN: ${HuggingFace_API_KEY:-}
       HUGGINGFACEHUB_API_TOKEN: ${HuggingFace_API_KEY:-}
+      HF_API_TOKEN: ${HuggingFace_API_KEY:-}
     ports:
       - "${EMBEDDING_PORT:-8081}:8080"
     volumes:

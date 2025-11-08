@@ -22,6 +22,7 @@ class SpladeEncoder:
         # Authenticate with Hugging Face if token is available
         hf_token = (
             os.getenv("HF_TOKEN")
+            or os.getenv("HF_API_TOKEN")
             or os.getenv("HF_HUB_TOKEN")
             or os.getenv("HUGGING_FACE_HUB_TOKEN")
             or os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -30,6 +31,7 @@ class SpladeEncoder:
         if hf_token:
             try:
                 os.environ.setdefault("HF_TOKEN", hf_token)
+                os.environ.setdefault("HF_API_TOKEN", hf_token)
                 os.environ.setdefault("HF_HUB_TOKEN", hf_token)
                 os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", hf_token)
                 os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", hf_token)

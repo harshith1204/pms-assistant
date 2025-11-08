@@ -67,6 +67,7 @@ def load_env_and_login() -> None:
     token = (
         os.getenv("HuggingFace_API_KEY")
         or os.getenv("HF_TOKEN")
+        or os.getenv("HF_API_TOKEN")
         or os.getenv("HF_HUB_TOKEN")
         or os.getenv("HUGGING_FACE_HUB_TOKEN")
         or os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -77,6 +78,7 @@ def load_env_and_login() -> None:
         for name in (
             "HuggingFace_API_KEY",
             "HF_TOKEN",
+            "HF_API_TOKEN",
             "HF_HUB_TOKEN",
             "HUGGING_FACE_HUB_TOKEN",
             "HUGGINGFACEHUB_API_TOKEN",
