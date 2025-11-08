@@ -703,6 +703,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         label_name = get_nested(entity, "label.name")
                         return (
                             f"• {truncate_str(title or 'Epic', 80)} — "
+                            f"description={truncate_str(description, 120)}, "
                             f"state={state or 'N/A'}, priority={priority or 'N/A'}, "
                             f"project={project or 'N/A'}, assignee={assignee or 'N/A'}, "
                             f"bugNo={bug_number or 'N/A'}, label={label_name or 'N/A'}"
@@ -724,7 +725,31 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         priority = entity.get("priority")
                         label = entity.get_nested(entity,"label.name")
                         # Build base line
-                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={([i for i in assignees] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}, "
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={([i for i in assignees] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}, goal={goal or 'N/A'}, feature={feature or 'N/A'}, epic={epic or 'N/A'}, business={business or 'N/A'}, acceptanceCriteria={Accept_criteria or 'N/A'}"
+                        
+                        if description:
+                            base += f", description={truncate_str(description, 120)}"
+                            
+                        # Add persona info if present
+                        if persona and isinstance(persona, dict):
+                            name = persona.get("personaName", "")
+                            role = persona.get("role", "")
+                            techLevel = persona.get("techLevel", "")
+                            base += f", persona=[name: {name}, role: {role}, techLevel: {techLevel}]"
+                            goals = persona.get("goals")
+                            if goals and isinstance(goals, list):
+                                goals_text = "; ".join([str(g) for g in goals if isinstance(g, str) and g.strip()])
+                                base += f", goals=[{goals_text}]"
+                        elif persona:
+                            base += f", persona={persona}"
+                            
+                        # Add demographics if present
+                        if demographics:
+                            if isinstance(demographics, dict):
+                                demo_text = ", ".join([f"{k}: {v}" for k, v in demographics.items()])
+                                base += f", demographics=[{demo_text}]"
+                            else:
+                                base += f", demographics={demographics}"
 
                     if e == "features":
                         bug = entity.get("displayBugNo") or entity.get("title") or "Item"
@@ -751,7 +776,34 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         label = entity.get_nested(entity,"label.name")
                         estimatesystem = entity.get("estimateSystem")
                         # Build base line
-                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}"
+                        base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}, lead={lead or 'N/A'}, cycle={cycle or 'N/A'}, module={module or 'N/A'}, parent={parent or 'N/A'}, business={business or 'N/A'}, estimatesystem={estimatesystem or 'N/A'}, scope={scope or 'N/A'}"
+                        
+                        if description:
+                            base += f", description={truncate_str(description, 120)}"
+                        
+                        # Add userStories if present
+                        if userStories:
+                            if isinstance(userStories, list):
+                                stories_text = "; ".join([str(s.get('title') if isinstance(s, dict) else s) for s in userStories if s])
+                                base += f", userStories=[{stories_text}]"
+                            else:
+                                base += f", userStories={userStories}"
+
+                        # Add workitems if present
+                        if workitems:
+                            if isinstance(workitems, list):
+                                items_text = "; ".join([str(w.get('title') if isinstance(w, dict) else w) for w in workitems if w])
+                                base += f", workItems=[{items_text}]"
+                            else:
+                                base += f", workItems={workitems}"
+
+                        # Add links if present
+                        if links:
+                            if isinstance(links, list):
+                                links_text = "; ".join([str(l.get('url') if isinstance(l, dict) else l) for l in links if l])
+                                base += f", links=[{links_text}]"
+                            else:
+                                base += f", links={links}"
                         
                         #Add basic info
                         if basicInfo and isinstance(basicInfo, dict):
