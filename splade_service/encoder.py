@@ -20,10 +20,25 @@ class SpladeEncoder:
         self.model_name = name
 
         # Authenticate with Hugging Face if token is available
-        hf_token = os.getenv("HF_TOKEN") or os.getenv("HuggingFace_API_KEY")
+        hf_token = (
+            os.getenv("HF_TOKEN")
+            or os.getenv("HF_API_TOKEN")
+            or os.getenv("HF_HUB_TOKEN")
+            or os.getenv("HUGGING_FACE_HUB_TOKEN")
+            or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+            or os.getenv("HuggingFace_API_KEY")
+        )
         if hf_token:
             try:
-                login(hf_token)
+                os.environ.setdefault("HF_TOKEN", hf_token)
+                os.environ.setdefault("HF_API_TOKEN", hf_token)
+                os.environ.setdefault("HF_HUB_TOKEN", hf_token)
+                os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", hf_token)
+                os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", hf_token)
+                try:
+                    login(token=hf_token, add_to_git_credential=False)
+                except TypeError:
+                    login(hf_token)
             except Exception as e:
                 print(f"Warning: Hugging Face login failed: {e}")
 

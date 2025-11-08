@@ -17,6 +17,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-ENV APP_PORT=7000
+ENV APP_PORT=8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
