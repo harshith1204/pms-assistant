@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from typing import Any, List, Sequence
@@ -11,6 +12,7 @@ from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 
 DEFAULT_MODEL_NAME = "google/embeddinggemma-300m"
+logger = logging.getLogger(__name__)
 
 
 def _resolve_token() -> str | None:
@@ -94,7 +96,12 @@ class EmbeddingEncoder:
                 self.backend = "sentence-transformers"
                 self.dimension = int(self.sentence_transformer.get_sentence_embedding_dimension())
                 return
-            except Exception:
+            except Exception as sentence_transformer_exc:
+                logger.warning(
+                    "SentenceTransformer backend initialisation failed for %s: %s",
+                    name,
+                    sentence_transformer_exc,
+                )
                 self.sentence_transformer = None
                 if backend_preference == "sentence-transformers":
                     raise
@@ -131,7 +138,7 @@ class EmbeddingEncoder:
                     "The installed transformers version "
                     f"({getattr(transformers, '__version__', 'unknown')}) "
                     f"does not support the model type required by '{name}'. "
-                    "Upgrade transformers to >=4.47.0 (see embedding_service/requirements.txt)."
+                    "Upgrade transformers to >=4.57.1 (see embedding_service/requirements.txt)."
                 ) from model_exc
             raise
         self.model.eval()
