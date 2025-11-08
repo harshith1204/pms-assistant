@@ -11,8 +11,10 @@ RUN apt-get update \
 WORKDIR /app
 
 # Install Python dependencies
-COPY data-sync/consumer/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --default-timeout=300 --retries=5 -r requirements.txt
+COPY requirements.txt ./requirements.txt
+COPY data-sync/consumer/requirements.txt ./consumer-requirements.txt
+RUN pip install --no-cache-dir --default-timeout=300 --retries=5 -r requirements.txt && \
+    pip install --no-cache-dir --default-timeout=300 --retries=5 -r consumer-requirements.txt
 
 # Copy application code and shared qdrant modules
 COPY data-sync/qdrant ./qdrant

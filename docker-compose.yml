@@ -12,9 +12,9 @@ services:
       - "${APP_PORT:-7000}:7000"
     depends_on:
       embedding:
-        condition: service_started
+        condition: service_healthy
       splade:
-        condition: service_started
+        condition: service_healthy
       qdrant:
         condition: service_started
       kafka:
@@ -46,15 +46,22 @@ services:
       EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL:-google/embeddinggemma-300m}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-16}
       EMBEDDING_MAX_LENGTH: ${EMBEDDING_MAX_LENGTH:-512}
-      HF_TOKEN: ${HuggingFace_API_KEY:-}
-      HF_API_TOKEN: ${HuggingFace_API_KEY:-}
-      HF_HUB_TOKEN: ${HuggingFace_API_KEY:-}
-      HUGGING_FACE_HUB_TOKEN: ${HuggingFace_API_KEY:-}
-      HUGGINGFACEHUB_API_TOKEN: ${HuggingFace_API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${EMBEDDING_PORT:-8081}:8080"
     volumes:
       - hf_cache:/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4g
     networks:
       - app-net
 
@@ -68,12 +75,22 @@ services:
     environment:
       SPLADE_MODEL_NAME: ${SPLADE_MODEL_NAME:-naver/splade-cocondenser-ensembledistil}
       SPLADE_MAX_TERMS: ${SPLADE_MAX_TERMS:-200}
-      HF_TOKEN: ${HuggingFace_API_KEY:-}
-      HF_HUB_TOKEN: ${HuggingFace_API_KEY:-}
-      HUGGING_FACE_HUB_TOKEN: ${HuggingFace_API_KEY:-}
-      HUGGINGFACEHUB_API_TOKEN: ${HuggingFace_API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${SPLADE_PORT:-8082}:8080"
+    volumes:
+      - hf_cache:/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4g
     networks:
       - app-net
 
@@ -97,10 +114,10 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://host.docker.internal:${KAFKA_EXTERNAL_PORT:-9094}
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
@@ -189,23 +206,20 @@ services:
       - BACKFILL_COLLECTIONS=${BACKFILL_COLLECTIONS:-epic,features,cycle,module,members,workItem,userStory,page}
       - BACKFILL_BATCH_SIZE=${BACKFILL_BATCH_SIZE:-1000}
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
-      - HuggingFace_API_KEY=${HuggingFace_API_KEY:-}
-      - HF_TOKEN=${HuggingFace_API_KEY:-}
-      - HF_HUB_TOKEN=${HuggingFace_API_KEY:-}
-      - HUGGING_FACE_HUB_TOKEN=${HuggingFace_API_KEY:-}
-      - HUGGINGFACEHUB_API_TOKEN=${HuggingFace_API_KEY:-}
+      - HF_TOKEN=${HF_TOKEN:-}
     command: ["python", "/app/backfill_mongodb.py"]
     volumes:
       - ./data-sync/backfill_mongodb.py:/app/backfill_mongodb.py:ro
+      - hf_cache:/app/.cache/huggingface
     depends_on:
       kafka:
         condition: service_healthy
       kafka-connect:
         condition: service_started
       embedding:
-        condition: service_started
+        condition: service_healthy
       splade:
-        condition: service_started
+        condition: service_healthy
     networks:
       - app-net
 
@@ -230,11 +244,7 @@ services:
       - HF_HUB_ETAG_TIMEOUT=${HF_HUB_ETAG_TIMEOUT:-300}
       - BATCH_MAX_MESSAGES=${BATCH_MAX_MESSAGES:-256}
       - BATCH_MAX_SECONDS=${BATCH_MAX_SECONDS:-2}
-      - HuggingFace_API_KEY=${HuggingFace_API_KEY:-}
-      - HF_TOKEN=${HuggingFace_API_KEY:-}
-      - HF_HUB_TOKEN=${HuggingFace_API_KEY:-}
-      - HUGGING_FACE_HUB_TOKEN=${HuggingFace_API_KEY:-}
-      - HUGGINGFACEHUB_API_TOKEN=${HuggingFace_API_KEY:-}
+      - HF_TOKEN=${HF_TOKEN:-}
     depends_on:
       kafka:
         condition: service_healthy
