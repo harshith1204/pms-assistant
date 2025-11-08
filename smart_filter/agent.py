@@ -14,9 +14,9 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from .tools import SmartFilterTools
 # Import the actual tools that are available
-from tools import mongo_query, rag_search
+from agent.tools import mongo_query, rag_search
 # Orchestration utilities
-from orchestrator import Orchestrator
+from agent.orchestrator import Orchestrator
 from bson import ObjectId
 from bson.binary import Binary
 

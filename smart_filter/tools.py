@@ -22,7 +22,7 @@ from collections import defaultdict
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
-from mongo_to_uuid import mongo_uuid_converter
+from agent.mongo_to_uuid import mongo_uuid_converter
 from langchain_core.tools import tool
 from .planner import plan_and_execute_query
 
@@ -219,6 +219,7 @@ class SmartFilterTools:
                     self.rag_tool = existing_instance
                     # Only log on first initialization
                     if not self.rag_available:
+                        pass
                 else:
                     await RAGTool.initialize()
                     self.rag_tool = RAGTool.get_instance()
