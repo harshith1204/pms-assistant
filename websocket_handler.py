@@ -13,7 +13,7 @@ import re
 from dotenv import load_dotenv
 import logging
 from mongo.constants import DATABASE_NAME
-from planner import plan_and_execute_query
+from agent.planner import plan_and_execute_query
 from mongo.conversations import save_user_message
 import os
 import contextlib
@@ -245,7 +245,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             force_planner = data.get("planner", False)
 
             # Proactively cache older conversations to reduce Redis latency
-            from memory import conversation_memory
+            from agent.memory import conversation_memory
             await conversation_memory.ensure_conversation_cached(conversation_id)
 
 
@@ -305,7 +305,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         })
                 else:
                     # Set websocket for content generation tool (direct streaming to frontend)
-                    from tools import set_generation_context
+                    from agent.tools import set_generation_context
                     # Provide websocket + conversation context for persisting generated artifacts
                     set_generation_context(websocket, conversation_id)
                     
@@ -327,7 +327,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             pass
                     
                     # Clean up websocket reference after completion
-                    from tools import set_generation_websocket
+                    from agent.tools import set_generation_websocket
                     set_generation_websocket(None)
 
             await websocket.send_json({

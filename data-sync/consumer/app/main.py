@@ -39,8 +39,11 @@ from qdrant.indexing_shared import (  # noqa: E402
 # Updated to match setup-connectors.sh exactly
 RELEVANT_COLLECTIONS = {
     "page",
+    "pages",
     "workItem",
+    "workitem",
     "project",
+    "projects",
     "cycle",
     "module",
     "epic",

@@ -874,11 +874,11 @@ def index_projects_to_qdrant():
             chunks = get_chunks_for_content(combined_text, "project")
             if not chunks:
                 chunks = [combined_text]
-            
+
             # Record statistics
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("project", mongo_id, name, len(chunks), word_count)
-            
+
             vectors = embedder.encode(chunks)
             if len(vectors) != len(chunks):
                 raise EmbeddingServiceError("Embedding service returned unexpected vector count")
@@ -902,9 +902,9 @@ def index_projects_to_qdrant():
                     "id": point_id_from_seed(f"{mongo_id}/project/{idx}"),
                     "vector": {
                         "dense": vector,
-                    },
-                    "payload": payload,
-                }
+                        },
+                        "payload": payload,
+                    }
                 if splade_vec.get("indices"):
                     point_kwargs["vector"]["sparse"] = SparseVector(
                         indices=splade_vec["indices"], values=splade_vec["values"]
@@ -956,59 +956,59 @@ def index_cycles_to_qdrant():
             combined_text = " ".join(text_parts).strip()
             if not combined_text:
                 logger.error(f"Skipping cycle {mongo_id} - no substantial text content found")
-                continue
+                
 
-            # Build metadata
-            metadata = {}
-            if doc.get("business") and isinstance(doc["business"], dict):
-                metadata["business_name"] = doc["business"].get("name")
-                if doc["business"].get("_id") is not None:
-                    try:
-                        metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
-                    except Exception:
-                        pass
+                # Build metadata
+                metadata = {}
+                if doc.get("business") and isinstance(doc["business"], dict):
+                    metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
 
-            # Chunk cycles with long descriptions
-            chunks = get_chunks_for_content(combined_text, "cycle")
-            if not chunks:
-                chunks = [combined_text]
-            
-            # Record statistics
-            word_count = len(combined_text.split()) if combined_text else 0
-            _stats.record("cycle", mongo_id, name, len(chunks), word_count)
-            
-            vectors = embedder.encode(chunks)
-            if len(vectors) != len(chunks):
-                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+                # Chunk cycles with long descriptions
+                chunks = get_chunks_for_content(combined_text, "cycle")
+                if not chunks:
+                    chunks = [combined_text]
 
-            for idx, chunk in enumerate(chunks):
-                vector = vectors[idx]
-                full_text = f"{name} {chunk}".strip()
-                splade_vec = splade.encode_text(full_text)
-                payload = {
-                    "mongo_id": mongo_id,
-                    "parent_id": mongo_id,
-                    "chunk_index": idx,
-                    "chunk_count": len(chunks),
-                    "title": name,
-                    "content": chunk,
-                    "full_text": full_text,
-                    "content_type": "cycle"
-                }
-                payload.update({k: v for k, v in metadata.items() if v is not None})
-                point_kwargs = {
-                    "id": point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
-                    "vector": {
-                        "dense": vector,
-                    },
-                    "payload": payload,
-                }
-                if splade_vec.get("indices"):
-                    point_kwargs["vector"]["sparse"] = SparseVector(
-                        indices=splade_vec["indices"], values=splade_vec["values"]
-                    )
-                point = PointStruct(**point_kwargs)
-                points.append(point)
+                # Record statistics
+                word_count = len(combined_text.split()) if combined_text else 0
+                _stats.record("cycle", mongo_id, name, len(chunks), word_count)
+
+                vectors = embedder.encode(chunks)
+                if len(vectors) != len(chunks):
+                    raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
+                for idx, chunk in enumerate(chunks):
+                    vector = vectors[idx]
+                    full_text = f"{name} {chunk}".strip()
+                    splade_vec = splade.encode_text(full_text)
+                    payload = {
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": name,
+                        "content": chunk,
+                        "full_text": full_text,
+                        "content_type": "cycle"
+                    }
+                    payload.update({k: v for k, v in metadata.items() if v is not None})
+                    point_kwargs = {
+                        "id": point_id_from_seed(f"{mongo_id}/cycle/{idx}"),
+                        "vector": {
+                            "dense": vector,
+                            },
+                            "payload": payload,
+                        }
+                    if splade_vec.get("indices"):
+                        point_kwargs["vector"]["sparse"] = SparseVector(
+                            indices=splade_vec["indices"], values=splade_vec["values"]
+                        )
+                    point = PointStruct(**point_kwargs)
+                    points.append(point)
 
         if not points:
             logger.error("No cycles with descriptions to index.")
@@ -1056,57 +1056,57 @@ def index_modules_to_qdrant():
                 logger.error(f"Skipping module {mongo_id} - no substantial text content found")
                 continue
 
-            # Build metadata
-            metadata = {}
-            if doc.get("business") and isinstance(doc["business"], dict):
-                metadata["business_name"] = doc["business"].get("name")
-                if doc["business"].get("_id") is not None:
-                    try:
-                        metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
-                    except Exception:
-                        pass
+                # Build metadata
+                metadata = {}
+                if doc.get("business") and isinstance(doc["business"], dict):
+                    metadata["business_name"] = doc["business"].get("name")
+                    if doc["business"].get("_id") is not None:
+                        try:
+                            metadata["business_id"] = normalize_mongo_id(doc["business"].get("_id"))
+                        except Exception:
+                            pass
 
-            # Chunk modules with long descriptions
-            chunks = get_chunks_for_content(combined_text, "module")
-            if not chunks:
-                chunks = [combined_text]
-            
-            # Record statistics
-            word_count = len(combined_text.split()) if combined_text else 0
-            _stats.record("module", mongo_id, name, len(chunks), word_count)
-            
-            vectors = embedder.encode(chunks)
-            if len(vectors) != len(chunks):
-                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+                # Chunk modules with long descriptions
+                chunks = get_chunks_for_content(combined_text, "module")
+                if not chunks:
+                    chunks = [combined_text]
 
-            for idx, chunk in enumerate(chunks):
-                vector = vectors[idx]
-                full_text = f"{name} {chunk}".strip()
-                splade_vec = splade.encode_text(full_text)
-                payload = {
-                    "mongo_id": mongo_id,
-                    "parent_id": mongo_id,
-                    "chunk_index": idx,
-                    "chunk_count": len(chunks),
-                    "title": name,
-                    "content": chunk,
-                    "full_text": full_text,
-                    "content_type": "module"
-                }
-                payload.update({k: v for k, v in metadata.items() if v is not None})
-                point_kwargs = {
-                    "id": point_id_from_seed(f"{mongo_id}/module/{idx}"),
-                    "vector": {
-                        "dense": vector,
-                    },
-                    "payload": payload,
-                }
-                if splade_vec.get("indices"):
-                    point_kwargs["vector"]["sparse"] = SparseVector(
-                        indices=splade_vec["indices"], values=splade_vec["values"]
-                    )
-                point = PointStruct(**point_kwargs)
-                points.append(point)
+                # Record statistics
+                word_count = len(combined_text.split()) if combined_text else 0
+                _stats.record("module", mongo_id, name, len(chunks), word_count)
+
+                vectors = embedder.encode(chunks)
+                if len(vectors) != len(chunks):
+                    raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
+                for idx, chunk in enumerate(chunks):
+                    vector = vectors[idx]
+                    full_text = f"{name} {chunk}".strip()
+                    splade_vec = splade.encode_text(full_text)
+                    payload = {
+                        "mongo_id": mongo_id,
+                        "parent_id": mongo_id,
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "title": name,
+                        "content": chunk,
+                        "full_text": full_text,
+                        "content_type": "module"
+                    }
+                    payload.update({k: v for k, v in metadata.items() if v is not None})
+                    point_kwargs = {
+                        "id": point_id_from_seed(f"{mongo_id}/module/{idx}"),
+                        "vector": {
+                            "dense": vector,
+                            },
+                            "payload": payload,
+                        }
+                    if splade_vec.get("indices"):
+                        point_kwargs["vector"]["sparse"] = SparseVector(
+                            indices=splade_vec["indices"], values=splade_vec["values"]
+                        )
+                    point = PointStruct(**point_kwargs)
+                    points.append(point)
 
         if not points:
             logger.error("No modules with descriptions to index.")
