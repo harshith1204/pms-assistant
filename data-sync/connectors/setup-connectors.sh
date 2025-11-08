@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Wait for Kafka Connect to be ready
 echo "Waiting for Kafka Connect to be ready..."
-until curl -f http://localhost:8083/connectors > /dev/null 2>&1; do
+until curl -f http://localhost:8084/connectors > /dev/null 2>&1; do
   echo "Kafka Connect not ready, waiting..."
   sleep 5
 done
@@ -107,13 +107,13 @@ with open(config_path, "w", encoding="utf-8") as f:
 PY
 
 # Remove existing connector if present to apply the latest config
-curl -s -X DELETE http://localhost:8083/connectors/mongodb-source-connector > /dev/null 2>&1 || true
+curl -s -X DELETE http://localhost:8084/connectors/mongodb-source-connector > /dev/null 2>&1 || true
 
 echo "Registering mongodb-source-connector from ${CONFIG_PATH}"
 response="$(curl -s -o /tmp/connector_response.json -w "%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   --data @${CONFIG_PATH} \
-  http://localhost:8083/connectors)"
+  http://localhost:8084/connectors)"
 
 if [ "$response" != "201" ] && [ "$response" != "409" ]; then
   echo "ERROR: Failed to register connector (HTTP $response)" >&2

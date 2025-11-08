@@ -17,7 +17,7 @@ MONGODB_CONNECTION_STRING = os.getenv(
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")  # Default Qdrant URL
 QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "pms_collection")  # Collection for page and work item content
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m")  # Sentence transformer model for embeddings
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")  # Sentence transformer model for embeddings
  
 # Retrieval packing configuration
 # Max tokens to allocate for retrieved context before sending to the LLM
