@@ -23,7 +23,7 @@ from qdrant.indexing_shared import normalize_document_ids
 # Configuration - match the connector setup
 MONGODB_URI = os.getenv(
     "MONGODB_URI",
-    "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017/ProjectManagement?authSource=admin&replicaSet=rs0"
+    "mongodb://mongo:27017/ProjectManagement?authSource=admin"
 )
 DATABASE_NAME = os.getenv("MONGODB_DATABASE", "ProjectManagement")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")

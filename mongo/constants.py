@@ -7,14 +7,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Database configuration
-DATABASE_NAME = "ProjectManagement"
-MONGODB_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
+DATABASE_NAME = os.getenv("MONGODB_DATABASE", "ProjectManagement")
+MONGODB_CONNECTION_STRING = os.getenv(
+    "MONGODB_URI",
+    "mongodb://mongo:27017/?authSource=admin",
+)
 
 # Qdrant configuration
-QDRANT_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.pWxytfubjbSDBCTZaH321Eya7qis_tP6sHMAZ3Gki6Y"
-QDRANT_URL = "https://dc88ad91-1e1e-48b4-bf73-0e5c1db1cffd.europe-west3-0.gcp.cloud.qdrant.io"  # Default Qdrant URL
-QDRANT_COLLECTION_NAME = "pms_collection"  # Collection for page and work item content
-EMBEDDING_MODEL = "google/embeddinggemma-300m"  # Sentence transformer model for embeddings
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")  # Default Qdrant URL
+QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "pms_collection")  # Collection for page and work item content
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m")  # Sentence transformer model for embeddings
  
 # Retrieval packing configuration
 # Max tokens to allocate for retrieved context before sending to the LLM
