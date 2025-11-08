@@ -9,7 +9,7 @@ services:
       EMBEDDING_SERVICE_URL: http://embedding:8080
       SPLADE_SERVICE_URL: http://splade:8080
     ports:
-      - "${APP_PORT:-7000}:7000"
+      - "${APP_PORT:-8000}:8000"
     depends_on:
       embedding:
         condition: service_healthy
