@@ -151,7 +151,24 @@ const Index = () => {
 
     const flushPendingIntoLastAssistant = () => {
       if (pendingActionBullets.length === 0) return;
-      // Attach to the most recent assistant message if available
+      // Find the most recent assistant message that doesn't have actions yet, or the last one
+      for (let i = result.length - 1; i >= 0; i--) {
+        if (result[i].role === "assistant" && (!result[i].internalActivity || !result[i].internalActivity.bullets || result[i].internalActivity.bullets.length === 0)) {
+          const prev = result[i];
+          result[i] = {
+            ...prev,
+            internalActivity: {
+              summary: prev.internalActivity?.summary || "Actions",
+              bullets: [...pendingActionBullets],
+              doneLabel: prev.internalActivity?.doneLabel || "Done",
+              body: prev.internalActivity?.body,
+            },
+          };
+          pendingActionBullets = [];
+          return;
+        }
+      }
+      // If all assistant messages already have actions, merge with the last one
       for (let i = result.length - 1; i >= 0; i--) {
         if (result[i].role === "assistant") {
           const prev = result[i];
