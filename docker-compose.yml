@@ -38,22 +38,25 @@ services:
       - app-net
 
   embedding:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    build:
+      context: .
+      dockerfile: embedding_service/Dockerfile
     container_name: embedding
-    platform: linux/amd64
     env_file:
       - .env
     environment:
-      MODEL_ID: ${EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-16}
+      EMBEDDING_MAX_LENGTH: ${EMBEDDING_MAX_LENGTH:-512}
       HF_TOKEN: ${HuggingFace_API_KEY:-}
+      HF_API_TOKEN: ${HuggingFace_API_KEY:-}
       HF_HUB_TOKEN: ${HuggingFace_API_KEY:-}
       HUGGING_FACE_HUB_TOKEN: ${HuggingFace_API_KEY:-}
       HUGGINGFACEHUB_API_TOKEN: ${HuggingFace_API_KEY:-}
-      HF_API_TOKEN: ${HuggingFace_API_KEY:-}
     ports:
       - "${EMBEDDING_PORT:-8081}:8080"
     volumes:
-      - hf_cache:/data
+      - hf_cache:/app/.cache/huggingface
     networks:
       - app-net
 
