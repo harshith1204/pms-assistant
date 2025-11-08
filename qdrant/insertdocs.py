@@ -1054,7 +1054,6 @@ def index_modules_to_qdrant():
             combined_text = " ".join(text_parts).strip()
             if not combined_text:
                 logger.error(f"Skipping module {mongo_id} - no substantial text content found")
-                continue
 
                 # Build metadata
                 metadata = {}

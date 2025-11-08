@@ -462,7 +462,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
     Use this ONLY when the user asks for authoritative data that must come from
     MongoDB (counts, lists, filters, group-by, breakdowns, state/assignee/project details)
     across collections: `project`, `workItem`, `cycle`, `module`, `epic`, `members`,
-    `page`, `projectState`, `timeline`.
+    `page`, `projectState`, `userStory`, `features`.
 
     Do NOT use this for:
     - Free-form content questions (use `rag_search`).
@@ -1130,7 +1130,7 @@ async def rag_search(
     - Synthesize information from multiple sources
     
     Use this for ANY content-based search or analysis needs:
-    - Find relevant pages, work items, projects, cycles, modules, epics
+    - Find relevant pages, work items, projects, cycles, modules, epics, userstories, features
     - Search by semantic meaning (not just keywords)
     - Get full context for answering questions
     - Analyze content patterns and distributions
@@ -1148,7 +1148,7 @@ async def rag_search(
     
     Args:
         query: Search query (semantic meaning, not just keywords)
-        content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', 'epic', or None (all)
+        content_type: Filter by type - 'page', 'work_item', 'project', 'cycle', 'module', 'epic', 'userStory', 'features' or None (all)
         group_by: Group results by field - 'project_name', 'updatedAt', 'priority', 'state_name', 
                  'content_type', 'assignee_name', 'visibility', etc. (None = no grouping)
         limit: Max results to retrieve (default 10, increase for broader searches)
