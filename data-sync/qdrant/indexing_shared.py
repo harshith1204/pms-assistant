@@ -53,8 +53,9 @@ CHUNKING_CONFIG: Dict[str, Dict[str, int]] = {
 
 PROJECT_COLLECTIONS: Dict[str, str] = {
     "page": "page",
-    "workItem": "work_item",
+    "workitem": "work_item",
     "project": "project",
+    "projects": "project",
     "cycle": "cycle",
     "module": "module",
     "epic": "epic",
@@ -67,6 +68,8 @@ COLLECTION_ALIASES: Dict[str, str] = {
     "page": "page",
     "pages": "page",
     "Page": "page",
+    "Project": "project",
+    "Projects": "project",
     "workItem": "workitem",
     "workitem": "workitem",
     "work_item": "workitem",
@@ -171,8 +174,21 @@ def ensure_collection_with_hybrid(
             ("content_type", qmodels.PayloadSchemaType.KEYWORD),
             ("business_id", qmodels.PayloadSchemaType.KEYWORD),
             ("project_name", qmodels.PayloadSchemaType.KEYWORD),
+            ("projectDisplayId", qmodels.PayloadSchemaType.KEYWORD),
             ("title", qmodels.PayloadSchemaType.TEXT),
             ("full_text", qmodels.PayloadSchemaType.TEXT),
+            ("status", qmodels.PayloadSchemaType.KEYWORD),
+            ("priority", qmodels.PayloadSchemaType.KEYWORD),
+            ("state_name", qmodels.PayloadSchemaType.KEYWORD),
+            ("stateMaster_name", qmodels.PayloadSchemaType.KEYWORD),
+            ("assignee_name", qmodels.PayloadSchemaType.KEYWORD),
+            ("business_name", qmodels.PayloadSchemaType.KEYWORD),
+            ("labels", qmodels.PayloadSchemaType.KEYWORD),
+            ("createdAt", qmodels.PayloadSchemaType.DATETIME),
+            ("updatedAt", qmodels.PayloadSchemaType.DATETIME),
+            ("startDate", qmodels.PayloadSchemaType.DATETIME),
+            ("endDate", qmodels.PayloadSchemaType.DATETIME),
+            ("releaseDate", qmodels.PayloadSchemaType.DATETIME),
             ("chunk_index", qmodels.PayloadSchemaType.INTEGER),
             ("parent_id", qmodels.PayloadSchemaType.KEYWORD),
             ("project_id", qmodels.PayloadSchemaType.KEYWORD),
@@ -186,9 +202,9 @@ def ensure_collection_with_hybrid(
                     field_name=field_name,
                     field_schema=schema,
                 )
-        except Exception as exc:
-            if "already exists" not in str(exc):
-                logger.error(f"Failed to ensure index on '{field_name}': {exc}")
+            except Exception as exc:
+                if "already exists" not in str(exc):
+                    logger.error(f"Failed to ensure index on '{field_name}': {exc}")
 
     except Exception as exc:  # pragma: no cover - top-level guard
         logger.error(f"Could not ensure collection '{collection_name}': {exc}")
@@ -702,6 +718,7 @@ def _prepare_page(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
     metadata: Dict[str, Any] = {
         "visibility": doc.get("visibility"),
         "isFavourite": doc.get("isFavourite", False),
+        "locked": doc.get("locked"),
         "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
         "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
     }
@@ -711,6 +728,8 @@ def _prepare_page(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
         metadata["project_name"] = project.get("name")
         if project.get("_id") is not None:
             metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+        if project.get("projectDisplayId"):
+            metadata["projectDisplayId"] = project.get("projectDisplayId")
 
     business = doc.get("business")
     if isinstance(business, dict):
@@ -721,6 +740,76 @@ def _prepare_page(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
     created_by = doc.get("createdBy")
     if isinstance(created_by, dict):
         metadata["created_by_name"] = created_by.get("name")
+        if created_by.get("_id") is not None:
+            metadata["created_by_id"] = normalize_mongo_id(created_by.get("_id"))
+
+    linked_cycle = doc.get("linkedCycle")
+    if isinstance(linked_cycle, list):
+        cycle_names = []
+        cycle_ids = []
+        for entry in linked_cycle:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if name:
+                cycle_names.append(name)
+            if entry.get("_id") is not None:
+                cycle_ids.append(normalize_mongo_id(entry.get("_id")))
+        if cycle_names:
+            metadata["linked_cycle_names"] = cycle_names
+        if cycle_ids:
+            metadata["linked_cycle_ids"] = cycle_ids
+
+    linked_module = doc.get("linkedModule")
+    if isinstance(linked_module, list):
+        module_names = []
+        module_ids = []
+        for entry in linked_module:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if name:
+                module_names.append(name)
+            if entry.get("_id") is not None:
+                module_ids.append(normalize_mongo_id(entry.get("_id")))
+        if module_names:
+            metadata["linked_module_names"] = module_names
+        if module_ids:
+            metadata["linked_module_ids"] = module_ids
+
+    linked_pages = doc.get("linkedPages")
+    if isinstance(linked_pages, list):
+        page_titles = []
+        page_ids = []
+        for entry in linked_pages:
+            if not isinstance(entry, dict):
+                continue
+            title_ref = entry.get("title") or entry.get("name")
+            if title_ref:
+                page_titles.append(title_ref)
+            if entry.get("_id") is not None:
+                page_ids.append(normalize_mongo_id(entry.get("_id")))
+        if page_titles:
+            metadata["linked_page_titles"] = page_titles
+        if page_ids:
+            metadata["linked_page_ids"] = page_ids
+
+    linked_members = doc.get("linkedMembers")
+    if isinstance(linked_members, list):
+        member_names = []
+        member_ids = []
+        for member in linked_members:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("name")
+            if name:
+                member_names.append(name)
+            if member.get("_id") is not None:
+                member_ids.append(normalize_mongo_id(member.get("_id")))
+        if member_names:
+            metadata["linked_member_names"] = member_names
+        if member_ids:
+            metadata["linked_member_ids"] = member_ids
 
     prepared = PreparedDocument(
         content_type="page",
@@ -760,25 +849,41 @@ def _prepare_work_item(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]
         "status": doc.get("status"),
         "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
         "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+        "estimate": doc.get("estimate"),
+        "type": doc.get("type"),
     }
 
     state = doc.get("state")
     if isinstance(state, dict):
         metadata["state_name"] = state.get("name")
+        if state.get("_id") is not None:
+            metadata["state_id"] = normalize_mongo_id(state.get("_id"))
+
+    state_master = doc.get("stateMaster")
+    if isinstance(state_master, dict):
+        metadata["stateMaster_name"] = state_master.get("name")
+        if state_master.get("_id") is not None:
+            metadata["stateMaster_id"] = normalize_mongo_id(state_master.get("_id"))
 
     project = doc.get("project")
     if isinstance(project, dict):
         metadata["project_name"] = project.get("name")
         if project.get("_id") is not None:
             metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+        if project.get("projectDisplayId"):
+            metadata["projectDisplayId"] = project.get("projectDisplayId")
 
     cycle = doc.get("cycle")
     if isinstance(cycle, dict):
         metadata["cycle_name"] = cycle.get("name")
+        if cycle.get("_id") is not None:
+            metadata["cycle_id"] = normalize_mongo_id(cycle.get("_id"))
 
     modules = doc.get("modules")
     if isinstance(modules, dict):
         metadata["module_name"] = modules.get("name")
+        if modules.get("_id") is not None:
+            metadata["module_id"] = normalize_mongo_id(modules.get("_id"))
 
     business = doc.get("business")
     if isinstance(business, dict):
@@ -786,15 +891,67 @@ def _prepare_work_item(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]
         if business.get("_id") is not None:
             metadata["business_id"] = normalize_mongo_id(business.get("_id"))
 
+    user_story = doc.get("userStory")
+    if isinstance(user_story, dict):
+        metadata["user_story_name"] = user_story.get("name")
+        if user_story.get("_id") is not None:
+            metadata["user_story_id"] = normalize_mongo_id(user_story.get("_id"))
+
+    feature = doc.get("feature")
+    if isinstance(feature, dict):
+        metadata["feature_name"] = feature.get("name")
+        if feature.get("_id") is not None:
+            metadata["feature_id"] = normalize_mongo_id(feature.get("_id"))
+
+    epic = doc.get("epic")
+    if isinstance(epic, dict):
+        metadata["epic_name"] = epic.get("name")
+        if epic.get("_id") is not None:
+            metadata["epic_id"] = normalize_mongo_id(epic.get("_id"))
+
     assignee = doc.get("assignee")
-    if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
-        metadata["assignee_name"] = assignee[0].get("name")
+    if isinstance(assignee, list):
+        assignee_names: List[str] = []
+        assignee_ids: List[str] = []
+        for member in assignee:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("name")
+            if name:
+                assignee_names.append(name)
+            if member.get("_id") is not None:
+                assignee_ids.append(normalize_mongo_id(member.get("_id")))
+        if assignee_names:
+            metadata["assignee_name"] = assignee_names[0]
+            metadata["assignee_names"] = assignee_names
+        if assignee_ids:
+            metadata["assignee_ids"] = assignee_ids
     elif isinstance(assignee, dict):
         metadata["assignee_name"] = assignee.get("name")
+        if assignee.get("_id") is not None:
+            metadata["assignee_id"] = normalize_mongo_id(assignee.get("_id"))
 
     created_by = doc.get("createdBy")
     if isinstance(created_by, dict):
         metadata["created_by_name"] = created_by.get("name")
+        if created_by.get("_id") is not None:
+            metadata["created_by_id"] = normalize_mongo_id(created_by.get("_id"))
+
+    labels = doc.get("label")
+    if isinstance(labels, list):
+        label_names = [html_to_text((label or {}).get("name", "")) for label in labels]
+        label_names = [name for name in label_names if name]
+        if label_names:
+            metadata["labels"] = label_names
+
+    updated_by = doc.get("updatedBy")
+    if isinstance(updated_by, list):
+        updater_names: List[str] = []
+        for member in updated_by:
+            if isinstance(member, dict) and member.get("name"):
+                updater_names.append(member.get("name"))
+        if updater_names:
+            metadata["updated_by_names"] = updater_names
 
     prepared = PreparedDocument(
         content_type="work_item",
@@ -836,7 +993,39 @@ def _prepare_project(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
             f"WARN: skipping project {mongo_id} - no substantial text content"
         )
 
-    metadata = _build_metadata_with_business(doc)
+    metadata: Dict[str, Any] = {
+        "projectDisplayId": doc.get("projectDisplayId"),
+        "status": doc.get("status"),
+        "access": doc.get("access"),
+        "isActive": doc.get("isActive"),
+        "isArchived": doc.get("isArchived"),
+        "favourite": doc.get("favourite"),
+        "leadMail": doc.get("leadMail"),
+        "imageUrl": doc.get("imageUrl"),
+        "icon": doc.get("icon"),
+        "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
+        "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+    }
+
+    metadata.update(_build_metadata_with_business(doc))
+
+    lead = doc.get("lead")
+    if isinstance(lead, dict):
+        metadata["lead_name"] = lead.get("name")
+        if lead.get("_id") is not None:
+            metadata["lead_id"] = normalize_mongo_id(lead.get("_id"))
+
+    default_assignee = doc.get("defaultAsignee")
+    if isinstance(default_assignee, dict):
+        metadata["default_assignee_name"] = default_assignee.get("name")
+        if default_assignee.get("_id") is not None:
+            metadata["default_assignee_id"] = normalize_mongo_id(default_assignee.get("_id"))
+
+    created_by = doc.get("createdBy")
+    if isinstance(created_by, dict):
+        metadata["created_by_name"] = created_by.get("name")
+        if created_by.get("_id") is not None:
+            metadata["created_by_id"] = normalize_mongo_id(created_by.get("_id"))
 
     prepared = PreparedDocument(
         content_type="project",
@@ -879,7 +1068,29 @@ def _prepare_cycle(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
             f"WARN: skipping cycle {mongo_id} - no substantial text content"
         )
 
-    metadata = _build_metadata_with_business(doc)
+    metadata: Dict[str, Any] = {
+        "status": doc.get("status"),
+        "startDate": doc.get("startDate"),
+        "endDate": doc.get("endDate"),
+        "isDefault": doc.get("isDefault"),
+        "isFavourite": doc.get("isFavourite"),
+        "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
+        "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+    }
+
+    metadata.update(_build_metadata_with_business(doc))
+
+    project = doc.get("project")
+    if isinstance(project, dict):
+        metadata["project_name"] = project.get("name")
+        if project.get("_id") is not None:
+            metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+
+    created_by = doc.get("createdBy")
+    if isinstance(created_by, dict):
+        metadata["created_by_name"] = created_by.get("name")
+        if created_by.get("_id") is not None:
+            metadata["created_by_id"] = normalize_mongo_id(created_by.get("_id"))
 
     prepared = PreparedDocument(
         content_type="cycle",
@@ -922,7 +1133,53 @@ def _prepare_module(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
             f"WARN: skipping module {mongo_id} - no substantial text content"
         )
 
-    metadata = _build_metadata_with_business(doc)
+    metadata: Dict[str, Any] = {
+        "isFavourite": doc.get("isFavourite"),
+        "createdAt": doc.get("createdAt") or doc.get("createdTimeStamp"),
+        "updatedAt": doc.get("updatedAt") or doc.get("updatedTimeStamp"),
+    }
+
+    metadata.update(_build_metadata_with_business(doc))
+
+    project = doc.get("project")
+    if isinstance(project, dict):
+        metadata["project_name"] = project.get("name")
+        if project.get("_id") is not None:
+            metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+
+    epic = doc.get("epic")
+    if isinstance(epic, dict):
+        metadata["epic_name"] = epic.get("name")
+        if epic.get("_id") is not None:
+            metadata["epic_id"] = normalize_mongo_id(epic.get("_id"))
+
+    lead = doc.get("lead")
+    if isinstance(lead, dict):
+        metadata["lead_name"] = lead.get("name")
+        if lead.get("_id") is not None:
+            metadata["lead_id"] = normalize_mongo_id(lead.get("_id"))
+
+    assignee = doc.get("assignee")
+    if isinstance(assignee, list):
+        assignee_names: List[str] = []
+        assignee_ids: List[str] = []
+        for member in assignee:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("name")
+            if name:
+                assignee_names.append(name)
+            if member.get("_id") is not None:
+                assignee_ids.append(normalize_mongo_id(member.get("_id")))
+        if assignee_names:
+            metadata["assignee_names"] = assignee_names
+            metadata["assignee_name"] = assignee_names[0]
+        if assignee_ids:
+            metadata["assignee_ids"] = assignee_ids
+    elif isinstance(assignee, dict):
+        metadata["assignee_name"] = assignee.get("name")
+        if assignee.get("_id") is not None:
+            metadata["assignee_id"] = normalize_mongo_id(assignee.get("_id"))
 
     prepared = PreparedDocument(
         content_type="module",
@@ -954,16 +1211,22 @@ def _prepare_epic(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
     state = doc.get("state")
     if isinstance(state, dict):
         metadata["state_name"] = state.get("name")
+        if state.get("_id") is not None:
+            metadata["state_id"] = normalize_mongo_id(state.get("_id"))
 
     state_master = doc.get("stateMaster")
     if isinstance(state_master, dict):
         metadata["stateMaster_name"] = state_master.get("name")
+        if state_master.get("_id") is not None:
+            metadata["stateMaster_id"] = normalize_mongo_id(state_master.get("_id"))
 
     project = doc.get("project")
     if isinstance(project, dict):
         metadata["project_name"] = project.get("name")
         if project.get("_id") is not None:
             metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+        if project.get("projectDisplayId"):
+            metadata["projectDisplayId"] = project.get("projectDisplayId")
 
     business = doc.get("business")
     if isinstance(business, dict):
@@ -972,14 +1235,56 @@ def _prepare_epic(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
             metadata["business_id"] = normalize_mongo_id(business.get("_id"))
 
     assignee = doc.get("assignee")
-    if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
-        metadata["assignee_name"] = assignee[0].get("name")
+    if isinstance(assignee, list):
+        assignee_names: List[str] = []
+        assignee_ids: List[str] = []
+        for member in assignee:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("name")
+            if name:
+                assignee_names.append(name)
+            if member.get("_id") is not None:
+                assignee_ids.append(normalize_mongo_id(member.get("_id")))
+        if assignee_names:
+            metadata["assignee_name"] = assignee_names[0]
+            metadata["assignee_names"] = assignee_names
+        if assignee_ids:
+            metadata["assignee_ids"] = assignee_ids
     elif isinstance(assignee, dict):
         metadata["assignee_name"] = assignee.get("name")
+        if assignee.get("_id") is not None:
+            metadata["assignee_id"] = normalize_mongo_id(assignee.get("_id"))
 
     created_by = doc.get("createdBy")
     if isinstance(created_by, dict):
         metadata["created_by_name"] = created_by.get("name")
+        if created_by.get("_id") is not None:
+            metadata["created_by_id"] = normalize_mongo_id(created_by.get("_id"))
+
+    labels = doc.get("label")
+    if isinstance(labels, list):
+        label_names = [html_to_text((label or {}).get("name", "")) for label in labels]
+        label_names = [name for name in label_names if name]
+        if label_names:
+            metadata["labels"] = label_names
+
+    modules_list = doc.get("modulesList")
+    if isinstance(modules_list, list):
+        module_names = []
+        module_ids = []
+        for module_entry in modules_list:
+            if not isinstance(module_entry, dict):
+                continue
+            name = module_entry.get("name")
+            if name:
+                module_names.append(name)
+            if module_entry.get("_id") is not None:
+                module_ids.append(normalize_mongo_id(module_entry.get("_id")))
+        if module_names:
+            metadata["module_names"] = module_names
+        if module_ids:
+            metadata["module_ids"] = module_ids
 
     prepared = PreparedDocument(
         content_type="epic",
@@ -1070,6 +1375,8 @@ def _prepare_feature(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
         metadata["project_name"] = project.get("name")
         if project.get("_id") is not None:
             metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+        if project.get("projectDisplayId"):
+            metadata["projectDisplayId"] = project.get("projectDisplayId")
 
     business = doc.get("business")
     if isinstance(business, dict):
@@ -1080,28 +1387,60 @@ def _prepare_feature(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
     state = doc.get("state")
     if isinstance(state, dict):
         metadata["state_name"] = state.get("name")
+        if state.get("_id") is not None:
+            metadata["state_id"] = normalize_mongo_id(state.get("_id"))
 
     state_master = doc.get("stateMaster")
     if isinstance(state_master, dict):
         metadata["stateMaster_name"] = state_master.get("name")
+        if state_master.get("_id") is not None:
+            metadata["stateMaster_id"] = normalize_mongo_id(state_master.get("_id"))
 
     cycle = doc.get("cycle")
     if isinstance(cycle, dict):
         metadata["cycle_name"] = cycle.get("name")
+        if cycle.get("_id") is not None:
+            metadata["cycle_id"] = normalize_mongo_id(cycle.get("_id"))
 
     modules = doc.get("modules")
     if isinstance(modules, dict):
         metadata["module_name"] = modules.get("name")
+        if modules.get("_id") is not None:
+            metadata["module_id"] = normalize_mongo_id(modules.get("_id"))
 
     created_by = doc.get("createdBy")
     if isinstance(created_by, dict):
         metadata["created_by_name"] = created_by.get("name")
+        if created_by.get("_id") is not None:
+            metadata["created_by_id"] = normalize_mongo_id(created_by.get("_id"))
 
     assignee = doc.get("assignee")
-    if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
-        metadata["assignee_name"] = assignee[0].get("name")
+    if isinstance(assignee, list):
+        assignee_names: List[str] = []
+        assignee_ids: List[str] = []
+        for member in assignee:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("name")
+            if name:
+                assignee_names.append(name)
+            if member.get("_id") is not None:
+                assignee_ids.append(normalize_mongo_id(member.get("_id")))
+        if assignee_names:
+            metadata["assignee_name"] = assignee_names[0]
+            metadata["assignee_names"] = assignee_names
+        if assignee_ids:
+            metadata["assignee_ids"] = assignee_ids
     elif isinstance(assignee, dict):
         metadata["assignee_name"] = assignee.get("name")
+        if assignee.get("_id") is not None:
+            metadata["assignee_id"] = normalize_mongo_id(assignee.get("_id"))
+
+    epic = doc.get("epic")
+    if isinstance(epic, dict):
+        metadata["epic_name"] = epic.get("name")
+        if epic.get("_id") is not None:
+            metadata["epic_id"] = normalize_mongo_id(epic.get("_id"))
 
     labels = doc.get("label")
     if isinstance(labels, list):
@@ -1110,6 +1449,40 @@ def _prepare_feature(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str]]:
         if label_names:
             metadata["labels"] = label_names
             text_parts.extend(label_names)
+
+    linked_work_items = doc.get("workItems")
+    if isinstance(linked_work_items, list):
+        work_item_names = []
+        work_item_ids = []
+        for item in linked_work_items:
+            if not isinstance(item, dict):
+                continue
+            name = html_to_text(item.get("name", ""))
+            if name:
+                work_item_names.append(name)
+            if item.get("_id") is not None:
+                work_item_ids.append(normalize_mongo_id(item.get("_id")))
+        if work_item_names:
+            metadata["work_item_names"] = work_item_names
+        if work_item_ids:
+            metadata["work_item_ids"] = work_item_ids
+
+    linked_user_stories = doc.get("userStories")
+    if isinstance(linked_user_stories, list):
+        story_names = []
+        story_ids = []
+        for story in linked_user_stories:
+            if not isinstance(story, dict):
+                continue
+            name = html_to_text(story.get("name", ""))
+            if name:
+                story_names.append(name)
+            if story.get("_id") is not None:
+                story_ids.append(normalize_mongo_id(story.get("_id")))
+        if story_names:
+            metadata["user_story_names"] = story_names
+        if story_ids:
+            metadata["user_story_ids"] = story_ids
 
     prepared_title = title or doc.get("displayBugNo", "") or mongo_id
     warnings: List[str] = []
@@ -1170,6 +1543,8 @@ def _prepare_user_story(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str
         "priority": doc.get("priority"),
         "createdAt": doc.get("createdAt"),
         "updatedAt": doc.get("updatedAt"),
+        "persona": doc.get("persona"),
+        "userGoal": doc.get("userGoal"),
     }
 
     project = doc.get("project")
@@ -1177,6 +1552,8 @@ def _prepare_user_story(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str
         metadata["project_name"] = project.get("name")
         if project.get("_id") is not None:
             metadata["project_id"] = normalize_mongo_id(project.get("_id"))
+        if project.get("projectDisplayId"):
+            metadata["projectDisplayId"] = project.get("projectDisplayId")
 
     business = doc.get("business")
     if isinstance(business, dict):
@@ -1187,20 +1564,60 @@ def _prepare_user_story(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str
     state = doc.get("state")
     if isinstance(state, dict):
         metadata["state_name"] = state.get("name")
+        if state.get("_id") is not None:
+            metadata["state_id"] = normalize_mongo_id(state.get("_id"))
 
     state_master = doc.get("stateMaster")
     if isinstance(state_master, dict):
         metadata["stateMaster_name"] = state_master.get("name")
+        if state_master.get("_id") is not None:
+            metadata["stateMaster_id"] = normalize_mongo_id(state_master.get("_id"))
+
+    feature = doc.get("feature")
+    if isinstance(feature, dict):
+        metadata["feature_name"] = feature.get("name")
+        if feature.get("_id") is not None:
+            metadata["feature_id"] = normalize_mongo_id(feature.get("_id"))
+
+    epic = doc.get("epic")
+    if isinstance(epic, dict):
+        metadata["epic_name"] = epic.get("name")
+        if epic.get("_id") is not None:
+            metadata["epic_id"] = normalize_mongo_id(epic.get("_id"))
+
+    modules = doc.get("modules")
+    if isinstance(modules, dict):
+        metadata["module_name"] = modules.get("name")
+        if modules.get("_id") is not None:
+            metadata["module_id"] = normalize_mongo_id(modules.get("_id"))
 
     created_by = doc.get("createdBy")
     if isinstance(created_by, dict):
         metadata["created_by_name"] = created_by.get("name")
+        if created_by.get("_id") is not None:
+            metadata["created_by_id"] = normalize_mongo_id(created_by.get("_id"))
 
     assignee = doc.get("assignee")
-    if isinstance(assignee, list) and assignee and isinstance(assignee[0], dict):
-        metadata["assignee_name"] = assignee[0].get("name")
+    if isinstance(assignee, list):
+        assignee_names: List[str] = []
+        assignee_ids: List[str] = []
+        for member in assignee:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("name")
+            if name:
+                assignee_names.append(name)
+            if member.get("_id") is not None:
+                assignee_ids.append(normalize_mongo_id(member.get("_id")))
+        if assignee_names:
+            metadata["assignee_name"] = assignee_names[0]
+            metadata["assignee_names"] = assignee_names
+        if assignee_ids:
+            metadata["assignee_ids"] = assignee_ids
     elif isinstance(assignee, dict):
         metadata["assignee_name"] = assignee.get("name")
+        if assignee.get("_id") is not None:
+            metadata["assignee_id"] = normalize_mongo_id(assignee.get("_id"))
 
     labels = doc.get("label")
     if isinstance(labels, list):
@@ -1209,6 +1626,23 @@ def _prepare_user_story(doc: Dict[str, Any]) -> Tuple[PreparedDocument, List[str
         if label_names:
             metadata["labels"] = label_names
             text_parts.extend(label_names)
+
+    linked_work_items = doc.get("workItems")
+    if isinstance(linked_work_items, list):
+        work_item_names = []
+        work_item_ids = []
+        for item in linked_work_items:
+            if not isinstance(item, dict):
+                continue
+            name = html_to_text(item.get("name", ""))
+            if name:
+                work_item_names.append(name)
+            if item.get("_id") is not None:
+                work_item_ids.append(normalize_mongo_id(item.get("_id")))
+        if work_item_names:
+            metadata["work_item_names"] = work_item_names
+        if work_item_ids:
+            metadata["work_item_ids"] = work_item_ids
 
     prepared_title = title or doc.get("displayBugNo", "") or mongo_id
     warnings: List[str] = []

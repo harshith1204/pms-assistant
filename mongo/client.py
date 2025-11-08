@@ -8,7 +8,7 @@ import contextlib
 import asyncio
 import logging
 from dotenv import load_dotenv
-from mongo_to_uuid import mongo_uuid_converter
+from agent.mongo_to_uuid import mongo_uuid_converter
 load_dotenv()
 
 # Configure logging
