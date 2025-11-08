@@ -163,7 +163,7 @@ class SmartFilterAgent:
         self.collection_name = QDRANT_COLLECTION_NAME
         self.retriever = SmartFilterTools(
             qdrant_client=self.rag_tool.qdrant_client,
-            embedding_model=self.rag_tool.embedding_model
+            embedding_client=self.rag_tool.embedding_client
         )
         # Initialize RAG components
         self.orchestrator = Orchestrator(tracer_name="smart_filter_agent", max_parallel=3)

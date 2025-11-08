@@ -14,7 +14,7 @@ from qdrant_client.http.models import (
     SparseVectorParams,
     SparseVector,
 )
-from sentence_transformers import SentenceTransformer
+from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
 from collections import defaultdict
 
 # Add the parent directory to sys.path so we can import from qdrant
@@ -50,9 +50,11 @@ except Exception as e:
 
 # Load embedding model once, with fallback to a public model
 try:
-    embedder = SentenceTransformer("google/embeddinggemma-300m")
-except Exception as e:
-    print(f"⚠️ Failed to load embedding model 'google/embeddinggemma-300m': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
+    embedder = EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
+    EMBEDDING_DIMENSION = embedder.get_dimension()
+    print(f"ℹ️ Embedding service connected (dimension={EMBEDDING_DIMENSION})")
+except (EmbeddingServiceError, ValueError) as exc:
+    raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
 
 # ------------------ Chunking Statistics ------------------
 
@@ -488,7 +490,7 @@ def index_pages_to_qdrant():
         print("🔄 Indexing pages from MongoDB to Qdrant...")
 
         # Ensure collection and indexes for hybrid search
-        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         # Ensure payload index exists
         try:
@@ -574,8 +576,12 @@ def index_pages_to_qdrant():
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("page", mongo_id, title, len(chunks), word_count)
 
+            vectors = embedder.encode(chunks)
+            if len(vectors) != len(chunks):
+                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
             for idx, chunk in enumerate(chunks):
-                vector = embedder.encode(chunk).tolist()
+                vector = vectors[idx]
                 full_text = f"{title} {chunk}".strip()
                 splade_vec = splade.encode_text(full_text)
                 payload = {
@@ -623,7 +629,7 @@ def index_workitems_to_qdrant():
         print("🔄 Indexing work items from MongoDB to Qdrant...")
 
         # Ensure collection and indexes for hybrid search
-        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         # Ensure payload index exists
         try:
@@ -724,8 +730,12 @@ def index_workitems_to_qdrant():
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("work_item", mongo_id, doc.get("title", ""), len(chunks), word_count)
             
+            vectors = embedder.encode(chunks)
+            if len(vectors) != len(chunks):
+                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
             for idx, chunk in enumerate(chunks):
-                vector = embedder.encode(chunk).tolist()
+                vector = vectors[idx]
                 full_text = f"{doc.get('title', '')} {chunk}".strip()
                 splade_vec = splade.encode_text(full_text)
                 
@@ -772,7 +782,7 @@ def index_projects_to_qdrant():
     try:
         print("🔄 Indexing projects to Qdrant...")
 
-        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         documents = project_collection.find({}, {"_id": 1, "name": 1, "description": 1, "business": 1})
         points = []
@@ -825,8 +835,12 @@ def index_projects_to_qdrant():
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("project", mongo_id, name, len(chunks), word_count)
             
+            vectors = embedder.encode(chunks)
+            if len(vectors) != len(chunks):
+                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
             for idx, chunk in enumerate(chunks):
-                vector = embedder.encode(chunk).tolist()
+                vector = vectors[idx]
                 full_text = f"{name} {chunk}".strip()
                 splade_vec = splade.encode_text(full_text)
                 payload = {
@@ -869,7 +883,7 @@ def index_cycles_to_qdrant():
     try:
         print("🔄 Indexing cycles to Qdrant...")
 
-        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         documents = cycle_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
         points = []
@@ -922,8 +936,12 @@ def index_cycles_to_qdrant():
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("cycle", mongo_id, name, len(chunks), word_count)
             
+            vectors = embedder.encode(chunks)
+            if len(vectors) != len(chunks):
+                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
             for idx, chunk in enumerate(chunks):
-                vector = embedder.encode(chunk).tolist()
+                vector = vectors[idx]
                 full_text = f"{name} {chunk}".strip()
                 splade_vec = splade.encode_text(full_text)
                 payload = {
@@ -966,7 +984,7 @@ def index_modules_to_qdrant():
     try:
         print("🔄 Indexing modules to Qdrant...")
 
-        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         documents = module_collection.find({}, {"_id": 1, "name": 1, "title": 1, "description": 1, "business": 1})
         points = []
@@ -1019,8 +1037,12 @@ def index_modules_to_qdrant():
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("module", mongo_id, name, len(chunks), word_count)
             
+            vectors = embedder.encode(chunks)
+            if len(vectors) != len(chunks):
+                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
             for idx, chunk in enumerate(chunks):
-                vector = embedder.encode(chunk).tolist()
+                vector = vectors[idx]
                 full_text = f"{name} {chunk}".strip()
                 splade_vec = splade.encode_text(full_text)
                 payload = {
@@ -1064,7 +1086,7 @@ def index_epic_to_qdrant():
     try:
         print("🔄 Indexing epic from MongoDB to Qdrant...")
 
-        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=768)
+        ensure_collection_with_hybrid(QDRANT_COLLECTION, vector_size=EMBEDDING_DIMENSION)
 
         try:
             qdrant_client.create_payload_index(
@@ -1155,8 +1177,12 @@ def index_epic_to_qdrant():
             word_count = len(combined_text.split()) if combined_text else 0
             _stats.record("epic", mongo_id, doc.get("title", ""), len(chunks), word_count)
 
+            vectors = embedder.encode(chunks)
+            if len(vectors) != len(chunks):
+                raise EmbeddingServiceError("Embedding service returned unexpected vector count")
+
             for idx, chunk in enumerate(chunks):
-                vector = embedder.encode(chunk).tolist()
+                vector = vectors[idx]
                 full_text = f"{doc.get('title', '')} {chunk}".strip()
                 splade_vec = splade.encode_text(full_text)
                 payload = {
