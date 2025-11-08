@@ -126,7 +126,7 @@ class RAGTool:
                     member_projects = await self._get_member_projects(member_uuid, business_uuid)
                     if member_projects:
                         # Only apply member filtering for content types that belong to projects
-                        project_content_types = {"page", "work_item", "cycle", "module"}
+                        project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
                         if content_type is None or content_type in project_content_types:
                             # Filter by accessible project IDs
                             must_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))

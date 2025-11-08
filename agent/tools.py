@@ -27,9 +27,10 @@ logger = logging.getLogger(__name__)
 mongodb_tools = mongo.constants.mongodb_tools
 DATABASE_NAME = mongo.constants.DATABASE_NAME
 try:
-    from planner import plan_and_execute_query
+    from agent.planner import plan_and_execute_query, _format_pipeline_for_display
 except ImportError:
     plan_and_execute_query = None
+    _format_pipeline_for_display = None
 
 
 # ------------------ RAG Retrieval Defaults ------------------
@@ -516,13 +517,10 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 response += "\n"
             elif pipeline:
                 response += f"🔧 GENERATED PIPELINE:\n"
-                # Import the formatting function from planner
-                try:
-                    from planner import _format_pipeline_for_display
+                if _format_pipeline_for_display:
                     formatted_pipeline = _format_pipeline_for_display(pipeline)
                     response += formatted_pipeline
-                except ImportError:
-                    # Fallback to JSON format if import fails
+                else:
                     for i, stage in enumerate(pipeline):
                         stage_name = list(stage.keys())[0]
                         # Format the stage content nicely
