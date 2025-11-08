@@ -131,7 +131,7 @@ class EmbeddingEncoder:
                     "The installed transformers version "
                     f"({getattr(transformers, '__version__', 'unknown')}) "
                     f"does not support the model type required by '{name}'. "
-                    "Upgrade transformers to >=4.46.2 (see embedding_service/requirements.txt)."
+                    "Upgrade transformers to >=4.47.0 (see embedding_service/requirements.txt)."
                 ) from model_exc
             raise
         self.model.eval()
