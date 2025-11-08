@@ -1173,7 +1173,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    logger.warning(f"Could not send to websocket: {e}")
+                    logger.error(f"Could not send to websocket: {e}")
 
             # Persist generated artifact as a conversation message (best-effort)
             try:
@@ -1192,7 +1192,7 @@ async def generate_content(
                     })
             except Exception as e:
                 # Non-fatal
-                logger.warning(f"Failed to persist generated work item to conversation: {e}")
+                logger.error(f"Failed to persist generated work item to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1224,7 +1224,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    logger.warning(f"Could not send to websocket: {e}")
+                    logger.error(f"Could not send to websocket: {e}")
 
             # Persist generated artifact as a conversation message (best-effort)
             try:
@@ -1239,7 +1239,7 @@ async def generate_content(
                     })
             except Exception as e:
                 # Non-fatal
-                logger.warning(f"Failed to persist generated cycle to conversation: {e}")
+                logger.error(f"Failed to persist generated cycle to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1271,7 +1271,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    logger.warning(f"Could not send to websocket: {e}")
+                    logger.error(f"Could not send to websocket: {e}")
 
             # Persist generated artifact as a conversation message (best-effort)
             try:
@@ -1286,7 +1286,7 @@ async def generate_content(
                     })
             except Exception as e:
                 # Non-fatal
-                logger.warning(f"Failed to persist generated module to conversation: {e}")
+                logger.error(f"Failed to persist generated module to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1318,7 +1318,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    logger.warning(f"Could not send to websocket: {e}")
+                    logger.error(f"Could not send to websocket: {e}")
 
             # Persist generated epic as a conversation message (best-effort)
             try:
@@ -1342,7 +1342,7 @@ async def generate_content(
                     await save_generated_epic(conv_id, epic_payload)
             except Exception as e:
                 # Non-fatal
-                logger.warning(f"Failed to persist generated epic to conversation: {e}")
+                logger.error(f"Failed to persist generated epic to conversation: {e}")
 
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
@@ -1392,7 +1392,7 @@ async def generate_content(
                         "success": True
                     })
                 except Exception as e:
-                    logger.warning(f"Could not send to websocket: {e}")
+                    logger.error(f"Could not send to websocket: {e}")
 
             # Persist generated page as a conversation message (best-effort)
             try:
@@ -1409,7 +1409,7 @@ async def generate_content(
                         "blocks": blocks
                     })
             except Exception as e:
-                logger.warning(f"Failed to persist generated page to conversation: {e}")
+                logger.error(f"Failed to persist generated page to conversation: {e}")
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"

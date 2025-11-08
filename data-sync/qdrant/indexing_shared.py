@@ -132,14 +132,10 @@ def ensure_collection_with_hybrid(
             existing_names = [c.name for c in client.get_collections().collections]
             should_create = collection_name not in existing_names
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning(f"Could not list collections: {exc}")
+            logger.error(f"Could not list collections: {exc}")
             should_create = True
 
         if force_recreate:
-            print(
-                f"INFO: recreating Qdrant collection '{collection_name}' "
-                "(existing data will be replaced)."
-            )
             client.recreate_collection(
                 collection_name=collection_name,
                 vectors_config={
@@ -151,12 +147,7 @@ def ensure_collection_with_hybrid(
                     "sparse": qmodels.SparseVectorParams(),
                 },
             )
-            print(f"INFO: collection '{collection_name}' recreated for hybrid search.")
         elif should_create:
-            print(
-                f"INFO: creating Qdrant collection '{collection_name}' with "
-                "dense and sparse vectors."
-            )
             client.create_collection(
                 collection_name=collection_name,
                 vectors_config={
@@ -168,18 +159,13 @@ def ensure_collection_with_hybrid(
                     "sparse": qmodels.SparseVectorParams(),
                 },
             )
-            print(f"INFO: collection '{collection_name}' created for hybrid search.")
-        else:
-            print(f"INFO: collection '{collection_name}' already exists; keeping data.")
-
         try:
             client.update_collection(
                 collection_name=collection_name,
                 optimizer_config=qmodels.OptimizersConfigDiff(indexing_threshold=1),
             )
-            print("INFO: indexing_threshold set to 1 for faster ingestion.")
         except Exception as exc:
-            logger.warning(f"Failed to update optimizer config: {exc}")
+            logger.error(f"Failed to update optimizer config: {exc}")
 
         indexed_fields = [
             ("content_type", qmodels.PayloadSchemaType.KEYWORD),
@@ -200,17 +186,12 @@ def ensure_collection_with_hybrid(
                     field_name=field_name,
                     field_schema=schema,
                 )
-            except Exception as exc:
-                if "already exists" not in str(exc):
-                    logger.warning(f"Failed to ensure index on '{field_name}': {exc}")
+        except Exception as exc:
+            if "already exists" not in str(exc):
+                logger.error(f"Failed to ensure index on '{field_name}': {exc}")
 
     except Exception as exc:  # pragma: no cover - top-level guard
         logger.error(f"Could not ensure collection '{collection_name}': {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Mongo ? text helpers
-# ---------------------------------------------------------------------------
 
 
 def _decode_uuid_bytes(data: bytes) -> Optional[str]:
