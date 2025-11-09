@@ -1,0 +1,22 @@
+{
+  "services": [
+    {
+      "name": "embedding_service",
+      "description": "Embedding service health endpoint",
+      "url": "https://embedding.example.com/health",
+      "method": "GET",
+      "timeout": 10,
+      "expected_statuses": [200],
+      "failure_threshold": 2
+    },
+    {
+      "name": "frontend",
+      "description": "Frontend web application health check",
+      "url": "https://frontend.example.com/api/health",
+      "method": "GET",
+      "timeout": 5,
+      "expected_statuses": [200, 204],
+      "failure_threshold": 1
+    }
+  ]
+}
