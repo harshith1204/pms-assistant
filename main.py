@@ -148,6 +148,41 @@ async def lifespan(app: FastAPI):
     """Manage the lifespan of the FastAPI application"""
     global mongodb_agent, smart_filter_agent , template_generator
 
+    def _is_env_truthy(name: str) -> Optional[bool]:
+        raw = os.getenv(name)
+        if raw is None:
+            return None
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    monitor_task: Optional[asyncio.Task] = None
+    monitor_stop_event: Optional[asyncio.Event] = None
+
+    monitor_flag = _is_env_truthy("SERVICE_MONITOR_ENABLED")
+    monitor_enabled = False
+    if monitor_flag is None:
+        monitor_enabled = bool(os.getenv("SERVICE_MONITOR_CONFIG") or os.getenv("SERVICE_MONITOR_ENDPOINTS"))
+    else:
+        monitor_enabled = monitor_flag
+
+    if monitor_enabled:
+        try:
+            from monitoring.service_monitor import run_monitor
+        except Exception as exc:
+            logger.error("Failed to import service monitor: %s", exc)
+        else:
+            monitor_stop_event = asyncio.Event()
+
+            async def _monitor_wrapper():
+                try:
+                    await run_monitor(stop_event=monitor_stop_event)
+                except RuntimeError as runtime_exc:
+                    logger.error("Service monitor configuration error: %s", runtime_exc)
+                except Exception:
+                    logger.exception("Service monitor stopped unexpectedly.")
+
+            monitor_task = asyncio.create_task(_monitor_wrapper())
+            logger.info("Service monitor background task started.")
+
     # Startup
     mongodb_agent = MongoDBAgent()
     await mongodb_agent.connect()
@@ -173,6 +208,14 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if monitor_stop_event is not None:
+        monitor_stop_event.set()
+    if monitor_task is not None:
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
+
     await mongodb_agent.disconnect()
 
     # Close Redis conversation memory

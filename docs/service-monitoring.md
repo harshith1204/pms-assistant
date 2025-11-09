@@ -69,13 +69,19 @@ python -m monitoring.service_monitor
 
 Log level can be changed via `--log-level DEBUG` or `SERVICE_MONITOR_LOG_LEVEL`.
 
-## 4. Integration pointers
+## 4. Application integration
+
+- The FastAPI application (`main.py`) automatically starts the monitor in a background task when either `SERVICE_MONITOR_ENABLED` is set to a truthy value or a service configuration env var (`SERVICE_MONITOR_CONFIG` or `SERVICE_MONITOR_ENDPOINTS`) is present.
+- To opt out explicitly, set `SERVICE_MONITOR_ENABLED=false`.
+- Shutdown is coordinated through the app lifespan handler, so the monitor stops cleanly when the API process terminates.
+
+## 5. Additional deployment pointers
 
 - Wrap the script in a systemd service, Docker container, or Kubernetes CronJob for production use.
 - The helper `monitoring.brevo.send_brevo_email` is reusable if you need to trigger custom notifications elsewhere.
 - When using YAML configuration files, install `PyYAML` (`pip install pyyaml`).
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 - Missing Brevo credentials or recipients will raise configuration errors before monitoring starts.
 - Per-service failures are logged with a counter showing progress toward the failure threshold.

@@ -197,7 +197,7 @@ async def _monitor_iteration(
             state.last_down_notification = timestamp
 
 
-async def run_monitor(run_once: bool = False) -> None:
+async def run_monitor(run_once: bool = False, stop_event: Optional[asyncio.Event] = None) -> None:
     services_list = load_service_definitions()
     services = {service.name: service for service in services_list}
     states: Dict[str, ServiceState] = {}
@@ -220,31 +220,32 @@ async def run_monitor(run_once: bool = False) -> None:
         ", ".join(f"{svc.name}:{svc.failure_threshold}" for svc in services.values()),
     )
 
-    stop_event = asyncio.Event()
+    internal_stop_event = stop_event or asyncio.Event()
 
-    def _handle_signal(signum, frame):  # noqa: D401, DAR101
-        logger.info("Received signal %s, stopping monitor.", signum)
-        stop_event.set()
+    if stop_event is None:
+        def _handle_signal(signum, frame):  # noqa: D401, DAR101
+            logger.info("Received signal %s, stopping monitor.", signum)
+            internal_stop_event.set()
 
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _handle_signal, sig, None)
-        except NotImplementedError:
-            signal.signal(sig, _handle_signal)  # type: ignore[arg-type]
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _handle_signal, sig, None)
+            except NotImplementedError:
+                signal.signal(sig, _handle_signal)  # type: ignore[arg-type]
 
     async with httpx.AsyncClient(timeout=None) as client:
-        while not stop_event.is_set():
+        while not internal_stop_event.is_set():
             timestamp = time.time()
             await _monitor_iteration(client, services, states, settings, timestamp=timestamp)
 
             if run_once:
                 break
 
-            await asyncio.wait(
-                [asyncio.create_task(stop_event.wait())],
-                timeout=settings.interval,
-            )
+            try:
+                await asyncio.wait_for(internal_stop_event.wait(), timeout=settings.interval)
+            except asyncio.TimeoutError:
+                continue
 
 
 def main() -> None:
