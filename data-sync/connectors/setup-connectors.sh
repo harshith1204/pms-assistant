@@ -3,7 +3,11 @@ set -euo pipefail
 
 # Wait for Kafka Connect to be ready
 echo "Waiting for Kafka Connect to be ready..."
+<<<<<<< HEAD
 until curl -f http://localhost:8083/connectors > /dev/null 2>&1; do
+=======
+until curl -f http://localhost:8084/connectors > /dev/null 2>&1; do
+>>>>>>> ae93ad9fb1fa340ead6da5d854b5c5d0aa9b1fd7
   echo "Kafka Connect not ready, waiting..."
   sleep 5
 done
@@ -50,7 +54,11 @@ config_path = os.environ.get("CONFIG_PATH", "/tmp/mongodb-source-connector.json"
 
 uri = os.environ.get(
     "MONGODB_URI",
+<<<<<<< HEAD
     "mongodb://mongo:27017/ProjectManagement?authSource=admin",
+=======
+    "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0",
+>>>>>>> ae93ad9fb1fa340ead6da5d854b5c5d0aa9b1fd7
 )
 database = os.environ.get("MONGODB_DATABASE", "ProjectManagement")
 topic_prefix = os.environ.get("KAFKA_TOPIC_PREFIX", "ProjectManagement.")
@@ -107,13 +115,13 @@ with open(config_path, "w", encoding="utf-8") as f:
 PY
 
 # Remove existing connector if present to apply the latest config
-curl -s -X DELETE http://localhost:8083/connectors/mongodb-source-connector > /dev/null 2>&1 || true
+curl -s -X DELETE http://localhost:8084/connectors/mongodb-source-connector > /dev/null 2>&1 || true
 
 echo "Registering mongodb-source-connector from ${CONFIG_PATH}"
 response="$(curl -s -o /tmp/connector_response.json -w "%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   --data @${CONFIG_PATH} \
-  http://localhost:8083/connectors)"
+  http://localhost:8084/connectors)"
 
 if [ "$response" != "201" ] && [ "$response" != "409" ]; then
   echo "ERROR: Failed to register connector (HTTP $response)" >&2

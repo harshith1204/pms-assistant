@@ -6,7 +6,7 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .encoder import get_encoder
+from encoder import get_encoder
 
 
 MAX_TERMS_DEFAULT = int(os.getenv("SPLADE_MAX_TERMS", "200"))
@@ -26,7 +26,13 @@ app = FastAPI(title="SPLADE Service", version="1.0.0")
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    # Ensure encoder is loaded and ready
+    try:
+        encoder = get_encoder()
+        # Verify the model is actually loaded
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Service not ready: {e}")
 
 
 @app.post("/encode", response_model=EncodeResponse)
