@@ -343,6 +343,21 @@ CHUNKING_CONFIG = {
         "overlap_words": 40,
         "min_words_to_chunk": 220,
     },
+    "epic": {
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,
+    },
+    "feature": {
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,
+    },
+    "user_story": {
+        "max_words": 220,
+        "overlap_words": 40,
+        "min_words_to_chunk": 220,
+    },
     # timeline intentionally excluded from RAG indexing to avoid bulky data
 }
 
@@ -1373,7 +1388,7 @@ def index_features_to_qdrant():
         projection = {
             "_id": 1, "title": 1, "name": 1, "description": 1, "displayBugNo": 1,
             "basicInfo": 1, "problemInfo": 1, "persona": 1, "requirements": 1,
-            "risksAndDependencies": 1, "projectName": 1, "project": 1, "scope": 1,
+            "riskAndDependencies": 1, "projectName": 1, "project": 1, "scope": 1,
             "workItems": 1, "userStories": 1, "addLink": 1, "business": 1,
             "stateName": 1, "state": 1, "leadName": 1, "lead": 1, "assignees": 1,
             "assignee": 1, "cycle": 1, "modules": 1, "parent": 1, "priority": 1,
@@ -1421,7 +1436,7 @@ def index_features_to_qdrant():
                 nonfunc = _serialize_list_of_strings_or_dicts(reqs.get("nonFunctionalRequirements"), "title")
                 if nonfunc: text_parts.append(f"Non-Functional Requirements: {nonfunc}")
 
-            risks = doc.get("risksAndDependencies")
+            risks = doc.get("riskAndDependencies")
             if isinstance(risks, dict):
                 text_parts.append(_serialize_risks(risks.get("risks")))
                 deps = _serialize_list_of_strings_or_dicts(risks.get("dependencies"), "title")

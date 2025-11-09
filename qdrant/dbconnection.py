@@ -23,6 +23,8 @@ cycle_collection = None
 module_collection = None
 project_collection = None
 epic_collection = None
+userStory_collection = None
+features_collection = None
 
 try:
     mongo_client = MongoClient(
@@ -41,6 +43,8 @@ try:
     module_collection = db.get_collection("module")
     project_collection = db.get_collection("project")
     epic_collection = db.get_collection("epic")
+    userStory_collection = db.get_collection("userStory")
+    features_collection = db.get_collection("features")
 
 except Exception as e:
     logger.error(f"MongoDB connection failed: {e}")
