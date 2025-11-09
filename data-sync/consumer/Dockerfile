@@ -11,15 +11,18 @@ RUN apt-get update \
 WORKDIR /app
 
 # Install Python dependencies
-COPY consumer/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --default-timeout=300 --retries=5 -r requirements.txt
+COPY requirements.txt ./requirements.txt
+COPY data-sync/consumer/requirements.txt ./consumer-requirements.txt
+RUN pip install --no-cache-dir --default-timeout=300 --retries=5 -r requirements.txt && \
+    pip install --no-cache-dir --default-timeout=300 --retries=5 -r consumer-requirements.txt
 
 # Copy application code and shared qdrant modules
-COPY qdrant ./qdrant
+COPY data-sync/qdrant ./qdrant
 COPY embedding ./embedding
-COPY consumer/app ./app
-COPY backfill_mongodb.py ./backfill_mongodb.py
-COPY consumer/wait-for-qdrant.sh /usr/local/bin/wait-for-qdrant.sh
+COPY splade ./splade
+COPY data-sync/consumer/app ./app
+COPY data-sync/backfill_mongodb.py ./backfill_mongodb.py
+COPY data-sync/consumer/wait-for-qdrant.sh /usr/local/bin/wait-for-qdrant.sh
 
 RUN chmod +x /usr/local/bin/wait-for-qdrant.sh
 
