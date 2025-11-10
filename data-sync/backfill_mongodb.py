@@ -20,7 +20,19 @@ from confluent_kafka import KafkaError, KafkaException
 # Import document normalization function from consumer
 from qdrant.indexing_shared import normalize_document_ids
 
+# Import Qdrant client to check for existing data
+try:
+    from qdrant_client import QdrantClient
+    QDRANT_AVAILABLE = True
+except ImportError:
+    QDRANT_AVAILABLE = False
+
 # Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 # Configuration - match the connector setup
@@ -43,6 +55,13 @@ SLEEP_BETWEEN_BATCHES = float(os.getenv("BACKFILL_SLEEP", "1.0"))
 # Default to production mode (not dry run)
 DEFAULT_DRY_RUN = os.getenv("BACKFILL_DRY_RUN", "false").lower() == "true"
 
+# Qdrant configuration for duplicate checking
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "pms_collection")
+
+# Skip backfill if Qdrant already has data (prevents duplicates)
+SKIP_IF_DATA_EXISTS = os.getenv("SKIP_BACKFILL_IF_EXISTS", "true").lower() == "true"
+
 
 class MongoDBBackfill:
     """Handles backfilling MongoDB data to Kafka."""
@@ -51,6 +70,7 @@ class MongoDBBackfill:
         self.mongo_client = None
         self.kafka_producer = None
         self.database = None
+        self.qdrant_client = None
 
     def connect_mongodb(self) -> bool:
         """Connect to MongoDB."""
@@ -80,6 +100,49 @@ class MongoDBBackfill:
             return True
         except Exception as e:
             logger.error(f"Kafka connection failed: {e}")
+            return False
+
+    def connect_qdrant(self) -> bool:
+        """Connect to Qdrant to check for existing data."""
+        if not QDRANT_AVAILABLE:
+            logger.warning("Qdrant client not available, skipping duplicate check")
+            return False
+        try:
+            self.qdrant_client = QdrantClient(url=QDRANT_URL)
+            # Test connection
+            self.qdrant_client.get_collections()
+            return True
+        except Exception as e:
+            logger.warning(f"Qdrant connection failed: {e}, proceeding with backfill")
+            return False
+
+    def check_qdrant_has_data(self) -> bool:
+        """Check if Qdrant already has data to prevent duplicate backfill."""
+        if not self.qdrant_client:
+            return False
+        
+        try:
+            # Check if collection exists
+            collections = self.qdrant_client.get_collections()
+            collection_names = [c.name for c in collections.collections]
+            
+            if QDRANT_COLLECTION not in collection_names:
+                logger.info(f"Qdrant collection '{QDRANT_COLLECTION}' does not exist, proceeding with backfill")
+                return False
+            
+            # Check if collection has any points
+            collection_info = self.qdrant_client.get_collection(QDRANT_COLLECTION)
+            point_count = collection_info.points_count if hasattr(collection_info, 'points_count') else 0
+            
+            if point_count > 0:
+                logger.info(f"Qdrant collection '{QDRANT_COLLECTION}' already has {point_count} points, skipping backfill to prevent duplicates")
+                return True
+            else:
+                logger.info(f"Qdrant collection '{QDRANT_COLLECTION}' is empty, proceeding with backfill")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"Failed to check Qdrant data: {e}, proceeding with backfill")
             return False
 
     def create_change_event(self, collection_name: str, document: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,6 +266,7 @@ def main():
     parser.add_argument("--collections", nargs="*", help="Specific collections to backfill")
     parser.add_argument("--batch-size", type=int, help="Batch size for processing")
     parser.add_argument("--sleep", type=float, help="Sleep between batches")
+    parser.add_argument("--force", action="store_true", help="Force backfill even if data exists in Qdrant")
 
     args = parser.parse_args()
 
@@ -223,19 +287,31 @@ def main():
     try:
         # Connect to services
         if not backfill.connect_mongodb():
+            logger.error("Failed to connect to MongoDB")
             sys.exit(1)
 
+        # Check if Qdrant already has data (prevents duplicate backfill)
+        if SKIP_IF_DATA_EXISTS and not args.force:
+            if backfill.connect_qdrant():
+                if backfill.check_qdrant_has_data():
+                    logger.info("✅ Qdrant already contains data. Skipping backfill to prevent duplicates.")
+                    logger.info("   To force backfill, use --force flag or set SKIP_BACKFILL_IF_EXISTS=false")
+                    sys.exit(0)
+
         if not dry_run and not backfill.connect_kafka():
+            logger.error("Failed to connect to Kafka")
             sys.exit(1)
 
         # Perform backfill
+        logger.info(f"🔄 Starting backfill for collections: {', '.join(collections)}")
         results = backfill.backfill_all_collections(collections, dry_run=dry_run)
 
         # Summary
         total_processed = sum(results.values())
         if total_processed == 0:
-            logger.error("No documents were processed.")
-            sys.exit(1)
+            logger.warning("No documents were processed.")
+        else:
+            logger.info(f"✅ Backfill completed. Processed {total_processed} documents across {len(results)} collections.")
         sys.exit(0)
 
     except KeyboardInterrupt:

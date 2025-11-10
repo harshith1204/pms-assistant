@@ -130,10 +130,15 @@ services:
       - BACKFILL_COLLECTIONS=${BACKFILL_COLLECTIONS:-epic,features,cycle,module,members,workItem,userStory,page}
       - BACKFILL_BATCH_SIZE=${BACKFILL_BATCH_SIZE:-1000}
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
+      - SKIP_BACKFILL_IF_EXISTS=${SKIP_BACKFILL_IF_EXISTS:-true}
     depends_on:
       kafka:
         condition: service_healthy
       kafka-connect:
+        condition: service_started
+      qdrant:
         condition: service_started
       splade:
         condition: service_started
