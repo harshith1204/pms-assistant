@@ -452,9 +452,9 @@ class MongoDBAgent:
         self.system_prompt = system_prompt
         self.tracing_enabled = False
         self.enable_parallel_tools = enable_parallel_tools
-        conversation_cache_ttl = int(os.getenv("AGENT_CONVERSATION_CACHE_TTL", "60"))
+        conversation_cache_ttl = int(os.getenv("AGENT_CONVERSATION_CACHE_TTL", "300"))
         conversation_cache_size = int(os.getenv("AGENT_CONVERSATION_CACHE_SIZE", "256"))
-        tool_cache_ttl = int(os.getenv("AGENT_TOOL_CACHE_TTL", "120"))
+        tool_cache_ttl = int(os.getenv("AGENT_TOOL_CACHE_TTL", "600"))
         tool_cache_size = int(os.getenv("AGENT_TOOL_CACHE_SIZE", "200"))
         self._conversation_context_cache = TTLCache(
             max_items=conversation_cache_size,
