@@ -37,7 +37,7 @@ class RedisConversationMemory:
         redis_url: Optional[str] = None,
         ttl_hours: int = 24,
         l1_cache_size: int = 500,
-        l1_cache_ttl_seconds: int = 1800
+        l1_cache_ttl_seconds: int = 120
     ):
         self.max_messages_per_conversation = max_messages_per_conversation
         self.ttl_seconds = ttl_hours * 3600  # 24 hours = 86400 seconds
