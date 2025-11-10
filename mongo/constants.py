@@ -22,7 +22,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")  # Sentence transformer model for
 # Retrieval packing configuration
 # Max tokens to allocate for retrieved context before sending to the LLM
 # You can override via env: RAG_CONTEXT_TOKEN_BUDGET
-RAG_CONTEXT_TOKEN_BUDGET: int = int(os.getenv("RAG_CONTEXT_TOKEN_BUDGET", "2200"))
+RAG_CONTEXT_TOKEN_BUDGET: int = int(os.getenv("RAG_CONTEXT_TOKEN_BUDGET", "1200"))
 class _LazyMongoDBTools:
     """Lazy wrapper to avoid circular imports"""
     def __init__(self):

@@ -10,6 +10,7 @@ from glob import glob
 from datetime import datetime
 from agent.orchestrator import Orchestrator, StepSpec, as_async
 from qdrant.initializer import RAGTool
+from cachetools import TTLCache
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -34,6 +35,8 @@ except ImportError:
 
 
 # ------------------ RAG Retrieval Defaults ------------------
+# Mongo query result cache (avoid recomputing identical plans/results)
+_MONGO_QUERY_RESULT_CACHE = TTLCache(maxsize=200, ttl=300)
 # Per content_type default limits for retrieval. These are applied when the caller
 # does not explicitly provide a limit (i.e., limit is None).
 # Rationale: pages/work_items generally require broader recall; projects/cycles/modules
@@ -55,12 +58,12 @@ DEFAULT_RAG_LIMIT: int = 10
 # - include_adjacent controls whether to pull neighboring chunks for context
 # - min_score sets a score threshold for initial vector hits
 CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
-    "page": 3,          # Reduced from 4 to minimize context window usage
-    "work_item": 4,     # Reduced from 3 to minimize context window usage
-    "project": 2,
-    "cycle": 2,
-    "module": 2,
-    "epic": 2,
+    "page": 2,
+    "work_item": 3,
+    "project": 1,
+    "cycle": 1,
+    "module": 1,
+    "epic": 1,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
@@ -485,8 +488,17 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 
     Returns: A compact result suitable for direct user display.
     """
+    cache_key = json.dumps({"query": query, "show_all": show_all}, sort_keys=True)
+    cached_payload = _MONGO_QUERY_RESULT_CACHE.get(cache_key)
+    if cached_payload is not None:
+        return cached_payload
+
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
+
+    def _cache_and_return(value: str) -> str:
+        _MONGO_QUERY_RESULT_CACHE[cache_key] = value
+        return value
 
     try:
         result = await plan_and_execute_query(query)
@@ -983,7 +995,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                 if isinstance(data, list):
                     # Handle count-only results
                     if len(data) == 1 and isinstance(data[0], dict) and "total" in data[0]:
-                        return f"📊 RESULTS:\nTotal: {data[0]['total']}"
+                        return _cache_and_return(f"📊 RESULTS:\nTotal: {data[0]['total']}")
 
                     # Handle grouped/aggregated results
                     if len(data) > 0 and isinstance(data[0], dict) and ("count" in data[0] or "totalMinutes" in data[0]):
@@ -1040,7 +1052,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                 response += f"Found total {int(total_minutes)} min\n"
                             else:
                                 response += f"Found {total_items} items\n"
-                        return response
+                        return _cache_and_return(response)
 
                     # Handle list of documents - show summary instead of raw JSON
                     if max_items is not None and len(data) > max_items:
@@ -1052,14 +1064,14 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                 response += render_line(item) + "\n"
                         if len(data) > max_items:
                             response += f"• ... and {len(data) - max_items} items were omitted above\n"
-                        return response
+                        return _cache_and_return(response)
                     else:
                         # Show all items or small list - show in formatted way
                         response = "📊 RESULTS:\n"
                         for item in data:
                             if isinstance(item, dict):
                                 response += render_line(item) + "\n"
-                        return response
+                        return _cache_and_return(response)
 
                 # Single document or other data
                 if isinstance(data, dict):
@@ -1085,10 +1097,10 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                                 response += f"• {key}: {truncate_str(str(value), 160)}\n"
                             else:
                                 response += f"• {key}: [{len(value)} items]\n"
-                    return response
+                    return _cache_and_return(response)
                 else:
                     # Fallback to JSON for other data types
-                    return f"📊 RESULTS:\n{json.dumps(data, indent=2)}"
+                    return _cache_and_return(f"📊 RESULTS:\n{json.dumps(data, indent=2)}")
 
             # Apply strong filter/transform now that we know the primary entity
             primary_entity = intent.get('primary_entity') if isinstance(intent, dict) else None
@@ -1104,7 +1116,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             except Exception:
                 pass
             response += formatted_result
-            return response
+            return _cache_and_return(response)
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
 
@@ -1205,7 +1217,7 @@ async def rag_search(
             from mongo.constants import QDRANT_COLLECTION_NAME
             
             # Per content_type chunk-level tuning
-            chunks_per_doc = CONTENT_TYPE_CHUNKS_PER_DOC.get(content_type or "", 3)
+            chunks_per_doc = CONTENT_TYPE_CHUNKS_PER_DOC.get(content_type or "", 2)
             include_adjacent = CONTENT_TYPE_INCLUDE_ADJACENT.get(content_type or "", True)
             min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.5)
 

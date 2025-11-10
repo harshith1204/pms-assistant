@@ -7,6 +7,8 @@ import re
 import uuid
 import logging
 from bson import ObjectId, Binary
+from cachetools import TTLCache
+import copy
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -43,6 +45,7 @@ class RAGTool:
             instance.qdrant_client = None
             instance.embedding_client = None
             instance.connected = False
+            instance.result_cache = TTLCache(maxsize=500, ttl=600)
 
             await instance.connect()
             cls._instance = instance
@@ -90,6 +93,16 @@ class RAGTool:
         """Search for relevant content in Qdrant with dense+SPLADE hybrid fusion."""
         if not self.connected:
             await self.connect()
+
+        cache_key = json.dumps(
+            {"query": query, "content_type": content_type, "limit": limit},
+            sort_keys=True,
+        )
+        cached = None
+        if hasattr(self, "result_cache"):
+            cached = self.result_cache.get(cache_key)
+        if cached is not None:
+            return copy.deepcopy(cached)
 
         try:
             # Generate embedding for the query
@@ -223,7 +236,10 @@ class RAGTool:
 
             # Keep top-N by score
             results.sort(key=lambda x: x.get("score", 0), reverse=True)
-            return results[:limit]
+            final_results = results[:limit]
+            if hasattr(self, "result_cache"):
+                self.result_cache[cache_key] = copy.deepcopy(final_results)
+            return final_results
 
         except Exception as e:
             logger.error(f"Error searching Qdrant: {e}")

@@ -55,12 +55,12 @@ class DirectMongoClient:
                     # Motor maintains persistent connections automatically
                     self.client = AsyncIOMotorClient(
                         MONGODB_CONNECTION_STRING,
-                        maxPoolSize=50,          # Max connections in pool
-                        minPoolSize=10,          # Keep minimum connections alive
-                        maxIdleTimeMS=45000,     # Keep idle connections for 45s
+                        maxPoolSize=20,          # Max connections in pool
+                        minPoolSize=5,           # Keep minimum connections alive
+                        maxIdleTimeMS=30000,     # Close idle connections faster
                         waitQueueTimeoutMS=5000, # Faster timeout for queue
                         serverSelectionTimeoutMS=5000,  # Faster server selection
-                        connectTimeoutMS=10000,  # Connection timeout
+                        connectTimeoutMS=8000,   # Connection timeout
                         socketTimeoutMS=20000,   # Socket timeout
                     )
 

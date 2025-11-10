@@ -18,9 +18,9 @@ from typing import Tuple
 from agent.tools import tools
 from datetime import datetime
 import time
-from collections import defaultdict, deque
 import os
 import json
+import math
 
 # Import tools list
 try:
@@ -165,7 +165,7 @@ DEFAULT_SYSTEM_PROMPT = (
 llm = ChatGroq(
     model=os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905"),
     temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
-    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
+    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "512")),
     streaming=True,
     verbose=False,
     top_p=0.8,
@@ -516,6 +516,35 @@ class MongoDBAgent:
         task = asyncio.create_task(_refresh())
         self._conversation_cache_tasks[conversation_id] = task
 
+    def _approx_message_tokens(self, message: BaseMessage) -> int:
+        content = getattr(message, "content", "")
+        try:
+            return max(1, math.ceil(len(content) / 4)) + 8
+        except Exception:
+            return max(1, len(content) // 4) + 8
+
+    def _trim_messages_to_budget(self, messages: List[BaseMessage], max_tokens: int) -> List[BaseMessage]:
+        if max_tokens <= 0 or not messages:
+            return []
+        running_total = 0
+        selected: List[BaseMessage] = []
+        for message in reversed(messages):
+            tokens = self._approx_message_tokens(message)
+            if running_total + tokens > max_tokens and selected:
+                break
+            selected.append(message)
+            running_total += tokens
+        selected.reverse()
+        return selected
+
+    async def _get_optimized_context(self, conversation_id: str, max_tokens: int = 1500, max_messages: int = 20) -> List[BaseMessage]:
+        """Retrieve cached context, limiting messages and token usage."""
+        context = await self._get_conversation_context_cached(conversation_id)
+        if not context:
+            return []
+        trimmed_messages = list(context[-max_messages:])
+        return self._trim_messages_to_budget(trimmed_messages, max_tokens)
+
     async def _add_message_to_memory(self, conversation_id: str, message: BaseMessage) -> None:
         await conversation_memory.add_message(conversation_id, message)
         self._append_conversation_cache(conversation_id, message)
@@ -618,7 +647,7 @@ class MongoDBAgent:
                     conversation_id = f"conv_{int(time.time())}"
 
                 # Get conversation history (cached per session with async refresh)
-                conversation_context = await self._get_conversation_context_cached(conversation_id)
+                conversation_context = await self._get_optimized_context(conversation_id)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []

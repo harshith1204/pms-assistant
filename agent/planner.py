@@ -1460,6 +1460,8 @@ class PipelineGenerator:
         if added_priority_rank:
             pipeline.append({"$unset": "_priorityRank"})
 
+        pipeline = self._apply_final_projection(pipeline, effective_projections, intent)
+
         # Add pagination: skip then limit (only for non-grouped queries; grouped handled above)
         if not intent.group_by:
             # Apply skip before limit
@@ -1472,6 +1474,29 @@ class PipelineGenerator:
             if effective_limit:
                 pipeline.append({"$limit": int(effective_limit)})
 
+        return pipeline
+
+    def _apply_final_projection(self, pipeline: List[Dict[str, Any]], effective_projections: List[str], intent: QueryIntent) -> List[Dict[str, Any]]:
+        """Add a lightweight projection near the end of the pipeline to control payload size."""
+        if not pipeline or intent.group_by:
+            return pipeline
+        terminal_stage = pipeline[-1]
+        # Skip when terminal stages are count/group operations
+        if "$count" in terminal_stage or "$group" in terminal_stage:
+            return pipeline
+        # Avoid adding an extra projection if one already exists near the tail
+        if any("$project" in stage for stage in pipeline[-3:]):
+            return pipeline
+
+        fields = effective_projections[:] if effective_projections else self._get_default_projections(intent.primary_entity) or []
+        if not fields:
+            fields = ["title", "name", "description", "status", "priority", "state", "projectName", "businessName", "assignee", "createdAt", "updatedAt"]
+
+        projection_doc: Dict[str, Any] = {"_id": 0}
+        for field in fields:
+            projection_doc[field] = 1
+
+        pipeline.append({"$project": projection_doc})
         return pipeline
 
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:

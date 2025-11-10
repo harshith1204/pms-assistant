@@ -113,12 +113,12 @@ DEFAULT_RAG_LIMIT: int = 10
 # - include_adjacent controls whether to pull neighboring chunks for context
 # - min_score sets a score threshold for initial vector hits
 CONTENT_TYPE_CHUNKS_PER_DOC: Dict[str, int] = {
-    "page": 3,          # Reduced from 4 to minimize context window usage
-    "work_item": 4,     # Reduced from 3 to minimize context window usage
-    "project": 2,
-    "cycle": 2,
-    "module": 2,
-    "epic": 2,
+    "page": 2,
+    "work_item": 3,
+    "project": 1,
+    "cycle": 1,
+    "module": 1,
+    "epic": 1,
 }
 
 CONTENT_TYPE_INCLUDE_ADJACENT: Dict[str, bool] = {
@@ -1206,7 +1206,7 @@ class SmartFilterTools:
                 from mongo.constants import QDRANT_COLLECTION_NAME
                 
                 # Per content_type chunk-level tuning
-                chunks_per_doc = CONTENT_TYPE_CHUNKS_PER_DOC.get(content_type or "", 3)
+                chunks_per_doc = CONTENT_TYPE_CHUNKS_PER_DOC.get(content_type or "", 2)
                 include_adjacent = CONTENT_TYPE_INCLUDE_ADJACENT.get(content_type or "", True)
                 min_score = CONTENT_TYPE_MIN_SCORE.get(content_type or "", 0.5)
 

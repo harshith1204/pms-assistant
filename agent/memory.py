@@ -12,10 +12,11 @@ import time
 import math
 from collections import defaultdict, deque
 import os
-import json
 import logging
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError
+import base64
+import pickle
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ class RedisConversationMemory:
         self.ttl_seconds = ttl_hours * 3600  # 24 hours = 86400 seconds
         
         # --- New L1 Cache ---
-        self.l1_cache: TTLCache[str, deque[BaseMessage]] = TTLCache(
+        self.l1_cache: TTLCache[str, List[BaseMessage]] = TTLCache(
             maxsize=l1_cache_size,
             ttl=l1_cache_ttl_seconds
         )
@@ -102,58 +103,50 @@ class RedisConversationMemory:
         return f"conversation:turns:{conversation_id}"
 
     def _serialize_message(self, message: BaseMessage) -> str:
-        """Serialize a LangChain message to JSON string"""
-        msg_dict = {
-            "type": message.__class__.__name__,
-            "content": message.content,
-        }
-        
-        # Add additional fields for specific message types
-        if hasattr(message, "tool_call_id"):
-            msg_dict["tool_call_id"] = message.tool_call_id
-        if hasattr(message, "tool_calls"):
-            msg_dict["tool_calls"] = message.tool_calls
-        if hasattr(message, "additional_kwargs"):
-            msg_dict["additional_kwargs"] = message.additional_kwargs
-            
-        return json.dumps(msg_dict)
+        """Serialize a LangChain message to a base64-encoded pickle string"""
+        try:
+            encoded = base64.b64encode(pickle.dumps(message)).decode("utf-8")
+            return encoded
+        except Exception as exc:
+            logger.error("Failed to serialize message for conversation cache: %s", exc)
+            # Fallback to storing minimal information to avoid dropping the message entirely
+            fallback = {
+                "type": message.__class__.__name__,
+                "content": getattr(message, "content", ""),
+            }
+            return base64.b64encode(pickle.dumps(fallback)).decode("utf-8")
 
     def _deserialize_message(self, msg_str: str) -> BaseMessage:
-        """Deserialize JSON string back to LangChain message"""
-        msg_dict = json.loads(msg_str)
-        msg_type = msg_dict.get("type")
-        content = msg_dict.get("content", "")
-        
-        # Reconstruct the appropriate message type
-        if msg_type == "HumanMessage":
-            return HumanMessage(content=content)
-        elif msg_type == "AIMessage":
-            msg = AIMessage(content=content)
-            if "tool_calls" in msg_dict:
-                msg.tool_calls = msg_dict["tool_calls"]
-            if "additional_kwargs" in msg_dict:
-                msg.additional_kwargs = msg_dict["additional_kwargs"]
-            return msg
-        elif msg_type == "ToolMessage":
-            return ToolMessage(
-                content=content,
-                tool_call_id=msg_dict.get("tool_call_id", "")
-            )
-        elif msg_type == "SystemMessage":
-            return SystemMessage(content=content)
-        else:
-            # Default to AIMessage for unknown types
+        """Deserialize base64-encoded pickle string back to a LangChain message"""
+        try:
+            data = base64.b64decode(msg_str.encode("utf-8"))
+            loaded = pickle.loads(data)
+            if isinstance(loaded, BaseMessage):
+                return loaded
+            # Fallback path for minimal dict payload
+            msg_type = loaded.get("type")
+            content = loaded.get("content", "")
+            if msg_type == "HumanMessage":
+                return HumanMessage(content=content)
+            if msg_type == "ToolMessage":
+                return ToolMessage(content=content, tool_call_id=loaded.get("tool_call_id", ""))
+            if msg_type == "SystemMessage":
+                return SystemMessage(content=content)
             return AIMessage(content=content)
+        except Exception as exc:
+            logger.error("Failed to deserialize message from conversation cache: %s", exc)
+            return AIMessage(content="")
 
     async def add_message(self, conversation_id: str, message: BaseMessage):
         """Add a message to the conversation history in Redis"""
         # --- L1 Cache Write (Thread-safe) ---
         with self.l1_lock:
-            if conversation_id not in self.l1_cache:
-                self.l1_cache[conversation_id] = deque(maxlen=self.max_messages_per_conversation)
-            self.l1_cache[conversation_id].append(message)
-                # Re-assign to update its TTL status
-            self.l1_cache[conversation_id] = self.l1_cache[conversation_id]
+            cached_messages = self.l1_cache.get(conversation_id, [])
+            cached_copy = list(cached_messages)
+            cached_copy.append(message)
+            if len(cached_copy) > self.max_messages_per_conversation:
+                cached_copy = cached_copy[-self.max_messages_per_conversation:]
+            self.l1_cache[conversation_id] = cached_copy
 
         await self._ensure_connected()
         
@@ -209,10 +202,8 @@ class RedisConversationMemory:
             messages = [self._deserialize_message(msg_str) for msg_str in messages_str]
 
             with self.l1_lock:
-                self.l1_cache[conversation_id] = deque(
-                    messages, 
-                    maxlen=self.max_messages_per_conversation
-                )
+                trimmed = list(messages[-self.max_messages_per_conversation:])
+                self.l1_cache[conversation_id] = trimmed
             # Refresh TTL on access
             await self.redis_client.expire(key, self.ttl_seconds)
             
@@ -253,66 +244,67 @@ class RedisConversationMemory:
                 self.fallback_conversations[conversation_id].clear()
 
     async def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
-        """Get recent conversation context with a token budget and rolling summary.
-        
-        Smart loading: 
-        1. First checks Redis cache for fast access
-        2. If cache is empty/expired, loads ONLY recent messages from MongoDB (within token budget)
-        3. Applies consistent token budget selection (handles both cache hit and miss)
-        4. Adds summary if it fits within budget
-        """
-        # Approximate token counting (≈4 chars/token)
-        def approx_tokens(text: str) -> int:
-            try:
-                return max(1, math.ceil(len(text) / 4))
-            except Exception:
-                return len(text) // 4
-
+        """Get recent conversation context with a token budget and rolling summary."""
         budget = max(500, max_tokens)
         
-        # Reserve space for summary (if present)
         summary = await self._get_summary(conversation_id)
         summary_tokens = 0
         if summary:
-            summary_tokens = approx_tokens(summary) + 50  # +50 for formatting
+            summary_tokens = self._approx_tokens(summary) + 50  # +50 for formatting
         
-        # Adjust budget for messages to leave room for summary
-        message_budget = budget - summary_tokens
+        message_budget = max(0, budget - summary_tokens)
         
-        # Try to get from Redis cache first (fast path)
         messages = await self.get_conversation_history(conversation_id)
         
-        # If cache is empty, load recent messages from MongoDB
         if not messages:
             try:
-                # Load with adjusted budget (accounting for summary)
-                messages = await self._load_recent_from_mongodb(conversation_id, message_budget)
+                recent_chunk = await self._load_recent_from_mongodb(conversation_id, message_budget, limit=10)
             except Exception as e:
                 logger.error(f"Could not load recent messages from MongoDB: {e}")
-                messages = []
+                recent_chunk = []
+            if recent_chunk and self._check_token_budget(recent_chunk, message_budget):
+                messages = recent_chunk
+            else:
+                try:
+                    messages = await self._load_recent_from_mongodb(conversation_id, message_budget)
+                except Exception as e:
+                    logger.error(f"Could not progressively load messages from MongoDB: {e}")
+                    messages = []
         
-        # Apply token budget selection (needed for Redis cache path)
-        # For MongoDB path, this is mostly redundant but ensures consistency
-        used = 0
-        selected: List[BaseMessage] = []
+        selected = self._apply_token_budget(messages, message_budget)
+        
+        if summary and summary_tokens <= budget - self._estimate_tokens(selected):
+            selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
+        
+        return selected
 
-        # Walk backwards to select most recent turns under budget
+    def _approx_tokens(self, text: str) -> int:
+        try:
+            return max(1, math.ceil(len(text) / 4))
+        except Exception:
+            return max(1, len(text) // 4)
+
+    def _estimate_tokens(self, messages: List[BaseMessage]) -> int:
+        total = 0
+        for msg in messages:
+            total += self._approx_tokens(getattr(msg, "content", "")) + 8
+        return total
+
+    def _check_token_budget(self, messages: List[BaseMessage], budget: int) -> bool:
+        return self._estimate_tokens(messages) <= budget
+
+    def _apply_token_budget(self, messages: List[BaseMessage], budget: int) -> List[BaseMessage]:
+        if budget <= 0 or not messages:
+            return []
+        selected: List[BaseMessage] = []
+        used = 0
         for msg in reversed(messages):
-            content = getattr(msg, "content", "")
-            msg_tokens = approx_tokens(str(content)) + 8
-            if used + msg_tokens > message_budget and selected:
-                # Budget exceeded, stop
+            msg_tokens = self._approx_tokens(getattr(msg, "content", "")) + 8
+            if used + msg_tokens > budget and selected:
                 break
             selected.append(msg)
             used += msg_tokens
-
         selected.reverse()
-
-        # Prepend rolling summary if present
-        if summary and summary_tokens <= budget - used:
-            selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
-            used += summary_tokens
-
         return selected
 
     async def _get_summary(self, conversation_id: str) -> Optional[str]:
@@ -409,7 +401,7 @@ class RedisConversationMemory:
             # Best-effort; log but don't fail
             logger.error(f"Failed to update summary: {e}")
 
-    async def _load_recent_from_mongodb(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
+    async def _load_recent_from_mongodb(self, conversation_id: str, max_tokens: int = 3000, limit: Optional[int] = None) -> List[BaseMessage]:
         """Load ONLY recent messages from MongoDB (limited by token budget).
         
         This is much more efficient than loading entire conversation history.
@@ -432,13 +424,9 @@ class RedisConversationMemory:
             messages = doc.get("messages") or []
             if not messages:
                 return []
-            
-            # Approximate token counting
-            def approx_tokens(text: str) -> int:
-                try:
-                    return max(1, math.ceil(len(text) / 4))
-                except Exception:
-                    return len(text) // 4
+
+            if limit is not None and limit > 0:
+                messages = messages[-limit:]
             
             # Load recent messages within token budget (work backwards)
             budget = max(500, max_tokens)
@@ -454,7 +442,7 @@ class RedisConversationMemory:
                 content = msg.get("content", "")
                 
                 # Check token budget
-                msg_tokens = approx_tokens(str(content)) + 8
+                msg_tokens = self._approx_tokens(str(content)) + 8
                 if used + msg_tokens > budget and recent_messages:
                     # Budget exceeded, stop loading
                     break
@@ -499,10 +487,8 @@ class RedisConversationMemory:
         # --- L1 Cache Populate (Thread-safe) ---
         with self.l1_lock:
             # We only cache the most recent messages, matching maxlen
-            self.l1_cache[conversation_id] = deque(
-                messages, 
-                maxlen=self.max_messages_per_conversation
-            )
+            trimmed = list(messages[-self.max_messages_per_conversation:])
+            self.l1_cache[conversation_id] = trimmed
         # --- End L1 Populate ---
 
         await self._ensure_connected()

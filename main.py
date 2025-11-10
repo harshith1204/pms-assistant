@@ -7,10 +7,12 @@ from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
 import logging
+import gc
 from generate.router import router as generate_router
 
 # Load environment variables from .env file
 load_dotenv()
+gc.set_threshold(700, 10, 10)
 
 # Configure logging
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
