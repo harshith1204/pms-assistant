@@ -287,6 +287,8 @@ services:
       - ./monitoring:/app/monitoring:ro
     command: ["python", "-m", "monitoring.service_monitor"]
     depends_on:
+      backfill:
+        condition: service_completed_successfully
       backend:
         condition: service_started
       kafka:
