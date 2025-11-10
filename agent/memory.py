@@ -1,4 +1,5 @@
-
+from cachetools import TTLCache
+from threading import Lock
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 import asyncio
@@ -34,11 +35,19 @@ class RedisConversationMemory:
         self, 
         max_messages_per_conversation: int = 50,
         redis_url: Optional[str] = None,
-        ttl_hours: int = 24
+        ttl_hours: int = 24,
+        l1_cache_size: int = 250,      
+        l1_cache_ttl_seconds: int = 300
     ):
         self.max_messages_per_conversation = max_messages_per_conversation
         self.ttl_seconds = ttl_hours * 3600  # 24 hours = 86400 seconds
         
+        # --- New L1 Cache ---
+        self.l1_cache: TTLCache[str, deque[BaseMessage]] = TTLCache(
+            maxsize=l1_cache_size,
+            ttl=l1_cache_ttl_seconds
+        )
+        self.l1_lock = Lock()  # Thread-safe lock for L1
         # Initialize Redis connection
         default_redis_url = "redis://redis:6379/0"
         self.redis_url = redis_url or os.getenv("REDIS_URL") or default_redis_url
@@ -138,6 +147,14 @@ class RedisConversationMemory:
 
     async def add_message(self, conversation_id: str, message: BaseMessage):
         """Add a message to the conversation history in Redis"""
+        # --- L1 Cache Write (Thread-safe) ---
+        with self.l1_lock:
+            if conversation_id in self.l1_cache:
+                self.l1_cache[conversation_id] = deque(maxlen=self.max_messages_per_conversation)
+                self.l1_cache[conversation_id].append(message)
+                # Re-assign to update its TTL status
+                self.l1_cache[conversation_id] = self.l1_cache[conversation_id]
+
         await self._ensure_connected()
         
         if self.use_fallback:
@@ -169,6 +186,11 @@ class RedisConversationMemory:
         If not in cache, returns empty list (will be populated as new messages are added).
         Use get_recent_context() instead to get context from MongoDB when cache is empty.
         """
+        with self.l1_lock:
+            if conversation_id in self.l1_cache:
+                # L1 Hit: Fastest path
+                return list(self.l1_cache[conversation_id])
+            
         await self._ensure_connected()
         
         if self.use_fallback:
@@ -185,7 +207,12 @@ class RedisConversationMemory:
             
             # Deserialize messages
             messages = [self._deserialize_message(msg_str) for msg_str in messages_str]
-            
+
+            with self.l1_lock:
+                self.l1_cache[conversation_id] = deque(
+                    messages, 
+                    maxlen=self.max_messages_per_conversation
+                )
             # Refresh TTL on access
             await self.redis_client.expire(key, self.ttl_seconds)
             
@@ -198,6 +225,12 @@ class RedisConversationMemory:
 
     async def clear_conversation(self, conversation_id: str):
         """Clear the conversation history for a given conversation ID"""
+        with self.l1_lock:
+            if conversation_id in self.l1_cache:
+                try:
+                    del self.l1_cache[conversation_id]
+                except KeyError:
+                    pass
         await self._ensure_connected()
         
         if self.use_fallback:
@@ -522,6 +555,10 @@ class RedisConversationMemory:
         This should be called at the start of any conversation interaction to ensure
         the conversation history is available in Redis cache.
         """
+        with self.l1_lock:
+            if conversation_id in self.l1_cache:
+                return
+            
         await self._ensure_connected()
         
         # Check if conversation exists in Redis
