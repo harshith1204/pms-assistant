@@ -201,20 +201,28 @@ services:
       - EMBEDDING_SERVICE_URL=http://embedding:8080
       - SPLADE_SERVICE_URL=http://splade:8080
       - MONGODB_URI=${MONGODB_URI:-mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-ProjectManagement}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       - KAFKA_TOPIC_PREFIX=${KAFKA_TOPIC_PREFIX:-ProjectManagement.}
       - BACKFILL_COLLECTIONS=${BACKFILL_COLLECTIONS:-epic,features,cycle,module,members,workItem,userStory,page}
       - BACKFILL_BATCH_SIZE=${BACKFILL_BATCH_SIZE:-1000}
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
+      - INCREMENTAL_BACKFILL=${INCREMENTAL_BACKFILL:-true}
+      - QDRANT_CHECK_BATCH_SIZE=${QDRANT_CHECK_BATCH_SIZE:-1000}
       - HF_TOKEN=${HF_TOKEN:-}
     command: ["python", "/app/backfill_mongodb.py"]
     volumes:
       - ./data-sync/backfill_mongodb.py:/app/backfill_mongodb.py:ro
       - hf_cache:/app/.cache/huggingface
+    restart: "no"
     depends_on:
       kafka:
         condition: service_healthy
       kafka-connect:
+        condition: service_started
+      qdrant:
         condition: service_started
       embedding:
         condition: service_healthy
