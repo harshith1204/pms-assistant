@@ -256,7 +256,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Persist user message to SimpoAssist.conversations
+            # Persist user message to ProjectManagement.conversations
             try:
                 await save_user_message(conversation_id, message)
             except Exception as e:
