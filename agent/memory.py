@@ -149,11 +149,11 @@ class RedisConversationMemory:
         """Add a message to the conversation history in Redis"""
         # --- L1 Cache Write (Thread-safe) ---
         with self.l1_lock:
-            if conversation_id in self.l1_cache:
+            if conversation_id not in self.l1_cache:
                 self.l1_cache[conversation_id] = deque(maxlen=self.max_messages_per_conversation)
-                self.l1_cache[conversation_id].append(message)
+            self.l1_cache[conversation_id].append(message)
                 # Re-assign to update its TTL status
-                self.l1_cache[conversation_id] = self.l1_cache[conversation_id]
+            self.l1_cache[conversation_id] = self.l1_cache[conversation_id]
 
         await self._ensure_connected()
         
