@@ -259,6 +259,45 @@ services:
     networks:
       - app-net
 
+  monitoring:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: service-monitor
+    env_file:
+      - monitoring/monitoring.env
+    environment:
+      - SERVICE_MONITOR_ENABLED=true
+      - SERVICE_MONITOR_CONFIG=monitoring/services.json
+      - SERVICE_MONITOR_INTERVAL=60
+      - SERVICE_MONITOR_DEFAULT_TIMEOUT=10
+      - SERVICE_MONITOR_DEFAULT_FAILURE_THRESHOLD=1
+      - SERVICE_MONITOR_DOWN_NOTIFY_COOLDOWN=900
+      - SERVICE_MONITOR_RECOVERY_NOTIFY_COOLDOWN=0
+      - SERVICE_MONITOR_SEND_RECOVERY=true
+    volumes:
+      - ./monitoring:/app/monitoring:ro
+    command: ["python", "-m", "monitoring.service_monitor"]
+    depends_on:
+      backend:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      kafka-connect:
+        condition: service_started
+      kafka-ui:
+        condition: service_started
+      embedding:
+        condition: service_healthy
+      splade:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - app-net
+
 volumes:
   qdrant_data:
   redis_data:

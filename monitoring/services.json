@@ -1,36 +1,27 @@
 {
   "services": [
     {
-      "name": "main_api",
+      "name": "backend",
       "description": "Main PMS Assistant API",
-      "url": "http://localhost:8000/health",
+      "url": "http://backend:8000/health",
       "method": "GET",
       "timeout": 10,
       "expected_statuses": [200],
       "failure_threshold": 1
     },
     {
-      "name": "redis",
-      "description": "Redis Cache Database",
-      "url": "http://localhost:6379",
-      "method": "GET",
-      "timeout": 10,
-      "expected_statuses": [200],
-      "failure_threshold": 1
-    },
-    {
-      "name": "embedding_service",
+      "name": "embedding",
       "description": "Embedding service health endpoint",
-      "url": "http://localhost:8081/health",
+      "url": "http://embedding:8080/health",
       "method": "GET",
       "timeout": 30,
       "expected_statuses": [200],
       "failure_threshold": 1
     },
     {
-      "name": "splade_service",
+      "name": "splade",
       "description": "SPLADE service health endpoint",
-      "url": "http://localhost:8082/health",
+      "url": "http://splade:8080/health",
       "method": "GET",
       "timeout": 30,
       "expected_statuses": [200],
@@ -39,25 +30,16 @@
     {
       "name": "qdrant",
       "description": "Qdrant vector database",
-      "url": "http://localhost:6333/health",
+      "url": "http://qdrant:6333/health",
       "method": "GET",
       "timeout": 10,
       "expected_statuses": [200],
       "failure_threshold": 1
     },
     {
-      "name": "kafka",
-      "description": "Kafka message broker",
-      "url": "http://localhost:9094",
-      "method": "GET",
-      "timeout": 15,
-      "expected_statuses": [200],
-      "failure_threshold": 1
-    },
-    {
       "name": "kafka_connect",
       "description": "Kafka Connect for MongoDB integration",
-      "url": "http://localhost:8083",
+      "url": "http://kafka-connect:8083/connectors",
       "method": "GET",
       "timeout": 15,
       "expected_statuses": [200],
@@ -66,16 +48,7 @@
     {
       "name": "kafka_ui",
       "description": "Kafka UI management interface",
-      "url": "http://localhost:8080",
-      "method": "GET",
-      "timeout": 10,
-      "expected_statuses": [200],
-      "failure_threshold": 1
-    },
-    {
-      "name": "mongodb",
-      "description": "MongoDB database connection",
-      "url": "http://localhost:27017",
+      "url": "http://kafka-ui:8080",
       "method": "GET",
       "timeout": 10,
       "expected_statuses": [200],
