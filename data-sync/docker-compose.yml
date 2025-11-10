@@ -132,7 +132,8 @@ services:
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
-      - SKIP_BACKFILL_IF_EXISTS=${SKIP_BACKFILL_IF_EXISTS:-true}
+      - INCREMENTAL_BACKFILL=${INCREMENTAL_BACKFILL:-true}
+      - QDRANT_CHECK_BATCH_SIZE=${QDRANT_CHECK_BATCH_SIZE:-1000}
     depends_on:
       kafka:
         condition: service_healthy

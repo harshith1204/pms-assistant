@@ -17,8 +17,8 @@ import pymongo
 from confluent_kafka import Producer
 from confluent_kafka import KafkaError, KafkaException
 
-# Import document normalization function from consumer
-from qdrant.indexing_shared import normalize_document_ids
+# Import document normalization and point ID generation from consumer
+from qdrant.indexing_shared import normalize_document_ids, point_id_from_seed, normalize_mongo_id
 
 # Import Qdrant client to check for existing data
 try:
@@ -59,8 +59,11 @@ DEFAULT_DRY_RUN = os.getenv("BACKFILL_DRY_RUN", "false").lower() == "true"
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "pms_collection")
 
-# Skip backfill if Qdrant already has data (prevents duplicates)
-SKIP_IF_DATA_EXISTS = os.getenv("SKIP_BACKFILL_IF_EXISTS", "true").lower() == "true"
+# Enable smart incremental backfill (only index missing documents)
+INCREMENTAL_BACKFILL = os.getenv("INCREMENTAL_BACKFILL", "true").lower() == "true"
+
+# Batch size for checking existing points in Qdrant
+QDRANT_CHECK_BATCH_SIZE = int(os.getenv("QDRANT_CHECK_BATCH_SIZE", "1000"))
 
 
 class MongoDBBackfill:
@@ -116,34 +119,88 @@ class MongoDBBackfill:
             logger.warning(f"Qdrant connection failed: {e}, proceeding with backfill")
             return False
 
-    def check_qdrant_has_data(self) -> bool:
-        """Check if Qdrant already has data to prevent duplicate backfill."""
+    def get_qdrant_point_count(self) -> int:
+        """Get the current point count in Qdrant collection."""
         if not self.qdrant_client:
-            return False
+            return 0
         
         try:
-            # Check if collection exists
             collections = self.qdrant_client.get_collections()
             collection_names = [c.name for c in collections.collections]
             
             if QDRANT_COLLECTION not in collection_names:
-                logger.info(f"Qdrant collection '{QDRANT_COLLECTION}' does not exist, proceeding with backfill")
-                return False
+                return 0
             
-            # Check if collection has any points
             collection_info = self.qdrant_client.get_collection(QDRANT_COLLECTION)
-            point_count = collection_info.points_count if hasattr(collection_info, 'points_count') else 0
-            
-            if point_count > 0:
-                logger.info(f"Qdrant collection '{QDRANT_COLLECTION}' already has {point_count} points, skipping backfill to prevent duplicates")
-                return True
-            else:
-                logger.info(f"Qdrant collection '{QDRANT_COLLECTION}' is empty, proceeding with backfill")
-                return False
-                
+            return collection_info.points_count if hasattr(collection_info, 'points_count') else 0
         except Exception as e:
-            logger.warning(f"Failed to check Qdrant data: {e}, proceeding with backfill")
-            return False
+            logger.warning(f"Failed to get Qdrant point count: {e}")
+            return 0
+
+    def check_points_exist(self, point_ids: List[str]) -> set:
+        """Check which point IDs already exist in Qdrant.
+        
+        Args:
+            point_ids: List of point IDs to check
+            
+        Returns:
+            Set of point IDs that exist in Qdrant
+        """
+        if not self.qdrant_client or not point_ids:
+            return set()
+        
+        try:
+            # Retrieve points by ID (only returns existing ones)
+            result = self.qdrant_client.retrieve(
+                collection_name=QDRANT_COLLECTION,
+                ids=point_ids,
+                with_payload=False,
+                with_vectors=False
+            )
+            # Return set of IDs that exist
+            return {str(point.id) for point in result}
+        except Exception as e:
+            logger.warning(f"Failed to check existing points: {e}, assuming none exist")
+            return set()
+
+    def generate_point_id_for_document(self, collection_name: str, document: Dict[str, Any]) -> Optional[str]:
+        """Generate the deterministic point ID that would be used for this document in Qdrant.
+        
+        This matches the logic in the consumer/indexing pipeline.
+        """
+        try:
+            # Normalize the document ID
+            mongo_id = normalize_mongo_id(document.get("_id"))
+            if not mongo_id:
+                return None
+            
+            # Map collection names to content types (matching indexing_shared.py logic)
+            content_type_map = {
+                "page": "page",
+                "workItem": "work_item",
+                "project": "project",
+                "cycle": "cycle",
+                "module": "module",
+                "epic": "epic",
+                "feature": "feature",
+                "features": "feature",
+                "userStory": "user_story",
+                "userStories": "user_story",
+            }
+            
+            content_type = content_type_map.get(collection_name)
+            if not content_type:
+                logger.warning(f"Unknown collection type: {collection_name}")
+                return None
+            
+            # Generate base point ID for chunk 0 (same as indexing pipeline)
+            # Point IDs are generated as: "{mongo_id}/{content_type}/{chunk_index}"
+            point_id = point_id_from_seed(f"{mongo_id}/{content_type}/0")
+            return point_id
+            
+        except Exception as e:
+            logger.error(f"Failed to generate point ID for document: {e}")
+            return None
 
     def create_change_event(self, collection_name: str, document: Dict[str, Any]) -> Dict[str, Any]:
         """Create a change event message in the format expected by the consumer."""
@@ -168,82 +225,221 @@ class MongoDBBackfill:
             logger.error(f"Error getting count for {collection_name}: {e}")
             return 0
 
-    def backfill_collection(self, collection_name: str, dry_run: bool = False) -> int:
-        """Backfill a single collection."""
+    def backfill_collection(self, collection_name: str, dry_run: bool = False, incremental: bool = True) -> Dict[str, int]:
+        """Backfill a single collection with smart incremental support.
+        
+        Args:
+            collection_name: Name of the MongoDB collection
+            dry_run: If True, don't actually send to Kafka
+            incremental: If True, check Qdrant and only send missing documents
+            
+        Returns:
+            Dictionary with statistics: processed, skipped, errors
+        """
         collection = self.database[collection_name]
         topic_name = f"{KAFKA_TOPIC_PREFIX}{collection_name}"
 
         total_count = self.get_collection_count(collection_name)
 
         if total_count == 0:
-            logger.error(f"No documents to process for collection {collection_name}")
-            return 0
+            logger.info(f"No documents to process for collection {collection_name}")
+            return {"processed": 0, "skipped": 0, "errors": 0}
+
+        logger.info(f"📊 Collection '{collection_name}' has {total_count} documents in MongoDB")
 
         processed = 0
+        skipped = 0
         errors = 0
 
         try:
-            cursor = collection.find({}, batch_size=BATCH_SIZE)
-
-            for i, document in enumerate(cursor):
-                try:
-                    # Create change event
-                    change_event = self.create_change_event(collection_name, document)
-
-                    if not dry_run:
-                        # Send to Kafka using confluent-kafka
-                        try:
-                            self.kafka_producer.produce(
-                                topic=topic_name,
-                                value=json.dumps(change_event),
-                                key=str(document["_id"])
-                            )
-                            # Trigger delivery callback
-                            self.kafka_producer.poll(0)
-                        except KafkaException as e:
-                            logger.error(f"Kafka error sending to {topic_name}: {e}")
-                            errors += 1
+            # If incremental mode is enabled and Qdrant is available, check for existing points
+            if incremental and self.qdrant_client:
+                logger.info(f"🔍 Checking Qdrant for existing points from '{collection_name}'...")
+                
+                # Fetch all documents and generate their point IDs
+                cursor = collection.find({}, batch_size=BATCH_SIZE)
+                documents_to_process = []
+                
+                for document in cursor:
+                    point_id = self.generate_point_id_for_document(collection_name, document)
+                    if point_id:
+                        documents_to_process.append({
+                            "document": document,
+                            "point_id": point_id
+                        })
+                
+                logger.info(f"📝 Generated point IDs for {len(documents_to_process)} documents")
+                
+                # Check existing points in batches
+                all_point_ids = [item["point_id"] for item in documents_to_process]
+                existing_points = set()
+                
+                for i in range(0, len(all_point_ids), QDRANT_CHECK_BATCH_SIZE):
+                    batch_ids = all_point_ids[i:i + QDRANT_CHECK_BATCH_SIZE]
+                    batch_existing = self.check_points_exist(batch_ids)
+                    existing_points.update(batch_existing)
+                    
+                    if (i + QDRANT_CHECK_BATCH_SIZE) % (QDRANT_CHECK_BATCH_SIZE * 5) == 0:
+                        logger.info(f"  Checked {min(i + QDRANT_CHECK_BATCH_SIZE, len(all_point_ids))}/{len(all_point_ids)} points...")
+                
+                logger.info(f"✅ Found {len(existing_points)} existing points in Qdrant")
+                logger.info(f"📤 Will backfill {len(documents_to_process) - len(existing_points)} missing documents")
+                
+                # Process only documents that don't exist in Qdrant
+                for i, item in enumerate(documents_to_process):
+                    document = item["document"]
+                    point_id = item["point_id"]
+                    
+                    try:
+                        # Skip if already exists in Qdrant
+                        if point_id in existing_points:
+                            skipped += 1
                             continue
-                    processed += 1
+                        
+                        # Create change event for missing document
+                        change_event = self.create_change_event(collection_name, document)
 
-                    # Progress reporting
-                    if (i + 1) % BATCH_SIZE == 0:
-                        time.sleep(SLEEP_BETWEEN_BATCHES)
+                        if not dry_run:
+                            # Send to Kafka
+                            try:
+                                self.kafka_producer.produce(
+                                    topic=topic_name,
+                                    value=json.dumps(change_event),
+                                    key=str(document["_id"])
+                                )
+                                self.kafka_producer.poll(0)
+                            except KafkaException as e:
+                                logger.error(f"Kafka error sending to {topic_name}: {e}")
+                                errors += 1
+                                continue
+                        
+                        processed += 1
 
-                except Exception as e:
-                    errors += 1
-                    logger.error(f"Error processing document {document.get('_id', 'unknown')}: {e}")
-                    if errors > 10:  # Stop if too many errors
-                        logger.error("Too many errors, stopping collection processing")
-                        break
+                        # Progress reporting
+                        if (i + 1) % BATCH_SIZE == 0:
+                            logger.info(f"  Progress: {processed} sent, {skipped} skipped, {errors} errors")
+                            time.sleep(SLEEP_BETWEEN_BATCHES)
+
+                    except Exception as e:
+                        errors += 1
+                        logger.error(f"Error processing document {document.get('_id', 'unknown')}: {e}")
+                        if errors > 10:
+                            logger.error("Too many errors, stopping collection processing")
+                            break
+            else:
+                # Non-incremental mode: process all documents
+                logger.info(f"⚠️  Incremental mode disabled, processing all documents")
+                cursor = collection.find({}, batch_size=BATCH_SIZE)
+
+                for i, document in enumerate(cursor):
+                    try:
+                        change_event = self.create_change_event(collection_name, document)
+
+                        if not dry_run:
+                            try:
+                                self.kafka_producer.produce(
+                                    topic=topic_name,
+                                    value=json.dumps(change_event),
+                                    key=str(document["_id"])
+                                )
+                                self.kafka_producer.poll(0)
+                            except KafkaException as e:
+                                logger.error(f"Kafka error sending to {topic_name}: {e}")
+                                errors += 1
+                                continue
+                        processed += 1
+
+                        if (i + 1) % BATCH_SIZE == 0:
+                            logger.info(f"  Progress: {processed} processed, {errors} errors")
+                            time.sleep(SLEEP_BETWEEN_BATCHES)
+
+                    except Exception as e:
+                        errors += 1
+                        logger.error(f"Error processing document {document.get('_id', 'unknown')}: {e}")
+                        if errors > 10:
+                            logger.error("Too many errors, stopping collection processing")
+                            break
 
         except Exception as e:
             logger.error(f"Error processing collection {collection_name}: {e}")
-            return processed
 
-        return processed
+        return {"processed": processed, "skipped": skipped, "errors": errors}
 
-    def backfill_all_collections(self, collections: Optional[List[str]] = None, dry_run: bool = False) -> Dict[str, int]:
-        """Backfill all specified collections."""
+    def backfill_all_collections(self, collections: Optional[List[str]] = None, dry_run: bool = False, incremental: bool = True) -> Dict[str, Dict[str, int]]:
+        """Backfill all specified collections with incremental support.
+        
+        Args:
+            collections: List of collection names to backfill
+            dry_run: If True, don't actually send to Kafka
+            incremental: If True, only backfill missing documents
+            
+        Returns:
+            Dictionary mapping collection names to statistics
+        """
         if collections is None:
             collections = COLLECTIONS_TO_BACKFILL
 
         results = {}
+        
+        # Get initial Qdrant point count
+        initial_count = self.get_qdrant_point_count()
+        if incremental and initial_count > 0:
+            logger.info(f"📊 Qdrant currently has {initial_count} points")
+            logger.info(f"🔄 Running incremental backfill (will only add missing documents)")
+        elif incremental:
+            logger.info(f"📊 Qdrant is empty, running full backfill")
+        else:
+            logger.info(f"⚠️  Running full backfill (incremental mode disabled)")
+
+        total_processed = 0
+        total_skipped = 0
+        total_errors = 0
 
         for collection_name in collections:
             try:
-                processed = self.backfill_collection(collection_name, dry_run=dry_run)
-                results[collection_name] = processed
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Processing collection: {collection_name}")
+                logger.info(f"{'='*60}")
+                
+                stats = self.backfill_collection(collection_name, dry_run=dry_run, incremental=incremental)
+                results[collection_name] = stats
+                
+                total_processed += stats["processed"]
+                total_skipped += stats["skipped"]
+                total_errors += stats["errors"]
+                
+                logger.info(f"✅ Collection '{collection_name}' complete:")
+                logger.info(f"   - Processed: {stats['processed']}")
+                logger.info(f"   - Skipped: {stats['skipped']}")
+                logger.info(f"   - Errors: {stats['errors']}")
+                
             except Exception as e:
                 logger.error(f"Failed to process collection {collection_name}: {e}")
-                results[collection_name] = 0
+                results[collection_name] = {"processed": 0, "skipped": 0, "errors": 1}
+                total_errors += 1
 
         # Flush producer to ensure all messages are sent
         if not dry_run and self.kafka_producer:
-            # Wait for all messages to be delivered (timeout: 30 seconds)
+            logger.info(f"\n🔄 Flushing Kafka producer...")
             remaining = self.kafka_producer.flush(30)
             if remaining > 0:
-                logger.error(f"{remaining} messages may not have been delivered")
+                logger.error(f"❌ {remaining} messages may not have been delivered")
+            else:
+                logger.info(f"✅ All messages delivered successfully")
+
+        # Summary
+        logger.info(f"\n{'='*60}")
+        logger.info(f"BACKFILL SUMMARY")
+        logger.info(f"{'='*60}")
+        logger.info(f"📊 Total documents processed: {total_processed}")
+        logger.info(f"⏭️  Total documents skipped: {total_skipped}")
+        logger.info(f"❌ Total errors: {total_errors}")
+        
+        # Get final Qdrant point count
+        if incremental:
+            final_count = self.get_qdrant_point_count()
+            added = final_count - initial_count
+            logger.info(f"📈 Qdrant points: {initial_count} → {final_count} (+{added})")
 
         return results
 
@@ -261,12 +457,12 @@ def main():
 
     global BATCH_SIZE, SLEEP_BETWEEN_BATCHES  # Declare globals first
 
-    parser = argparse.ArgumentParser(description="Backfill MongoDB data to Kafka")
+    parser = argparse.ArgumentParser(description="Backfill MongoDB data to Kafka with smart incremental support")
     parser.add_argument("--dry-run", action="store_true", help="Run without actually sending to Kafka")
     parser.add_argument("--collections", nargs="*", help="Specific collections to backfill")
     parser.add_argument("--batch-size", type=int, help="Batch size for processing")
     parser.add_argument("--sleep", type=float, help="Sleep between batches")
-    parser.add_argument("--force", action="store_true", help="Force backfill even if data exists in Qdrant")
+    parser.add_argument("--no-incremental", action="store_true", help="Disable incremental mode (backfill all documents)")
 
     args = parser.parse_args()
 
@@ -281,44 +477,61 @@ def main():
 
     # Determine collections to process
     collections = args.collections if args.collections else COLLECTIONS_TO_BACKFILL
+    
+    # Determine incremental mode
+    incremental = INCREMENTAL_BACKFILL and not args.no_incremental
 
     backfill = MongoDBBackfill()
 
     try:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"MONGODB TO QDRANT BACKFILL")
+        logger.info(f"{'='*60}")
+        logger.info(f"Mode: {'Incremental (smart)' if incremental else 'Full (all documents)'}")
+        logger.info(f"Collections: {', '.join(collections)}")
+        logger.info(f"Dry run: {'Yes' if dry_run else 'No'}")
+        logger.info(f"{'='*60}\n")
+
         # Connect to services
         if not backfill.connect_mongodb():
-            logger.error("Failed to connect to MongoDB")
+            logger.error("❌ Failed to connect to MongoDB")
             sys.exit(1)
+        logger.info("✅ Connected to MongoDB")
 
-        # Check if Qdrant already has data (prevents duplicate backfill)
-        if SKIP_IF_DATA_EXISTS and not args.force:
+        # Connect to Qdrant for incremental check (if enabled)
+        if incremental:
             if backfill.connect_qdrant():
-                if backfill.check_qdrant_has_data():
-                    logger.info("✅ Qdrant already contains data. Skipping backfill to prevent duplicates.")
-                    logger.info("   To force backfill, use --force flag or set SKIP_BACKFILL_IF_EXISTS=false")
-                    sys.exit(0)
+                logger.info("✅ Connected to Qdrant for incremental sync")
+            else:
+                logger.warning("⚠️  Could not connect to Qdrant, falling back to full backfill")
+                incremental = False
 
         if not dry_run and not backfill.connect_kafka():
-            logger.error("Failed to connect to Kafka")
+            logger.error("❌ Failed to connect to Kafka")
             sys.exit(1)
+        if not dry_run:
+            logger.info("✅ Connected to Kafka")
 
         # Perform backfill
-        logger.info(f"🔄 Starting backfill for collections: {', '.join(collections)}")
-        results = backfill.backfill_all_collections(collections, dry_run=dry_run)
+        results = backfill.backfill_all_collections(collections, dry_run=dry_run, incremental=incremental)
 
-        # Summary
-        total_processed = sum(results.values())
-        if total_processed == 0:
-            logger.warning("No documents were processed.")
+        # Exit status
+        total_processed = sum(r.get("processed", 0) for r in results.values())
+        total_skipped = sum(r.get("skipped", 0) for r in results.values())
+        
+        if total_processed > 0 or total_skipped > 0:
+            sys.exit(0)
         else:
-            logger.info(f"✅ Backfill completed. Processed {total_processed} documents across {len(results)} collections.")
-        sys.exit(0)
+            logger.warning("⚠️  No documents were processed or skipped.")
+            sys.exit(0)
 
     except KeyboardInterrupt:
-        logger.error("Backfill interrupted by user.")
+        logger.error("\n❌ Backfill interrupted by user.")
         sys.exit(1)
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
     finally:
         backfill.close()
