@@ -1,4 +1,3 @@
-
 """WebSocket handler for streaming chat responses"""
 from fastapi import WebSocket, WebSocketDisconnect , status , WebSocketException
 from typing import Dict, Any, AsyncGenerator
@@ -147,13 +146,22 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             nonlocal authenticated
             await asyncio.sleep(handshake_timeout)
             if not authenticated:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Handshake timeout. Please send member_id and business_id within 30 seconds.",
-                    "timestamp": datetime.now().isoformat()
-                })
+                try:
+                    # Only send error if connection is still active
+                    if websocket.client_state.name != 'DISCONNECTED':
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Handshake timeout. Please send member_id and business_id within 30 seconds.",
+                            "timestamp": datetime.now().isoformat()
+                        })
+                except Exception:
+                    # Ignore errors if connection is already closed
+                    pass
                 # Close the connection on timeout
-                await websocket.close()
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
 
         handshake_timer = asyncio.create_task(check_handshake_timeout())
 
@@ -161,12 +169,16 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         while True:
             # Send connected message only after handshake is received
             if authenticated and user_context["user_id"] and user_context["businessId"]:
-                await websocket.send_json({
-                    "type": "connected",
-                    "user_id": user_context["user_id"],
-                    "business_id": user_context["businessId"],
-                    "timestamp": datetime.now().isoformat()
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "connected",
+                        "user_id": user_context["user_id"],
+                        "business_id": user_context["businessId"],
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception:
+                    # Connection closed, break the loop
+                    break
 
             try:
                 data_str = await websocket.receive_text()
@@ -176,19 +188,27 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             data = json.loads(data_str)
 
             if data.get("type") == "ping":
-                await websocket.send_json({
-                    "type": "pong",
-                    "timestamp": datetime.now().isoformat()
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "pong",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception:
+                    # Connection closed, break the loop
+                    break
                 continue
 
             # Handle project_data_loaded message
             if data.get("type") == "project_data_loaded":
-                await websocket.send_json({
-                    "type": "project_data_loaded",
-                    "message": data.get("message", "Project data loaded"),
-                    "timestamp": datetime.now().isoformat()
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "project_data_loaded",
+                        "message": data.get("message", "Project data loaded"),
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception:
+                    # Connection closed, break the loop
+                    break
                 continue
 
             # Handle handshake message to set user context
@@ -210,21 +230,29 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 # Mark as authenticated now that handshake is complete
                 authenticated = True
 
-                await websocket.send_json({
-                    "type": "handshake_ack",
-                    "user_id": user_context["user_id"],
-                    "business_id": user_context["businessId"],
-                    "timestamp": datetime.now().isoformat()
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "handshake_ack",
+                        "user_id": user_context["user_id"],
+                        "business_id": user_context["businessId"],
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception:
+                    # Connection closed, break the loop
+                    break
                 continue
 
             # Check if handshake has been completed
             if not authenticated:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Handshake required. Please send member_id and business_id.",
-                    "timestamp": datetime.now().isoformat()
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Handshake required. Please send member_id and business_id.",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception:
+                    # Connection closed, break the loop
+                    break
                 continue
 
             # Use the trusted context for all operations
@@ -244,12 +272,16 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             conversation_id = data.get("conversation_id") or f"conv_{user_id}"
             force_planner = data.get("planner", False)
 
-            await websocket.send_json({
-                "type": "user_message",
-                "content": message,
-                "conversation_id": conversation_id,
-                "timestamp": datetime.now().isoformat()
-            })
+            try:
+                await websocket.send_json({
+                    "type": "user_message",
+                    "content": message,
+                    "conversation_id": conversation_id,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception:
+                # Connection closed, break the loop
+                break
 
             # Persist user message to ProjectManagement.conversations
             try:
@@ -277,15 +309,19 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                     planner_span.set_attribute("planner.success", plan_result.get("success", False))
                                 except Exception:
                                     pass
-                        await websocket.send_json({
-                            "type": "planner_result",
-                            "success": plan_result.get("success", False),
-                            "intent": plan_result.get("intent"),
-                            "pipeline": plan_result.get("pipeline"),
-                            "pipeline_js": plan_result.get("pipeline_js"),
-                            "result": plan_result.get("result"),
-                            "timestamp": datetime.now().isoformat()
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "planner_result",
+                                "success": plan_result.get("success", False),
+                                "intent": plan_result.get("intent"),
+                                "pipeline": plan_result.get("pipeline"),
+                                "pipeline_js": plan_result.get("pipeline_js"),
+                                "result": plan_result.get("result"),
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        except Exception:
+                            # Connection closed, break the loop
+                            break
                     except Exception as e:
                         if user_span:
                             try:
@@ -293,11 +329,15 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                 pass
                             except Exception:
                                 pass
-                        await websocket.send_json({
-                            "type": "planner_error",
-                            "message": str(e),
-                            "timestamp": datetime.now().isoformat()
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "planner_error",
+                                "message": str(e),
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        except Exception:
+                            # Connection closed, break the loop
+                            break
                 else:
                     # Set websocket for content generation tool (direct streaming to frontend)
                     from agent.tools import set_generation_context
@@ -312,24 +352,32 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                 agent_span.set_attribute("input.value", (message or "")[:1000])
                             except Exception:
                                 pass
-                        async for _ in mongodb_agent.run_streaming(
-                            query=message,
-                            websocket=websocket,
-                            conversation_id=conversation_id
-                        ):
-                            # The streaming is handled internally by the callback handler
-                            # Just iterate through the generator to complete the streaming
-                            pass
+                        try:
+                            async for _ in mongodb_agent.run_streaming(
+                                query=message,
+                                websocket=websocket,
+                                conversation_id=conversation_id
+                            ):
+                                # The streaming is handled internally by the callback handler
+                                # Just iterate through the generator to complete the streaming
+                                pass
+                        except Exception:
+                            # Connection closed, break the loop
+                            break
                     
                     # Clean up websocket reference after completion
                     from agent.tools import set_generation_websocket
                     set_generation_websocket(None)
 
-            await websocket.send_json({
-                "type": "complete",
-                "conversation_id": conversation_id,
-                "timestamp": datetime.now().isoformat()
-            })
+            try:
+                await websocket.send_json({
+                    "type": "complete",
+                    "conversation_id": conversation_id,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception:
+                # Connection closed, break the loop
+                break
 
     except WebSocketDisconnect:
         # Cancel handshake timer if it exists
@@ -342,10 +390,13 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
         if handshake_timer:
             handshake_timer.cancel()
         if not websocket.client_state.name == 'DISCONNECTED':
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e),
-                "timestamp": datetime.now().isoformat()
-            })
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e),
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception:
+                pass
         if user_context["user_id"]:
             ws_manager.disconnect(user_context["user_id"])
