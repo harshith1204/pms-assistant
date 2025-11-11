@@ -3,7 +3,7 @@ services:
     image: confluentinc/cp-kafka-connect:7.8.0
     container_name: kafka-connect
     ports:
-      - "8084:8083"
+      - "8083:8083"
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:9092
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
@@ -90,7 +90,7 @@ services:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka-ui
     ports:
-      - "8083:8080"
+      - "8084:8080"
     environment:
       - KAFKA_CLUSTERS_0_NAME=local
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
@@ -131,7 +131,7 @@ services:
       - BACKFILL_BATCH_SIZE=${BACKFILL_BATCH_SIZE:-1000}
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-ProjectManagement}
       - INCREMENTAL_BACKFILL=${INCREMENTAL_BACKFILL:-true}
       - QDRANT_CHECK_BATCH_SIZE=${QDRANT_CHECK_BATCH_SIZE:-1000}
     depends_on:
@@ -160,7 +160,7 @@ services:
       - KAFKA_TOPIC=${KAFKA_TOPIC:-ProjectManagement\..*}
       - KAFKA_GROUP_ID=${KAFKA_GROUP_ID:-qdrant-consumer}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-ProjectManagement}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-300}

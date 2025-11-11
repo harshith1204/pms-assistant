@@ -40,6 +40,7 @@ safetensors==0.4.5
 # Redis for conversation memory cache
 redis
 redis[hiredis]
+cachetools
 
 # Kafka dependencies
 kafka-python>=2.0.2

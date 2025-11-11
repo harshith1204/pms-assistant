@@ -183,7 +183,7 @@ services:
       - KAFKA_CLUSTERS_0_NAME=local
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
     ports:
-      - "8080:8080"
+      - "8084:8080"
     depends_on:
       kafka:
         condition: service_healthy
@@ -208,7 +208,7 @@ services:
       - BACKFILL_BATCH_SIZE=${BACKFILL_BATCH_SIZE:-1000}
       - BACKFILL_SLEEP=${BACKFILL_SLEEP:-1.0}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-ProjectManagement}
       - INCREMENTAL_BACKFILL=${INCREMENTAL_BACKFILL:-true}
       - QDRANT_CHECK_BATCH_SIZE=${QDRANT_CHECK_BATCH_SIZE:-1000}
       - HF_TOKEN=${HF_TOKEN:-}
@@ -245,7 +245,7 @@ services:
       - KAFKA_TOPIC=${KAFKA_TOPIC:-ProjectManagement\..*}
       - KAFKA_GROUP_ID=${KAFKA_GROUP_ID:-qdrant-consumer}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-pms_collection}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-ProjectManagement}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-300}
@@ -287,6 +287,8 @@ services:
       - ./monitoring:/app/monitoring:ro
     command: ["python", "-m", "monitoring.service_monitor"]
     depends_on:
+      backfill:
+        condition: service_completed_successfully
       backend:
         condition: service_started
       kafka:
