@@ -457,7 +457,7 @@ class LLMIntentParser:
             "## EXAMPLES\n"
             "- 'show me tasks assigned to alice' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_name\": \"alice\"}, \"aggregations\": []}\n"
             "- 'how many bugs are there' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"count\"]}\n"
-            "- 'count active projects' → {\"primary_entity\": \"project\", \"filters\": {\"project_status\": \"STARTED\"}, \"aggregations\": [\"count\"]}\n"
+            "- 'count active projects' → {\"primary_entity\": \"project\", \"filters\": {\"isActive\": true}, \"aggregations\": [\"count\"]}\n"
             "- 'group tasks by priority' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"group\"], \"group_by\": [\"priority\"]}\n"
             "- 'show archived projects' → {\"primary_entity\": \"project\", \"filters\": {\"isArchived\": true}, \"aggregations\": []}\n"
             "- 'find favourite modules' → {\"primary_entity\": \"module\", \"filters\": {\"isFavourite\": true}, \"aggregations\": []}\n"
@@ -680,6 +680,13 @@ class LLMIntentParser:
             else:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
+
+        # Heuristic: For project queries, interpret 'active projects' phrasing as isActive=true when not explicitly set
+        if primary == "project":
+            oq_lower = (original_query or "").lower()
+            mentions_active = "active" in oq_lower and not any(w in oq_lower for w in ["inactive", "archiv", "not active", "deactive"])
+            if mentions_active and "isActive" not in filters and "isArchived" not in filters and "project_status" not in filters:
+                filters["isActive"] = True
 
         
         # Heuristic enrichments from original query text (generalized)
