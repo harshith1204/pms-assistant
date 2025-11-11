@@ -15,7 +15,8 @@ import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
 from agent.memory import conversation_memory
 from typing import Tuple
-from agent.tools import tools
+# Import the tools module so we can access its registry
+import agent.tools as tools_module
 from datetime import datetime
 import time
 from collections import defaultdict, deque
@@ -23,7 +24,7 @@ import os
 
 # Import tools list
 try:
-    tools_list = tools.tools
+    tools_list = tools_module.tools
 except AttributeError:
     # Fallback: define empty tools list if import fails
     tools_list = []
