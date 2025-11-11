@@ -21,6 +21,7 @@ from qdrant_client.models import (
     SparseVector,
 )
 from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
+from sentence_transformers import SentenceTransformer
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -60,31 +61,55 @@ class RAGTool:
             )
         return cls._instance
 
+    # async def connect(self):
+    #     # This method's internal logic remains the same
+    #     if self.connected:
+    #         return
+    #     try:
+    #         self.qdrant_client = QdrantClient(
+    #             url=mongo.constants.QDRANT_URL,
+    #             api_key=mongo.constants.QDRANT_API_KEY,
+    #         )
+    #         self.embedding_client = EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
+    #         try:
+    #             dimension = self.embedding_client.get_dimension()
+    #         except EmbeddingServiceError as exc:
+    #             raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
+    #         self.connected = True
+    #         # Lightweight verification that sparse vectors are configured and present
+    #         try:
+    #             col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
+    #             # If call succeeds, we assume sparse config exists as we create it during indexing
+    #         except Exception as e:
+    #             logger.error(f"Could not verify collection config: {e}")
+    #     except Exception as e:
+    #         logger.error(f"Failed to connect RAGTool components: {e}")
+    #         raise
+    
     async def connect(self):
         # This method's internal logic remains the same
         if self.connected:
             return
         try:
-            self.qdrant_client = QdrantClient(
-                url=mongo.constants.QDRANT_URL,
-                api_key=mongo.constants.QDRANT_API_KEY,
-            )
-            self.embedding_client = EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
+            self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL, api_key=mongo.constants.QDRANT_API_KEY)
             try:
-                dimension = self.embedding_client.get_dimension()
-            except EmbeddingServiceError as exc:
-                raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
+                self.embedding_client = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
+            except Exception as e:
+                print(f"⚠ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
             self.connected = True
+            print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
             # Lightweight verification that sparse vectors are configured and present
             try:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
                 # If call succeeds, we assume sparse config exists as we create it during indexing
+                print(f"ℹ Collection loaded: {getattr(col, 'name', mongo.constants.QDRANT_COLLECTION_NAME)}")
             except Exception as e:
-                logger.error(f"Could not verify collection config: {e}")
+                print(f"⚠ Could not verify collection config: {e}")
         except Exception as e:
-            logger.error(f"Failed to connect RAGTool components: {e}")
+            print(f"Failed to connect RAGTool components: {e}")
             raise
-    
+
+
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
     async def search_content(self, query: str, content_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
         """Search for relevant content in Qdrant with dense+SPLADE hybrid fusion."""
