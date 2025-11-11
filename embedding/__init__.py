@@ -1,0 +1,1 @@
+# Embedding service client package

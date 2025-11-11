@@ -5,7 +5,6 @@ langchain-core
 langchain-groq
 langchain-community
 
-
 python-dotenv
 pydantic
 typing-extensions
@@ -17,8 +16,8 @@ httpx
 python-dateutil
 
 # Web framework
-fastapi
-uvicorn[standard]
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
 
 # Development and testing
 groq
@@ -29,16 +28,22 @@ pytest-asyncio
 websockets  # For WebSocket testing
 
 # Qdrant and RAG dependencies
-qdrant-client
-sentence-transformers
-numpy
+qdrant-client>=1.9.1
+numpy==1.26.4
 
-# SPLADE (sparse) dependencies
-transformers
-torch
+# Hugging Face dependencies (unified versions)
+transformers==4.57.1
+huggingface-hub==0.36.0
+sentencepiece==0.2.0
+safetensors==0.4.5
 
 # Redis for conversation memory cache
 redis
 redis[hiredis]
+cachetools
+
+# Kafka dependencies
+kafka-python>=2.0.2
+confluent-kafka>=2.3.0
 
 # (Phoenix and OpenTelemetry removed; using internal no-op shims)

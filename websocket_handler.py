@@ -11,13 +11,17 @@ from langchain_core.callbacks import AsyncCallbackHandler
 import time
 import re
 from dotenv import load_dotenv
+import logging
 from mongo.constants import DATABASE_NAME
-from planner import plan_and_execute_query
+from agent.planner import plan_and_execute_query
 from mongo.conversations import save_user_message
 import os
 import contextlib
 
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class StreamingCallbackHandler(AsyncCallbackHandler):
     """Callback handler for streaming LLM responses"""
@@ -91,13 +95,11 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket, user_id: str):
         """Accept and store a new WebSocket connection"""
         self.active_connections[user_id] = websocket
-        print(f"Client {user_id} connected. Total connections: {len(self.active_connections)}")
 
     def disconnect(self, user_id: str):
         """Remove a WebSocket connection"""
         if user_id in self.active_connections:
             del self.active_connections[user_id]
-            print(f"Client {user_id} disconnected. Total connections: {len(self.active_connections)}")
 
     def get_connection(self, user_id: str) -> WebSocket | None:
         """Get a WebSocket connection by user_id"""
@@ -114,7 +116,7 @@ class WebSocketManager:
             try:
                 await connection.send_json(message)
             except Exception as e:
-                print(f"Error broadcasting to {user_id}: {e}")
+                logger.error(f"Error broadcasting to {user_id}: {e}")
 
 # Global WebSocket manager instance
 ws_manager = WebSocketManager()
@@ -240,13 +242,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
 
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{user_id}"
-            print(f"conversation_id: {conversation_id}")
             force_planner = data.get("planner", False)
-
-            # Proactively cache older conversations to reduce Redis latency
-            from memory import conversation_memory
-            await conversation_memory.ensure_conversation_cached(conversation_id)
-
 
             await websocket.send_json({
                 "type": "user_message",
@@ -255,12 +251,12 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Persist user message to SimpoAssist.conversations
+            # Persist user message to ProjectManagement.conversations
             try:
                 await save_user_message(conversation_id, message)
             except Exception as e:
-                # Non-fatal: log to console, continue processing
-                print(f"Warning: failed to save user message: {e}")
+                # Non-fatal: log error, continue processing
+                logger.error(f"Failed to save user message: {e}")
 
             # Create a root span per user message and keep all work nested (disabled if DISABLE_TRACING)
             tracer = None
@@ -304,7 +300,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                         })
                 else:
                     # Set websocket for content generation tool (direct streaming to frontend)
-                    from tools import set_generation_context
+                    from agent.tools import set_generation_context
                     # Provide websocket + conversation context for persisting generated artifacts
                     set_generation_context(websocket, conversation_id)
                     
@@ -326,7 +322,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             pass
                     
                     # Clean up websocket reference after completion
-                    from tools import set_generation_websocket
+                    from agent.tools import set_generation_websocket
                     set_generation_websocket(None)
 
             await websocket.send_json({
@@ -341,7 +337,6 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             handshake_timer.cancel()
         if user_context["user_id"]:
             ws_manager.disconnect(user_context["user_id"])
-        print(f"Client {user_context['user_id'] or 'unknown'} disconnected")
     except Exception as e:
         # Cancel handshake timer if it exists
         if handshake_timer:

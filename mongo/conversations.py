@@ -7,6 +7,8 @@ import asyncio
 import contextlib
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import logging
+from dotenv import load_dotenv
 
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -17,6 +19,13 @@ except Exception:
         ERROR_TYPE = "error.type"
         ERROR_MESSAGE = "error.message"
     OI = _OI()
+
+
+# Ensure environment variables are loaded when running locally
+load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class ConversationMongoClient:
@@ -54,10 +63,8 @@ class ConversationMongoClient:
 
                     self.connected = True
 
-                    print("✅ Conversations MongoDB connected with persistent connection pool")
-
             except Exception as e:
-                print(f"❌ Failed to connect to Conversations MongoDB: {e}")
+                logger.error(f"Failed to connect to Conversations MongoDB: {e}")
                 raise
 
     async def disconnect(self):
@@ -75,12 +82,16 @@ class ConversationMongoClient:
 
 
 # Initialize conversations client with the provided connection string
-CONVERSATIONS_CONNECTION_STRING = "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017/?authSource=admin"
+CONVERSATIONS_CONNECTION_STRING = os.getenv(
+    "CONVERSATIONS_MONGODB_URI",
+    os.getenv("MONGODB_URI", "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0"),
+)
 conversation_mongo_client = ConversationMongoClient(CONVERSATIONS_CONNECTION_STRING)
 
 
-CONVERSATIONS_DB_NAME = "SimpoAssist"
-CONVERSATIONS_COLLECTION_NAME = "conversations"
+CONVERSATIONS_DB_NAME = os.getenv("CONVERSATIONS_DB_NAME", "ProjectManagement")
+CONVERSATIONS_COLLECTION_NAME = os.getenv("CONVERSATIONS_COLLECTION_NAME", "conversations")
+TEMPLATES_COLLECTION_NAME = os.getenv("TEMPLATES_COLLECTION_NAME", "Templates")
 
 
 async def ensure_conversation_client_connected():
@@ -287,6 +298,54 @@ async def save_generated_module(conversation_id: str, module: Dict[str, Any]) ->
                 "title": (module.get("title") or "Module"),
                 "description": (module.get("description") or ""),
             },
+        })
+    )
+
+
+async def save_generated_epic(conversation_id: str, epic: Dict[str, Any]) -> None:
+    """Persist a generated epic as a conversation message.
+
+    Expects a minimal payload: {title, description?, priority?, state?, assignee?, labels?}
+    """
+    epic_payload: Dict[str, Any] = {
+        "title": (epic.get("title") or "Epic"),
+        "description": (epic.get("description") or ""),
+    }
+
+    if isinstance(epic.get("priority"), str) and epic["priority"].strip():
+        epic_payload["priority"] = epic["priority"].strip()
+    state_val = epic.get("state") or epic.get("stateName")
+    if isinstance(state_val, str) and state_val.strip():
+        epic_payload["state"] = state_val.strip()
+    assignee_val = epic.get("assignee") or epic.get("assigneeName")
+    if isinstance(assignee_val, str) and assignee_val.strip():
+        epic_payload["assignee"] = assignee_val.strip()
+    if isinstance(epic.get("labels"), list) and epic["labels"]:
+        label_names = []
+        for label in epic["labels"]:
+            if isinstance(label, str) and label.strip():
+                label_names.append(label.strip())
+            elif isinstance(label, dict):
+                name = label.get("name")
+                if isinstance(name, str) and name.strip():
+                    label_names.append(name.strip())
+        if label_names:
+            epic_payload["labels"] = label_names
+    if isinstance(epic.get("projectId"), str) and epic["projectId"].strip():
+        epic_payload["projectId"] = epic["projectId"].strip()
+    if isinstance(epic.get("startDate"), str) and epic["startDate"].strip():
+        epic_payload["startDate"] = epic["startDate"].strip()
+    if isinstance(epic.get("dueDate"), str) and epic["dueDate"].strip():
+        epic_payload["dueDate"] = epic["dueDate"].strip()
+    if isinstance(epic.get("link"), str) and epic["link"].strip():
+        epic_payload["link"] = epic["link"].strip()
+
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "epic",
+            "content": "",
+            "epic": epic_payload,
         })
     )
 

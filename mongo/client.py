@@ -6,9 +6,13 @@ from typing import Dict, Any, List
 import os
 import contextlib
 import asyncio
+import logging
 from dotenv import load_dotenv
-
+from agent.mongo_to_uuid import mongo_uuid_converter
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 try:
     from openinference.semconv.trace import SpanAttributes as OI
@@ -45,9 +49,8 @@ class DirectMongoClient:
             try:
                 async with self._connect_lock:
                     if self.connected and self.client:
-                        print("✅ MongoDB already connected (reusing persistent connection)")
                         return
-                    
+
                     # Create Motor client with optimized connection pool settings
                     # Motor maintains persistent connections automatically
                     self.client = AsyncIOMotorClient(
@@ -60,20 +63,14 @@ class DirectMongoClient:
                         connectTimeoutMS=10000,  # Connection timeout
                         socketTimeoutMS=20000,   # Socket timeout
                     )
-                    
+
                     # Test connection
                     await self.client.admin.command('ping')
-                    
+
                     self.connected = True
-                    
-                    pass
-                    
-                    print(f"✅ MongoDB connected with persistent connection pool (50 connections)")
-                    print(f"   Direct connection - no MCP/Smithery overhead!")
-                    
+
             except Exception as e:
-                pass
-                print(f"❌ Failed to connect to MongoDB: {e}")
+                logger.error(f"Failed to connect to MongoDB: {e}")
                 raise
 
     async def disconnect(self):
@@ -150,11 +147,10 @@ class DirectMongoClient:
                             ])
                     except ValueError as e:
                         # Invalid UUID format - log and skip business filter
-                        print(f"⚠️  Invalid BUSINESS_UUID format '{biz_uuid}': {e}")
-                        print(f"   Skipping business filter for {collection}")
+                        logger.error(f"Invalid BUSINESS_UUID format '{biz_uuid}': {e}")
                     except Exception as e:
                         # Other errors - log and skip business filter
-                        print(f"⚠️  Error applying business filter for {collection}: {e}")
+                        logger.error(f"Error applying business filter for {collection}: {e}")
 
                 # 2) Member-level project RBAC scoping
                 if enforce_member and member_uuid:
@@ -187,11 +183,10 @@ class DirectMongoClient:
                         # Other collections: no-op
                     except ValueError as e:
                         # Invalid UUID format - log and skip member filter
-                        print(f"⚠️  Invalid MEMBER_UUID format '{member_uuid}': {e}")
-                        print(f"   Skipping member filter for {collection}")
+                        logger.error(f"Invalid MEMBER_UUID format '{member_uuid}': {e}")
                     except Exception as e:
                         # Other errors - log and skip member filter
-                        print(f"⚠️  Error applying member filter for {collection}: {e}")
+                        logger.error(f"Error applying member filter for {collection}: {e}")
 
                 # Execute aggregation - Motor uses persistent connection pool
                 db = self.client[database]
@@ -208,6 +203,56 @@ class DirectMongoClient:
                 pass
                 raise
 
+    async def aggregate_smart(self, database: str, collection: str, pipeline: List[Dict[str, Any]], project_id: str) -> List[Dict[str, Any]]:
+        """Execute MongoDB aggregation pipeline directly
+        
+        This replaces mongodb_tools.execute_tool("aggregate", {...})
+        
+        Args:
+            database: Database name
+            collection: Collection name
+            pipeline: MongoDB aggregation pipeline
+            project_id: Project UUID for RBAC scoping
+        Returns:
+            List of result documents
+        """
+        span_cm = contextlib.nullcontext()
+        with span_cm as span:
+            pass
+        injected_stages: List[Dict[str, Any]] = []
+        try:    
+            # Motor maintains persistent connection pool automatically
+            # No need to check connection status on every query - massive latency savings!
+            if not self.client:
+                raise RuntimeError("MongoDB client not initialized. Call connect() first.")
+            
+            if project_id:
+                try:
+                    pr_id = uuid_str_to_mongo_binary(project_id)
+
+                    injected_stages.append({"$match": {"project._id": pr_id}})
+                except ValueError as e:
+                        # Invalid UUID format - log and skip project filter
+                        logger.error(f"Invalid PROJECT_UUID format '{project_id}': {e}")
+                except Exception as e:
+                    # Other errors - log and skip project filter
+                    logger.error(f"Error applying project filter for {collection}: {e}")
+                        
+                    
+
+            # Execute aggregation - Motor uses persistent connection pool
+            db = self.client[database]
+            coll = db[collection]
+            effective_pipeline = (injected_stages + pipeline) if injected_stages else pipeline
+            cursor = coll.aggregate(effective_pipeline)
+            results = await cursor.to_list(length=None)
+                
+            return results
+        
+        except Exception as e:
+                pass
+                raise
+
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Compatibility wrapper matching MongoDB MCP interface
         
@@ -219,6 +264,12 @@ class DirectMongoClient:
             collection = arguments["collection"]
             pipeline = arguments["pipeline"]
             return await self.aggregate(database, collection, pipeline)
+        elif tool_name == "aggregate_smart":
+            database = arguments.get("database", DATABASE_NAME)
+            collection = arguments["collection"]
+            pipeline = arguments["pipeline"]
+            project_id = arguments.get("project_id")
+            return await self.aggregate_smart(database, collection, pipeline, project_id)
         else:
             raise ValueError(f"Tool '{tool_name}' not supported by direct client. Only 'aggregate' is implemented.")
 

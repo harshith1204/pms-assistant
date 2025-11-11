@@ -1,17 +1,21 @@
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 import asyncio
 import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
-from memory import conversation_memory
+from agent.memory import conversation_memory
 from typing import Tuple
-import tools
+from agent.tools import tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
@@ -97,7 +101,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Examples of INDEPENDENT: 'Show bug counts AND feature counts' → call both tools together\n"
     "- Examples of DEPENDENT: 'Find bugs by John, THEN search docs about those bugs' → call mongo_query first, wait for results, then call rag_search\n\n"
     "DECISION GUIDE:\n"
-    "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState, timeline.\n"
+    "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, epic, members, page, projectState, userStory, features.\n"
     "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
     "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
     "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
@@ -111,15 +115,17 @@ DEFAULT_SYSTEM_PROMPT = (
     "     * Questions about 'work items', 'bugs', 'tasks', 'issues' → content_type='work_item'\n"
     "     * Questions about 'cycle', 'sprint', 'iteration' → content_type='cycle'\n"
     "     * Questions about 'module', 'component', 'feature area' → content_type='module'\n"
+    "     * Questions about 'epic', 'initiative', 'large feature' → content_type='epic'\n"
     "     * Questions about 'project' → content_type='project'\n"
-    "     * Timeline/history questions → use mongo_query on 'timeline' (do not use RAG)\n"
+    "     * Questions about 'userStory' → content_type='user_story'\n"
+    "     * Questions about 'features' → content_type='feature'\n"
     "     * Ambiguous queries → omit content_type (searches all types) OR call rag_search multiple times with different types\n"
-    "3) Use 'generate_content' to CREATE new work items, pages, cycles, or modules.\n"
+    "3) Use 'generate_content' to CREATE new work items, pages, cycles, modules, or epics.\n"
     "   - CRITICAL: Content is sent DIRECTLY to frontend, tool returns only '✅ Content generated' or '❌ Error'.\n"
     "   - Do NOT expect content details in the response - they go straight to the user's screen.\n"
     "   - Just acknowledge success: 'The [type] has been generated' or similar.\n"
     "   - Examples: 'create a bug report', 'generate documentation page', 'draft meeting notes', 'create sprint', 'generate module'.\n"
-    "   - REQUIRED: content_type ('work_item', 'page', 'cycle', or 'module'), prompt (user's instruction).\n"
+    "   - REQUIRED: content_type ('work_item', 'page', 'cycle', 'module', or 'epic'), prompt (user's instruction).\n"
     "   - OPTIONAL: template_title, template_content, context.\n"
     "4) Use MULTIPLE tools together when question needs different operations.\n"
     "   - Example: 'Show bug counts by priority (mongo_query) and find related documentation (rag_search)'.\n"
@@ -129,9 +135,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
     "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
     "  REQUIRED: 'query' - semantic search terms.\n"
-    "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None for all), group_by (field name), limit, show_content.\n"
-    "- generate_content(content_type:str, prompt:str, template_title:str='', template_content:str='', context:dict=None): Generate work items/pages/cycles/modules.\n"
-    "  REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'), prompt (what to generate).\n"
+    "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|'epic'|'user_story'|'feature'|None for all), group_by (field name), limit, show_content.\n"
+    "- generate_content(content_type:str, prompt:str, template_title:str='', template_content:str='', context:dict=None): Generate work items/pages/cycles/modules/epics.\n"
+    "  REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'|'epic'), prompt (what to generate).\n"
     "  OPTIONAL: template_title, template_content, context.\n"
     "  NOTE: Returns '✅ Content generated' only - full content sent directly to frontend to save tokens.\n\n"
     "CONTENT TYPE ROUTING EXAMPLES:\n"
@@ -143,7 +149,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "- 'Create a bug for login issue' → generate_content(content_type='work_item', prompt='Bug: login fails on mobile')\n"
     "- 'Generate API docs page' → generate_content(content_type='page', prompt='API documentation for auth endpoints')\n"
     "- 'Create a Q4 sprint' → generate_content(content_type='cycle', prompt='Q4 2024 Sprint')\n"
-    "- 'Generate authentication module' → generate_content(content_type='module', prompt='Authentication Module')\n\n"
+    "- 'Generate authentication module' → generate_content(content_type='module', prompt='Authentication Module')\n"
+    "- 'Draft customer onboarding epic' → generate_content(content_type='epic', prompt='Customer Onboarding Epic')\n\n"
     "WHEN UNSURE WHICH TOOL:\n"
     "- If the query is ambiguous or entity/field mapping to Mongo is unclear → prefer rag_search first.\n"
     "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
@@ -494,7 +501,6 @@ class MongoDBAgent:
             self.connected = True
             if span:
                 pass
-            print("MongoDB Agent connected successfully!")
         except Exception as e:
             if span:
                 pass
@@ -586,7 +592,7 @@ class MongoDBAgent:
                             "- Use **nested lists** for hierarchical information\n"
                             "- Keep list items concise and use **bold** for key terms\n\n"
                             "DECISION GUIDE:\n"
-                            "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, members, page, projectState.\n"
+                            "1) Use 'mongo_query' for structured questions about entities/fields in collections: project, workItem, cycle, module, epic, members, page, projectState, userStory, features.\n"
                             "   - Examples: counts, lists, filters, sort, group by, breakdowns by assignee/state/project/priority/date.\n"
                             "   - Use for: 'count bugs by priority', 'list work items by assignee', 'group projects by business', 'show breakdown by state'.\n"
                             "   - The query planner automatically determines when complex joins are beneficial and adds strategic relationships only when they improve query performance.\n"
@@ -599,14 +605,17 @@ class MongoDBAgent:
                             "     • 'release', 'documentation', 'notes', 'wiki' keywords → content_type='page'\n"
                             "     • 'work items', 'bugs', 'tasks', 'issues' keywords → content_type='work_item'\n"
                             "     • 'cycle', 'sprint', 'iteration' keywords → content_type='cycle'\n"
-                            "     • 'module', 'component', 'feature area' keywords → content_type='module'\n"
+                            "     • 'module', 'component' keywords → content_type='module'\n"
+                            "     • 'epic', 'initiative' keywords → content_type='epic'\n"
                             "     • 'project' keyword → content_type='project'\n"
+                            "     • 'user story', 'story' keywords → content_type='user_story'\n"
+                            "     • 'features', 'feature', 'new feature' keywords → content_type='feature'\n"
                             "     • Unclear/multi-type query → content_type=None (all) OR multiple rag_search calls\n"
-                            "3) Use 'generate_content' to CREATE new work items, pages, cycles, or modules.\n"
+                            "3) Use 'generate_content' to CREATE new work items, pages, cycles, modules, or epics.\n"
                             "   - CRITICAL: Content sent DIRECTLY to frontend, returns only '✅ Content generated'.\n"
                             "   - Do NOT expect details - just acknowledge success to user.\n"
                             "   - Examples: 'create a bug report', 'generate documentation', 'draft meeting notes', 'create sprint', 'generate module'.\n"
-                            "   - REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'), prompt.\n"
+                            "   - REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'|'epic'), prompt.\n"
                             "   - OPTIONAL: template_title, template_content, context.\n"
                             "4) Use MULTIPLE tools together when question needs different operations.\n"
                             "   - Example: 'Show bug counts by priority (mongo_query) and find related documentation (rag_search)'.\n"
@@ -616,9 +625,9 @@ class MongoDBAgent:
                             "  REQUIRED: 'query' - natural language description of what MongoDB data you want.\n"
                             "- rag_search(query:str, content_type:str|None, group_by:str|None, limit:int=10, show_content:bool=True): Universal RAG search.\n"
                             "  REQUIRED: 'query' - semantic search terms.\n"
-                            "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|None), group_by (field), limit, show_content.\n"
-                            "- generate_content(content_type:str, prompt:str, template_title:str='', template_content:str='', context:dict=None): Generate work items/pages/cycles/modules.\n"
-                            "  REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'), prompt.\n"
+                            "  OPTIONAL: content_type ('page'|'work_item'|'project'|'cycle'|'module'|'epic'|'user_story'|'feature'|None), group_by (field), limit, show_content.\n"
+                            "- generate_content(content_type:str, prompt:str, template_title:str='', template_content:str='', context:dict=None): Generate work items/pages/cycles/modules/epics.\n"
+                            "  REQUIRED: content_type ('work_item'|'page'|'cycle'|'module'|'epic'), prompt.\n"
                             "  OPTIONAL: template_title, template_content, context.\n"
                             "  NOTE: Returns '✅ Content generated' only - content goes directly to frontend.\n\n"
                             "CONTENT TYPE EXAMPLES:\n"
@@ -626,10 +635,12 @@ class MongoDBAgent:
                             "- 'Recent work items about auth?' → rag_search(query='recent work items auth', content_type='work_item')\n"
                             "- 'Active cycle details?' → rag_search(query='active cycle', content_type='cycle')\n"
                             "- 'CRM module overview?' → rag_search(query='CRM module', content_type='module')\n"
+                            "- 'Epic roadmap for onboarding?' → rag_search(query='onboarding epic', content_type='epic')\n"
                             "- 'Create bug for login' → generate_content(content_type='work_item', prompt='Bug: login fails on mobile')\n"
                             "- 'Generate API docs' → generate_content(content_type='page', prompt='API documentation for auth')\n"
                             "- 'Create Q4 sprint' → generate_content(content_type='cycle', prompt='Q4 2024 Sprint')\n"
-                            "- 'Generate auth module' → generate_content(content_type='module', prompt='Authentication Module')\n\n"
+                            "- 'Generate auth module' → generate_content(content_type='module', prompt='Authentication Module')\n"
+                            "- 'Draft onboarding epic' → generate_content(content_type='epic', prompt='Customer Onboarding Epic')\n\n"
                             "WHEN UNSURE WHICH TOOL:\n"
                             "- If the query is ambiguous or entity/field mapping to Mongo is unclear → prefer rag_search first.\n"
                             "- Question about structured data (counts, filters, group by, breakdown by assignee/state/priority/project/date) → mongo_query.\n"
@@ -689,7 +700,7 @@ class MongoDBAgent:
                         try:
                             await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
                         except Exception as e:
-                            print(f"Warning: failed to save assistant message: {e}")
+                            logger.error(f"Failed to save assistant message: {e}")
                         yield response.content
                         return
                     else:
@@ -717,7 +728,7 @@ class MongoDBAgent:
                             await callback_handler.emit_dynamic_action(action_text)
                     except Exception as e:
                         # Log exception for debugging
-                        print(f"Warning: Failed to generate action statement: {e}")
+                        logger.error(f"Failed to generate action statement: {e}")
                         pass
 
                     # ✅ NEW: Create a clean version of the response for messages (without reasoning)
@@ -728,11 +739,6 @@ class MongoDBAgent:
                     )
                     messages.append(clean_response)
                     did_any_tool = False
-                    
-                    # Log execution info
-                    tool_names = [tc["name"] for tc in response.tool_calls]
-                    execution_mode = "PARALLEL" if len(response.tool_calls) > 1 else "SINGLE"
-                    print(f"🔧 Executing {len(response.tool_calls)} tool(s) ({execution_mode}): {tool_names}")
                     
                     if self.enable_parallel_tools and len(response.tool_calls) > 1:
                         # Multiple tools called together = LLM determined they're independent
@@ -785,7 +791,7 @@ class MongoDBAgent:
                                 conversation_memory.update_summary_async(conversation_id, self.llm_base)
                             )
                         except Exception as e:
-                            print(f"Warning: Failed to update summary: {e}")
+                            logger.error(f"Failed to update summary: {e}")
                     yield last_response.content
                 else:
                     yield "Reached maximum reasoning steps without a final answer."

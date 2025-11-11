@@ -6,17 +6,22 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
+import logging
 from generate.router import router as generate_router
 
 # Load environment variables from .env file
 load_dotenv()
 
-from agent import MongoDBAgent
+# Configure logging
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+from agent.agent import MongoDBAgent
 import os
 from websocket_handler import handle_chat_websocket, ws_manager,user_id_global,business_id_global
 from qdrant.initializer import RAGTool
 from mongo.conversations import ensure_conversation_client_connected
-from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
+from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME ,TEMPLATES_COLLECTION_NAME
 from mongo.conversations import update_message_reaction
 from mongo.constants import mongodb_tools, DATABASE_NAME
 # Pydantic models for API requests/responses
@@ -108,37 +113,71 @@ class ModuleCreateResponse(BaseModel):
     projectId: Optional[str] = None
     link: Optional[str] = None
 
-# Global MongoDB agent instance
+
+class EpicCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    project_id: Optional[str] = None
+    priority: Optional[str] = None
+    state_name: Optional[str] = None
+    assignee: Optional[str] = None
+    labels: Optional[List[str]] = None
+    start_date: Optional[str] = None
+    due_date: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+class EpicCreateResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    projectId: Optional[str] = None
+    state: Optional[str] = None
+    priority: Optional[str] = None
+    link: Optional[str] = None
+
+
+
+# Global agent instances
 mongodb_agent = None
+smart_filter_agent = None
+template_generator = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage the lifespan of the FastAPI application"""
-    global mongodb_agent
+    global mongodb_agent, smart_filter_agent , template_generator
 
     # Startup
-    print("Starting MongoDB Agent...")
     mongodb_agent = MongoDBAgent()
     await mongodb_agent.connect()
-    print("MongoDB Agent connected successfully!")
     await RAGTool.initialize()
+
+    # Initialize Smart Filter Tools (singleton)
+    from smart_filter import tools as smart_filter_tools_module
+    await smart_filter_tools_module.SmartFilterTools.initialize()
+
+    # Initialize Smart Filter Agent after RAGTool
+    from smart_filter.agent import SmartFilterAgent
+    smart_filter_agent = SmartFilterAgent()
+    set_smart_filter_agent_instance(smart_filter_agent)
+
+    from template_generator.generator import TemplateGenerator
+    template_generator = TemplateGenerator()
+    set_template_generator_instance(template_generator)
     # Ensure conversation DB connection pool is ready
     try:
         await ensure_conversation_client_connected()
     except Exception as e:
-        print(f"Warning: Conversations DB not connected: {e}")
-    print("RAGTool initialized successfully!")
+        logger.error(f"Conversations DB not connected: {e}")
     yield
 
     # Shutdown
-    print("Shutting down MongoDB Agent...")
     await mongodb_agent.disconnect()
-    print("MongoDB Agent disconnected.")
-    
+
     # Close Redis conversation memory
-    from memory import conversation_memory
+    from agent.memory import conversation_memory
     await conversation_memory.close()
-    print("Redis conversation memory closed.")
 
 # Create FastAPI app
 app = FastAPI(
@@ -162,6 +201,14 @@ app.add_middleware(
 
 # Include generation-related API routes
 app.include_router(generate_router)
+
+# Include template generator API routes
+from template_generator.router import router as template_router, set_template_generator as set_template_generator_instance
+app.include_router(template_router)
+
+# Include smart filter API routes
+from smart_filter.router import router as smart_filter_router, set_smart_filter_agent as set_smart_filter_agent_instance
+app.include_router(smart_filter_router)
 
 @app.get("/")
 async def root():
@@ -233,6 +280,8 @@ async def get_conversation(conversation_id: str):
                 entry["cycle"] = m.get("cycle")
             if m.get("type") == "module" and isinstance(m.get("module"), dict):
                 entry["module"] = m.get("module")
+            if m.get("type") == "epic" and isinstance(m.get("epic"), dict):
+                entry["epic"] = m.get("epic")
             norm.append(entry)
         return {"id": conversation_id, "messages": norm}
     except Exception as e:
@@ -278,6 +327,8 @@ async def get_conversation(user_id: str, business_id: str):
                     entry["cycle"] = m.get("cycle")
                 if m.get("type") == "module" and isinstance(m.get("module"), dict):
                     entry["module"] = m.get("module")
+                if m.get("type") == "epic" and isinstance(m.get("epic"), dict):
+                    entry["epic"] = m.get("epic")
                 norm.append(entry)
 
             all_conversations.append({
@@ -488,6 +539,61 @@ async def create_module(req: ModuleCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/epics", response_model=EpicCreateResponse)
+async def create_epic(req: EpicCreateRequest):
+    """Create a minimal epic in MongoDB 'epic' collection."""
+    try:
+        if not mongodb_tools.client:
+            await mongodb_tools.connect()
+
+        db = mongodb_tools.client[DATABASE_NAME]
+        coll = db["epic"]
+
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat()
+
+        doc: Dict[str, Any] = {
+            "title": (req.title or "").strip() or "Untitled Epic",
+            "description": (req.description or "").strip(),
+            "createdAt": now_iso,
+            "updatedAt": now_iso,
+        }
+        if req.project_id:
+            doc["project"] = {"id": req.project_id}
+        if req.priority:
+            doc["priority"] = req.priority
+        if req.state_name:
+            doc["state"] = {"name": req.state_name}
+        if req.assignee:
+            doc["assignee"] = {"name": req.assignee}
+        if req.labels:
+            cleaned_labels = [label.strip() for label in req.labels if isinstance(label, str) and label.strip()]
+            if cleaned_labels:
+                doc["label"] = [{"name": label} for label in cleaned_labels]
+        if req.start_date:
+            doc["startDate"] = req.start_date
+        if req.due_date:
+            doc["dueDate"] = req.due_date
+        if req.created_by:
+            doc["createdBy"] = {"name": req.created_by}
+
+        result = await coll.insert_one(doc)
+
+        return EpicCreateResponse(
+            id=str(result.inserted_id),
+            title=doc["title"],
+            description=doc["description"],
+            projectId=req.project_id,
+            state=req.state_name,
+            priority=req.priority,
+            link=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/conversations/reaction")
 async def set_reaction(req: ReactionRequest):
     """Set like/dislike and optional feedback on an assistant message."""
@@ -507,7 +613,7 @@ async def set_reaction(req: ReactionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-    # (Duplicate endpoint removed)
+
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
@@ -516,7 +622,6 @@ async def websocket_chat(websocket: WebSocket):
 
     # Initialize agent if not already done (for testing/development)
     if not mongodb_agent:
-        print("Initializing MongoDB Agent for WebSocket...")
         mongodb_agent = MongoDBAgent()
         await mongodb_agent.connect()
 

@@ -11,14 +11,18 @@ Improves context quality by:
 from typing import List, Dict, Any, Optional, Set, Tuple
 import re
 import uuid
+import logging
 from bson import ObjectId, Binary
-from mongo.constants import BUSINESS_UUID, MEMBER_UUID, uuid_str_to_mongo_binary
+from mongo.constants import BUSINESS_UUID, MEMBER_UUID
 from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ChunkResult:
@@ -52,9 +56,9 @@ class ReconstructedDocument:
 class ChunkAwareRetriever:
     """Enhanced RAG retrieval with chunk awareness and context reconstruction"""
     
-    def __init__(self, qdrant_client, embedding_model):
+    def __init__(self, qdrant_client, embedding_client):
         self.qdrant_client = qdrant_client
-        self.embedding_model = embedding_model
+        self.embedding_client = embedding_client
         # Minimal English stopword list for lightweight keyword-overlap filtering
         self._STOPWORDS: Set[str] = {
             "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
@@ -109,7 +113,10 @@ class ChunkAwareRetriever:
         from qdrant_client.models import Filter, FieldCondition, MatchValue
         
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
-        query_embedding = self.embedding_model.encode(query).tolist()
+        vectors = self.embedding_client.encode([query])
+        if not vectors:
+            raise RuntimeError("Embedding service returned empty vector")
+        query_embedding = vectors[0]
         
         # Build filter with optional content_type and global business scoping
         must_conditions = []
@@ -119,7 +126,7 @@ class ChunkAwareRetriever:
         # Business-level scoping
         business_uuid = BUSINESS_UUID()
         if business_uuid:
-            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=uuid_str_to_mongo_binary(business_uuid))))
+            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
 
         # Member-level project RBAC scoping
         member_uuid = MEMBER_UUID()
@@ -129,7 +136,7 @@ class ChunkAwareRetriever:
                 member_projects = await self._get_member_projects(member_uuid, business_uuid)
                 if member_projects:
                     # Only apply member filtering for content types that belong to projects
-                    project_content_types = {"page", "work_item", "cycle", "module"}
+                    project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
                     if content_type is None or content_type in project_content_types:
                         # Filter by accessible project IDs
                         must_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
@@ -138,8 +145,7 @@ class ChunkAwareRetriever:
                         must_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
             except Exception as e:
                 # Error getting member projects - log and skip member filter
-                print(f"⚠️  Error getting member projects for '{member_uuid}': {e}")
-                print(f"   Skipping member filter for search")
+                logger.error(f"Error getting member projects for '{member_uuid}': {e}")
 
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
@@ -213,7 +219,7 @@ class ChunkAwareRetriever:
                 limit=initial_limit,
             ).points
         except Exception as e:
-            print(f"❌ Hybrid search failed: {e}")
+            logger.error(f"Hybrid search failed: {e}")
             return []
         
 
@@ -366,7 +372,7 @@ class ChunkAwareRetriever:
                     business_uuid = BUSINESS_UUID()
                     if business_uuid:
                         filter_conditions.append(
-                            FieldCondition(key="business_id", match=MatchValue(value=uuid_str_to_mongo_binary(business_uuid)))
+                            FieldCondition(key="business_id", match=MatchValue(value=business_uuid))
                         )
 
                     # Member-level project RBAC scoping for adjacent chunks
@@ -377,7 +383,7 @@ class ChunkAwareRetriever:
                             member_projects = await self._get_member_projects(member_uuid, business_uuid)
                             if member_projects:
                                 # Only apply member filtering for content types that belong to projects
-                                project_content_types = {"page", "work_item", "cycle", "module"}
+                                project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
                                 if content_type is None or content_type in project_content_types:
                                     # Filter by accessible project IDs
                                     filter_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
@@ -386,8 +392,7 @@ class ChunkAwareRetriever:
                                     filter_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
                         except Exception as e:
                             # Error getting member projects - log and skip member filter
-                            print(f"⚠️  Error getting member projects for adjacent chunks '{member_uuid}': {e}")
-                            print(f"   Skipping member filter for adjacent chunks")
+                            logger.error(f"Error getting member projects for adjacent chunks '{member_uuid}': {e}")
                     
                     # Use scroll to find specific chunk (more efficient than search for exact match)
                     scroll_result = self.qdrant_client.scroll(
@@ -421,7 +426,7 @@ class ChunkAwareRetriever:
                             chunks.append(adjacent_chunk)
                 
                 except Exception as e:
-                    print(f"Warning: Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
+                    logger.warning(f"Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
                     continue
     
     def _reconstruct_documents(
@@ -697,7 +702,7 @@ class ChunkAwareRetriever:
             return project_ids
 
         except Exception as e:
-            print(f"Error querying member projects: {e}")
+            logger.error(f"Error querying member projects: {e}")
             return []
 
 

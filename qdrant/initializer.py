@@ -5,14 +5,25 @@ import os
 import json
 import re
 import uuid
+import logging
 from bson import ObjectId, Binary
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
+    Filter,
+    FieldCondition,
+    MatchValue,
+    MatchAny,
+    Prefetch,
+    NearestQuery,
+    FusionQuery,
+    Fusion,
+    SparseVector,
 )
-from sentence_transformers import SentenceTransformer
-print(f"DEBUG: Imported QdrantClient, value is: {QdrantClient}")
+from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class RAGTool:
     """
@@ -27,18 +38,14 @@ class RAGTool:
         This should be called once at server startup.
         """
         if cls._instance is None:
-            print("Initializing RAGTool for the first time...")
             # Create the instance and connect it
             instance = cls.__new__(cls)
             instance.qdrant_client = None
-            instance.embedding_model = None
+            instance.embedding_client = None
             instance.connected = False
-            
+
             await instance.connect()
             cls._instance = instance
-            print("RAGTool successfully initialized and connected.")
-        else:
-            print("RAGTool is already initialized.")
 
     @classmethod
     def get_instance(cls):
@@ -58,23 +65,24 @@ class RAGTool:
         if self.connected:
             return
         try:
-            self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL, api_key=mongo.constants.QDRANT_API_KEY)
+            self.qdrant_client = QdrantClient(
+                url=mongo.constants.QDRANT_URL,
+                api_key=mongo.constants.QDRANT_API_KEY,
+            )
+            self.embedding_client = EmbeddingServiceClient(os.getenv("EMBEDDING_SERVICE_URL"))
             try:
-                self.embedding_model = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
-            except Exception as e:
-                print(f"⚠️ Failed to load embedding model '{mongo.constants.EMBEDDING_MODEL}': {e}\nFalling back to 'sentence-transformers/all-MiniLM-L6-v2'")
-                self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+                dimension = self.embedding_client.get_dimension()
+            except EmbeddingServiceError as exc:
+                raise RuntimeError(f"Failed to initialize embedding service: {exc}") from exc
             self.connected = True
-            print(f"Successfully connected to Qdrant at {mongo.constants.QDRANT_URL}")
             # Lightweight verification that sparse vectors are configured and present
             try:
                 col = self.qdrant_client.get_collection(mongo.constants.QDRANT_COLLECTION_NAME)
                 # If call succeeds, we assume sparse config exists as we create it during indexing
-                print(f"ℹ️ Collection loaded: {getattr(col, 'name', mongo.constants.QDRANT_COLLECTION_NAME)}")
             except Exception as e:
-                print(f"⚠️ Could not verify collection config: {e}")
+                logger.error(f"Could not verify collection config: {e}")
         except Exception as e:
-            print(f"Failed to connect RAGTool components: {e}")
+            logger.error(f"Failed to connect RAGTool components: {e}")
             raise
     
     # ... all other methods like search_content() and get_content_context() remain unchanged ...
@@ -85,7 +93,10 @@ class RAGTool:
 
         try:
             # Generate embedding for the query
-            query_embedding = self.embedding_model.encode(query).tolist()
+            query_vectors = self.embedding_client.encode([query])
+            if not query_vectors:
+                return []
+            query_embedding = query_vectors[0]
             # Build filter if content_type is specified
             from mongo.constants import BUSINESS_UUID, MEMBER_UUID
             must_conditions = []
@@ -115,7 +126,7 @@ class RAGTool:
                     member_projects = await self._get_member_projects(member_uuid, business_uuid)
                     if member_projects:
                         # Only apply member filtering for content types that belong to projects
-                        project_content_types = {"page", "work_item", "cycle", "module"}
+                        project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
                         if content_type is None or content_type in project_content_types:
                             # Filter by accessible project IDs
                             must_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
@@ -124,8 +135,7 @@ class RAGTool:
                             must_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
                 except Exception as e:
                     # Error getting member projects - log and skip member filter
-                    print(f"⚠️  Error getting member projects for '{member_uuid}': {e}")
-                    print(f"   Skipping member filter for search")
+                    logger.error(f"Error getting member projects for '{member_uuid}': {e}")
             search_filter = Filter(must=must_conditions) if must_conditions else None
 
             # Hybrid fusion: dense + SPLADE sparse (fallback to keyword over full_text)
@@ -216,7 +226,7 @@ class RAGTool:
             return results[:limit]
 
         except Exception as e:
-            print(f"Error searching Qdrant: {e}")
+            logger.error(f"Error searching Qdrant: {e}")
             return []
 
     async def get_content_context(self, query: str, content_types: List[str] = None) -> str:
@@ -234,7 +244,6 @@ class RAGTool:
 
         # Format context
         context_parts = []
-        # print(all_results)
         for i, result in enumerate(all_results[:5], 1):  # Limit to top 5 results
             chunk_info = ""
             if result.get("chunk_index") is not None and result.get("chunk_count"):
@@ -300,5 +309,5 @@ class RAGTool:
             return project_ids
 
         except Exception as e:
-            print(f"Error querying member projects: {e}")
+            logger.error(f"Error querying member projects: {e}")
             return [] 
