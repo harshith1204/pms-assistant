@@ -57,7 +57,7 @@ DEFAULT_DRY_RUN = os.getenv("BACKFILL_DRY_RUN", "false").lower() == "true"
 
 # Qdrant configuration for duplicate checking
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "pms_collection")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "ProjectManagement")
 
 # Enable smart incremental backfill (only index missing documents)
 INCREMENTAL_BACKFILL = os.getenv("INCREMENTAL_BACKFILL", "true").lower() == "true"
