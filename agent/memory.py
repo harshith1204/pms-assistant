@@ -291,22 +291,39 @@ class RedisConversationMemory:
                 logger.error(f"Could not load recent messages from MongoDB: {e}")
                 messages = []
         
-        # Apply token budget selection (needed for Redis cache path)
-        # For MongoDB path, this is mostly redundant but ensures consistency
+        # Apply token budget selection while keeping tool-call batches intact.
+        # We group an assistant request with its subsequent tool responses so
+        # trimming never drops one side of the exchange.
+        segments: List[Tuple[List[BaseMessage], int]] = []
+        idx = 0
+        while idx < len(messages):
+            msg = messages[idx]
+            group: List[BaseMessage] = [msg]
+            group_tokens = approx_tokens(str(getattr(msg, "content", ""))) + 8
+            idx += 1
+
+            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                while idx < len(messages):
+                    following = messages[idx]
+                    if not isinstance(following, ToolMessage):
+                        break
+                    group.append(following)
+                    group_tokens += approx_tokens(str(getattr(following, "content", ""))) + 8
+                    idx += 1
+
+            segments.append((group, group_tokens))
+
         used = 0
-        selected: List[BaseMessage] = []
+        selected_messages: deque[BaseMessage] = deque()
 
-        # Walk backwards to select most recent turns under budget
-        for msg in reversed(messages):
-            content = getattr(msg, "content", "")
-            msg_tokens = approx_tokens(str(content)) + 8
-            if used + msg_tokens > message_budget and selected:
-                # Budget exceeded, stop
+        for group, group_tokens in reversed(segments):
+            if used and used + group_tokens > message_budget:
                 break
-            selected.append(msg)
-            used += msg_tokens
+            for message in reversed(group):
+                selected_messages.appendleft(message)
+            used += group_tokens
 
-        selected.reverse()
+        selected = list(selected_messages)
 
         # Prepend rolling summary if present
         if summary and summary_tokens <= budget - used:
