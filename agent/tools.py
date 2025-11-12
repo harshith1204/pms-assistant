@@ -98,6 +98,31 @@ def normalize_mongodb_types(obj: Any) -> Any:
         elif '$oid' in obj:
             # Convert ObjectId to string
             return obj['$oid']
+        elif '$numberLong' in obj:
+            # Convert MongoDB Long to Python int
+            try:
+                return int(obj['$numberLong'])
+            except (ValueError, TypeError):
+                return obj['$numberLong']  # Return as string if conversion fails
+        elif '$numberDecimal' in obj:
+            # Convert MongoDB Decimal128 to Python float
+            try:
+                return float(obj['$numberDecimal'])
+            except (ValueError, TypeError):
+                return obj['$numberDecimal']  # Return as string if conversion fails
+        elif '$timestamp' in obj:
+            # Convert MongoDB Timestamp to dict representation
+            return f"<timestamp:{obj['$timestamp']['t']},{obj['$timestamp']['i']}>"
+        elif '$regex' in obj:
+            # Convert MongoDB Regex to string representation
+            options = obj['$regex'].get('$options', '')
+            return f"<regex:{obj['$regex']['$pattern']}{'/' + options if options else ''}>"
+        elif '$minKey' in obj:
+            # Convert MinKey to representation
+            return "<minKey>"
+        elif '$maxKey' in obj:
+            # Convert MaxKey to representation
+            return "<maxKey>"
         else:
             # Recursively process nested objects
             return {key: normalize_mongodb_types(value) for key, value in obj.items()}
@@ -357,6 +382,37 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
         set_names_list("assignee", "assignees")
         set_names_list("updatedBy", "updatedByNames")
 
+        # Handle estimate object
+        estimate = doc.get("estimate")
+        if isinstance(estimate, dict):
+            if isinstance(estimate.get("hr"), (int, float)):
+                out["estimateHours"] = estimate["hr"]
+            if isinstance(estimate.get("min"), (int, float)):
+                out["estimateMinutes"] = estimate["min"]
+            # Calculate total minutes
+            total_minutes = 0
+            if isinstance(estimate.get("hr"), (int, float)):
+                total_minutes += estimate["hr"] * 60
+            if isinstance(estimate.get("min"), (int, float)):
+                total_minutes += estimate["min"]
+            if total_minutes > 0:
+                out["estimateTotalMinutes"] = total_minutes
+
+        # Handle workLogs array
+        work_logs = doc.get("workLogs")
+        if isinstance(work_logs, list) and work_logs:
+            out["workLogsCount"] = len(work_logs)
+            total_logged_minutes = 0
+            for log in work_logs:
+                if isinstance(log, dict):
+                    if isinstance(log.get("hours"), (int, float)):
+                        total_logged_minutes += log["hours"] * 60
+                    if isinstance(log.get("minutes"), (int, float)):
+                        total_logged_minutes += log["minutes"]
+            if total_logged_minutes > 0:
+                out["totalLoggedMinutes"] = total_logged_minutes
+                out["totalLoggedHours"] = round(total_logged_minutes / 60, 2)
+
     elif collection == "project":
         set_name("business", "businessName")
         set_name("lead", "leadName")
@@ -383,6 +439,35 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
         set_name("project", "projectName")
         set_name("createdBy", "createdByName")
         set_name("business", "businessName")
+
+        # Handle complex page content structure (Editor.js format)
+        content = doc.get("content")
+        if isinstance(content, dict):
+            blocks = content.get("blocks")
+            if isinstance(blocks, list):
+                out["contentBlocksCount"] = len(blocks)
+                # Extract text content from blocks
+                text_blocks = []
+                for block in blocks:
+                    if isinstance(block, dict):
+                        block_type = block.get("type")
+                        block_data = block.get("data")
+                        if isinstance(block_data, dict):
+                            if block_type == "paragraph":
+                                text = block_data.get("text", "")
+                                if text.strip():
+                                    text_blocks.append(truncate_str(text, 100))
+                            elif block_type == "header":
+                                text = block_data.get("text", "")
+                                if text.strip():
+                                    text_blocks.append(f"Header: {truncate_str(text, 100)}")
+                if text_blocks:
+                    out["contentPreview"] = text_blocks[:3]  # First 3 meaningful blocks
+
+        # Handle linkedPages array
+        if isinstance(doc.get("linkedPages"), list):
+            out["linkedPagesCount"] = len(doc["linkedPages"])
+
         # Linked arrays could contain ids only; surface counts
         if isinstance(doc.get("linkedCycle"), list):
             out["linkedCycleCount"] = len(doc["linkedCycle"])  # type: ignore[index]
@@ -391,6 +476,7 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
         # Also surface names if available
         set_names_list("linkedCycle", "linkedCycleNames")
         set_names_list("linkedModule", "linkedModuleNames")
+        set_names_list("linkedPages", "linkedPagesNames")
 
     elif collection == "projectState":
         # Keep core fields and slim subStates
@@ -423,9 +509,192 @@ def _transform_by_collection(doc: Dict[str, Any], collection: Optional[str]) -> 
         if isinstance(doc.get("fieldChanged"), str):
             out["fieldChanged"] = doc["fieldChanged"]
 
+    elif collection == "epic":
+        set_name("project", "projectName")
+        set_name("business", "businessName")
+        set_name("createdBy", "createdByName")
+        set_names_list("assignee", "assignees")
+
+        # Handle customProperties array with complex structures
+        custom_props = doc.get("customProperties")
+        if isinstance(custom_props, list) and custom_props:
+            out["customPropertiesCount"] = len(custom_props)
+            # Surface custom property types and values
+            prop_types = []
+            for prop in custom_props[:5]:  # First 5 properties
+                if isinstance(prop, dict):
+                    prop_type = prop.get("type") or prop.get("propertyType")
+                    prop_value = prop.get("value") or prop.get("propertyValue")
+                    if prop_type and prop_value:
+                        prop_types.append(f"{prop_type}: {truncate_str(str(prop_value), 50)}")
+                    elif prop_type:
+                        prop_types.append(str(prop_type))
+            if prop_types:
+                out["customPropertiesSample"] = prop_types
+
+    elif collection == "features":
+        set_name("project", "projectName")
+        set_name("business", "businessName")
+        set_name("lead", "leadName")
+        set_name("createdBy", "createdByName")
+        set_name("cycle", "cycleName")
+        set_name("modules", "moduleName")
+        set_name("parent", "parentName")
+        set_names_list("assignee", "assignees")
+
+        # Handle nested basicInfo structure
+        basic_info = doc.get("basicInfo")
+        if isinstance(basic_info, dict):
+            if isinstance(basic_info.get("title"), str):
+                out["basicInfoTitle"] = basic_info["title"]
+            if isinstance(basic_info.get("description"), str):
+                out["basicInfoDescription"] = truncate_str(basic_info["description"], 200)
+
+        # Handle nested problemInfo structure
+        problem_info = doc.get("problemInfo")
+        if isinstance(problem_info, dict):
+            if isinstance(problem_info.get("statement"), str):
+                out["problemStatement"] = truncate_str(problem_info["statement"], 200)
+            if isinstance(problem_info.get("objective"), str):
+                out["problemObjective"] = truncate_str(problem_info["objective"], 200)
+
+        # Handle nested requirements structure
+        requirements = doc.get("requirements")
+        if isinstance(requirements, dict):
+            functional_reqs = requirements.get("functionalRequirements")
+            if isinstance(functional_reqs, list):
+                out["functionalRequirementsCount"] = len(functional_reqs)
+                # Surface first few requirements
+                if functional_reqs and len(functional_reqs) > 0:
+                    sample_reqs = [req for req in functional_reqs[:3] if isinstance(req, str)]
+                    if sample_reqs:
+                        out["functionalRequirementsSample"] = sample_reqs
+
+            non_functional_reqs = requirements.get("nonFunctionalRequirements")
+            if isinstance(non_functional_reqs, list):
+                out["nonFunctionalRequirementsCount"] = len(non_functional_reqs)
+                # Surface first few requirements
+                if non_functional_reqs and len(non_functional_reqs) > 0:
+                    sample_reqs = [req for req in non_functional_reqs[:3] if isinstance(req, str)]
+                    if sample_reqs:
+                        out["nonFunctionalRequirementsSample"] = sample_reqs
+
+        # Handle nested riskAndDependencies structure
+        risk_deps = doc.get("riskAndDependencies")
+        if isinstance(risk_deps, dict):
+            dependencies = risk_deps.get("dependencies")
+            if isinstance(dependencies, list):
+                out["dependenciesCount"] = len(dependencies)
+                # Surface dependency titles
+                dep_titles = []
+                for dep in dependencies:
+                    if isinstance(dep, dict) and dep.get("title"):
+                        dep_titles.append(dep["title"])
+                    elif isinstance(dep, str):
+                        dep_titles.append(dep)
+                if dep_titles:
+                    out["dependencyTitles"] = dep_titles[:5]  # First 5 dependencies
+
+            risks = risk_deps.get("risks")
+            if isinstance(risks, list):
+                out["risksCount"] = len(risks)
+                # Surface risk summaries
+                risk_summaries = []
+                for risk in risks[:3]:  # First 3 risks
+                    if isinstance(risk, dict):
+                        summary = ""
+                        if risk.get("problemLevel"):
+                            summary += f"Problem: {risk['problemLevel']}"
+                        if risk.get("impactLevel"):
+                            summary += f", Impact: {risk['impactLevel']}"
+                        if summary:
+                            risk_summaries.append(summary)
+                if risk_summaries:
+                    out["riskSummaries"] = risk_summaries
+
+        # Handle various array fields
+        if isinstance(doc.get("workItems"), list):
+            out["workItemsCount"] = len(doc["workItems"])
+        if isinstance(doc.get("userStories"), list):
+            out["userStoriesCount"] = len(doc["userStories"])
+        if isinstance(doc.get("goals"), list):
+            out["goalsCount"] = len(doc["goals"])
+        if isinstance(doc.get("painPoints"), list):
+            out["painPointsCount"] = len(doc["painPoints"])
+
+        # Handle successCriteria (could be in problemInfo or top-level)
+        success_criteria = doc.get("problemInfo", {}).get("successCriteria") or doc.get("successCriteria")
+        if isinstance(success_criteria, list) and success_criteria:
+            out["successCriteriaCount"] = len(success_criteria)
+            # Surface first few criteria
+            criteria_text = [str(c) for c in success_criteria[:3] if c]
+            if criteria_text:
+                out["successCriteriaSample"] = criteria_text
+
+    elif collection == "userStory":
+        set_name("project", "projectName")
+        set_name("business", "businessName")
+        set_name("createdBy", "createdByName")
+        set_name("epic", "epicName")
+        set_name("feature", "featureName")
+        set_names_list("assignee", "assignees")
+
+        # Handle demographics
+        demographics = doc.get("demographics")
+        if isinstance(demographics, dict):
+            # Surface demographic information
+            for key, value in demographics.items():
+                if isinstance(value, str):
+                    out[f"demographic{key.title()}"] = value
+
+        # Handle acceptance criteria
+        acceptance_criteria = doc.get("acceptanceCriteria")
+        if isinstance(acceptance_criteria, list) and acceptance_criteria:
+            out["acceptanceCriteriaCount"] = len(acceptance_criteria)
+            # Surface first few criteria
+            criteria_text = [str(c) for c in acceptance_criteria[:3] if c]
+            if criteria_text:
+                out["acceptanceCriteriaSample"] = criteria_text
+
+        # Handle persona object with detailed structure
+        persona = doc.get("persona")
+        if isinstance(persona, dict):
+            # Basic persona info
+            if isinstance(persona.get("personaName"), str):
+                out["personaName"] = persona["personaName"]
+            if isinstance(persona.get("role"), str):
+                out["personaRole"] = persona["role"]
+            if isinstance(persona.get("techLevel"), str):
+                out["personaTechLevel"] = persona["techLevel"]
+
+            # Handle goals array
+            goals = persona.get("goals")
+            if isinstance(goals, list):
+                out["personaGoalsCount"] = len(goals)
+                # Surface first few goals
+                goal_texts = [str(g) for g in goals[:3] if g]
+                if goal_texts:
+                    out["personaGoalsSample"] = goal_texts
+
+            # Handle pain points array
+            pain_points = persona.get("painPoints")
+            if isinstance(pain_points, list):
+                out["personaPainPointsCount"] = len(pain_points)
+                # Surface first few pain points
+                pain_texts = [str(p) for p in pain_points[:3] if p]
+                if pain_texts:
+                    out["personaPainPointsSample"] = pain_texts
+
     # Drop empty/None values and metadata keys
     out = {k: v for k, v in out.items() if v not in (None, "", [], {}) and k != "_class"}
     return out
+
+
+def truncate_str(s: Any, limit: int = 120) -> str:
+    """Truncate string to specified limit with ellipsis."""
+    if not isinstance(s, str):
+        return str(s)
+    return s if len(s) <= limit else s[:limit] + "..."
 
 
 def filter_and_transform_content(data: Any, primary_entity: Optional[str] = None) -> Any:

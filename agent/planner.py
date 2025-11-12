@@ -67,6 +67,29 @@ class QueryIntent:
     wants_details: bool  # Prefer detailed documents over counts
     wants_count: bool  # Whether the user asked for a count
     fetch_one: bool  # Whether the user wants a single specific item
+    # Advanced aggregation fields
+    facet_fields: Optional[List[str]] = None  # Fields for $facet operation
+    bucket_field: Optional[str] = None  # Field for $bucket operation
+    bucket_boundaries: Optional[List[Any]] = None  # Boundaries for $bucket
+    sort_by_field: Optional[str] = None  # Field for $sortByCount
+    new_root: Optional[str] = None  # Expression for $replaceRoot
+    union_collection: Optional[str] = None  # Collection for $unionWith
+    graph_from: Optional[str] = None  # From collection for $graphLookup
+    graph_start: Optional[str] = None  # Start expression for $graphLookup
+    graph_connect_from: Optional[str] = None  # Connect from field for $graphLookup
+    graph_connect_to: Optional[str] = None  # Connect to field for $graphLookup
+    # Time-series analysis fields
+    window_field: Optional[str] = None  # Field for time window operations
+    window_size: Optional[str] = None  # Size of sliding window (e.g., "7d", "30d")
+    window_unit: Optional[str] = None  # Unit for window (day, week, month)
+    trend_field: Optional[str] = None  # Field for trend analysis
+    trend_period: Optional[str] = None  # Period for trend (week, month, quarter)
+    trend_metric: Optional[str] = None  # Metric to trend (count, sum, avg)
+    anomaly_field: Optional[str] = None  # Field for anomaly detection
+    anomaly_metric: Optional[str] = None  # Metric for anomaly detection
+    anomaly_threshold: Optional[float] = None  # Standard deviation threshold
+    forecast_field: Optional[str] = None  # Field for forecasting
+    forecast_periods: Optional[int] = None  # Number of periods to forecast
 
 @dataclass
 class RelationshipPath:
@@ -377,7 +400,45 @@ class LLMIntentParser:
             "- estimate: object with hr/min fields (for workItem)\n"
             "- workLogs: array of work log entries with user, hours, minutes, description, loggedAt (for workItem)\n\n"
             "- state_name: Backlog|New|Started|Unstarted|Completed (for epic)\n"
-            "- priority: URGENT|HIGH|MEDIUM|LOW (for epic)\n"
+            "- priority: URGENT|HIGH|MEDIUM|LOW (for epic)\n\n"
+            "## ARRAY SIZE FILTERING (CRITICAL)\n"
+            "Support filtering by array field sizes using natural language:\n"
+            "- 'multiple assignees' / 'more than one assignee' → assignee_count > 1\n"
+            "- 'with assignees' / 'assigned' → assignee_count >= 1\n"
+            "- 'unassigned' / 'no assignees' → assignee_count = 0\n"
+            "- 'more than N assignees' → assignee_count > N\n"
+            "- 'exactly N assignees' → assignee_count = N\n"
+            "- 'at least N assignees' → assignee_count >= N\n"
+            "- Same patterns work for: labels, customProperties, functionalRequirements, dependencies, risks, goals, painPoints, etc.\n"
+            "- Array size filters use keys like: assignee_count, label_count, customProperties_count, etc.\n\n"
+            "## ADVANCED MONGODB OPERATORS\n"
+            "Support for complex query operators:\n"
+            "- 'items with assignees matching X' → $elemMatch on assignee array\n"
+            "- 'items with all labels in [A,B,C]' → $all operator\n"
+            "- 'items with string fields' → $type operator for type checking\n"
+            "- 'items with even/odd IDs' → $mod operator for modulo\n"
+            "- 'items containing text X' → $text operator for full-text search\n"
+            "- 'items near location' → $near for geospatial queries\n"
+            "- 'items within area' → $geoWithin for geospatial containment\n"
+            "- Use natural language to express these complex conditions\n\n"
+            "## ADVANCED AGGREGATION STAGES\n"
+            "Support for complex aggregation operations:\n"
+            "- 'break down by priority and status' → $facet for multiple aggregations\n"
+            "- 'group by priority ranges' → $bucket for custom range grouping\n"
+            "- 'auto-group by priority' → $bucketAuto for automatic range grouping\n"
+            "- 'sort by frequency' → $sortByCount for counting and sorting\n"
+            "- 'flatten nested results' → $replaceRoot to replace document root\n"
+            "- 'combine with other collection' → $unionWith to merge collections\n"
+            "- 'graph traversal queries' → $graphLookup for hierarchical data\n"
+            "- Express complex analytical queries using these stages\n\n"
+            "## TIME-SERIES ANALYSIS\n"
+            "Support for time-based analytical operations:\n"
+            "- 'sliding window of 7 days' → $setWindowFields for moving averages\n"
+            "- 'rolling average over 30 days' → time window aggregations\n"
+            "- 'trend analysis for last quarter' → period-over-period comparisons\n"
+            "- 'anomaly detection in work items' → statistical outlier detection\n"
+            "- 'time series forecasting' → trend projection and prediction\n"
+            "- Express temporal analysis queries with sliding windows and trends\n"
 
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
@@ -455,7 +516,28 @@ class LLMIntentParser:
             '  "skip": 0,\n'
             '  "wants_details": true,\n'
             '  "wants_count": false,\n'
-            '  "fetch_one": false\n'
+            '  "fetch_one": false,\n'
+            '  "facet_fields": null,\n'
+            '  "bucket_field": null,\n'
+            '  "bucket_boundaries": null,\n'
+            '  "sort_by_field": null,\n'
+            '  "new_root": null,\n'
+            '  "union_collection": null,\n'
+            '  "graph_from": null,\n'
+            '  "graph_start": null,\n'
+            '  "graph_connect_from": null,\n'
+            '  "graph_connect_to": null,\n'
+            '  "window_field": null,\n'
+            '  "window_size": null,\n'
+            '  "window_unit": null,\n'
+            '  "trend_field": null,\n'
+            '  "trend_period": null,\n'
+            '  "trend_metric": null,\n'
+            '  "anomaly_field": null,\n'
+            '  "anomaly_metric": null,\n'
+            '  "anomaly_threshold": null,\n'
+            '  "forecast_field": null,\n'
+            '  "forecast_periods": null\n'
             "}\n\n"
 
             "## EXAMPLES\n"
@@ -490,6 +572,33 @@ class LLMIntentParser:
             "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
             "- 'show work items with estimates' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"estimate\", \"estimateSystem\"], \"aggregations\": []}\n"
             "- 'show work logs for tasks' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"workLogs\"], \"aggregations\": []}\n\n"
+            "## ARRAY SIZE EXAMPLES\n"
+            "- 'how many work items have multiple assignees' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \">1\"}, \"aggregations\": [\"count\"]}\n"
+            "- 'show work items with more than 2 assignees' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \">2\"}, \"aggregations\": []}\n"
+            "- 'find epics with custom properties' → {\"primary_entity\": \"epic\", \"filters\": {\"customProperties_count\": \">=1\"}, \"aggregations\": []}\n"
+            "- 'count features with multiple dependencies' → {\"primary_entity\": \"features\", \"filters\": {\"dependencies_count\": \">1\"}, \"aggregations\": [\"count\"]}\n"
+            "- 'show user stories with multiple labels' → {\"primary_entity\": \"userStory\", \"filters\": {\"label_count\": \">1\"}, \"aggregations\": []}\n"
+            "- 'find modules with no assignees' → {\"primary_entity\": \"module\", \"filters\": {\"assignee_count\": \"0\"}, \"aggregations\": []}\n"
+            "- 'pages linked to exactly 2 cycles' → {\"primary_entity\": \"page\", \"filters\": {\"linkedCycle_count\": \"2\"}, \"aggregations\": []}\n"
+            "- 'epics with at least 3 custom properties' → {\"primary_entity\": \"epic\", \"filters\": {\"customProperties_count\": \">=3\"}, \"aggregations\": []}\n\n"
+            "## ADVANCED OPERATOR EXAMPLES\n"
+            "- 'work items with assignees named John' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_elemMatch\": {\"name\": \"John\"}}, \"aggregations\": []}\n"
+            "- 'items with all labels bug,urgent' → {\"primary_entity\": \"workItem\", \"filters\": {\"label_all\": [\"bug\", \"urgent\"]}, \"aggregations\": []}\n"
+            "- 'projects with string descriptions' → {\"primary_entity\": \"project\", \"filters\": {\"description_type\": \"string\"}, \"aggregations\": []}\n"
+            "- 'items with even numbered IDs' → {\"primary_entity\": \"workItem\", \"filters\": {\"_id_mod\": [2, 0]}, \"aggregations\": []}\n"
+            "- 'pages containing authentication' → {\"primary_entity\": \"page\", \"filters\": {\"$text\": \"authentication\"}, \"aggregations\": []}\n\n"
+            "## ADVANCED AGGREGATION EXAMPLES\n"
+            "- 'break down work items by priority and status' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"facet\"], \"facet_fields\": [\"priority\", \"status\"]}\n"
+            "- 'group work items by priority ranges' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"bucket\"], \"bucket_field\": \"priority\", \"bucket_boundaries\": [\"LOW\", \"MEDIUM\", \"HIGH\"]}\n"
+            "- 'sort assignees by work item count' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"sortByCount\"], \"sort_by_field\": \"assignee.name\"}\n"
+            "- 'flatten project hierarchy' → {\"primary_entity\": \"project\", \"aggregations\": [\"replaceRoot\"], \"new_root\": \"$project\"}\n"
+            "- 'combine work items with user stories' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"unionWith\"], \"union_collection\": \"userStory\"}\n"
+            "- 'find project dependencies' → {\"primary_entity\": \"project\", \"aggregations\": [\"graphLookup\"], \"graph_from\": \"project\", \"graph_start\": \"$_id\", \"graph_connect_from\": \"_id\", \"graph_connect_to\": \"depends_on\"}\n\n"
+            "## TIME-SERIES EXAMPLES\n"
+            "- '7-day rolling average of work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"timeWindow\"], \"window_field\": \"createdTimeStamp\", \"window_size\": \"7d\", \"window_unit\": \"day\"}\n"
+            "- 'trend analysis for last month' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"trend\"], \"trend_field\": \"createdTimeStamp\", \"trend_period\": \"month\", \"trend_metric\": \"count\"}\n"
+            "- 'detect anomalies in work item creation' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"anomaly\"], \"anomaly_field\": \"createdTimeStamp\", \"anomaly_metric\": \"count\", \"anomaly_threshold\": 2.0}\n"
+            "- 'forecast work item creation for next week' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"forecast\"], \"forecast_field\": \"createdTimeStamp\", \"forecast_periods\": 7, \"forecast_metric\": \"count\"}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -1472,6 +1581,196 @@ class PipelineGenerator:
             if effective_limit:
                 pipeline.append({"$limit": int(effective_limit)})
 
+        # Add advanced aggregation stages
+        if intent.aggregations:
+            # $facet - multiple aggregations
+            if "facet" in intent.aggregations and intent.facet_fields:
+                facet_stage = {"$facet": {}}
+                for field in intent.facet_fields:
+                    facet_stage["$facet"][f"{field}_breakdown"] = [
+                        {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}},
+                        {"$limit": 10}
+                    ]
+                pipeline.append(facet_stage)
+
+            # $bucket - group by ranges
+            elif "bucket" in intent.aggregations and intent.bucket_field and intent.bucket_boundaries:
+                bucket_stage = {
+                    "$bucket": {
+                        "groupBy": f"${intent.bucket_field}",
+                        "boundaries": intent.bucket_boundaries,
+                        "default": "Other",
+                        "output": {"count": {"$sum": 1}}
+                    }
+                }
+                pipeline.append(bucket_stage)
+
+            # $bucketAuto - automatic range grouping
+            elif "bucketAuto" in intent.aggregations and intent.bucket_field:
+                bucket_auto_stage = {
+                    "$bucketAuto": {
+                        "groupBy": f"${intent.bucket_field}",
+                        "buckets": 5,
+                        "output": {"count": {"$sum": 1}}
+                    }
+                }
+                pipeline.append(bucket_auto_stage)
+
+            # $sortByCount - count and sort by field
+            elif "sortByCount" in intent.aggregations and intent.sort_by_field:
+                sort_by_count_stage = {
+                    "$sortByCount": f"${intent.sort_by_field}"
+                }
+                pipeline.append(sort_by_count_stage)
+
+        # $replaceRoot - replace document root
+        if intent.new_root:
+            replace_root_stage = {
+                "$replaceRoot": {"newRoot": intent.new_root}
+            }
+            pipeline.append(replace_root_stage)
+
+        # $unionWith - combine with another collection
+        if intent.union_collection:
+            union_with_stage = {
+                "$unionWith": {
+                    "coll": intent.union_collection,
+                    "pipeline": [{"$match": {}}]  # Add filters if needed
+                }
+            }
+            pipeline.append(union_with_stage)
+
+        # $graphLookup - graph traversal
+        if (intent.graph_from and intent.graph_start and
+            intent.graph_connect_from and intent.graph_connect_to):
+            graph_lookup_stage = {
+                "$graphLookup": {
+                    "from": intent.graph_from,
+                    "startWith": intent.graph_start,
+                    "connectFromField": intent.graph_connect_from,
+                    "connectToField": intent.graph_connect_to,
+                    "as": "graph_path",
+                    "maxDepth": 5,
+                    "depthField": "depth"
+                }
+            }
+            pipeline.append(graph_lookup_stage)
+
+        # Add time-series analysis stages
+        if intent.aggregations:
+            # Time window aggregations ($setWindowFields)
+            if "timeWindow" in intent.aggregations and intent.window_field and intent.window_size:
+                window_stage = {
+                    "$setWindowFields": {
+                        "partitionBy": None,  # Partition by entire collection
+                        "sortBy": {intent.window_field: 1},
+                        "output": {
+                            "rollingAvg": {
+                                "$avg": f"${intent.window_field}",
+                                "window": {
+                                    "range": [-int(intent.window_size.rstrip('d')), "current"]
+                                }
+                            }
+                        }
+                    }
+                }
+                pipeline.append(window_stage)
+
+            # Trend analysis - period over period comparison
+            elif "trend" in intent.aggregations and intent.trend_field and intent.trend_period:
+                # Group by time periods and calculate metrics
+                period_group = {}
+                if intent.trend_period == "week":
+                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "week"}}
+                elif intent.trend_period == "month":
+                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "month"}}
+                elif intent.trend_period == "quarter":
+                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "quarter"}}
+
+                trend_stage = {
+                    "$group": {
+                        "_id": period_group,
+                        "count": {"$sum": 1},
+                        "period": {"$first": period_group}
+                    }
+                }
+                pipeline.append(trend_stage)
+                pipeline.append({"$sort": {"_id": 1}})
+
+            # Anomaly detection using statistical methods
+            elif "anomaly" in intent.aggregations and intent.anomaly_field and intent.anomaly_threshold:
+                # Calculate mean and standard deviation, then flag anomalies
+                stats_stage = {
+                    "$group": {
+                        "_id": None,
+                        "avg": {"$avg": f"${intent.anomaly_field}"},
+                        "std": {"$stdDevSamp": f"${intent.anomaly_field}"},
+                        "values": {"$push": f"${intent.anomaly_field}"}
+                    }
+                }
+                pipeline.append(stats_stage)
+
+                # Flag anomalies based on threshold
+                anomaly_stage = {
+                    "$project": {
+                        "anomalies": {
+                            "$filter": {
+                                "input": "$values",
+                                "as": "value",
+                                "cond": {
+                                    "$gt": [
+                                        {"$abs": {"$subtract": ["$$value", "$avg"]}},
+                                        {"$multiply": ["$std", intent.anomaly_threshold]}
+                                    ]
+                                }
+                            }
+                        },
+                        "avg": 1,
+                        "std": 1,
+                        "threshold": intent.anomaly_threshold
+                    }
+                }
+                pipeline.append(anomaly_stage)
+
+            # Simple forecasting using linear trend
+            elif "forecast" in intent.aggregations and intent.forecast_field and intent.forecast_periods:
+                # Calculate trend line and project forward
+                forecast_stage = {
+                    "$group": {
+                        "_id": {
+                            "$dateTrunc": {
+                                "date": f"${intent.forecast_field}",
+                                "unit": "day"
+                            }
+                        },
+                        "count": {"$sum": 1},
+                        "period": {"$first": {
+                            "$dateTrunc": {
+                                "date": f"${intent.forecast_field}",
+                                "unit": "day"
+                            }
+                        }}
+                    }
+                }
+                pipeline.append(forecast_stage)
+                pipeline.append({"$sort": {"_id": 1}})
+
+                # Add linear regression for forecasting (simplified)
+                pipeline.append({
+                    "$setWindowFields": {
+                        "sortBy": {"_id": 1},
+                        "output": {
+                            "trend": {
+                                "$linreg": {
+                                    "x": {"$toLong": "$_id"},
+                                    "y": "$count"
+                                }
+                            }
+                        }
+                    }
+                })
+
         return pipeline
 
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
@@ -1839,10 +2138,225 @@ class PipelineGenerator:
             if 'project_name' in filters and isinstance(filters['project_name'], str):
                 primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
             if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
-                # module.assignee can be array of member subdocs
+                # epic.assignee can be array of member subdocs
                 primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
             _apply_date_range(primary_filters, 'createdTimeStamp', filters)
             _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+
+        elif collection == "features":
+            if 'priority' in filters:
+                primary_filters['priority'] = filters['priority']
+            if 'state' in filters:
+                # Map logical state filter to embedded field
+                primary_filters['state.name'] = filters['state']
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'label_name' in filters and isinstance(filters['label_name'], str):
+                primary_filters['label.name'] = {'$regex': filters['label_name'], '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # features.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            if 'lead_name' in filters and isinstance(filters['lead_name'], str):
+                primary_filters['lead.name'] = {'$regex': filters['lead_name'], '$options': 'i'}
+            if 'cycle_name' in filters and isinstance(filters['cycle_name'], str):
+                primary_filters['cycle.name'] = {'$regex': filters['cycle_name'], '$options': 'i'}
+            if 'module_name' in filters and isinstance(filters['module_name'], str):
+                primary_filters['modules.name'] = {'$regex': filters['module_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+            _apply_date_range(primary_filters, 'startDate', filters)
+            _apply_date_range(primary_filters, 'endDate', filters)
+
+        elif collection == "userStory":
+            if 'priority' in filters:
+                primary_filters['priority'] = filters['priority']
+            if 'state' in filters:
+                # Map logical state filter to embedded field
+                primary_filters['state.name'] = filters['state']
+            if 'createdBy_name' in filters and isinstance(filters['createdBy_name'], str):
+                primary_filters['createdBy.name'] = {'$regex': filters['createdBy_name'], '$options': 'i'}
+            if 'title' in filters and isinstance(filters['title'], str):
+                primary_filters['title'] = {'$regex': filters['title'], '$options': 'i'}
+            if 'label_name' in filters and isinstance(filters['label_name'], str):
+                primary_filters['label.name'] = {'$regex': filters['label_name'], '$options': 'i'}
+            if 'project_name' in filters and isinstance(filters['project_name'], str):
+                primary_filters['project.name'] = {'$regex': filters['project_name'], '$options': 'i'}
+            if 'assignee_name' in filters and isinstance(filters['assignee_name'], str):
+                # userStory.assignee can be array of member subdocs
+                primary_filters['assignee.name'] = {'$regex': filters['assignee_name'], '$options': 'i'}
+            if 'epic_name' in filters and isinstance(filters['epic_name'], str):
+                primary_filters['epic.name'] = {'$regex': filters['epic_name'], '$options': 'i'}
+            if 'feature_name' in filters and isinstance(filters['feature_name'], str):
+                primary_filters['feature.name'] = {'$regex': filters['feature_name'], '$options': 'i'}
+            _apply_date_range(primary_filters, 'createdTimeStamp', filters)
+            _apply_date_range(primary_filters, 'updatedTimeStamp', filters)
+            _apply_date_range(primary_filters, 'startDate', filters)
+            _apply_date_range(primary_filters, 'dueDate', filters)
+
+        # Handle array size filters (e.g., assignee_count: ">1")
+        array_size_filters = {}
+        array_field_map = {
+            'assignee_count': 'assignee',
+            'label_count': 'label',
+            'customProperties_count': 'customProperties',
+            'functionalRequirements_count': 'requirements.functionalRequirements',
+            'nonFunctionalRequirements_count': 'requirements.nonFunctionalRequirements',
+            'dependencies_count': 'riskAndDependencies.dependencies',
+            'risks_count': 'riskAndDependencies.risks',
+            'workItems_count': 'workItems',
+            'userStories_count': 'userStories',
+            'goals_count': 'goals',
+            'painPoints_count': 'painPoints',
+            'successCriteria_count': 'problemInfo.successCriteria',
+            'personaGoals_count': 'persona.goals',
+            'personaPainPoints_count': 'persona.painPoints',
+            'linkedCycle_count': 'linkedCycle',
+            'linkedModule_count': 'linkedModule',
+            'linkedPages_count': 'linkedPages'
+        }
+
+        for count_key, array_field in array_field_map.items():
+            if count_key in filters:
+                condition = filters[count_key]
+                if isinstance(condition, str):
+                    # Parse conditions like ">1", ">=2", "0", "=3", etc.
+                    if condition.startswith('>'):
+                        if condition.startswith('>='):
+                            min_size = int(condition[2:])
+                            array_size_filters[array_field] = {'$gte': min_size}
+                        else:
+                            min_size = int(condition[1:])
+                            array_size_filters[array_field] = {'$gt': min_size}
+                    elif condition.startswith('='):
+                        exact_size = int(condition[1:])
+                        array_size_filters[array_field] = {'$size': exact_size}
+                    elif condition.isdigit():
+                        exact_size = int(condition)
+                        array_size_filters[array_field] = {'$size': exact_size}
+                    else:
+                        # Handle other conditions like "<2", "<=3"
+                        if condition.startswith('<='):
+                            max_size = int(condition[2:])
+                            array_size_filters[array_field] = {'$lte': max_size}
+                        elif condition.startswith('<'):
+                            max_size = int(condition[1:])
+                            array_size_filters[array_field] = {'$lt': max_size}
+
+        # Convert array size filters to $expr for MongoDB
+        for array_field, size_condition in array_size_filters.items():
+            if '$size' in size_condition:
+                # Exact size match
+                size_val = size_condition['$size']
+                if '$expr' not in primary_filters:
+                    primary_filters['$expr'] = {}
+                if '$and' not in primary_filters['$expr']:
+                    primary_filters['$expr']['$and'] = []
+                primary_filters['$expr']['$and'].append({
+                    '$eq': [{'$size': f'${array_field}'}, size_val]
+                })
+            elif '$gt' in size_condition:
+                # Greater than
+                size_val = size_condition['$gt']
+                if '$expr' not in primary_filters:
+                    primary_filters['$expr'] = {}
+                if '$and' not in primary_filters['$expr']:
+                    primary_filters['$expr']['$and'] = []
+                primary_filters['$expr']['$and'].append({
+                    '$gt': [{'$size': f'${array_field}'}, size_val]
+                })
+            elif '$gte' in size_condition:
+                # Greater than or equal
+                size_val = size_condition['$gte']
+                if '$expr' not in primary_filters:
+                    primary_filters['$expr'] = {}
+                if '$and' not in primary_filters['$expr']:
+                    primary_filters['$expr']['$and'] = []
+                primary_filters['$expr']['$and'].append({
+                    '$gte': [{'$size': f'${array_field}'}, size_val]
+                })
+            elif '$lt' in size_condition:
+                # Less than
+                size_val = size_condition['$lt']
+                if '$expr' not in primary_filters:
+                    primary_filters['$expr'] = {}
+                if '$and' not in primary_filters['$expr']:
+                    primary_filters['$expr']['$and'] = []
+                primary_filters['$expr']['$and'].append({
+                    '$lt': [{'$size': f'${array_field}'}, size_val]
+                })
+            elif '$lte' in size_condition:
+                # Less than or equal
+                size_val = size_condition['$lte']
+                if '$expr' not in primary_filters:
+                    primary_filters['$expr'] = {}
+                if '$and' not in primary_filters['$expr']:
+                    primary_filters['$expr']['$and'] = []
+                primary_filters['$expr']['$and'].append({
+                    '$lte': [{'$size': f'${array_field}'}, size_val]
+                })
+
+        # Handle advanced MongoDB operators
+        advanced_operators = {}
+
+        # $elemMatch for complex array element matching
+        for key, value in filters.items():
+            if key.endswith('_elemMatch') and isinstance(value, dict):
+                array_field = key.replace('_elemMatch', '')
+                advanced_operators[array_field] = {'$elemMatch': value}
+
+        # $all for matching all elements in array
+        for key, value in filters.items():
+            if key.endswith('_all') and isinstance(value, list):
+                array_field = key.replace('_all', '')
+                advanced_operators[array_field] = {'$all': value}
+
+        # $type for type checking
+        for key, value in filters.items():
+            if key.endswith('_type'):
+                field_name = key.replace('_type', '')
+                # Map common type names to BSON type numbers
+                type_map = {
+                    'string': 'string',
+                    'number': 'number',
+                    'boolean': 'bool',
+                    'object': 'object',
+                    'array': 'array',
+                    'date': 'date',
+                    'null': 'null'
+                }
+                if value in type_map:
+                    advanced_operators[field_name] = {'$type': type_map[value]}
+
+        # $mod for modulo operations
+        for key, value in filters.items():
+            if key.endswith('_mod') and isinstance(value, list) and len(value) == 2:
+                field_name = key.replace('_mod', '')
+                advanced_operators[field_name] = {'$mod': value}
+
+        # $text for full-text search
+        if '$text' in filters:
+            primary_filters['$text'] = {'$search': filters['$text']}
+
+        # Geospatial operators ($near, $geoWithin)
+        if '$near' in filters:
+            # Assume coordinates are provided as [lng, lat]
+            coords = filters['$near']
+            if isinstance(coords, list) and len(coords) == 2:
+                # For now, assume a location field exists
+                advanced_operators['location'] = {'$near': {'$geometry': {'type': 'Point', 'coordinates': coords}}}
+
+        if '$geoWithin' in filters:
+            # Assume geometry is provided
+            geometry = filters['$geoWithin']
+            advanced_operators['location'] = {'$geoWithin': geometry}
+
+        # Add advanced operators to primary filters
+        for field, operator in advanced_operators.items():
+            primary_filters[field] = operator
 
         return primary_filters
 
