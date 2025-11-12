@@ -841,8 +841,12 @@ class LLMIntentParser:
                 filters["state_not"] = ["Completed", "Verified"]
 
 
-        # Aggregations
-        allowed_aggs = {"count", "group", "summary"}
+        # Aggregations - include new advanced aggregation types
+        allowed_aggs = {
+            "count", "group", "summary",
+            "graphLookup", "timeWindow", "trend", "anomaly", "forecast",
+            "facet", "bucket", "bucketAuto", "sortByCount", "replaceRoot", "unionWith"
+        }
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
         # Group by tokens
@@ -1020,6 +1024,33 @@ class LLMIntentParser:
         # Fetch one heuristic
         fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
 
+        # Extract advanced aggregation fields
+        facet_fields = data.get("facet_fields")
+        bucket_field = data.get("bucket_field")
+        bucket_boundaries = data.get("bucket_boundaries")
+        sort_by_field = data.get("sort_by_field")
+        new_root = data.get("new_root")
+        union_collection = data.get("union_collection")
+        
+        # Graph lookup fields
+        graph_from = data.get("graph_from")
+        graph_start = data.get("graph_start")
+        graph_connect_from = data.get("graph_connect_from")
+        graph_connect_to = data.get("graph_connect_to")
+        
+        # Time-series analysis fields
+        window_field = data.get("window_field")
+        window_size = data.get("window_size")
+        window_unit = data.get("window_unit")
+        trend_field = data.get("trend_field")
+        trend_period = data.get("trend_period")
+        trend_metric = data.get("trend_metric")
+        anomaly_field = data.get("anomaly_field")
+        anomaly_metric = data.get("anomaly_metric")
+        anomaly_threshold = data.get("anomaly_threshold")
+        forecast_field = data.get("forecast_field")
+        forecast_periods = data.get("forecast_periods")
+
         return QueryIntent(
             primary_entity=primary,
             target_entities=target_entities,
@@ -1033,6 +1064,27 @@ class LLMIntentParser:
             wants_details=wants_details,
             wants_count=wants_count,
             fetch_one=fetch_one,
+            facet_fields=facet_fields if facet_fields else None,
+            bucket_field=bucket_field if bucket_field else None,
+            bucket_boundaries=bucket_boundaries if bucket_boundaries else None,
+            sort_by_field=sort_by_field if sort_by_field else None,
+            new_root=new_root if new_root else None,
+            union_collection=union_collection if union_collection else None,
+            graph_from=graph_from if graph_from else None,
+            graph_start=graph_start if graph_start else None,
+            graph_connect_from=graph_connect_from if graph_connect_from else None,
+            graph_connect_to=graph_connect_to if graph_connect_to else None,
+            window_field=window_field if window_field else None,
+            window_size=window_size if window_size else None,
+            window_unit=window_unit if window_unit else None,
+            trend_field=trend_field if trend_field else None,
+            trend_period=trend_period if trend_period else None,
+            trend_metric=trend_metric if trend_metric else None,
+            anomaly_field=anomaly_field if anomaly_field else None,
+            anomaly_metric=anomaly_metric if anomaly_metric else None,
+            anomaly_threshold=float(anomaly_threshold) if anomaly_threshold is not None else None,
+            forecast_field=forecast_field if forecast_field else None,
+            forecast_periods=int(forecast_periods) if forecast_periods is not None else None,
         )
 
     async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
