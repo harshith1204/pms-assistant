@@ -45,7 +45,7 @@ except ImportError:
     RAGTool = None
     mongodb_tools = None
     DATABASE_NAME = os.getenv("MONGODB_DATABASE", "ProjectManagement")
-    QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "pms_collection")
+    QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "ProjectManagement")
     build_lookup_stage = None
     REL = None
 

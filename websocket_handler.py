@@ -251,9 +251,10 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Persist user message to ProjectManagement.conversations
+            # ✅ OPTIMIZED: Persist user message to ProjectManagement.conversations (fire-and-forget)
             try:
-                await save_user_message(conversation_id, message)
+                # Fire-and-forget: don't block request processing
+                asyncio.create_task(save_user_message(conversation_id, message))
             except Exception as e:
                 # Non-fatal: log error, continue processing
                 logger.error(f"Failed to save user message: {e}")

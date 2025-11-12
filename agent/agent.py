@@ -26,7 +26,6 @@ import os
 try:
     tools_list = agent_tools.tools
 except AttributeError:
-    # Fallback: define empty tools list if import fails
     tools_list = []
 import os
 from langchain_groq import ChatGroq
@@ -201,9 +200,40 @@ class TTLCache:
         self._evict_if_needed()
 
 
+# ✅ OPTIMIZED: LLM response cache for efficient call management
+_llm_response_cache = TTLCache(max_items=100, ttl_seconds=300)  # 5 min cache for LLM responses
 
+def _hash_messages(messages: List[BaseMessage]) -> str:
+    """Create a hash key from message list for caching."""
+    import hashlib
+    # Create a simple hash from message contents
+    content_parts = []
+    for msg in messages:
+        content = getattr(msg, "content", "")
+        msg_type = msg.__class__.__name__
+        content_parts.append(f"{msg_type}:{content[:200]}")  # Limit content length for hashing
+    combined = "|".join(content_parts)
+    return hashlib.md5(combined.encode()).hexdigest()
 
-# Lightweight helper to create natural, user-facing action statements
+# Simple template-based action statement generator (no LLM call)
+def _simple_action_statement(tool_calls: List[Dict[str, Any]]) -> str:
+    """Generate action statement from tool calls without LLM call."""
+    if not tool_calls:
+        return "Analyzing your request..."
+    
+    tool_names = [tc.get("name", "") for tc in tool_calls]
+    
+    if "mongo_query" in tool_names and "rag_search" in tool_names:
+        return "Querying database and searching content..."
+    elif "mongo_query" in tool_names:
+        return "Querying database..."
+    elif "rag_search" in tool_names:
+        return "Searching documentation and content..."
+    elif "generate_content" in tool_names:
+        return "Generating content..."
+    else:
+        return "Processing your request..."
+# Lightweight helper to create natural, user-facing action statements (DEPRECATED - kept for compatibility)
 async def generate_action_statement(
     user_query: str,
     tool_calls: List[Dict[str, Any]],
@@ -668,13 +698,10 @@ class MongoDBAgent:
                             ))
                             # Emit a dynamic action statement to indicate synthesis/finalization
                             try:
-                                synth_action = await generate_action_statement(
-                                    query,
-                                    [{"name": "synthesize", "args": {"query": "finalize answer from gathered findings"}}],
-                                    "Synthesizing findings into a comprehensive answer...",
-                                )
+                                synth_action = "Synthesizing findings into a comprehensive answer..."
                                 if callback_handler:
-                                    await callback_handler.emit_dynamic_action(synth_action)
+                                    # Fire-and-forget
+                                    asyncio.create_task(callback_handler.emit_dynamic_action(synth_action))
                             except Exception:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
@@ -686,13 +713,25 @@ class MongoDBAgent:
                         # During tool planning, we'll emit action events instead
                         should_stream = is_finalizing  # ✅ Use the saved state
                         main_llm_start_time = perf_counter()
-                        response = await llm_with_tools.ainvoke(
-                            invoke_messages,
-                            config={"callbacks": [callback_handler] if should_stream else []},
-                        )
-                        main_llm_elapsed_ms = (perf_counter() - main_llm_start_time) * 1000
-                        log_msg_type = "Final Synthesis" if is_finalizing else "Tool Planning"
-                        print(f"Main Agent LLM call ({log_msg_type}) took {main_llm_elapsed_ms:.2f} ms")
+                        # ✅ OPTIMIZED: Check LLM response cache before making API call
+                        cache_key = _hash_messages(invoke_messages)
+                        cached_response = _llm_response_cache.get(cache_key)
+                        
+                        if cached_response and not should_stream:
+                            # Use cached response for non-streaming calls (tool planning)
+                            response = cached_response
+                        else:
+                            # Make LLM call
+                            response = await llm_with_tools.ainvoke(
+                                invoke_messages,
+                                config={"callbacks": [callback_handler] if should_stream else []},
+                            )
+                            main_llm_elapsed_ms = (perf_counter() - main_llm_start_time) * 1000
+                            log_msg_type = "Final Synthesis" if is_finalizing else "Tool Planning"
+                            print(f"Main Agent LLM call ({log_msg_type}) took {main_llm_elapsed_ms:.2f} ms")
+                            # Cache response for non-streaming calls (tool planning)
+                            if not should_stream:
+                                _llm_response_cache.set(cache_key, response)
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
@@ -722,20 +761,13 @@ class MongoDBAgent:
                     # Execute requested tools with streaming callbacks
                     # The LLM decides execution order by how it calls tools
                     # Emit a dynamic, user-facing action line before running any tools
+                    # ✅ OPTIMIZED: Use simple template-based action statements (fire-and-forget)
                     try:
-                        # Extract any reasoning content from the LLM response
-                        llm_reasoning = getattr(response, "content", "").strip()
-
-                        # ✅ ALWAYS transform through generate_action_statement
-                        # This ensures consistent, user-friendly action messages
-                        action_text = await generate_action_statement(
-                            query,
-                            response.tool_calls,
-                            llm_reasoning  # Pass reasoning as context, but always generate clean action
-                        )
-
+                        # Simple template-based action generation (no LLM call)
+                        action_text = _simple_action_statement(response.tool_calls)
                         if callback_handler and action_text:
-                            await callback_handler.emit_dynamic_action(action_text)
+                            # Fire-and-forget: don't await, just schedule
+                            asyncio.create_task(callback_handler.emit_dynamic_action(action_text))
                     except Exception as e:
                         # Log exception for debugging
                         logger.error(f"Failed to generate action statement: {e}")
@@ -750,28 +782,40 @@ class MongoDBAgent:
                     messages.append(clean_response)
                     did_any_tool = False
                     
-                    if self.enable_parallel_tools and len(response.tool_calls) > 1:
-                        # Multiple tools called together = LLM determined they're independent
+                    # ✅ OPTIMIZED: Enhanced parallel tool execution
+                    # Always enable parallel execution when multiple tools are called
+                    if len(response.tool_calls) > 1:
+                        # Multiple tools called together = execute in parallel
                         # Send tool_start events for all tools first
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if tool:
                                 await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
                         
-                        # Execute all tools in parallel
+                        # Execute all tools in parallel (always enabled for multiple tools)
                         tool_tasks = [self._execute_single_tool(None, tool_call, selected_tools, None) for tool_call in response.tool_calls]
-                        tool_results = await asyncio.gather(*tool_tasks)
+                        tool_results = await asyncio.gather(*tool_tasks, return_exceptions=True)
                         
                         # Process results and send tool_end events
-                        for tool_message, success in tool_results:
-                            await callback_handler.on_tool_end(tool_message.content)
-                            messages.append(tool_message)
-                            await conversation_memory.add_message(conversation_id, tool_message)
-                            # Skip saving 'result' events to DB
-                            if success:
-                                did_any_tool = True
+                        for i, result in enumerate(tool_results):
+                            if isinstance(result, Exception):
+                                # Handle exception from tool execution
+                                error_msg = ToolMessage(
+                                    content=f"Tool execution error: {result}",
+                                    tool_call_id=response.tool_calls[i].get("id", ""),
+                                )
+                                await callback_handler.on_tool_end(error_msg.content)
+                                messages.append(error_msg)
+                                await conversation_memory.add_message(conversation_id, error_msg)
+                            else:
+                                tool_message, success = result
+                                await callback_handler.on_tool_end(tool_message.content)
+                                messages.append(tool_message)
+                                await conversation_memory.add_message(conversation_id, tool_message)
+                                if success:
+                                    did_any_tool = True
                     else:
-                        # Single tool or parallel disabled
+                        # Single tool execution
                         for tool_call in response.tool_calls:
                             tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
                             if tool:

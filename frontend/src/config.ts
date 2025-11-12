@@ -24,22 +24,22 @@ export const getBusinessId = () => {
   const raw = localStorage.getItem('bDetails');
   if (!raw) return DEFAULT_BUSINESS_ID;
 
-  try {
-    const parsed = JSON.parse(raw);
-    // bDetails is a business object with an 'id' field
-    if (parsed && typeof parsed === 'object' && parsed.id) {
-      return String(parsed.id).trim();
-    }
-    // Fallback: some wrappers may send businessId as a simple string
-    if (typeof parsed === 'string' && parsed.trim()) {
-      return parsed.trim();
-    }
-  } catch {
-    // Not JSON, treat as direct string
-    return raw.trim();
-  }
+  // try {
+  //   const parsed = JSON.parse(raw);
+  //   // bDetails is a business object with an 'id' field
+  //   if (parsed && typeof parsed === 'object' && parsed.id) {
+  //     return String(parsed.id).trim();
+  //   }
+  //   // Fallback: some wrappers may send businessId as a simple string
+  //   if (typeof parsed === 'string' && parsed.trim()) {
+  //     return parsed.trim();
+  //   }
+  // } catch {
+  //   // Not JSON, treat as direct string
+  //   return raw.trim();
+  // }
 
-  return '';
+  // return '';
 };
 
 export const getStaffType = () => {
