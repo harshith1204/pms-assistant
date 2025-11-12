@@ -622,7 +622,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        label = entity.get_nested(entity,"label.name")
+                        label = get_nested(entity,"label.name")
                         # Build base line
                         base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}"
                         
@@ -725,7 +725,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         state = entity.get("stateName") or get_nested(entity, "state.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        label = entity.get_nested(entity,"label.name")
+                        label = get_nested(entity,"label.name")
                         # Build base line
                         base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={([i for i in assignees] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}, goal={goal or 'N/A'}, feature={feature or 'N/A'}, epic={epic or 'N/A'}, business={business or 'N/A'}, acceptanceCriteria={Accept_criteria or 'N/A'}"
                         
@@ -775,7 +775,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         module = entity.get("modules.name")
                         parent = entity.get("parent.name")
                         priority = entity.get("priority")
-                        label = entity.get_nested(entity,"label.name")
+                        label = get_nested(entity,"label.name")
                         estimatesystem = entity.get("estimateSystem")
                         # Build base line
                         base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}, lead={lead or 'N/A'}, cycle={cycle or 'N/A'}, module={module or 'N/A'}, parent={parent or 'N/A'}, business={business or 'N/A'}, estimatesystem={estimatesystem or 'N/A'}, scope={scope or 'N/A'}"
