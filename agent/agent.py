@@ -161,13 +161,13 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 # Initialize the LLM with optimized settings for tool calling
+# NOTE: Using llama-3.3-70b-versatile for reliable tool calling support
 llm = ChatGroq(
-    model=os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905"),
+    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
     temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
-    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
+    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "2048")),
     streaming=True,
     verbose=False,
-    top_p=0.8,
 )
 
 
@@ -265,12 +265,11 @@ async def generate_action_statement(
             )),
         ]
         llm = ChatGroq(
-            model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
             temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
-            max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
+            max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "512")),
             streaming=True,
             verbose=False,
-            top_p=0.8,
         )
         # Use the existing model; rely on instruction for brevity
         resp = await llm.ainvoke(action_prompt)
