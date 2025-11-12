@@ -329,7 +329,7 @@ def _select_tools_for_query(user_query: str):
     return selected_tools, allowed_names
 
 
-class PhoenixCallbackHandler(AsyncCallbackHandler):
+class AgentCallbackHandler(AsyncCallbackHandler):
     """WebSocket streaming callback handler for Phoenix events + DB logging"""
 
     def __init__(self, websocket=None, conversation_id: Optional[str] = None):
@@ -585,7 +585,7 @@ class MongoDBAgent:
                 human_message = HumanMessage(content=query)
                 messages.append(human_message)
 
-                callback_handler = PhoenixCallbackHandler(websocket, conversation_id)
+                callback_handler = AgentCallbackHandler(websocket, conversation_id)
 
                 # Persist the human message
                 await conversation_memory.add_message(conversation_id, human_message)
