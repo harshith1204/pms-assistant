@@ -15,7 +15,7 @@ import contextlib
 from typing import Dict, Any, List, AsyncGenerator, Optional
 from agent.memory import conversation_memory
 from typing import Tuple
-from agent.tools import tools
+from agent import tools as agent_tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
@@ -23,9 +23,8 @@ import os
 
 # Import tools list
 try:
-    tools_list = tools.tools
+    tools_list = agent_tools.tools
 except AttributeError:
-    # Fallback: define empty tools list if import fails
     tools_list = []
 import os
 from langchain_groq import ChatGroq
