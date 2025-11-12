@@ -624,7 +624,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
                         project = entity.get("projectName") or get_nested(entity, "project.name")
                         assignees = ensure_list_str(entity.get("assignees") or entity.get("assignee"))
                         priority = entity.get("priority")
-                        label = entity.get_nested(entity,"label.name")
+                        label = get_nested(entity,"label.name")
                         # Build base line
                         base = f"• {bug}: {truncate_str(title, 80)} — state={state or 'N/A'}, priority={priority or 'N/A'}, assignee={(assignees[0] if assignees else 'N/A')}, project={project or 'N/A'}, label={label or 'N/A'}"
                         

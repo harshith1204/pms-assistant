@@ -685,11 +685,14 @@ class MongoDBAgent:
                         # Only stream tokens during finalization, NOT during tool planning
                         # During tool planning, we'll emit action events instead
                         should_stream = is_finalizing  # ✅ Use the saved state
-
+                        main_llm_start_time = perf_counter()
                         response = await llm_with_tools.ainvoke(
                             invoke_messages,
                             config={"callbacks": [callback_handler] if should_stream else []},
                         )
+                        main_llm_elapsed_ms = (perf_counter() - main_llm_start_time) * 1000
+                        log_msg_type = "Final Synthesis" if is_finalizing else "Tool Planning"
+                        print(f"Main Agent LLM call ({log_msg_type}) took {main_llm_elapsed_ms:.2f} ms")
                         if llm_span and getattr(response, "content", None):
                             try:
                                 preview = str(response.content)[:500]
