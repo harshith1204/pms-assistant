@@ -11,12 +11,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
+from time import perf_counter
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import os
- 
+logger = logging.getLogger(__name__)
 
 
 Jsonable = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
@@ -127,6 +129,7 @@ class Orchestrator:
         return step.name, None, last_exc
 
     async def run(self, steps: Sequence[StepSpec], initial_context: Optional[Dict[str, Any]] = None, correlation_id: Optional[str] = None) -> Dict[str, Any]:
+        orchestrator_start_time = perf_counter()
         context: Dict[str, Any] = dict(initial_context or {})
 
         # Build dependency graph: step -> required keys
@@ -163,7 +166,8 @@ class Orchestrator:
                         raise exc
                     if step and step.provides:
                         context[step.provides] = result
-
+        elapsed_ms = (perf_counter() - orchestrator_start_time) * 1000
+        print(f"Orchestrator.run completed {len(steps)} steps in {elapsed_ms:.2f} ms")
         return context
 
 

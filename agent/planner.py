@@ -7,6 +7,7 @@ based on the relationship registry
 
 import json
 import re
+from time import perf_counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Set
 import os
@@ -495,9 +496,11 @@ class LLMIntentParser:
         )
 
         user = f"Convert to JSON: {query}"
-
+        llm_start_time = perf_counter()
         try:
             ai = await self.llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
+            llm_elapsed_ms = (perf_counter() - llm_start_time) * 1000
+            print(f"LLMIntentParser.parse LLM call took {llm_elapsed_ms:.2f} ms")
             content = ai.content.strip()
             import re
             content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
@@ -968,12 +971,15 @@ class LLMIntentParser:
 
     async def _aggregate_count(self, collection: str, match_filter: Dict[str, Any]) -> int:
         """Run a count via aggregation to avoid needing a dedicated count tool."""
+        db_start_time = perf_counter()
         try:
             result = await mongodb_tools.execute_tool("aggregate", {
                 "database": DATABASE_NAME,
                 "collection": collection,
                 "pipeline": [{"$match": match_filter}, {"$count": "total"}]
             })
+            elapsed_ms = (perf_counter() - db_start_time) * 1000
+            print(f"_aggregate_count on '{collection}' took {elapsed_ms:.2f} ms")
             if isinstance(result, list) and result and isinstance(result[0], dict) and "total" in result[0]:
                 return int(result[0]["total"])  # type: ignore
         except Exception:
@@ -2148,6 +2154,7 @@ class Planner:
 
     async def plan_and_execute(self, query: str) -> Dict[str, Any]:
         """Plan and execute a natural language query using the Orchestrator."""
+        planner_start_time = perf_counter()
         try:
             # Define step coroutines as closures to capture self
             async def _ensure_connection(ctx: Dict[str, Any]) -> bool:
@@ -2216,7 +2223,8 @@ class Planner:
             intent: QueryIntent = ctx["intent"]  # type: ignore[assignment]
             pipeline: List[Dict[str, Any]] = ctx["pipeline"]  # type: ignore[assignment]
             result = ctx.get("result")
-
+            elapsed_ms = (perf_counter() - planner_start_time) * 1000
+            print(f"Planner.plan_and_execute for '{query[:50]}...' took {elapsed_ms:.2f} ms")
             return {
                 "success": True,
                 "intent": intent.__dict__,
@@ -2226,6 +2234,8 @@ class Planner:
                 "planner": "llm",
             }
         except Exception as e:
+            elapsed_ms = (perf_counter() - planner_start_time) * 1000
+            print(f"Planner.plan_and_execute for '{query[:50]}...' failed in {elapsed_ms:.2f} ms: {e}")
             pass
             return {
                 "success": False,

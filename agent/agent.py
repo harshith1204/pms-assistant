@@ -18,6 +18,7 @@ from typing import Tuple
 from agent import tools as agent_tools
 from datetime import datetime
 import time
+from time import perf_counter
 from collections import defaultdict, deque
 import os
 
@@ -273,7 +274,10 @@ async def generate_action_statement(
             top_p=0.8,
         )
         # Use the existing model; rely on instruction for brevity
+        llm_start_time = perf_counter()
         resp = await llm.ainvoke(action_prompt)
+        llm_elapsed_ms = (perf_counter() - llm_start_time) * 1000
+        print(f"Action statement generation LLM call took {llm_elapsed_ms:.2f} ms")
         action_text = str(getattr(resp, "content", "")).strip().strip("\".")
         if not action_text or len(action_text) > 100:
             return "Gathering relevant information for you..."
@@ -465,6 +469,7 @@ class MongoDBAgent:
             tuple: (ToolMessage, success_flag)
         """
         tool_cm = None
+        tool_start_time = perf_counter()
         with contextlib.nullcontext() as tool_span:
             # Enforce router: only allow selected tools
             actual_tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
@@ -490,6 +495,8 @@ class MongoDBAgent:
                 content=str(result),
                 tool_call_id=tool_call["id"],
             )
+            tool_elapsed_ms = (perf_counter() - tool_start_time) * 1000
+            print(f"Tool '{tool_call['name']}' executed in {tool_elapsed_ms:.2f} ms")
             return tool_message, True
 
     async def connect(self):

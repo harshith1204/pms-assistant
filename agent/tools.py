@@ -1,5 +1,6 @@
 import sys
 import logging
+from time import perf_counter
 from langchain_core.tools import tool
 from typing import Optional, Dict, List, Any, Union
 import mongo.constants
@@ -485,6 +486,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
 
     Returns: A compact result suitable for direct user display.
     """
+    tool_start_time = perf_counter()
     if not plan_and_execute_query:
         return "❌ Intelligent query planner not available. Please ensure query_planner.py is properly configured."
 
@@ -1104,11 +1106,15 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             except Exception:
                 pass
             response += formatted_result
+            elapsed_ms = (perf_counter() - tool_start_time) * 1000
+            print(f"mongo_query (including planner) for '{query[:50]}...' took {elapsed_ms:.2f} ms")
             return response
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
 
     except Exception as e:
+        elapsed_ms = (perf_counter() - tool_start_time) * 1000
+        print(f"mongo_query for '{query[:50]}...' failed in {elapsed_ms:.2f} ms: {e}")
         return f"❌ INTELLIGENT QUERY ERROR:\nQuery: '{query}'\nError: {str(e)}"
 
 
@@ -1162,6 +1168,7 @@ async def rag_search(
         query="API documentation", content_type="page" → finds API docs pages with complete content
         query="bugs", content_type="work_item", group_by="priority" → work items grouped by priority
     """
+    tool_start_time = perf_counter()
     try:
         # Fix: Add project root to sys.path to resolve module imports
         # This makes 'qdrant' and 'mongo' modules importable from any script location.
@@ -1330,7 +1337,8 @@ async def rag_search(
         if len(sorted_groups) > 20:
             remaining_items = sum(len(items) for _, items in sorted_groups[20:])
             response += f"... and {len(sorted_groups) - 20} more groups ({remaining_items} items)\n"
-        
+        elapsed_ms = (perf_counter() - tool_start_time) * 1000
+        print(f"rag_search for '{query[:50]}...' (type: {content_type}) took {elapsed_ms:.2f} ms")
         return response
         
     except ImportError:

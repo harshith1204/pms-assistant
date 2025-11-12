@@ -9,6 +9,7 @@ from typing import Tuple
 from agent.tools import tools
 from datetime import datetime
 import time
+from time import perf_counter
 import math
 from collections import defaultdict, deque
 import os
@@ -69,7 +70,7 @@ class RedisConversationMemory:
         async with self._connection_lock:
             if self._connected and self.redis_client:
                 return
-            
+            connect_start_time = perf_counter()
             try:
                 self.redis_client = await aioredis.from_url(
                     self.redis_url,
@@ -82,9 +83,12 @@ class RedisConversationMemory:
                 )
                 # Test connection
                 await self.redis_client.ping()
+                elapsed_ms = (perf_counter() - connect_start_time) * 1000
+                logger.info(f"Redis connection established in {elapsed_ms:.2f} ms")
                 self._connected = True
                 self.use_fallback = False
             except Exception as e:
+                elapsed_ms = (perf_counter() - connect_start_time) * 1000
                 logger.error(f"Redis connection failed, using in-memory fallback: {e}")
                 self.use_fallback = True
                 self._connected = False
@@ -161,7 +165,7 @@ class RedisConversationMemory:
             # Use in-memory fallback
             self.fallback_conversations[conversation_id].append(message)
             return
-        
+        redis_start_time = perf_counter()
         try:
             key = self._get_conversation_key(conversation_id)
             serialized = self._serialize_message(message)
@@ -174,7 +178,8 @@ class RedisConversationMemory:
             
             # Set TTL (24 hours)
             await self.redis_client.expire(key, self.ttl_seconds)
-            
+            elapsed_ms = (perf_counter() - redis_start_time) * 1000
+            print(f"Redis add_message (rpush/ltrim/expire) took {elapsed_ms:.2f} ms")
         except RedisError as e:
             logger.error(f"Redis error in add_message, falling back to memory: {e}")
             self.use_fallback = True
@@ -195,14 +200,15 @@ class RedisConversationMemory:
         
         if self.use_fallback:
             return list(self.fallback_conversations[conversation_id])
-        
+        redis_start_time = perf_counter()
         try:
             key = self._get_conversation_key(conversation_id)
             
             # Get all messages from Redis list
             messages_str = await self.redis_client.lrange(key, 0, -1)
-            
+            io_elapsed_ms = (perf_counter() - redis_start_time) * 1000
             if not messages_str:
+                print(f"Redis get_conversation_history (lrange) miss in {io_elapsed_ms:.2f} ms")
                 return []
             
             # Deserialize messages
@@ -215,7 +221,8 @@ class RedisConversationMemory:
                 )
             # Refresh TTL on access
             await self.redis_client.expire(key, self.ttl_seconds)
-            
+            total_elapsed_ms = (perf_counter() - redis_start_time) * 1000
+            print(f"Redis get_conversation_history (lrange + deserialize) hit in {total_elapsed_ms:.2f} ms")
             return messages
             
         except RedisError as e:
@@ -418,6 +425,7 @@ class RedisConversationMemory:
         Returns:
             List of recent messages (already within token budget)
         """
+        mongo_start_time = perf_counter()
         try:
             # Import here to avoid circular dependency
             from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
@@ -425,8 +433,9 @@ class RedisConversationMemory:
             # Fetch conversation from MongoDB
             coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
             doc = await coll.find_one({"conversationId": conversation_id})
-            
+            db_elapsed_ms = (perf_counter() - mongo_start_time) * 1000
             if not doc:
+                print(f"_load_recent_from_mongodb (find_one) miss in {db_elapsed_ms:.2f} ms")
                 return []
             
             messages = doc.get("messages") or []
@@ -479,7 +488,8 @@ class RedisConversationMemory:
             # Optionally cache in Redis for next access (background task, non-blocking)
             if recent_messages:
                 asyncio.create_task(self._cache_messages_background(conversation_id, recent_messages))
-            
+            total_elapsed_ms = (perf_counter() - mongo_start_time) * 1000
+            print(f"_load_recent_from_mongodb (find_one + process) took {total_elapsed_ms:.2f} ms. Found {len(recent_messages)} messages.")
             return recent_messages
             
         except Exception as e:
@@ -509,7 +519,7 @@ class RedisConversationMemory:
         if self.use_fallback or not self.redis_client:
             self.fallback_conversations[conversation_id].extend(messages)
             return
-
+        redis_start_time = perf_counter()
         try:
             # --- Optimized: Use pipeline for L2 write ---
             key = self._get_conversation_key(conversation_id)
@@ -522,7 +532,8 @@ class RedisConversationMemory:
                 pipe.expire(key, self.ttl_seconds)
                 await pipe.execute()
             # --- End L2 Pipeline ---
-
+            elapsed_ms = (perf_counter() - redis_start_time) * 1000
+            print(f"_cache_messages_background (Redis pipeline) for {len(messages)} messages took {elapsed_ms:.2f} ms")
         except Exception as e:
             logger.error(f"Background cache failed: {e}")
             # Populate fallback as a last resort
@@ -586,6 +597,7 @@ class RedisConversationMemory:
         """Load an existing conversation from MongoDB into L1/L2 cache
            using a single efficient Redis pipeline.
         """
+        mongo_start_time = perf_counter()
         try:
             # Import here to avoid circular dependency
             from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
@@ -619,7 +631,8 @@ class RedisConversationMemory:
                 else:
                     continue
                 lc_messages.append(lc_message)
-
+            total_elapsed_ms = (perf_counter() - mongo_start_time) * 1000
+            print(f"load_conversation_from_mongodb (find_one + process) took {total_elapsed_ms:.2f} ms. Found {len(lc_messages)} messages.")
             if not lc_messages:
                 return False
 

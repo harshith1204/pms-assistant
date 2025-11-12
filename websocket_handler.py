@@ -17,7 +17,7 @@ from agent.planner import plan_and_execute_query
 from mongo.conversations import save_user_message
 import os
 import contextlib
-
+from time import perf_counter
 load_dotenv()
 
 # Configure logging
@@ -226,7 +226,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     "timestamp": datetime.now().isoformat()
                 })
                 continue
-
+            message_start_time = perf_counter()
             # Use the trusted context for all operations
             user_id = data.get("member_id") or user_context["user_id"]
             business_id = data.get("business_id") or user_context["businessId"]
@@ -324,7 +324,8 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                     # Clean up websocket reference after completion
                     from agent.tools import set_generation_websocket
                     set_generation_websocket(None)
-
+            total_elapsed_ms = (perf_counter() - message_start_time) * 1000
+            print(f"Total message handling for conv '{conversation_id}' took {total_elapsed_ms:.2f} ms")
             await websocket.send_json({
                 "type": "complete",
                 "conversation_id": conversation_id,
