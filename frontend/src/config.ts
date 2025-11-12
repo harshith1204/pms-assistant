@@ -6,12 +6,12 @@ export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "ht
 
 // Get staff and business details dynamically from postMessage/localStorage (set by parent wrapper)
 // Note: Hardcoded fallbacks are intentionally commented out to avoid accidental misuse
-// const DEFAULT_MEMBER_ID = '...';
-// const DEFAULT_BUSINESS_ID = '...';
+const DEFAULT_MEMBER_ID = '1effc4a4-3c0f-67a5-99d0-374369aad116';
+const DEFAULT_BUSINESS_ID = '1eedcb26-d23a-688a-bd63-579d19dab229';
 
 export const getMemberId = () => {
   const stored = localStorage.getItem('staffId');
-  if (!stored) return '';
+  if (!stored) return DEFAULT_MEMBER_ID;
   // Support values sent as JSON strings (e.g., '"uuid"')
   try {
     const parsed = JSON.parse(stored);
@@ -22,7 +22,7 @@ export const getMemberId = () => {
 
 export const getBusinessId = () => {
   const raw = localStorage.getItem('bDetails');
-  if (!raw) return '';
+  if (!raw) return DEFAULT_BUSINESS_ID;
 
   try {
     const parsed = JSON.parse(raw);
