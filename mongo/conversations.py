@@ -46,16 +46,18 @@ class ConversationMongoClient:
                     if self.connected and self.client:
                         return
 
-                    # Create Motor client with optimized connection pool settings for conversations
+                    # ✅ OPTIMIZED: Create Motor client with enhanced connection pool settings
                     self.client = AsyncIOMotorClient(
                         self.connection_string,
-                        maxPoolSize=20,          # Smaller pool for conversations
-                        minPoolSize=5,           # Keep minimum connections alive
-                        maxIdleTimeMS=45000,     # Keep idle connections for 45s
+                        maxPoolSize=50,          # Increased pool size for better concurrency
+                        minPoolSize=10,          # Keep more minimum connections alive
+                        maxIdleTimeMS=60000,     # Keep idle connections for 60s (increased)
                         waitQueueTimeoutMS=5000, # Faster timeout for queue
                         serverSelectionTimeoutMS=5000,  # Faster server selection
                         connectTimeoutMS=10000,  # Connection timeout
                         socketTimeoutMS=20000,   # Socket timeout
+                        retryWrites=True,        # Enable retry writes for better reliability
+                        retryReads=True,         # Enable retry reads
                     )
 
                     # Test connection

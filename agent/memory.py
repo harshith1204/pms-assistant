@@ -35,12 +35,12 @@ class RedisConversationMemory:
         self, 
         max_messages_per_conversation: int = 50,
         redis_url: Optional[str] = None,
-        ttl_hours: int = 24,
+        ttl_hours: int = 168,  # ✅ OPTIMIZED: 7 days (168 hours) instead of 24 hours
         l1_cache_size: int = 250,      
         l1_cache_ttl_seconds: int = 300
     ):
         self.max_messages_per_conversation = max_messages_per_conversation
-        self.ttl_seconds = ttl_hours * 3600  # 24 hours = 86400 seconds
+        self.ttl_seconds = ttl_hours * 3600  # 7 days = 604800 seconds
         
         # --- New L1 Cache ---
         self.l1_cache: TTLCache[str, deque[BaseMessage]] = TTLCache(
@@ -255,11 +255,12 @@ class RedisConversationMemory:
     async def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
         """Get recent conversation context with a token budget and rolling summary.
         
-        Smart loading: 
-        1. First checks Redis cache for fast access
-        2. If cache is empty/expired, loads ONLY recent messages from MongoDB (within token budget)
-        3. Applies consistent token budget selection (handles both cache hit and miss)
-        4. Adds summary if it fits within budget
+        ✅ OPTIMIZED: 
+        1. First checks L1 cache (in-memory) for fastest access
+        2. Then checks Redis cache (L2) for fast access
+        3. If cache is empty/expired, loads ONLY recent messages from MongoDB (within token budget)
+        4. Applies consistent token budget selection (handles both cache hit and miss)
+        5. Adds summary if it fits within budget
         """
         # Approximate token counting (≈4 chars/token)
         def approx_tokens(text: str) -> int:
@@ -270,6 +271,35 @@ class RedisConversationMemory:
 
         budget = max(500, max_tokens)
         
+        # ✅ OPTIMIZED: Check L1 cache first (fastest path)
+        with self.l1_lock:
+            if conversation_id in self.l1_cache:
+                messages = list(self.l1_cache[conversation_id])
+                if messages:
+                    # L1 cache hit - skip Redis check
+                    summary = await self._get_summary(conversation_id)
+                    summary_tokens = 0
+                    if summary:
+                        summary_tokens = approx_tokens(summary) + 50
+                    message_budget = budget - summary_tokens
+                    
+                    # Apply token budget selection
+                    used = 0
+                    selected: List[BaseMessage] = []
+                    for msg in reversed(messages):
+                        content = getattr(msg, "content", "")
+                        msg_tokens = approx_tokens(str(content)) + 8
+                        if used + msg_tokens > message_budget and selected:
+                            break
+                        selected.append(msg)
+                        used += msg_tokens
+                    selected.reverse()
+                    
+                    if summary and summary_tokens <= budget - used:
+                        selected = [SystemMessage(content=f"Conversation summary (condensed):\n{summary}")] + selected
+                    
+                    return selected
+        
         # Reserve space for summary (if present)
         summary = await self._get_summary(conversation_id)
         summary_tokens = 0
@@ -279,7 +309,7 @@ class RedisConversationMemory:
         # Adjust budget for messages to leave room for summary
         message_budget = budget - summary_tokens
         
-        # Try to get from Redis cache first (fast path)
+        # Try to get from Redis cache (L2) - only if L1 miss
         messages = await self.get_conversation_history(conversation_id)
         
         # If cache is empty, load recent messages from MongoDB
@@ -412,6 +442,7 @@ class RedisConversationMemory:
     async def _load_recent_from_mongodb(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
         """Load ONLY recent messages from MongoDB (limited by token budget).
         
+        ✅ OPTIMIZED: Uses MongoDB projection with $slice to fetch only recent messages.
         This is much more efficient than loading entire conversation history.
         Only loads what's actually needed for context.
         
@@ -422,9 +453,16 @@ class RedisConversationMemory:
             # Import here to avoid circular dependency
             from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
             
-            # Fetch conversation from MongoDB
+            # ✅ OPTIMIZED: Use projection with $slice to fetch only recent messages
+            # Estimate: ~100 tokens per message, so fetch last N messages where N = max_tokens / 100
+            estimated_messages = max(10, min(50, max_tokens // 100))
+            
             coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
-            doc = await coll.find_one({"conversationId": conversation_id})
+            # Use projection to fetch only the last N messages
+            doc = await coll.find_one(
+                {"conversationId": conversation_id},
+                {"messages": {"$slice": -estimated_messages}}  # Only fetch last N messages
+            )
             
             if not doc:
                 return []
