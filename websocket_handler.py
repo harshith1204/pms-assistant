@@ -312,14 +312,23 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                 agent_span.set_attribute("input.value", (message or "")[:1000])
                             except Exception:
                                 pass
-                        async for _ in mongodb_agent.run_streaming(
+                        final_response = ""
+                        async for response_chunk in mongodb_agent.run_streaming(
                             query=message,
                             websocket=websocket,
                             conversation_id=conversation_id
                         ):
-                            # The streaming is handled internally by the callback handler
-                            # Just iterate through the generator to complete the streaming
-                            pass
+                            # Collect response chunks
+                            if response_chunk:
+                                final_response += response_chunk
+                        
+                        # Always send final response to frontend
+                        await websocket.send_json({
+                            "type": "final_response",
+                            "content": final_response if final_response else "No response generated",
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.now().isoformat()
+                        })
                     
                     # Clean up websocket reference after completion
                     from agent.tools import set_generation_websocket

@@ -443,7 +443,7 @@ class MongoDBAgent:
         enable_parallel_tools: Enable parallel tool execution (default: True)
     """
 
-    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT, enable_parallel_tools: bool = True):
+    def __init__(self, max_steps: int = 3, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT, enable_parallel_tools: bool = True):
         # Base LLM; tools will be bound per-query via router
         self.llm_base = llm
         self.connected = False
@@ -776,6 +776,10 @@ class MongoDBAgent:
                                 did_any_tool = True
                     
                     steps += 1
+
+                    # Force finalization before hitting max_steps
+                    if steps >= self.max_steps - 1:
+                        need_finalization = True
 
                     # After executing any tools, force the next LLM turn to synthesize
                     if did_any_tool:
