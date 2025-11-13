@@ -16,7 +16,7 @@ load_dotenv()
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-from agent.agent import MongoDBAgent
+from agent.agent import AgentExecutor
 import os
 from websocket_handler import handle_chat_websocket, ws_manager,user_id_global,business_id_global
 from qdrant.initializer import RAGTool
@@ -149,7 +149,7 @@ async def lifespan(app: FastAPI):
     global mongodb_agent, smart_filter_agent , template_generator
 
     # Startup
-    mongodb_agent = MongoDBAgent()
+    mongodb_agent = AgentExecutor()
     await mongodb_agent.connect()
     await RAGTool.initialize()
 
@@ -622,7 +622,7 @@ async def websocket_chat(websocket: WebSocket):
 
     # Initialize agent if not already done (for testing/development)
     if not mongodb_agent:
-        mongodb_agent = MongoDBAgent()
+        mongodb_agent = AgentExecutor()
         await mongodb_agent.connect()
 
     await handle_chat_websocket(websocket, mongodb_agent)
@@ -632,7 +632,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=7000,
+        port=8000,
         reload=True,
         log_level="info",
         forwarded_allow_ips="*"

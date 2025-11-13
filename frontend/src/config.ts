@@ -10,36 +10,42 @@ export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "ht
 // const DEFAULT_BUSINESS_ID = '...';
 
 export const getMemberId = () => {
-  const stored = localStorage.getItem('staffId');
-  if (!stored) return '';
-  // Support values sent as JSON strings (e.g., '"uuid"')
-  try {
-    const parsed = JSON.parse(stored);
-    if (typeof parsed === 'string') return parsed.trim();
-  } catch {}
-  return stored.trim();
+  // HARDCODED FOR TESTING - REMOVE AFTER
+  return '1eff982e-749f-6652-99d0-a1fb0d5128f4';
+  
+  // const stored = localStorage.getItem('staffId');
+  // if (!stored) return '';
+  // // Support values sent as JSON strings (e.g., '"uuid"')
+  // try {
+  //   const parsed = JSON.parse(stored);
+  //   if (typeof parsed === 'string') return parsed.trim();
+  // } catch {}
+  // return stored.trim();
 };
 
 export const getBusinessId = () => {
-  const raw = localStorage.getItem('bDetails');
-  if (!raw) return '';
+  // HARDCODED FOR TESTING - REMOVE AFTER
+  return '1f0a7f43-8793-6a04-9ec9-3125e1eff878';
+  
+  // const raw = localStorage.getItem('bDetails');
+  // if (!raw) return '';
 
-  try {
-    const parsed = JSON.parse(raw);
-    // bDetails is a business object with an 'id' field
-    if (parsed && typeof parsed === 'object' && parsed.id) {
-      return String(parsed.id).trim();
-    }
-    // Fallback: some wrappers may send businessId as a simple string
-    if (typeof parsed === 'string' && parsed.trim()) {
-      return parsed.trim();
-    }
-  } catch {
-    // Not JSON, treat as direct string
-    return raw.trim();
-  }
+  // try {
+  //   const parsed = JSON.parse(raw);
+  //   // bDetails is a business object with an 'id' field
+  //   if (parsed && typeof parsed === 'object' && parsed.id) {
+  //     return String(parsed.id).trim();
+  //   }
+  //   // Fallback: some wrappers may send businessId as a simple string
+  //   if (typeof parsed === 'string' && parsed.trim()) {
+  //     return parsed.trim();
+  //   }
+  // } catch {
+  //   // Not JSON, treat as direct string
+  //   return raw.trim();
+  // }
 
-  return '';
+  // return '';
 };
 
 export const getStaffType = () => {

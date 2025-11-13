@@ -59,6 +59,8 @@ class ChunkAwareRetriever:
     def __init__(self, qdrant_client, embedding_client):
         self.qdrant_client = qdrant_client
         self.embedding_client = embedding_client
+        # ✅ OPTIMIZED: Cache member projects per request to avoid repeated MongoDB queries
+        self._member_projects_cache: Dict[str, List[str]] = {}
         # Minimal English stopword list for lightweight keyword-overlap filtering
         self._STOPWORDS: Set[str] = {
             "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by",
@@ -129,11 +131,15 @@ class ChunkAwareRetriever:
             must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
 
         # Member-level project RBAC scoping
+        # ✅ OPTIMIZED: Cache member projects at request start
         member_uuid = MEMBER_UUID()
         if member_uuid:
             try:
-                # Get list of project IDs this member has access to
-                member_projects = await self._get_member_projects(member_uuid, business_uuid)
+                # Check cache first
+                cache_key = f"{member_uuid}:{business_uuid}"
+                if cache_key not in self._member_projects_cache:
+                    self._member_projects_cache[cache_key] = await self._get_member_projects(member_uuid, business_uuid)
+                member_projects = self._member_projects_cache[cache_key]
                 if member_projects:
                     # Only apply member filtering for content types that belong to projects
                     project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
@@ -150,8 +156,8 @@ class ChunkAwareRetriever:
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
         # Fetch more chunks initially to ensure we have multiple per document
-        # Increase pool size for smaller chunks to maintain document recall
-        initial_limit = max(limit * max(chunks_per_doc * 3, 10), 50)
+        # ✅ OPTIMIZED: Reduced initial limit to prevent over-fetching
+        initial_limit = min(max(limit * chunks_per_doc * 2, 20), 30)
 
         # search_results = self.qdrant_client.search(
         #     collection_name=collection_name,
@@ -326,9 +332,13 @@ class ChunkAwareRetriever:
     ):
         """
         Fetch adjacent chunks to fill gaps and provide better context.
+        ✅ OPTIMIZED: Batch fetch all adjacent chunks in a single Qdrant query instead of sequential loops.
         Modifies doc_chunks in place.
         """
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
+        from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
+        
+        # Collect all chunks to fetch across all documents
+        all_chunks_to_fetch: List[Tuple[str, int]] = []  # (parent_id, chunk_index)
         
         for parent_id, chunks in doc_chunks.items():
             if not chunks:
@@ -352,49 +362,113 @@ class ChunkAwareRetriever:
             # Remove indices we already have
             to_fetch = adjacent_indices - existing_indices
             
-            if not to_fetch:
-                continue
-            
-            # Fetch missing adjacent chunks using scroll/search by parent_id and chunk_index
-            # Note: This requires a compound filter which Qdrant supports
+            # Collect all chunks to fetch
             for chunk_idx in to_fetch:
+                all_chunks_to_fetch.append((parent_id, chunk_idx))
+        
+        if not all_chunks_to_fetch:
+            return
+        
+        # ✅ OPTIMIZED: Batch fetch all chunks in a single query using $or filter
+        business_uuid = BUSINESS_UUID()
+        member_uuid = MEMBER_UUID()
+        
+        # Get member projects once (use cache if available)
+        member_projects = None
+        if member_uuid:
+            try:
+                cache_key = f"{member_uuid}:{business_uuid}"
+                if cache_key not in self._member_projects_cache:
+                    self._member_projects_cache[cache_key] = await self._get_member_projects(member_uuid, business_uuid)
+                member_projects = self._member_projects_cache[cache_key]
+            except Exception as e:
+                logger.error(f"Error getting member projects for adjacent chunks '{member_uuid}': {e}")
+        
+        # Build batch filter conditions
+        should_conditions = []
+        for parent_id, chunk_idx in all_chunks_to_fetch:
+            conditions = [
+                FieldCondition(key="parent_id", match=MatchValue(value=parent_id)),
+                FieldCondition(key="chunk_index", match=MatchValue(value=chunk_idx))
+            ]
+            
+            if content_type:
+                conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
+            
+            if business_uuid:
+                conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
+            
+            # Add member project filter if applicable
+            if member_projects:
+                project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
+                if content_type is None or content_type in project_content_types:
+                    conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
+                elif content_type == "project":
+                    conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
+            
+            should_conditions.append(Filter(must=conditions))
+        
+        if not should_conditions:
+            return
+        
+        # Single batch query for all adjacent chunks
+        try:
+            batch_filter = Filter(should=should_conditions)
+            scroll_result = self.qdrant_client.scroll(
+                collection_name=collection_name,
+                scroll_filter=batch_filter,
+                limit=len(all_chunks_to_fetch),
+                with_payload=True,
+                with_vectors=False
+            )
+            
+            if scroll_result and scroll_result[0]:
+                # Group fetched chunks by parent_id
+                fetched_by_parent: Dict[str, Dict[int, ChunkResult]] = defaultdict(dict)
+                
+                for point in scroll_result[0]:
+                    payload = point.payload or {}
+                    parent_id = payload.get("parent_id", payload.get("mongo_id", ""))
+                    chunk_idx = payload.get("chunk_index", 0)
+                    
+                    adj_content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+                    
+                    adjacent_chunk = ChunkResult(
+                        id=str(point.id),
+                        score=0.0,  # Adjacent chunks get 0 score (context only)
+                        content=adj_content_text,
+                        mongo_id=payload.get("mongo_id", ""),
+                        parent_id=parent_id,
+                        chunk_index=chunk_idx,
+                        chunk_count=payload.get("chunk_count", 1),
+                        title=payload.get("title", "Untitled"),
+                        content_type=payload.get("content_type", "unknown"),
+                        metadata={k: v for k, v in payload.items() 
+                                 if k not in ["content", "full_text", "mongo_id", "parent_id",
+                                             "chunk_index", "chunk_count", "title", "content_type"]}
+                    )
+                    fetched_by_parent[parent_id][chunk_idx] = adjacent_chunk
+                
+                # Add fetched chunks to doc_chunks
+                for parent_id, chunks in doc_chunks.items():
+                    if parent_id in fetched_by_parent:
+                        for chunk_idx, chunk in fetched_by_parent[parent_id].items():
+                            chunks.append(chunk)
+        
+        except Exception as e:
+            logger.warning(f"Batch fetch of adjacent chunks failed, falling back to sequential: {e}")
+            # Fallback to sequential if batch fails
+            for parent_id, chunk_idx in all_chunks_to_fetch:
                 try:
                     filter_conditions = [
                         FieldCondition(key="parent_id", match=MatchValue(value=parent_id)),
                         FieldCondition(key="chunk_index", match=MatchValue(value=chunk_idx))
                     ]
-                    
                     if content_type:
-                        filter_conditions.append(
-                            FieldCondition(key="content_type", match=MatchValue(value=content_type))
-                        )
-                    # Business-level scoping
-                    business_uuid = BUSINESS_UUID()
+                        filter_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
                     if business_uuid:
-                        filter_conditions.append(
-                            FieldCondition(key="business_id", match=MatchValue(value=business_uuid))
-                        )
-
-                    # Member-level project RBAC scoping for adjacent chunks
-                    member_uuid = MEMBER_UUID()
-                    if member_uuid:
-                        try:
-                            # Get list of project IDs this member has access to
-                            member_projects = await self._get_member_projects(member_uuid, business_uuid)
-                            if member_projects:
-                                # Only apply member filtering for content types that belong to projects
-                                project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
-                                if content_type is None or content_type in project_content_types:
-                                    # Filter by accessible project IDs
-                                    filter_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
-                                elif content_type == "project":
-                                    # For project searches, only show projects the member has access to
-                                    filter_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
-                        except Exception as e:
-                            # Error getting member projects - log and skip member filter
-                            logger.error(f"Error getting member projects for adjacent chunks '{member_uuid}': {e}")
+                        filter_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
                     
-                    # Use scroll to find specific chunk (more efficient than search for exact match)
                     scroll_result = self.qdrant_client.scroll(
                         collection_name=collection_name,
                         scroll_filter=Filter(must=filter_conditions),
@@ -404,29 +478,25 @@ class ChunkAwareRetriever:
                     )
                     
                     if scroll_result and scroll_result[0]:
-                        for point in scroll_result[0]:
-                            payload = point.payload or {}
-                            # Prefer 'content'; fallback to 'full_text' or title if missing
-                            adj_content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
-
-                            adjacent_chunk = ChunkResult(
-                                id=str(point.id),
-                                score=0.0,  # Adjacent chunks get 0 score (context only)
-                                content=adj_content_text,
-                                mongo_id=payload.get("mongo_id", ""),
-                                parent_id=payload.get("parent_id", payload.get("mongo_id", "")),
-                                chunk_index=payload.get("chunk_index", 0),
-                                chunk_count=payload.get("chunk_count", 1),
-                                title=payload.get("title", "Untitled"),
-                                content_type=payload.get("content_type", "unknown"),
-                                metadata={k: v for k, v in payload.items() 
-                                         if k not in ["content", "full_text", "mongo_id", "parent_id",
-                                                     "chunk_index", "chunk_count", "title", "content_type"]}
-                            )
-                            chunks.append(adjacent_chunk)
-                
-                except Exception as e:
-                    logger.warning(f"Could not fetch adjacent chunk {chunk_idx} for {parent_id}: {e}")
+                        point = scroll_result[0][0]
+                        payload = point.payload or {}
+                        adj_content_text = payload.get("content") or payload.get("full_text") or payload.get("title", "")
+                        adjacent_chunk = ChunkResult(
+                            id=str(point.id),
+                            score=0.0,
+                            content=adj_content_text,
+                            mongo_id=payload.get("mongo_id", ""),
+                            parent_id=parent_id,
+                            chunk_index=chunk_idx,
+                            chunk_count=payload.get("chunk_count", 1),
+                            title=payload.get("title", "Untitled"),
+                            content_type=payload.get("content_type", "unknown"),
+                            metadata={k: v for k, v in payload.items() 
+                                     if k not in ["content", "full_text", "mongo_id", "parent_id",
+                                                 "chunk_index", "chunk_count", "title", "content_type"]}
+                        )
+                        doc_chunks[parent_id].append(adjacent_chunk)
+                except Exception:
                     continue
     
     def _reconstruct_documents(

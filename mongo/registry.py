@@ -279,6 +279,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
         "_id","title", "description","stateMaster._id","stateMaster.name",
         "isMandatory", "isActive","state._id","state.name","priority","assignee",
         "label","project._id","project.name","business._id","bugNo",
+        "customProperties",
         # "propertyType.value","propertyType.attributeType",
         # "propertyType.attributeValue","propertyType.attributeOptions"
         "createdBy._id", "createdBy.name",
@@ -287,7 +288,7 @@ ALLOWED_FIELDS: Dict[str, Set[str]] = {
     },
     "features":{
         "basicInfo.title","basicInfo.description","basicInfo.epicId","basicInfo.moduleId","basicInfo.status",
-        "problemInfo.statement","problemInfo.objective","problemInfo.sucessCriteria","displayBugNo","requirements.functionalRequirements",
+        "problemInfo.statement","problemInfo.objective","problemInfo.successCriteria","successCriteria","displayBugNo","requirements.functionalRequirements",
         "requirements.nonFunctionalRequirements","riskAndDependencies.dependencies","riskAndDependencies.risks",
         "createdBy._id", "createdBy.name","project._id","project.name","createdTimeStamp","scope.inScope","scope.OutOfScope",
         "updatedTimeStamp","workItems","userStories","addLink","goals","painPoints","title","description",

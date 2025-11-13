@@ -22,7 +22,7 @@ from collections import defaultdict
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue, MatchAny, Prefetch, NearestQuery, FusionQuery, Fusion, SparseVector
 )
-from agent.mongo_to_uuid import mongo_uuid_converter
+from utils.mongo_to_uuid import mongo_uuid_converter
 from langchain_core.tools import tool
 from .planner import plan_and_execute_query
 
