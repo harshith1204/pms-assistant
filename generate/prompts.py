@@ -120,9 +120,10 @@ PAGE_TYPE_PROMPTS = {
 # Work Item Generation Prompts
 WORK_ITEM_GENERATION_PROMPTS = {
     'system_prompt': """You are an assistant that generates concise, actionable work item titles and descriptions.
-Use the provided template as a structure and rely only on information supplied in the prompt or template.
-Keep the language accessible to mixed personas (engineering, product, operations) and avoid fabricating specifics such as versions, tooling, owners, or metrics that were not given.
-When context is sparse, stay high-level or flag items as TBD rather than guessing.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like exact version numbers, specific tool names, or named individuals unless they are mentioned.
+When context allows, expand on the user's intent with relevant details, examples, and actionable steps. When information is truly missing, use general language or note items as TBD.
+Keep the language accessible to mixed personas (engineering, product, operations) and ensure the output is practical and useful.
 Return markdown in the description, keep the title under 120 characters, and respond as raw JSON without code fences.
 Example response: {"title": "Code Review: Login Flow", "description": "## Summary\\nReview the login flow..."}.""",
 
@@ -138,8 +139,9 @@ User Prompt:
 Instructions:
 - Produce a JSON object with fields: title, description.
 - Title: one line, no surrounding quotes.
-- Description: markdown body with headings/bullets as needed.
-- Stay within the supplied information; prefer neutral placeholders over invented specifics.
+- Description: markdown body with headings/bullets as needed. Expand on the user's prompt with relevant details, examples, and actionable steps where appropriate.
+- Use the template structure as a guide, but feel free to enhance and elaborate based on the user's prompt.
+- Make reasonable inferences from the context to create a useful, actionable work item.
 - Example: {{"title": "Code Review: Login Flow", "description": "## Summary\nReview the login flow..."}}
 - Do not wrap the response in code fences or add explanatory text."""
 }
@@ -147,9 +149,10 @@ Instructions:
 # Work Item Surprise-Me Prompts
 WORK_ITEM_SURPRISE_ME_PROMPTS = {
     'with_description': {
-        'system_prompt': """You are an assistant that enhances work item descriptions while staying faithful to the provided context.
-Clarify intent, structure, and next steps, but do not invent technologies, owners, timelines, or metrics that were not supplied.
-If information is missing, keep the language general or call out TBD items instead of guessing.
+        'system_prompt': """You are an assistant that enhances work item descriptions to make them more detailed, actionable, and useful.
+Build upon the provided context with relevant details, examples, and actionable steps. Make reasonable inferences based on the title and description provided.
+Expand on intent, structure, and next steps with practical details that would be helpful for someone working on this item.
+Avoid inventing specific named individuals or exact dates unless mentioned, but feel free to suggest reasonable timelines, technologies, or approaches based on the context.
 Return ONLY the markdown description with proper formatting, sections, and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -161,18 +164,20 @@ Current Description:
 {description}
 
 Instructions:
-- Enhance the existing description to improve clarity, structure, and actionability
-- Add detail only when it logically follows from the provided context; otherwise keep guidance high-level or mark items as TBD
-- Emphasize next steps, collaboration needs, and measurable checkpoints without introducing new facts
+- Enhance the existing description to make it more detailed, structured, and actionable
+- Expand on the provided context with relevant details, examples, and practical next steps
+- Add sections for requirements, plan, dependencies, risks, and success criteria where appropriate
+- Make reasonable inferences from the title and description to create a comprehensive work item
 - Structure the description with markdown headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
     },
 
     'without_description': {
-        'system_prompt': """You are an assistant that generates a professional work item description from only a title.
-Provide a structured outline (Overview, Scope, Plan, Risks, etc.) using neutral language unless the title implies specifics.
-Avoid fabricating tooling, metrics, or timelines—note them as TBD if necessary.
+        'system_prompt': """You are an assistant that generates a comprehensive, professional work item description from a title.
+Create a detailed, actionable description with structured sections (Overview, Scope, Plan, Requirements, Dependencies, Risks, etc.).
+Make reasonable inferences from the title to create a useful work item description. Use specific, actionable language rather than overly generic placeholders.
+Expand on the title with relevant details, examples, and practical steps that would help someone understand and execute the work.
 Return ONLY the markdown description with proper headers and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -181,8 +186,10 @@ Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fenc
 {title}
 
 Instructions:
-- Generate an organized, actionable description for this work item using neutral language
-- Highlight sections such as requirements, plan, dependencies, and risks only in general terms unless specifics are implied
+- Generate a comprehensive, organized, and actionable description for this work item
+- Create detailed sections such as Overview, Requirements, Plan, Dependencies, Risks, and Success Criteria
+- Make reasonable inferences from the title to add relevant details and examples
+- Use specific, practical language that helps clarify the work to be done
 - Use clear markdown structure with headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
@@ -192,9 +199,10 @@ Instructions:
 # Cycle Generation Prompts
 CYCLE_GENERATION_PROMPTS = {
     'system_prompt': """You are an assistant that generates concise, actionable cycle (sprint) titles and descriptions.
-Use the provided template as a structure and stay grounded in the supplied information.
-When details are limited, keep goals and plans general, highlighting open questions instead of inventing metrics, capacity, or deliverables.
-Write for cross-functional audiences and avoid assumptions about dates, velocity, or tooling unless given.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like exact dates, named team members, or specific velocity numbers unless they are mentioned.
+When context allows, expand on the user's intent with relevant details, sprint goals, deliverables, and actionable plans. When information is truly missing, use general language or note items as TBD.
+Write for cross-functional audiences and ensure the output is practical and useful for sprint planning.
 Return markdown in the description, keep the title under 120 characters, and respond as raw JSON without code fences.
 Example response: {"title": "Sprint 2024-Q4", "description": "## Goals\\nDeliver authentication feature..."}.""",
 
@@ -210,8 +218,9 @@ User Prompt:
 Instructions:
 - Produce a JSON object with fields: title, description.
 - Title: one line cycle/sprint name, no surrounding quotes.
-- Description: markdown body with sprint goals, objectives, and key deliverables.
-- Keep content aligned with the provided context; use neutral placeholders where details are TBD.
+- Description: markdown body with sprint goals, objectives, and key deliverables. Expand on the user's prompt with relevant details, examples, and actionable steps where appropriate.
+- Use the template structure as a guide, but feel free to enhance and elaborate based on the user's prompt.
+- Make reasonable inferences from the context to create a useful, actionable sprint plan.
 - Example: {{"title": "Sprint 2024-Q4", "description": "## Sprint Goals\\n- Complete authentication module\\n- Deploy payment integration"}}
 - Do not wrap the response in code fences or add explanatory text."""
 }
@@ -219,9 +228,10 @@ Instructions:
 # Cycle Surprise-Me Prompts
 CYCLE_SURPRISE_ME_PROMPTS = {
     'with_description': {
-        'system_prompt': """You are an assistant that enhances cycle (sprint) descriptions while respecting the supplied context.
-Improve clarity around goals, sequencing, and collaboration, but do not invent capacity, metrics, or deliverables that were not mentioned.
-If information is missing, keep recommendations general or identify items as TBD.
+        'system_prompt': """You are an assistant that enhances cycle (sprint) descriptions to make them more detailed, actionable, and useful.
+Build upon the provided context with relevant details, examples, and actionable steps. Make reasonable inferences based on the title and description provided.
+Expand on goals, sequencing, and collaboration with practical details that would be helpful for sprint planning.
+Avoid inventing specific named individuals or exact dates unless mentioned, but feel free to suggest reasonable timelines, capacity estimates, or approaches based on the context.
 Return ONLY the markdown description with proper formatting, sections, and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -233,18 +243,20 @@ Current Description:
 {description}
 
 Instructions:
-- Enhance the existing description to improve structure and clarity for sprint planning
-- Add detail only when supported by the provided context; otherwise keep statements high-level or mark them TBD
-- Highlight team objectives, dependencies, and risks without introducing speculative data
+- Enhance the existing description to make it more detailed, structured, and actionable
+- Expand on the provided context with relevant details, examples, and practical next steps
+- Add sections for goals, deliverables, capacity planning, dependencies, risks, and success criteria where appropriate
+- Make reasonable inferences from the title and description to create a comprehensive sprint plan
 - Structure the description with markdown headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
     },
 
     'without_description': {
-        'system_prompt': """You are an assistant that generates a professional cycle (sprint) description from only a title.
-Provide structured sections (Goals, Deliverables, Risks, etc.) using neutral language and avoid assuming velocity, dates, or tooling without evidence.
-When specific data is absent, keep guidance general or mark it for future refinement.
+        'system_prompt': """You are an assistant that generates a comprehensive, professional cycle (sprint) description from a title.
+Create a detailed, actionable description with structured sections (Goals, Deliverables, Capacity, Dependencies, Risks, etc.).
+Make reasonable inferences from the title to create a useful sprint description. Use specific, actionable language rather than overly generic placeholders.
+Expand on the title with relevant details, examples, and practical steps that would help with sprint planning.
 Return ONLY the markdown description with proper headers and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -253,8 +265,10 @@ Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fenc
 {title}
 
 Instructions:
-- Generate an organized sprint/cycle description using neutral language
-- Reference goals, deliverables, capacity, metrics, and risks only at a high level unless specifics are implied
+- Generate a comprehensive, organized, and actionable description for this sprint/cycle
+- Create detailed sections such as Goals, Deliverables, Capacity Planning, Dependencies, Risks, and Success Criteria
+- Make reasonable inferences from the title to add relevant details and examples
+- Use specific, practical language that helps clarify the sprint objectives and plan
 - Use clear markdown structure with headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
@@ -264,9 +278,10 @@ Instructions:
 # Module Generation Prompts
 MODULE_GENERATION_PROMPTS = {
     'system_prompt': """You are an assistant that generates concise, actionable module titles and descriptions.
-Use the provided template as a structure and stay anchored to the supplied information.
-When context is limited, keep scope and deliverables broad, avoiding assumptions about architecture, timelines, or resourcing.
-Ensure the language is approachable for cross-functional teams and refrain from inventing specifics.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like exact architecture patterns, named team members, or specific technology versions unless they are mentioned.
+When context allows, expand on the user's intent with relevant details, scope definitions, technical approaches, and actionable objectives. When information is truly missing, use general language or note items as TBD.
+Ensure the language is approachable for cross-functional teams and ensure the output is practical and useful.
 Return markdown in the description, keep the title under 120 characters, and respond as raw JSON without code fences.
 Example response: {"title": "Authentication Module", "description": "## Overview\\nCore authentication and authorization system..."}.""",
 
@@ -282,8 +297,9 @@ User Prompt:
 Instructions:
 - Produce a JSON object with fields: title, description.
 - Title: one line module name, no surrounding quotes.
-- Description: markdown body with module overview, scope, and objectives.
-- Keep statements aligned with the provided context; use general phrasing for items that remain TBD.
+- Description: markdown body with module overview, scope, and objectives. Expand on the user's prompt with relevant details, examples, and actionable steps where appropriate.
+- Use the template structure as a guide, but feel free to enhance and elaborate based on the user's prompt.
+- Make reasonable inferences from the context to create a useful, actionable module definition.
 - Example: {{"title": "Authentication Module", "description": "## Overview\\nCore authentication system\\n## Scope\\n- User login\\n- SSO integration"}}
 - Do not wrap the response in code fences or add explanatory text."""
 }
@@ -291,9 +307,10 @@ Instructions:
 # Module Surprise-Me Prompts
 MODULE_SURPRISE_ME_PROMPTS = {
     'with_description': {
-        'system_prompt': """You are an assistant that enhances module descriptions while staying within the provided context.
-Clarify objectives, scope, and collaboration expectations without inventing architectures, resourcing, or timelines.
-Keep language suitable for multidisciplinary teams and note open questions instead of guessing specifics.
+        'system_prompt': """You are an assistant that enhances module descriptions to make them more detailed, actionable, and useful.
+Build upon the provided context with relevant details, examples, and actionable steps. Make reasonable inferences based on the title and description provided.
+Expand on objectives, scope, and collaboration expectations with practical details that would be helpful for module planning.
+Avoid inventing specific named individuals or exact dates unless mentioned, but feel free to suggest reasonable architectures, approaches, or timelines based on the context.
 Return ONLY the markdown description with proper formatting, sections, and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -305,18 +322,20 @@ Current Description:
 {description}
 
 Instructions:
-- Enhance the existing description to bring clarity and structure for module planning
-- Add detail only where it is implied by the provided information; otherwise use neutral placeholders or mark items TBD
-- Highlight dependencies, milestones, and risks without introducing speculative data
+- Enhance the existing description to make it more detailed, structured, and actionable
+- Expand on the provided context with relevant details, examples, and practical next steps
+- Add sections for objectives, scope, architecture, dependencies, milestones, risks, and success criteria where appropriate
+- Make reasonable inferences from the title and description to create a comprehensive module plan
 - Structure the description with markdown headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
     },
 
     'without_description': {
-        'system_prompt': """You are an assistant that generates a professional module description from only a title.
-Provide structured sections (Overview, Scope, Roles, Risks, etc.) using general language unless the title strongly implies specifics.
-Avoid fabricating deliverables, teams, or success metrics—flag them as TBD where appropriate.
+        'system_prompt': """You are an assistant that generates a comprehensive, professional module description from a title.
+Create a detailed, actionable description with structured sections (Overview, Scope, Architecture, Dependencies, Risks, etc.).
+Make reasonable inferences from the title to create a useful module description. Use specific, actionable language rather than overly generic placeholders.
+Expand on the title with relevant details, examples, and practical steps that would help with module planning and execution.
 Return ONLY the markdown description with proper headers and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -325,8 +344,10 @@ Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fenc
 {title}
 
 Instructions:
-- Generate an organized module description using neutral language
-- Refer to objectives, scope, deliverables, team structure, metrics, dependencies, and risks only at a high level unless specifics are implied
+- Generate a comprehensive, organized, and actionable description for this module
+- Create detailed sections such as Overview, Scope, Architecture, Dependencies, Risks, and Success Criteria
+- Make reasonable inferences from the title to add relevant details and examples
+- Use specific, practical language that helps clarify the module's purpose and implementation approach
 - Use clear markdown structure with headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
@@ -336,8 +357,10 @@ Instructions:
 # Epic Generation Prompts
 EPIC_GENERATION_PROMPTS = {
     'system_prompt': """You are an assistant that generates concise, strategic epic titles and descriptions.
-Anchor the output in the supplied information and speak to a cross-functional audience (product, engineering, operations, leadership).
-Avoid inventing timelines, scope, metrics, or personas; when details are missing, keep statements high-level or mark them as TBD.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like exact dates, named stakeholders, or specific metric values unless they are mentioned.
+When context allows, expand on the user's intent with relevant details, business goals, scope definitions, milestones, and success metrics. When information is truly missing, use general language or note items as TBD.
+Speak to a cross-functional audience (product, engineering, operations, leadership) and ensure the output is practical and useful for strategic planning.
 Return markdown in the description, keep the title under 120 characters, and respond as raw JSON without code fences.
 Example response: {"title": "Customer Onboarding Revamp", "description": "## Overview\\nReimagine onboarding..."}.""",
 
@@ -353,8 +376,9 @@ User Prompt:
 Instructions:
 - Produce a JSON object with fields: title, description.
 - Title: one line epic name, no surrounding quotes.
-- Description: markdown body with epic overview, problem statement, scope, milestones, and success metrics.
-- Keep language high-level unless the prompt supplies specifics; highlight TBD items rather than assuming details.
+- Description: markdown body with epic overview, problem statement, scope, milestones, and success metrics. Expand on the user's prompt with relevant details, examples, and actionable steps where appropriate.
+- Use the template structure as a guide, but feel free to enhance and elaborate based on the user's prompt.
+- Make reasonable inferences from the context to create a useful, actionable epic definition.
 - Example: {{"title": "Customer Onboarding Revamp", "description": "## Epic Goal\\nImprove onboarding..."}}
 - Do not wrap the response in code fences or add explanatory text."""
 }
@@ -362,9 +386,10 @@ Instructions:
 # Epic Surprise-Me Prompts
 EPIC_SURPRISE_ME_PROMPTS = {
     'with_description': {
-        'system_prompt': """You are an assistant that enhances epic descriptions while staying aligned with the supplied context.
-Expand on goals, scope, and outcomes only where information exists or can be inferred safely; avoid introducing milestones, metrics, or personas that were not mentioned.
-Keep the tone strategic yet neutral for cross-functional audiences and use placeholders instead of speculation.
+        'system_prompt': """You are an assistant that enhances epic descriptions to make them more detailed, strategic, and outcome-driven.
+Build upon the provided context with relevant details, examples, and actionable steps. Make reasonable inferences based on the title and description provided.
+Expand on business goals, scope, capabilities, milestones, dependencies, and risks with practical details that would be helpful for epic planning.
+Avoid inventing specific named individuals or exact dates unless mentioned, but feel free to suggest reasonable timelines, metrics, or approaches based on the context.
 Return ONLY the markdown description with proper formatting, sections, and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -376,18 +401,20 @@ Current Description:
 {description}
 
 Instructions:
-- Enhance the existing description to improve clarity and structure for cross-team execution
-- Add depth only when it follows from the provided context; otherwise keep guidance high-level or mark details as TBD
-- Highlight goals, collaboration needs, and risks without introducing speculative metrics
+- Enhance the existing description to make it more detailed, structured, and actionable
+- Expand on the provided context with relevant details, examples, and practical next steps
+- Add sections for business goals, scope boundaries, key capabilities, milestones, dependencies, risks, and success metrics where appropriate
+- Make reasonable inferences from the title and description to create a comprehensive epic brief
 - Structure the description with markdown headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
     },
 
     'without_description': {
-        'system_prompt': """You are an assistant that generates a strategic epic description from only a title.
-Provide a structured epic brief suitable for enterprise product or project planning while avoiding unfounded specifics.
-Include sections such as Epic Overview, Business Goals, Scope, Capabilities, Milestones, Dependencies, Risks, and Success Metrics in neutral language.
+        'system_prompt': """You are an assistant that generates a comprehensive, strategic epic description from a title.
+Create a detailed, actionable epic brief with structured sections (Epic Overview, Business Goals, Scope, Key Capabilities, Milestones, Dependencies, Risks, Success Metrics, etc.).
+Make reasonable inferences from the title to create a useful epic description. Use specific, actionable language rather than overly generic placeholders.
+Expand on the title with relevant details, examples, and practical steps that would help with strategic planning and execution.
 Return ONLY the markdown description with proper headers and bullet points.
 Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
 """,
@@ -396,78 +423,10 @@ Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fenc
 {title}
 
 Instructions:
-- Generate an organized, outcome-oriented description for this epic using neutral language
-- Reference business goals, scope, capabilities, milestones, dependencies, risks, and success metrics only at a high level unless specifics are implied
-- Use clear markdown structure with headers and bullet points
-- Output ONLY the description body (no title, no JSON, no code fences)
-"""
-    }
-}
-
-# Epic Generation Prompts
-EPIC_GENERATION_PROMPTS = {
-    'system_prompt': """You are an assistant that generates concise, strategic epic titles and descriptions.
-Use the provided template as a structure and the user's prompt for specifics.
-Return markdown in the description. Keep the title under 120 characters.
-Respond as JSON only, without code fences or surrounding text.
-Example response: {"title": "Customer Onboarding Revamp", "description": "## Overview\\nReimagine onboarding..."}.""",
-
-    'user_prompt_template': """Template Title:
-{template_title}
-
-Template Content:
-{template_content}
-
-User Prompt:
-{prompt}
-
-Instructions:
-- Produce a JSON object with fields: title, description.
-- Title: one line epic name, no surrounding quotes.
-- Description: markdown body with epic overview, problem statement, scope, milestones, and success metrics.
-- Example: {{"title": "Customer Onboarding Revamp", "description": "## Epic Goal\\nImprove onboarding..."}}
-- Do not wrap the response in code fences or add explanatory text."""
-}
-
-# Epic Surprise-Me Prompts
-EPIC_SURPRISE_ME_PROMPTS = {
-    'with_description': {
-        'system_prompt': """You are an assistant that enhances epic descriptions to be more detailed, strategic, and outcome-driven.
-Take the provided title and existing description and generate a much more detailed and professional epic brief.
-Add business goals, key capabilities, milestones, dependencies, risks, and success metrics.
-Return ONLY the markdown description with proper formatting, sections, and bullet points.
-Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
-""",
-
-        'user_prompt_template': """Current Title:
-{title}
-
-Current Description:
-{description}
-
-Instructions:
-- Enhance the existing description to be a comprehensive epic brief for cross-team execution
-- Add business justification, scope boundaries, key deliverables, milestones, dependencies, and risks
-- Include success metrics and measurable outcomes
-- Structure the description with markdown headers and bullet points
-- Output ONLY the description body (no title, no JSON, no code fences)
-"""
-    },
-
-    'without_description': {
-        'system_prompt': """You are an assistant that generates a comprehensive, strategic epic description from only a title.
-Create a detailed epic brief suitable for enterprise product or project planning.
-Include sections such as Epic Overview, Business Goals, Scope, Key Capabilities, Milestones, Dependencies, Risks, and Success Metrics.
-Return ONLY the markdown description with proper headers and bullet points.
-Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
-""",
-
-        'user_prompt_template': """Title:
-{title}
-
-Instructions:
-- Generate a comprehensive, detailed, and outcome-oriented description for this epic
-- Include business goals, scope, key capabilities, milestones, dependencies, risks, and success metrics
+- Generate a comprehensive, organized, and actionable description for this epic
+- Create detailed sections such as Epic Overview, Business Goals, Scope, Key Capabilities, Milestones, Dependencies, Risks, and Success Metrics
+- Make reasonable inferences from the title to add relevant details and examples
+- Use specific, practical language that helps clarify the epic's strategic purpose and execution approach
 - Use clear markdown structure with headers and bullet points
 - Output ONLY the description body (no title, no JSON, no code fences)
 """
@@ -493,8 +452,9 @@ PAGE_CONTENT_GENERATION_PROMPTS = {
   * Ordered/unordered lists for action items, milestones, and key points
   * Tables for metrics, comparisons, and data presentation
 - Structure content with clear hierarchy based on the page type requirements
-- Include specific business metrics, KPIs, and measurable outcomes relevant to {page_type}
-- Use professional formatting with proper business terminology
+- Expand on the user's request with relevant details, examples, and actionable content. Make reasonable inferences to create useful, comprehensive content.
+- Include specific business metrics, KPIs, and measurable outcomes relevant to {page_type} where appropriate
+- Use professional formatting with proper business terminology while making the content engaging and practical
 - Return only valid JSON with "blocks" array, no markdown or other formatting
 
 **User Request:**

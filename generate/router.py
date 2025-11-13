@@ -86,7 +86,7 @@ async def generate_work_item(req: GenerateRequest) -> GenerateResponse:
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -152,7 +152,7 @@ async def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> Gene
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         max_tokens=512,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -207,7 +207,7 @@ async def generate_page_content(request: Request):
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Generate professional business content for this {page_type} page in the specified Editor.js block format. Focus on enterprise business context with KPIs, metrics, project management terminology, and structured reporting. Ensure the content is suitable for business stakeholders and executive decision-making. User request: {req.prompt}"}
@@ -264,7 +264,7 @@ async def generate_cycle(req: GenerateRequest) -> GenerateResponse:
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -328,7 +328,7 @@ async def generate_cycle_surprise_me(req: CycleSurpriseMeRequest) -> GenerateRes
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         max_tokens=512,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -362,7 +362,7 @@ async def generate_epic(req: GenerateRequest) -> GenerateResponse:
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -424,7 +424,7 @@ async def generate_epic_surprise_me(req: EpicSurpriseMeRequest) -> GenerateRespo
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         max_tokens=512,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -457,7 +457,7 @@ async def generate_module(req: GenerateRequest) -> GenerateResponse:
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -521,7 +521,7 @@ async def generate_module_surprise_me(req: ModuleSurpriseMeRequest) -> GenerateR
     completion = await call_groq_with_timeout(
         client=client,
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.2,
+        temperature=0.4,
         max_tokens=512,
         messages=[
             {"role": "system", "content": system_prompt},
