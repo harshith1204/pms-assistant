@@ -8,22 +8,10 @@ import contextlib
 import asyncio
 import logging
 from dotenv import load_dotenv
-from agent.mongo_to_uuid import mongo_uuid_converter
 load_dotenv()
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
-try:
-    from openinference.semconv.trace import SpanAttributes as OI
-except Exception:
-    class _OI:
-        TOOL_INPUT = "tool.input"
-        TOOL_OUTPUT = "tool.output"
-        ERROR_TYPE = "error.type"
-        ERROR_MESSAGE = "error.message"
-    OI = _OI()
-
 from mongo.constants import (
     DATABASE_NAME,
     MONGODB_CONNECTION_STRING,

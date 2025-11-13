@@ -39,7 +39,7 @@ mongodb_tools = _LazyMongoDBTools()
 
 # --- Global business scoping ---
 # Business UUID to scope all queries/searches. Set via env or websocket context
-COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page", "epic"}
+COLLECTIONS_WITH_DIRECT_BUSINESS = {"project", "workItem", "cycle", "module", "page", "epic", "features", "userStory"}
 
 def _get_business_uuid():
     """Get business UUID from websocket context or environment variables."""
