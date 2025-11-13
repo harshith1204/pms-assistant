@@ -1,5 +1,7 @@
 import os
 import json
+import asyncio
+import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from .models import (
@@ -29,12 +31,41 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     Groq = None  # type: ignore
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/generate", tags=["generate"])
 
+# Helper function to call Groq API with timeout
+async def call_groq_with_timeout(client, model, temperature, messages, max_tokens=None, timeout=30.0):
+    """Call Groq API in executor with timeout protection."""
+    loop = asyncio.get_event_loop()
+    
+    def _call_groq():
+        kwargs = {
+            "model": model,
+            "temperature": temperature,
+            "messages": messages,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        return client.chat.completions.create(**kwargs)
+    
+    try:
+        completion = await asyncio.wait_for(
+            loop.run_in_executor(None, _call_groq),
+            timeout=timeout
+        )
+        return completion
+    except asyncio.TimeoutError:
+        logger.error(f"Groq API call timed out after {timeout} seconds")
+        raise HTTPException(status_code=504, detail=f"Groq API request timed out after {timeout} seconds")
+    except Exception as exc:
+        logger.error(f"Groq API error: {exc}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Groq API error: {str(exc)}")
+
 
 @router.post("/work-item", response_model=GenerateResponse)
-def generate_work_item(req: GenerateRequest) -> GenerateResponse:
+async def generate_work_item(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -52,18 +83,16 @@ def generate_work_item(req: GenerateRequest) -> GenerateResponse:
         prompt=req.prompt
     )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        content = completion.choices[0].message.content or ""
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
 
     # Best-effort parse: if JSON-like present, extract; else use raw content
     title = req.template.title
@@ -74,24 +103,29 @@ def generate_work_item(req: GenerateRequest) -> GenerateResponse:
         end = content.rfind("}")
         if start != -1 and end != -1 and end > start:
             parsed = json.loads(content[start : end + 1])
-    except Exception:
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:200]}")
         parsed = None
 
     if isinstance(parsed, dict):
         title = parsed.get("title") or title
         description = parsed.get("description") or description
     else:
-        description = content.strip() or description
-        first_line = description.splitlines()[0] if description else req.prompt
-        title = first_line[:120]
-
-    # Keep as-is: this endpoint expects JSON and already extracts description
+        # If we got content but couldn't parse, use it as description
+        if content.strip():
+            description = content.strip()
+            first_line = description.splitlines()[0] if description else req.prompt
+            title = first_line[:120] if len(first_line) > 120 else first_line
+        else:
+            # No content from API, use template defaults
+            description = req.template.content
+            title = req.template.title
 
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
 @router.post("/work-item-surprise-me", response_model=GenerateResponse)
-def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateResponse:
+async def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -115,20 +149,18 @@ def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateRe
             title=req.title
         )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            max_tokens=512,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        # The model is instructed to return ONLY markdown description
-        generated_description = (completion.choices[0].message.content or "").strip()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        max_tokens=512,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    # The model is instructed to return ONLY markdown description
+    generated_description = (completion.choices[0].message.content or "").strip()
 
     # Always return the original title and the generated markdown description
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
@@ -172,34 +204,23 @@ async def generate_page_content(request: Request):
         prompt=req.prompt
     )
 
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Generate professional business content for this {page_type} page in the specified Editor.js block format. Focus on enterprise business context with KPIs, metrics, project management terminology, and structured reporting. Ensure the content is suitable for business stakeholders and executive decision-making. User request: {req.prompt}"}
+        ]
+    )
+
+    content = completion.choices[0].message.content or "{}"
+
     try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Generate professional business content for this {page_type} page in the specified Editor.js block format. Focus on enterprise business context with KPIs, metrics, project management terminology, and structured reporting. Ensure the content is suitable for business stakeholders and executive decision-making. User request: {req.prompt}"}
-            ],
-            stream=False
-        )
-
-        content = completion.choices[0].message.content or "{}"
-
-        try:
-            parsed_response = json.loads(content)
-            if "blocks" in parsed_response and isinstance(parsed_response["blocks"], list):
-                return parsed_response
-            else:
-                return {
-                    "blocks": [
-                        {
-                            "id": "fallback_1",
-                            "type": "paragraph",
-                            "data": {"text": content.strip() or "Content generation failed"}
-                        }
-                    ]
-                }
-        except json.JSONDecodeError:
+        parsed_response = json.loads(content)
+        if "blocks" in parsed_response and isinstance(parsed_response["blocks"], list):
+            return parsed_response
+        else:
             return {
                 "blocks": [
                     {
@@ -209,13 +230,20 @@ async def generate_page_content(request: Request):
                     }
                 ]
             }
-
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {e}")
+    except json.JSONDecodeError:
+        return {
+            "blocks": [
+                {
+                    "id": "fallback_1",
+                    "type": "paragraph",
+                    "data": {"text": content.strip() or "Content generation failed"}
+                }
+            ]
+        }
 
 
 @router.post("/cycle", response_model=GenerateResponse)
-def generate_cycle(req: GenerateRequest) -> GenerateResponse:
+async def generate_cycle(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -233,18 +261,16 @@ def generate_cycle(req: GenerateRequest) -> GenerateResponse:
         prompt=req.prompt
     )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        content = completion.choices[0].message.content or ""
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
 
     # Parse JSON response
     title = req.template.title
@@ -255,22 +281,27 @@ def generate_cycle(req: GenerateRequest) -> GenerateResponse:
         end = content.rfind("}")
         if start != -1 and end != -1 and end > start:
             parsed = json.loads(content[start : end + 1])
-    except Exception:
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:200]}")
         parsed = None
 
     if isinstance(parsed, dict):
         title = parsed.get("title") or title
         description = parsed.get("description") or description
     else:
-        description = content.strip() or description
-        first_line = description.splitlines()[0] if description else req.prompt
-        title = first_line[:120]
+        if content.strip():
+            description = content.strip()
+            first_line = description.splitlines()[0] if description else req.prompt
+            title = first_line[:120] if len(first_line) > 120 else first_line
+        else:
+            description = req.template.content
+            title = req.template.title
 
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
 @router.post("/cycle-surprise-me", response_model=GenerateResponse)
-def generate_cycle_surprise_me(req: CycleSurpriseMeRequest) -> GenerateResponse:
+async def generate_cycle_surprise_me(req: CycleSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -294,25 +325,23 @@ def generate_cycle_surprise_me(req: CycleSurpriseMeRequest) -> GenerateResponse:
             title=req.title
         )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            max_tokens=512,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        generated_description = (completion.choices[0].message.content or "").strip()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        max_tokens=512,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    generated_description = (completion.choices[0].message.content or "").strip()
 
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 
 @router.post("/epic", response_model=GenerateResponse)
-def generate_epic(req: GenerateRequest) -> GenerateResponse:
+async def generate_epic(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -330,18 +359,16 @@ def generate_epic(req: GenerateRequest) -> GenerateResponse:
         prompt=req.prompt
     )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        content = completion.choices[0].message.content or ""
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
 
     title = req.template.title
     description = req.template.content
@@ -351,22 +378,27 @@ def generate_epic(req: GenerateRequest) -> GenerateResponse:
         end = content.rfind("}")
         if start != -1 and end != -1 and end > start:
             parsed = json.loads(content[start: end + 1])
-    except Exception:
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:200]}")
         parsed = None
 
     if isinstance(parsed, dict):
         title = parsed.get("title") or title
         description = parsed.get("description") or description
     else:
-        description = content.strip() or description
-        first_line = description.splitlines()[0] if description else req.prompt
-        title = first_line[:120]
+        if content.strip():
+            description = content.strip()
+            first_line = description.splitlines()[0] if description else req.prompt
+            title = first_line[:120] if len(first_line) > 120 else first_line
+        else:
+            description = req.template.content
+            title = req.template.title
 
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
 @router.post("/epic-surprise-me", response_model=GenerateResponse)
-def generate_epic_surprise_me(req: EpicSurpriseMeRequest) -> GenerateResponse:
+async def generate_epic_surprise_me(req: EpicSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -389,24 +421,22 @@ def generate_epic_surprise_me(req: EpicSurpriseMeRequest) -> GenerateResponse:
             title=req.title
         )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            max_tokens=512,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        generated_description = (completion.choices[0].message.content or "").strip()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        max_tokens=512,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    generated_description = (completion.choices[0].message.content or "").strip()
 
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 @router.post("/module", response_model=GenerateResponse)
-def generate_module(req: GenerateRequest) -> GenerateResponse:
+async def generate_module(req: GenerateRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -424,18 +454,16 @@ def generate_module(req: GenerateRequest) -> GenerateResponse:
         prompt=req.prompt
     )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        content = completion.choices[0].message.content or ""
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
 
     # Parse JSON response
     title = req.template.title
@@ -446,22 +474,27 @@ def generate_module(req: GenerateRequest) -> GenerateResponse:
         end = content.rfind("}")
         if start != -1 and end != -1 and end > start:
             parsed = json.loads(content[start : end + 1])
-    except Exception:
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:200]}")
         parsed = None
 
     if isinstance(parsed, dict):
         title = parsed.get("title") or title
         description = parsed.get("description") or description
     else:
-        description = content.strip() or description
-        first_line = description.splitlines()[0] if description else req.prompt
-        title = first_line[:120]
+        if content.strip():
+            description = content.strip()
+            first_line = description.splitlines()[0] if description else req.prompt
+            title = first_line[:120] if len(first_line) > 120 else first_line
+        else:
+            description = req.template.content
+            title = req.template.title
 
     return GenerateResponse(title=title.strip(), description=description.strip())
 
 
 @router.post("/module-surprise-me", response_model=GenerateResponse)
-def generate_module_surprise_me(req: ModuleSurpriseMeRequest) -> GenerateResponse:
+async def generate_module_surprise_me(req: ModuleSurpriseMeRequest) -> GenerateResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -485,19 +518,17 @@ def generate_module_surprise_me(req: ModuleSurpriseMeRequest) -> GenerateRespons
             title=req.title
         )
 
-    try:
-        completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-            temperature=0.2,
-            max_tokens=512,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        generated_description = (completion.choices[0].message.content or "").strip()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Groq API error: {exc}")
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        max_tokens=512,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    generated_description = (completion.choices[0].message.content or "").strip()
 
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
