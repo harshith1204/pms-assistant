@@ -30,6 +30,7 @@ import os
 from langchain_groq import ChatGroq
 from mongo.constants import DATABASE_NAME, mongodb_tools
 from mongo.conversations import save_assistant_message, save_action_event
+from agent.callback_handler import AgentCallbackHandler
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -220,103 +221,6 @@ def _hash_messages(messages: List[BaseMessage]) -> str:
     combined = "|".join(content_parts)
     return hashlib.md5(combined.encode()).hexdigest()
 
-# Simple template-based action statement generator (no LLM call)
-def _simple_action_statement(tool_calls: List[Dict[str, Any]]) -> str:
-    """Generate action statement from tool calls without LLM call."""
-    if not tool_calls:
-        return "Analyzing your request..."
-    
-    tool_names = [tc.get("name", "") for tc in tool_calls]
-    
-    if "mongo_query" in tool_names and "rag_search" in tool_names:
-        return "Querying database and searching content..."
-    elif "mongo_query" in tool_names:
-        return "Querying database..."
-    elif "rag_search" in tool_names:
-        return "Searching documentation and content..."
-    elif "generate_content" in tool_names:
-        return "Generating content..."
-    else:
-        return "Processing your request..."
-# Lightweight helper to create natural, user-facing action statements (DEPRECATED - kept for compatibility)
-async def generate_action_statement(
-    user_query: str,
-    tool_calls: List[Dict[str, Any]],
-    llm_reasoning: str = ""
-) -> str:
-    """Generate a concise, user-facing action sentence based on planned tool calls.
-
-    The sentence avoids exposing internal tooling and focuses on intent/benefit.
-
-    Args:
-        user_query: The user's original question
-        tool_calls: List of tool calls being executed
-        llm_reasoning: Optional reasoning from the LLM about what it's doing
-    """
-    try:
-        if not tool_calls:
-            return "Thinking through your request..."
-
-        # Build a compact description of planned actions
-        tool_summaries: List[str] = []
-        for tc in tool_calls:
-            try:
-                name = tc.get("name")
-                args = tc.get("args", {}) or {}
-            except Exception:
-                name, args = "tool", {}
-
-            if name == "mongo_query":
-                q = str(args.get("query", "")).strip()
-                tool_summaries.append(f"query structured data about: {q}")
-            elif name == "rag_search":
-                q = str(args.get("query", "")).strip()
-                ctype = args.get("content_type")
-                if ctype:
-                    tool_summaries.append(f"search {ctype} content about: {q}")
-                else:
-                    tool_summaries.append(f"search all content about: {q}")
-            elif name == "generate_content":
-                p = str(args.get("prompt", "")).strip()
-                ctype = str(args.get("content_type", "content"))
-                tool_summaries.append(f"generate a new {ctype} about: {p}")
-            else:
-                tool_summaries.append("gather relevant information")
-
-        tools_desc = "; and ".join([s for s in tool_summaries if s])
-
-        action_prompt = [
-            SystemMessage(content=(
-                "You are a helpful project management assistant. "
-                "Based on the user's request and your planned actions, generate ONE short, natural sentence "
-                "that explains what you're doing next in a friendly, confident tone. "
-                "Do NOT mention tools, databases, or technical details. "
-                "Focus on intent and user benefit. Keep it under 15 words."
-            )),
-            HumanMessage(content=(
-                f"User asked: '{user_query}'\n"
-                f"Planned actions: {tools_desc}\n"
-                f"{'Your reasoning: ' + llm_reasoning if llm_reasoning else ''}\n"
-                "Your next step (one sentence):"
-            )),
-        ]
-        llm = ChatGroq(
-            model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
-            temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
-            max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
-            streaming=True,
-            verbose=False,
-            top_p=0.8,
-        )
-        # Use the existing model; rely on instruction for brevity
-        resp = await llm.ainvoke(action_prompt)
-        action_text = str(getattr(resp, "content", "")).strip().strip("\".")
-        if not action_text or len(action_text) > 100:
-            return "Gathering relevant information for you..."
-        return action_text
-    except Exception:
-        return "Gathering relevant information for you..."
-
 # Simple per-query tool router: restrict RAG unless content/context is requested
 _TOOLS_BY_NAME = {getattr(t, "name", str(i)): t for i, t in enumerate(tools_list)}
 
@@ -334,130 +238,7 @@ def _select_tools_for_query(user_query: str):
         selected_tools = [_TOOLS_BY_NAME["mongo_query"]]
     return selected_tools, allowed_names
 
-
-class AgentCallbackHandler(AsyncCallbackHandler):
-    """WebSocket streaming callback handler for Phoenix events + DB logging"""
-
-    def __init__(self, websocket=None, conversation_id: Optional[str] = None):
-        super().__init__()
-        self.websocket = websocket
-        self.conversation_id = conversation_id
-        self.start_time = None
-        # Tool events are suppressed from frontend to avoid noise in chat UI
-        # Internal step counter for lightweight progress (not exposed directly)
-        self._step_counter = 0
-        # Whether a dynamic, high-level action statement was already emitted for this step
-        self._dynamic_action_emitted = False
-
-    def _safe_extract(self, input_str: str) -> dict:
-        """Best-effort parse of tool arg string to a dict without raising.
-
-        Avoids revealing internals; used only to craft short, user-facing action text.
-        """
-        try:
-            import json as _json
-            if isinstance(input_str, str):
-                # Try JSON first
-                return _json.loads(input_str)
-        except Exception:
-            pass
-        try:
-            import ast as _ast
-            if isinstance(input_str, str):
-                val = _ast.literal_eval(input_str)
-                if isinstance(val, dict):
-                    return val
-        except Exception:
-            pass
-        return {}
-
-    async def _emit_action(self, text: str) -> None:
-        if not self.websocket:
-            # Still log action to DB if possible
-            try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "action", text, step=self._step_counter + 1)
-            except Exception:
-                pass
-            return
-        self._step_counter += 1
-        payload = {
-            "type": "agent_action",
-            "text": text,
-            "step": self._step_counter,
-            "timestamp": datetime.now().isoformat(),
-        }
-        await self.websocket.send_json(payload)
-        try:
-            if self.conversation_id:
-                await save_action_event(self.conversation_id, "action", text, step=self._step_counter)
-        except Exception:
-            pass
-
-    async def _emit_result(self, text: str) -> None:
-        # No-op: disable sending and persisting 'result' events
-        return
-
-    async def on_llm_start(self, *args, **kwargs):
-        """Called when LLM starts generating"""
-        self.start_time = time.time()
-        # Reset dynamic action emission flag at the beginning of a reasoning step
-        self._dynamic_action_emitted = False
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "llm_start",
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def on_llm_new_token(self, token: str, **kwargs):
-        """Stream each token as it's generated"""
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "token",
-                "content": token,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def on_llm_end(self, *args, **kwargs):
-        """Called when LLM finishes generating"""
-        elapsed_time = time.time() - self.start_time if self.start_time else 0
-        if self.websocket:
-            await self.websocket.send_json({
-                "type": "llm_end",
-                "elapsed_time": elapsed_time,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def on_tool_end(self, output: str, **kwargs):
-        """Called when a tool finishes executing.
-
-        Suppressed: We no longer send tool_end events to the frontend socket.
-        """
-        return
-
-    async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs):
-        """Called when a tool starts executing.
-
-        Suppressed: We no longer send tool_start events to the frontend socket.
-        """
-        return
-
-    def cleanup(self):
-        """Clean up Phoenix span collector"""
-        pass
-
-    async def emit_dynamic_action(self, text: str) -> None:
-        """Emit a single, user-facing dynamic action line and mark it as emitted.
-
-        This prevents fallback action emissions inside on_tool_start for the same step.
-        """
-        try:
-            await self._emit_action(text)
-        finally:
-            # Ensure we don't emit fallback messages during this step
-            self._dynamic_action_emitted = True
-
-class MongoDBAgent:
+class AgentExecutor:
     """MongoDB Agent using Tool Calling with LLM-Controlled Execution
     
     Features:
@@ -695,12 +476,20 @@ class MongoDBAgent:
                                 "If the user asked to browse or see examples, summarize briefly and offer to expand. "
                                 "For work items, present canonical fields succinctly."
                             ))
-                            # Emit a dynamic action statement to indicate synthesis/finalization
+                            # Emit a natural action statement to indicate synthesis/finalization
                             try:
-                                synth_action = "Synthesizing findings into a comprehensive answer..."
+                                import random
+                                synth_phrases = [
+                                    "Putting together the findings into a clear answer",
+                                    "Synthesizing the information I gathered",
+                                    "Compiling the results into a comprehensive response",
+                                    "Organizing the data into a coherent answer",
+                                    "Bringing everything together for you"
+                                ]
+                                synth_action = random.choice(synth_phrases)
                                 if callback_handler:
-                                    # Fire-and-forget
-                                    asyncio.create_task(callback_handler.emit_dynamic_action(synth_action))
+                                    # Emit synchronously for real-time delivery
+                                    await callback_handler.emit_dynamic_action(synth_action)
                             except Exception:
                                 pass
                             invoke_messages = messages + [routing_instructions, finalization_instructions]
@@ -756,40 +545,27 @@ class MongoDBAgent:
 
                     # Execute requested tools with streaming callbacks
                     # The LLM decides execution order by how it calls tools
-                    # Emit a dynamic, user-facing action line before running any tools
-                    # ✅ OPTIMIZED: Use simple template-based action statements (fire-and-forget)
-                    try:
-                        # Simple template-based action generation (no LLM call)
-                        action_text = _simple_action_statement(response.tool_calls)
-                        if callback_handler and action_text:
-                            # Fire-and-forget: don't await, just schedule
-                            asyncio.create_task(callback_handler.emit_dynamic_action(action_text))
-                    except Exception as e:
-                        # Log exception for debugging
-                        logger.error(f"Failed to generate action statement: {e}")
-                        pass
-
-                    # ✅ NEW: Create a clean version of the response for messages (without reasoning)
-                    # The reasoning stays in conversation memory for LLM context but doesn't go to messages
                     clean_response = AIMessage(
                         content="",  # Clear content for clean message handling
                         tool_calls=response.tool_calls,  # Keep tool calls for execution
                     )
                     messages.append(clean_response)
                     did_any_tool = False
-                    
-                    # ✅ OPTIMIZED: Enhanced parallel tool execution
-                    # Always enable parallel execution when multiple tools are called
                     if len(response.tool_calls) > 1:
-                        # Multiple tools called together = execute in parallel
-                        # Send tool_start events for all tools first
+                    
+                        tool_tasks = []
                         for tool_call in response.tool_calls:
-                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
-                            if tool:
-                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                            # Emit action before starting tool execution
+                            if callback_handler:
+                                try:
+                                    await callback_handler.on_tool_start(
+                                        {"name": tool_call["name"]}, 
+                                        str(tool_call.get("args", {}))
+                                    )
+                                except Exception:
+                                    pass
+                            tool_tasks.append(self._execute_single_tool(None, tool_call, selected_tools, None))
                         
-                        # Execute all tools in parallel (always enabled for multiple tools)
-                        tool_tasks = [self._execute_single_tool(None, tool_call, selected_tools, None) for tool_call in response.tool_calls]
                         tool_results = await asyncio.gather(*tool_tasks, return_exceptions=True)
                         
                         # Process results and send tool_end events
@@ -812,10 +588,16 @@ class MongoDBAgent:
                                     did_any_tool = True
                     else:
                         # Single tool execution
+                        # Emit action before starting tool execution
                         for tool_call in response.tool_calls:
-                            tool = next((t for t in selected_tools if t.name == tool_call["name"]), None)
-                            if tool:
-                                await callback_handler.on_tool_start({"name": tool.name}, str(tool_call["args"]))
+                            if callback_handler:
+                                try:
+                                    await callback_handler.on_tool_start(
+                                        {"name": tool_call["name"]}, 
+                                        str(tool_call.get("args", {}))
+                                    )
+                                except Exception:
+                                    pass
                             
                             tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                             await callback_handler.on_tool_end(tool_message.content)
@@ -853,7 +635,7 @@ class MongoDBAgent:
 # ProjectManagement Insights Examples
 async def main():
     """Example usage of the ProjectManagement Insights Agent"""
-    agent = MongoDBAgent()
+    agent = AgentExecutor()
     await agent.connect()
     await agent.disconnect()
 
