@@ -243,6 +243,10 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{user_id}"
             force_planner = data.get("planner", False)
+            print(f"\n📨 WEBSOCKET: Received message: '{message[:50]}...'")
+            print(f"   conversation_id: {conversation_id}")
+            print(f"   user_id: {user_id}")
+            print(f"   business_id: {business_id}")
 
             await websocket.send_json({
                 "type": "user_message",
@@ -300,6 +304,7 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                             "timestamp": datetime.now().isoformat()
                         })
                 else:
+                    print(f"🎯 WEBSOCKET: Starting agent processing...")
                     # Set websocket for content generation tool (direct streaming to frontend)
                     from agent.tools import set_generation_context
                     # Provide websocket + conversation context for persisting generated artifacts
@@ -313,24 +318,30 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                                 agent_span.set_attribute("input.value", (message or "")[:1000])
                             except Exception:
                                 pass
-                        async for _ in mongodb_agent.run_streaming(
+                        print(f"🔄 WEBSOCKET: Calling agent.run_streaming...")
+                        chunk_count = 0
+                        async for response_chunk in mongodb_agent.run_streaming(
                             query=message,
                             websocket=websocket,
                             conversation_id=conversation_id
                         ):
-                            # The streaming is handled internally by the callback handler
-                            # Just iterate through the generator to complete the streaming
-                            pass
+                            # The streaming happens via callback handler automatically
+                            # Just iterate to completion
+                            chunk_count += 1
+                            print(f"📦 WEBSOCKET: Got chunk #{chunk_count}, content={response_chunk[:50] if response_chunk else 'None'}...")
+                        print(f"✅ WEBSOCKET: Agent completed, total chunks={chunk_count}")
                     
                     # Clean up websocket reference after completion
                     from agent.tools import set_generation_websocket
                     set_generation_websocket(None)
 
+            print(f"🏁 WEBSOCKET: Sending complete signal")
             await websocket.send_json({
                 "type": "complete",
                 "conversation_id": conversation_id,
                 "timestamp": datetime.now().isoformat()
             })
+            print(f"✅ WEBSOCKET: Complete signal sent")
 
     except WebSocketDisconnect:
         # Cancel handshake timer if it exists

@@ -166,13 +166,13 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 # Initialize the LLM with optimized settings for tool calling
+# NOTE: Using llama-3.3-70b-versatile for reliable tool calling support
 llm = ChatGroq(
-    model=os.getenv("GROQ_MODEL", "moonshotai/kimi-k2-instruct-0905"),
+    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
     temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
-    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
+    max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "2048")),
     streaming=True,
     verbose=False,
-    top_p=0.8,
 )
 
 
@@ -301,12 +301,11 @@ async def generate_action_statement(
             )),
         ]
         llm = ChatGroq(
-            model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
             temperature=float(os.getenv("GROQ_TEMPERATURE", "0.1")),
-            max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "1024")),
+            max_tokens=int(os.getenv("GROQ_MAX_TOKENS", "512")),
             streaming=True,
             verbose=False,
-            top_p=0.8,
         )
         # Use the existing model; rely on instruction for brevity
         resp = await llm.ainvoke(action_prompt)
@@ -479,7 +478,7 @@ class MongoDBAgent:
         enable_parallel_tools: Enable parallel tool execution (default: True)
     """
 
-    def __init__(self, max_steps: int = 8, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT, enable_parallel_tools: bool = True):
+    def __init__(self, max_steps: int = 3, system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT, enable_parallel_tools: bool = True):
         # Base LLM; tools will be bound per-query via router
         self.llm_base = llm
         self.connected = False
@@ -554,6 +553,7 @@ class MongoDBAgent:
 
     async def run_streaming(self, query: str, websocket=None, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Run the agent with streaming support and conversation context"""
+        print(f"\n🚀 AGENT: run_streaming called with query: {query[:50]}...")
         if not self.connected:
             await self.connect()
 
@@ -599,8 +599,10 @@ class MongoDBAgent:
                 steps = 0
                 last_response: Optional[AIMessage] = None
                 need_finalization: bool = False
+                print(f"🔄 AGENT: Starting loop, max_steps={self.max_steps}")
 
                 while steps < self.max_steps:
+                    print(f"\n🔁 AGENT: Loop iteration {steps}/{self.max_steps}")
                     # Choose tools for this query iteration
                     selected_tools, allowed_names = _select_tools_for_query(query)
                     llm_with_tools = self.llm_base.bind_tools(selected_tools)
@@ -736,17 +738,21 @@ class MongoDBAgent:
                             except Exception:
                                 pass
                     last_response = response
+                    print(f"🤖 AGENT: Got LLM response, has_tool_calls={bool(getattr(response, 'tool_calls', None))}, content_len={len(getattr(response, 'content', '') or '')}")
 
                     # Only persist assistant messages when there are NO tool calls (final response)
                     # Intermediate reasoning should not be saved as assistant messages
                     if not getattr(response, "tool_calls", None):
+                        print(f"✅ AGENT: Final response detected, yielding content")
                         # This is a final response, save it
                         await conversation_memory.add_message(conversation_id, response)
                         try:
                             await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
                         except Exception as e:
                             logger.error(f"Failed to save assistant message: {e}")
+                        print(f"📤 AGENT: Yielding {len(response.content)} chars")
                         yield response.content
+                        print(f"✅ AGENT: Yielded successfully, returning")
                         return
                     else:
                         # ✅ NEW: Keep intermediate response WITH reasoning in conversation history
@@ -826,13 +832,21 @@ class MongoDBAgent:
                                 did_any_tool = True
                     
                     steps += 1
+                    print(f"📊 AGENT: Completed step {steps}/{self.max_steps}")
+
+                    # Force finalization before hitting max_steps
+                    if steps >= self.max_steps - 1:
+                        print(f"⚠️  AGENT: Forcing finalization (step {steps} >= {self.max_steps - 1})")
+                        need_finalization = True
 
                     # After executing any tools, force the next LLM turn to synthesize
                     if did_any_tool:
                         need_finalization = True
 
                 # Step cap reached; send best available response
+                print(f"⛔ AGENT: Exited loop after {steps} steps")
                 if last_response is not None:
+                    print(f"📨 AGENT: Sending last_response as fallback")
                     # Register turn and update summary if needed
                     await conversation_memory.register_turn(conversation_id)
                     if await conversation_memory.should_update_summary(conversation_id, every_n_turns=3):
@@ -848,6 +862,9 @@ class MongoDBAgent:
                 return
 
         except Exception as e:
+            print(f"❌ AGENT ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             yield f"Error running streaming agent: {str(e)}"
 
 # ProjectManagement Insights Examples
