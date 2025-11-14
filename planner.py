@@ -64,6 +64,21 @@ class QueryIntent:
     wants_count: bool  # Whether the user asked for a count
     fetch_one: bool  # Whether the user wants a single specific item
 
+
+# Neutral IR used by compilers/routers (keeps us backend-agnostic)
+@dataclass
+class PlanIR:
+    entity: str
+    filters: Dict[str, Any]
+    group_by: List[str]
+    metrics: List[str]  # e.g., ["count"], future: sum/durations
+    time_range: Dict[str, Any]  # {field: {gte:..., lte:...}}
+    projections: List[str]
+    sort: Optional[Dict[str, int]]
+    limit: Optional[int]
+    skip: Optional[int]
+    mode: str  # "lookup" | "report" | "search" | "export" etc.
+
 @dataclass
 class RelationshipPath:
     """Represents a traversal path through relationships"""
@@ -921,6 +936,50 @@ class LLMIntentParser:
             wants_details=wants_details,
             wants_count=wants_count,
             fetch_one=fetch_one,
+        )
+
+    def to_ir(self, intent: "QueryIntent", original_query: str = "") -> PlanIR:
+        """Convert a sanitized intent into a backend-neutral IR.
+
+        Notes:
+        - metrics mirrors aggregations for now (e.g., ["count"])
+        - time_range is derived from *_from/*_to keys on filters; we keep as-is
+        - mode is a lightweight summary of the ask for router hints
+        """
+        # Extract time ranges from filters
+        time_range: Dict[str, Any] = {}
+        for k, v in (intent.filters or {}).items():
+            if k.endswith("_from") or k.endswith("_to"):
+                base = k[:-5] if k.endswith("_from") else k[:-3]
+                entry = time_range.setdefault(base, {})
+                if k.endswith("_from"):
+                    entry["$gte"] = v
+                else:
+                    entry["$lte"] = v
+
+        # Classify mode in a very lightweight manner
+        ql = (original_query or "").lower()
+        mode = "lookup"
+        if any(tok in ql for tok in ["report", "breakdown", "summary", "group by", "aggregate"]):
+            mode = "report"
+        if any(tok in ql for tok in ["search", "find", "examples", "browse"]):
+            # do not override explicit report, just hint
+            if mode == "lookup":
+                mode = "search"
+        if any(tok in ql for tok in ["export", "csv", "xlsx"]):
+            mode = "export"
+
+        return PlanIR(
+            entity=intent.primary_entity,
+            filters=intent.filters or {},
+            group_by=intent.group_by or [],
+            metrics=list(intent.aggregations or []),
+            time_range=time_range,
+            projections=intent.projections or [],
+            sort=intent.sort_order,
+            limit=intent.limit,
+            skip=intent.skip,
+            mode=mode,
         )
 
     async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
@@ -2135,12 +2194,49 @@ class PipelineGenerator:
         # Some bucket_expr entries may be None if field not applicable
         return val if val is not None else None
 
+
+class Router:
+    """Decides which compiler/tool to use given the IR and query context."""
+
+    def decide_route(self, ir: PlanIR, original_query: str = "") -> str:
+        ql = (original_query or "").lower()
+        # Hard safety default: mongo for all structured asks
+        route = "mongo"
+        # Light hints; we still default to mongo since those adapters may be optional
+        if ir.mode == "export" or any(t in ql for t in ["export", "csv", "xlsx"]):
+            route = "export"  # not executed unless adapter present
+        elif ir.mode == "search":
+            route = "search"  # content/keyword search
+        elif ir.mode == "report" or (ir.group_by or ir.metrics):
+            route = "mongo"  # reports can run on mongo for now
+        return route
+
+
+class MongoCompiler:
+    """Compiler that converts IR into a Mongo aggregation payload.
+
+    For now, we delegate to the existing PipelineGenerator which already
+    encapsulates relationship-aware planning from QueryIntent.
+    """
+
+    def __init__(self, generator: PipelineGenerator):
+        self.generator = generator
+
+    def compile(self, intent: QueryIntent) -> Dict[str, Any]:
+        pipeline = self.generator.generate_pipeline(intent)
+        return {
+            "collection": intent.primary_entity,
+            "pipeline": pipeline,
+        }
+
 class Planner:
     """Main query planner that orchestrates the entire process"""
 
     def __init__(self):
         self.generator = PipelineGenerator()
         self.llm_parser = LLMIntentParser()
+        self.router = Router()
+        self.mongo_compiler = MongoCompiler(self.generator)
         self.orchestrator = Orchestrator(tracer_name=__name__, max_parallel=5)
 
     async def plan_and_execute(self, query: str) -> Dict[str, Any]:
@@ -2158,6 +2254,7 @@ class Planner:
                 return result is not None
 
             def _generate_pipeline(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+                # For compatibility, keep returning pipeline list
                 return self.generator.generate_pipeline(ctx["intent"])  # type: ignore[index]
 
             async def _execute(ctx: Dict[str, Any]) -> Any:
@@ -2214,13 +2311,27 @@ class Planner:
             pipeline: List[Dict[str, Any]] = ctx["pipeline"]  # type: ignore[assignment]
             result = ctx.get("result")
 
+            # Build IR and decide route (router/compiler scaffold)
+            ir = self.llm_parser.to_ir(intent, query)
+            route = self.router.decide_route(ir, query)
+            compiled = {"collection": intent.primary_entity, "pipeline": pipeline}
+            if route == "mongo":
+                # Already compiled via generator; keep as-is
+                pass
+            else:
+                # Other routes are stubs for now; keep mongo exec but expose route metadata
+                route = "mongo"
+
             return {
                 "success": True,
                 "intent": intent.__dict__,
                 "pipeline": _serialize_pipeline_for_json(pipeline),
                 "pipeline_js": _format_pipeline_for_display(pipeline),
                 "result": result,
-                "planner": "llm",
+                "planner": "llm+router",
+                "route": route,
+                "ir": ir.__dict__,
+                "compiled": compiled,
             }
         except Exception as e:
             pass
