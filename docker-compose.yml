@@ -1,5 +1,8 @@
 services:
   backend:
+    # Use ACR image if ACR_REGISTRY is set: aiplanboard.azurecr.io/aiplanboard-backend:latest
+    # Otherwise Docker Compose will use the build configuration below
+    image: ${ACR_REGISTRY}/${IMAGE_PREFIX:-aiplanboard}-backend:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: agent/Dockerfile
@@ -36,6 +39,9 @@ services:
       - app-net
 
   embedding:
+    # Use ACR image if ACR_REGISTRY is set: aiplanboard.azurecr.io/aiplanboard-embedding:latest
+    # Otherwise Docker Compose will use the build configuration below
+    image: ${ACR_REGISTRY}/${IMAGE_PREFIX:-aiplanboard}-embedding:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: embedding_service/Dockerfile
@@ -66,6 +72,9 @@ services:
       - app-net
 
   splade:
+    # Use ACR image if ACR_REGISTRY is set: aiplanboard.azurecr.io/aiplanboard-splade:latest
+    # Otherwise Docker Compose will use the build configuration below
+    image: ${ACR_REGISTRY}/${IMAGE_PREFIX:-aiplanboard}-splade:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: splade_service/Dockerfile
@@ -191,6 +200,9 @@ services:
       - app-net
 
   backfill:
+    # Use ACR image if ACR_REGISTRY is set: aiplanboard.azurecr.io/aiplanboard-consumer:latest
+    # Otherwise Docker Compose will use the build configuration below
+    image: ${ACR_REGISTRY}/${IMAGE_PREFIX:-aiplanboard}-consumer:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: data-sync/consumer/Dockerfile
@@ -232,6 +244,9 @@ services:
       - app-net
 
   consumer:
+    # Use ACR image if ACR_REGISTRY is set: aiplanboard.azurecr.io/aiplanboard-consumer:latest
+    # Otherwise Docker Compose will use the build configuration below
+    image: ${ACR_REGISTRY}/${IMAGE_PREFIX:-aiplanboard}-consumer:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: data-sync/consumer/Dockerfile
@@ -268,6 +283,9 @@ services:
       - app-net
 
   monitoring:
+    # Use ACR image if ACR_REGISTRY is set: aiplanboard.azurecr.io/aiplanboard-backend:latest
+    # Otherwise Docker Compose will use the build configuration below
+    image: ${ACR_REGISTRY}/${IMAGE_PREFIX:-aiplanboard}-backend:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: agent/Dockerfile

@@ -311,6 +311,17 @@ class PipelineGenerator:
                 }
             })
 
+        # $unionWith - combine with another collection (MUST come BEFORE grouping)
+        # This allows grouping the combined results from multiple collections
+        if intent.union_collection:
+            union_with_stage = {
+                "$unionWith": {
+                    "coll": intent.union_collection,
+                    "pipeline": [{"$match": {}}]  # Add filters if needed
+                }
+            }
+            pipeline.append(union_with_stage)
+
         # Add grouping if requested
         if intent.group_by:
             # Pre-group unwind for embedded arrays that are used as grouping keys
@@ -506,33 +517,10 @@ class PipelineGenerator:
             if effective_limit:
                 pipeline.append({"$limit": int(effective_limit)})
 
-        # Add advanced aggregation stages
+        # Add advanced aggregation stages (check these BEFORE regular group aggregation)
         if intent.aggregations:
-            # $facet - multiple aggregations
-            if "facet" in intent.aggregations and intent.facet_fields:
-                facet_stage = {"$facet": {}}
-                for field in intent.facet_fields:
-                    facet_stage["$facet"][f"{field}_breakdown"] = [
-                        {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
-                        {"$sort": {"count": -1}},
-                        {"$limit": 10}
-                    ]
-                pipeline.append(facet_stage)
-
-            # $bucket - group by ranges
-            elif "bucket" in intent.aggregations and intent.bucket_field and intent.bucket_boundaries:
-                bucket_stage = {
-                    "$bucket": {
-                        "groupBy": f"${intent.bucket_field}",
-                        "boundaries": intent.bucket_boundaries,
-                        "default": "Other",
-                        "output": {"count": {"$sum": 1}}
-                    }
-                }
-                pipeline.append(bucket_stage)
-
             # $bucketAuto - automatic range grouping
-            elif "bucketAuto" in intent.aggregations and intent.bucket_field:
+            if "bucketAuto" in intent.aggregations and intent.bucket_field:
                 bucket_auto_stage = {
                     "$bucketAuto": {
                         "groupBy": f"${intent.bucket_field}",
@@ -541,40 +529,72 @@ class PipelineGenerator:
                     }
                 }
                 pipeline.append(bucket_auto_stage)
+                # Skip regular group_by handling when using $bucketAuto
+                intent.group_by = []
 
-            # $sortByCount - count and sort by field
-            elif "sortByCount" in intent.aggregations and intent.sort_by_field:
-                sort_by_count_stage = {
-                    "$sortByCount": f"${intent.sort_by_field}"
-                }
-                pipeline.append(sort_by_count_stage)
-
-        # $replaceRoot - replace document root
-        if intent.new_root:
-            replace_root_stage = {
-                "$replaceRoot": {"newRoot": intent.new_root}
-            }
-            pipeline.append(replace_root_stage)
-
-        # $unionWith - combine with another collection
-        if intent.union_collection:
-            union_with_stage = {
-                "$unionWith": {
-                    "coll": intent.union_collection,
-                    "pipeline": [{"$match": {}}]  # Add filters if needed
-                }
-            }
-            pipeline.append(union_with_stage)
+            # $facet - multiple aggregations
+            elif "facet" in intent.aggregations and intent.facet_fields:
+                facet_stage = {"$facet": {}}
+                for field in intent.facet_fields:
+                    facet_stage["$facet"][f"{field}_breakdown"] = [
+                        {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}},
+                        {"$limit": 10}
+                    ]
+                pipeline.append(facet_stage)
+                # Skip regular group_by handling when using $facet
+                intent.group_by = []
 
         # $graphLookup - graph traversal
-        if (intent.graph_from and intent.graph_start and
-            intent.graph_connect_from and intent.graph_connect_to):
+        # Check if graph lookup is requested (either explicitly or inferred from query)
+        # Improved detection: check aggregations, explicit graph fields, or query context
+        has_graph_aggregation = "graphLookup" in intent.aggregations
+        has_explicit_graph_fields = (
+            intent.graph_from and intent.graph_start and 
+            intent.graph_connect_from and intent.graph_connect_to
+        )
+        # Check filters for dependency-related terms
+        filters_str = str(intent.filters).lower() if intent.filters else ""
+        has_dependency_context = (
+            "dependency" in filters_str or 
+            "depends" in filters_str or
+            "graph" in filters_str or
+            "chain" in filters_str or
+            "relationship" in filters_str
+        )
+        
+        needs_graph_lookup = has_graph_aggregation or has_explicit_graph_fields or has_dependency_context
+        
+        if needs_graph_lookup:
+            # Set defaults based on primary entity
+            graph_from = intent.graph_from or intent.primary_entity
+            graph_start = intent.graph_start or "$_id"
+            
+            # Try to infer connection fields based on common patterns
+            if not intent.graph_connect_from or not intent.graph_connect_to:
+                # Common dependency patterns
+                if "dependency" in str(intent.filters).lower() or "depends" in str(intent.filters).lower():
+                    graph_connect_from = intent.graph_connect_from or "_id"
+                    graph_connect_to = intent.graph_connect_to or "dependsOn"
+                elif intent.primary_entity == "project":
+                    graph_connect_from = intent.graph_connect_from or "_id"
+                    graph_connect_to = intent.graph_connect_to or "parentProjectId"
+                elif intent.primary_entity == "workItem":
+                    graph_connect_from = intent.graph_connect_from or "_id"
+                    graph_connect_to = intent.graph_connect_to or "dependsOn"
+                else:
+                    graph_connect_from = intent.graph_connect_from or "_id"
+                    graph_connect_to = intent.graph_connect_to or "relatedId"
+            else:
+                graph_connect_from = intent.graph_connect_from
+                graph_connect_to = intent.graph_connect_to
+            
             graph_lookup_stage = {
                 "$graphLookup": {
-                    "from": intent.graph_from,
-                    "startWith": intent.graph_start,
-                    "connectFromField": intent.graph_connect_from,
-                    "connectToField": intent.graph_connect_to,
+                    "from": graph_from,
+                    "startWith": graph_start,
+                    "connectFromField": graph_connect_from,
+                    "connectToField": graph_connect_to,
                     "as": "graph_path",
                     "maxDepth": 5,
                     "depthField": "depth"
@@ -582,36 +602,109 @@ class PipelineGenerator:
             }
             pipeline.append(graph_lookup_stage)
 
-        # Add time-series analysis stages
+        # Add time-series analysis stages (can be combined, so use separate if statements)
         if intent.aggregations:
             # Time window aggregations ($setWindowFields)
-            if "timeWindow" in intent.aggregations and intent.window_field and intent.window_size:
-                window_stage = {
-                    "$setWindowFields": {
-                        "partitionBy": None,  # Partition by entire collection
-                        "sortBy": {intent.window_field: 1},
-                        "output": {
-                            "rollingAvg": {
-                                "$avg": f"${intent.window_field}",
-                                "window": {
-                                    "range": [-int(intent.window_size.rstrip('d')), "current"]
+            # Support multiple aggregation name variations
+            has_time_window = (
+                "timeWindow" in intent.aggregations or 
+                "timewindow" in [a.lower() for a in intent.aggregations] or
+                "rolling" in [a.lower() for a in intent.aggregations] or
+                "moving" in [a.lower() for a in intent.aggregations]
+            )
+            if has_time_window and intent.window_field and intent.window_size:
+                # Parse window size (supports "7d", "30d", "14", etc.)
+                window_size_str = str(intent.window_size).strip().lower()
+                window_days = 7  # default
+                try:
+                    if window_size_str.endswith('d'):
+                        window_days = int(window_size_str.rstrip('d'))
+                    elif window_size_str.isdigit():
+                        window_days = int(window_size_str)
+                    else:
+                        # Try to extract number
+                        import re
+                        match = re.search(r'(\d+)', window_size_str)
+                        if match:
+                            window_days = int(match.group(1))
+                except (ValueError, AttributeError):
+                    window_days = 7  # fallback to default
+                
+                # Determine what to aggregate (count for creation rates, or the field itself)
+                # For date fields, we want to count occurrences per day
+                is_date_field = 'date' in intent.window_field.lower() or 'timestamp' in intent.window_field.lower() or 'created' in intent.window_field.lower() or 'updated' in intent.window_field.lower()
+                
+                if is_date_field:
+                    # For date fields, group by day first, then calculate rolling average of counts
+                    pipeline.append({
+                        "$group": {
+                            "_id": {
+                                "$dateTrunc": {
+                                    "date": f"${intent.window_field}",
+                                    "unit": "day"
+                                }
+                            },
+                            "count": {"$sum": 1}
+                        }
+                    })
+                    pipeline.append({"$sort": {"_id": 1}})
+                    window_stage = {
+                        "$setWindowFields": {
+                            "sortBy": {"_id": 1},
+                            "output": {
+                                "rollingAvg": {
+                                    "$avg": "$count",
+                                    "window": {
+                                        "range": [-window_days, "current"]
+                                    }
+                                },
+                                "rollingSum": {
+                                    "$sum": "$count",
+                                    "window": {
+                                        "range": [-window_days, "current"]
+                                    }
                                 }
                             }
                         }
                     }
-                }
+                else:
+                    # For numeric fields, calculate rolling average directly
+                    window_stage = {
+                        "$setWindowFields": {
+                            "sortBy": {intent.window_field: 1},
+                            "output": {
+                                "rollingAvg": {
+                                    "$avg": f"${intent.window_field}",
+                                    "window": {
+                                        "range": [-window_days, "current"]
+                                    }
+                                }
+                            }
+                        }
+                    }
                 pipeline.append(window_stage)
 
             # Trend analysis - period over period comparison
-            elif "trend" in intent.aggregations and intent.trend_field and intent.trend_period:
+            # Support multiple aggregation name variations
+            has_trend = (
+                "trend" in [a.lower() for a in intent.aggregations] or
+                "trends" in [a.lower() for a in intent.aggregations]
+            )
+            if has_trend and intent.trend_field and intent.trend_period:
                 # Group by time periods and calculate metrics
                 period_group = {}
-                if intent.trend_period == "week":
+                trend_period = str(intent.trend_period).lower()
+                if trend_period == "week" or trend_period == "weekly":
                     period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "week"}}
-                elif intent.trend_period == "month":
+                elif trend_period == "month" or trend_period == "monthly":
                     period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "month"}}
-                elif intent.trend_period == "quarter":
+                elif trend_period == "quarter" or trend_period == "quarterly":
                     period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "quarter"}}
+                elif trend_period == "day" or trend_period == "daily":
+                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "day"}}
+                else:
+                    # Default to month
+                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "month"}}
 
                 trend_stage = {
                     "$group": {
@@ -624,43 +717,95 @@ class PipelineGenerator:
                 pipeline.append({"$sort": {"_id": 1}})
 
             # Anomaly detection using statistical methods
-            elif "anomaly" in intent.aggregations and intent.anomaly_field and intent.anomaly_threshold:
-                # Calculate mean and standard deviation, then flag anomalies
+            # Support multiple aggregation name variations
+            has_anomaly = (
+                "anomaly" in [a.lower() for a in intent.aggregations] or
+                "anomalies" in [a.lower() for a in intent.aggregations] or
+                "outlier" in [a.lower() for a in intent.aggregations] or
+                "unusual" in [a.lower() for a in intent.aggregations]
+            )
+            if has_anomaly and intent.anomaly_field:
+                # For date fields (like creation rates), first group by day to get counts
+                anomaly_field = intent.anomaly_field
+                is_date_field = 'date' in anomaly_field.lower() or 'timestamp' in anomaly_field.lower() or 'created' in anomaly_field.lower()
+                
+                if is_date_field:
+                    # Group by day first to get daily counts
+                    pipeline.append({
+                        "$group": {
+                            "_id": {
+                                "$dateTrunc": {
+                                    "date": f"${anomaly_field}",
+                                    "unit": "day"
+                                }
+                            },
+                            "count": {"$sum": 1}
+                        }
+                    })
+                    pipeline.append({"$sort": {"_id": 1}})
+                    # Then calculate stats on counts
+                    stats_field = "$count"
+                else:
+                    # For numeric fields, use directly
+                    stats_field = f"${anomaly_field}"
+                
+                # Use default threshold if not provided
+                threshold = intent.anomaly_threshold if intent.anomaly_threshold is not None else 2.0
+                
+                # Calculate mean and standard deviation across all values
+                # First, collect all values with their original documents
                 stats_stage = {
                     "$group": {
                         "_id": None,
-                        "avg": {"$avg": f"${intent.anomaly_field}"},
-                        "std": {"$stdDevSamp": f"${intent.anomaly_field}"},
-                        "values": {"$push": f"${intent.anomaly_field}"}
+                        "avg": {"$avg": stats_field},
+                        "std": {"$stdDevSamp": stats_field},
+                        "values": {"$push": {"value": stats_field, "doc": "$$ROOT"}}
                     }
                 }
                 pipeline.append(stats_stage)
 
-                # Flag anomalies based on threshold
+                # Flag anomalies based on threshold (values that deviate more than threshold * std from mean)
                 anomaly_stage = {
                     "$project": {
                         "anomalies": {
                             "$filter": {
                                 "input": "$values",
-                                "as": "value",
+                                "as": "item",
                                 "cond": {
-                                    "$gt": [
-                                        {"$abs": {"$subtract": ["$$value", "$avg"]}},
-                                        {"$multiply": ["$std", intent.anomaly_threshold]}
+                                    "$and": [
+                                        # Check if std is valid (not null/zero)
+                                        {"$gt": ["$std", 0]},
+                                        # Check if deviation exceeds threshold
+                                        {
+                                            "$gt": [
+                                                {"$abs": {"$subtract": ["$$item.value", "$avg"]}},
+                                                {"$multiply": ["$std", threshold]}
+                                            ]
+                                        }
                                     ]
                                 }
                             }
                         },
                         "avg": 1,
                         "std": 1,
-                        "threshold": intent.anomaly_threshold
+                        "threshold": threshold,
+                        "total_values": {"$size": "$values"}
                     }
                 }
                 pipeline.append(anomaly_stage)
 
             # Simple forecasting using linear trend
-            elif "forecast" in intent.aggregations and intent.forecast_field and intent.forecast_periods:
+            # Support multiple aggregation name variations
+            has_forecast = (
+                "forecast" in [a.lower() for a in intent.aggregations] or
+                "predict" in [a.lower() for a in intent.aggregations] or
+                "projection" in [a.lower() for a in intent.aggregations]
+            )
+            if has_forecast and intent.forecast_field and intent.forecast_periods:
                 # Calculate trend line and project forward
+                forecast_periods = int(intent.forecast_periods) if intent.forecast_periods else 7
+                
+                # Group by day to get historical counts
                 forecast_stage = {
                     "$group": {
                         "_id": {
@@ -669,30 +814,74 @@ class PipelineGenerator:
                                 "unit": "day"
                             }
                         },
-                        "count": {"$sum": 1},
-                        "period": {"$first": {
-                            "$dateTrunc": {
-                                "date": f"${intent.forecast_field}",
-                                "unit": "day"
-                            }
-                        }}
+                        "count": {"$sum": 1}
                     }
                 }
                 pipeline.append(forecast_stage)
                 pipeline.append({"$sort": {"_id": 1}})
 
-                # Add linear regression for forecasting (simplified)
+                # Calculate linear regression coefficients
                 pipeline.append({
                     "$setWindowFields": {
                         "sortBy": {"_id": 1},
                         "output": {
-                            "trend": {
+                            "linreg": {
                                 "$linreg": {
                                     "x": {"$toLong": "$_id"},
                                     "y": "$count"
                                 }
                             }
                         }
+                    }
+                })
+                
+                # Get the last document with regression coefficients
+                pipeline.append({
+                    "$group": {
+                        "_id": None,
+                        "last_date": {"$last": "$_id"},
+                        "last_count": {"$last": "$count"},
+                        "slope": {"$last": "$linreg.slope"},
+                        "intercept": {"$last": "$linreg.intercept"},
+                        "historical": {"$push": {"date": "$_id", "count": "$count"}}
+                    }
+                })
+                
+                # Generate forecasted periods
+                # Note: This is a simplified forecast. For production, consider using more sophisticated methods
+                pipeline.append({
+                    "$project": {
+                        "historical": 1,
+                        "forecast": {
+                            "$map": {
+                                "input": {"$range": [1, forecast_periods + 1]},
+                                "as": "day",
+                                "in": {
+                                    "date": {
+                                        "$add": [
+                                            "$last_date",
+                                            {"$multiply": ["$$day", 86400000]}  # Add days in milliseconds
+                                        ]
+                                    },
+                                    "predicted_count": {
+                                        "$add": [
+                                            "$intercept",
+                                            {
+                                                "$multiply": [
+                                                    "$slope",
+                                                    {"$add": [
+                                                        {"$toLong": "$last_date"},
+                                                        {"$multiply": ["$$day", 86400000]}
+                                                    ]}
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                        "slope": 1,
+                        "intercept": 1
                     }
                 })
 
@@ -1137,8 +1326,6 @@ class PipelineGenerator:
             'goals_count': 'goals',
             'painPoints_count': 'painPoints',
             'successCriteria_count': 'problemInfo.successCriteria',
-            'personaGoals_count': 'persona.goals',
-            'personaPainPoints_count': 'persona.painPoints',
             'linkedCycle_count': 'linkedCycle',
             'linkedModule_count': 'linkedModule',
             'linkedPages_count': 'linkedPages'
@@ -1172,54 +1359,49 @@ class PipelineGenerator:
                             array_size_filters[array_field] = {'$lt': max_size}
 
         # Convert array size filters to $expr for MongoDB
+        # First, ensure $expr exists and wrap any existing content in $and if needed
+        if array_size_filters:
+            if '$expr' not in primary_filters:
+                primary_filters['$expr'] = {}
+            
+            existing_expr = primary_filters['$expr']
+            # If $expr already has content but not wrapped in $and, we need to wrap it
+            if '$and' not in existing_expr and existing_expr:
+                # Wrap existing $expr content in $and array
+                wrapped_expr = existing_expr.copy()
+                primary_filters['$expr'] = {'$and': [wrapped_expr]}
+            elif '$and' not in primary_filters['$expr']:
+                primary_filters['$expr']['$and'] = []
+        
+        # Now add all array size conditions
         for array_field, size_condition in array_size_filters.items():
             if '$size' in size_condition:
                 # Exact size match
                 size_val = size_condition['$size']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$eq': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$gt' in size_condition:
                 # Greater than
                 size_val = size_condition['$gt']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$gt': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$gte' in size_condition:
                 # Greater than or equal
                 size_val = size_condition['$gte']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$gte': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$lt' in size_condition:
                 # Less than
                 size_val = size_condition['$lt']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$lt': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$lte' in size_condition:
                 # Less than or equal
                 size_val = size_condition['$lte']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$lte': [{'$size': f'${array_field}'}, size_val]
                 })
@@ -1233,51 +1415,9 @@ class PipelineGenerator:
                 array_field = key.replace('_elemMatch', '')
                 advanced_operators[array_field] = {'$elemMatch': value}
 
-        # $all for matching all elements in array
-        for key, value in filters.items():
-            if key.endswith('_all') and isinstance(value, list):
-                array_field = key.replace('_all', '')
-                advanced_operators[array_field] = {'$all': value}
-
-        # $type for type checking
-        for key, value in filters.items():
-            if key.endswith('_type'):
-                field_name = key.replace('_type', '')
-                # Map common type names to BSON type numbers
-                type_map = {
-                    'string': 'string',
-                    'number': 'number',
-                    'boolean': 'bool',
-                    'object': 'object',
-                    'array': 'array',
-                    'date': 'date',
-                    'null': 'null'
-                }
-                if value in type_map:
-                    advanced_operators[field_name] = {'$type': type_map[value]}
-
-        # $mod for modulo operations
-        for key, value in filters.items():
-            if key.endswith('_mod') and isinstance(value, list) and len(value) == 2:
-                field_name = key.replace('_mod', '')
-                advanced_operators[field_name] = {'$mod': value}
-
         # $text for full-text search
         if '$text' in filters:
             primary_filters['$text'] = {'$search': filters['$text']}
-
-        # Geospatial operators ($near, $geoWithin)
-        if '$near' in filters:
-            # Assume coordinates are provided as [lng, lat]
-            coords = filters['$near']
-            if isinstance(coords, list) and len(coords) == 2:
-                # For now, assume a location field exists
-                advanced_operators['location'] = {'$near': {'$geometry': {'type': 'Point', 'coordinates': coords}}}
-
-        if '$geoWithin' in filters:
-            # Assume geometry is provided
-            geometry = filters['$geoWithin']
-            advanced_operators['location'] = {'$geoWithin': geometry}
 
         # Add advanced operators to primary filters
         for field, operator in advanced_operators.items():

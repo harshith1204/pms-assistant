@@ -21,6 +21,7 @@ import time
 from time import perf_counter
 from collections import defaultdict, deque
 import os
+import json
 
 # Import tools list
 try:
@@ -269,6 +270,74 @@ class AgentExecutor:
         self.system_prompt = system_prompt
         self.tracing_enabled = False
         self.enable_parallel_tools = enable_parallel_tools
+        conversation_cache_ttl = int(os.getenv("AGENT_CONVERSATION_CACHE_TTL", "300"))
+        conversation_cache_size = int(os.getenv("AGENT_CONVERSATION_CACHE_SIZE", "256"))
+        tool_cache_ttl = int(os.getenv("AGENT_TOOL_CACHE_TTL", "600"))
+        tool_cache_size = int(os.getenv("AGENT_TOOL_CACHE_SIZE", "200"))
+        self._conversation_context_cache = TTLCache(
+            max_items=conversation_cache_size,
+            ttl_seconds=conversation_cache_ttl,
+        )
+        self._conversation_cache_tasks: Dict[str, asyncio.Task] = {}
+        self._tool_cache = TTLCache(
+            max_items=tool_cache_size,
+            ttl_seconds=tool_cache_ttl,
+        )
+
+    def _should_cache_tool(self, tool_name: str) -> bool:
+        return tool_name in {"mongo_query", "rag_search"}
+
+    def _build_tool_cache_key(self, tool_name: str, args: Dict[str, Any]) -> str:
+        def _default(obj):
+            if isinstance(obj, set):
+                return sorted(obj)
+            if isinstance(obj, bytes):
+                return obj.decode(errors="ignore")
+            return str(obj)
+
+        try:
+            serialized_args = json.dumps(args or {}, sort_keys=True, default=_default)
+        except Exception:
+            serialized_args = repr(args)
+        return f"{tool_name}:{serialized_args}"
+
+    async def _get_conversation_context_cached(self, conversation_id: str) -> List[BaseMessage]:
+        cached = self._conversation_context_cache.get(conversation_id)
+        if cached is not None:
+            return list(cached)
+        context = await conversation_memory.get_recent_context(conversation_id)
+        self._conversation_context_cache.set(conversation_id, list(context))
+        return context
+
+    def _append_conversation_cache(self, conversation_id: str, message: BaseMessage) -> None:
+        cached = self._conversation_context_cache.get(conversation_id)
+        if cached is None:
+            return
+        updated = list(cached)
+        updated.append(message)
+        self._conversation_context_cache.set(conversation_id, updated)
+
+    def _schedule_conversation_cache_refresh(self, conversation_id: str) -> None:
+        existing = self._conversation_cache_tasks.get(conversation_id)
+        if existing and not existing.done():
+            return
+
+        async def _refresh():
+            try:
+                context = await conversation_memory.get_recent_context(conversation_id)
+                self._conversation_context_cache.set(conversation_id, list(context))
+            except Exception as exc:
+                logger.error("Failed to refresh conversation cache for %s: %s", conversation_id, exc)
+            finally:
+                self._conversation_cache_tasks.pop(conversation_id, None)
+
+        task = asyncio.create_task(_refresh())
+        self._conversation_cache_tasks[conversation_id] = task
+
+    async def _add_message_to_memory(self, conversation_id: str, message: BaseMessage) -> None:
+        await conversation_memory.add_message(conversation_id, message)
+        self._append_conversation_cache(conversation_id, message)
+        self._schedule_conversation_cache_refresh(conversation_id)
 
     async def _execute_single_tool(
         self, 
@@ -295,15 +364,22 @@ class AgentExecutor:
                 return error_msg, False
 
             try:
-                pass
-                
-                result = await actual_tool.ainvoke(tool_call["args"])
-                
-                pass
+                result = None
+                cache_key = None
+                use_cache = self._should_cache_tool(actual_tool.name)
+                if use_cache:
+                    cache_key = self._build_tool_cache_key(actual_tool.name, tool_call.get("args", {}))
+                    cached_result = self._tool_cache.get(cache_key)
+                    if cached_result is not None:
+                        result = cached_result
+
+                if result is None:
+                    result = await actual_tool.ainvoke(tool_call["args"])
+                    if use_cache and cache_key is not None:
+                        self._tool_cache.set(cache_key, result)
                         
             except Exception as tool_exc:
                 result = f"Tool execution error: {tool_exc}"
-                pass
 
             tool_message = ToolMessage(
                 content=str(result),
@@ -362,8 +438,8 @@ class AgentExecutor:
                 if not conversation_id:
                     conversation_id = f"conv_{int(time.time())}"
 
-                # Get conversation history (automatically loads from MongoDB if cache empty)
-                conversation_context = await conversation_memory.get_recent_context(conversation_id)
+                # Get conversation history (cached per session with async refresh)
+                conversation_context = await self._get_conversation_context_cached(conversation_id)
 
                 # Build messages with optional system instruction
                 messages: List[BaseMessage] = []
@@ -379,7 +455,7 @@ class AgentExecutor:
                 callback_handler = AgentCallbackHandler(websocket, conversation_id)
 
                 # Persist the human message
-                await conversation_memory.add_message(conversation_id, human_message)
+                await self._add_message_to_memory(conversation_id, human_message)
 
                 steps = 0
                 last_response: Optional[AIMessage] = None
@@ -537,7 +613,7 @@ class AgentExecutor:
                     # Intermediate reasoning should not be saved as assistant messages
                     if not getattr(response, "tool_calls", None):
                         # This is a final response, save it
-                        await conversation_memory.add_message(conversation_id, response)
+                        await self._add_message_to_memory(conversation_id, response)
                         try:
                             await save_assistant_message(conversation_id, getattr(response, "content", "") or "")
                         except Exception as e:
@@ -547,7 +623,7 @@ class AgentExecutor:
                     else:
                         # ✅ NEW: Keep intermediate response WITH reasoning in conversation history
                         # This helps LLM maintain context, but don't persist to DB (not shown to user)
-                        await conversation_memory.add_message(conversation_id, response)
+                        await self._add_message_to_memory(conversation_id, response)
                         # Note: NOT calling save_assistant_message() - only actions are saved to DB
 
                     # Execute requested tools with streaming callbacks
@@ -609,7 +685,7 @@ class AgentExecutor:
                             tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
                             await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
-                            await conversation_memory.add_message(conversation_id, tool_message)
+                            await self._add_message_to_memory(conversation_id, tool_message)
                             # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True
