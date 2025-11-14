@@ -333,6 +333,9 @@ class RedisConversationMemory:
                     else:
                         # Background fetch summary (don't block on this)
                         asyncio.create_task(self._update_l1_summary_cache(conversation_id))
+                        # Invalidate processed context cache until summary is loaded
+                        cached_conv.processed_context = None
+                        cached_conv.context_budget = 0
 
                     message_budget = budget - summary_tokens
 
@@ -430,13 +433,16 @@ class RedisConversationMemory:
         """Background task to update summary in L1 cache"""
         try:
             summary = await self._get_summary(conversation_id)
-            if summary:
-                with self.l1_lock:
-                    if conversation_id in self.l1_cache:
-                        cached_conv = self.l1_cache[conversation_id]
-                        cached_conv.summary = summary
-                        # Re-assign to update TTL
-                        self.l1_cache[conversation_id] = cached_conv
+            with self.l1_lock:
+                if conversation_id in self.l1_cache:
+                    cached_conv = self.l1_cache[conversation_id]
+                    cached_conv.summary = summary
+                    # Invalidate processed context cache since summary changed
+                    cached_conv.processed_context = None
+                    cached_conv.context_budget = 0
+                    cached_conv.last_accessed = time.time()
+                    # Re-assign to update TTL
+                    self.l1_cache[conversation_id] = cached_conv
         except Exception as e:
             logger.error(f"Failed to update L1 summary cache: {e}")
 
@@ -601,8 +607,18 @@ class RedisConversationMemory:
             
             # Reverse to get chronological order
             recent_messages.reverse()
-            
-            # Optionally cache in Redis for next access (background task, non-blocking)
+
+            # ✅ CRITICAL: Populate L1 cache IMMEDIATELY (synchronous)
+            # This ensures next request hits L1 cache (<1ms instead of MongoDB query)
+            with self.l1_lock:
+                cached_conv = CachedConversation(
+                    messages=deque(recent_messages, maxlen=self.max_messages_per_conversation),
+                    summary=None,  # Will be loaded separately if needed
+                    last_accessed=time.time()
+                )
+                self.l1_cache[conversation_id] = cached_conv
+
+            # ✅ OPTIMIZED: Cache in Redis in background (non-blocking)
             if recent_messages:
                 asyncio.create_task(self._cache_messages_background(conversation_id, recent_messages))
             total_elapsed_ms = (perf_counter() - mongo_start_time) * 1000
