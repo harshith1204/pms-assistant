@@ -1034,6 +1034,40 @@ class LLMIntentParser:
         anomaly_threshold = data.get("anomaly_threshold")
         forecast_field = data.get("forecast_field")
         forecast_periods = data.get("forecast_periods")
+        print(f"""
+            ---- QueryIntent DEBUG ----
+            primary_entity: {primary}
+            target_entities: {target_entities}
+            filters: {filters}
+            aggregations: {aggregations}
+            group_by: {group_by}
+            projections: {projections}
+            sort_order: {sort_order}
+            limit: {limit}
+            skip: {skip}
+            wants_details: {wants_details}
+            wants_count: {wants_count}
+            fetch_one: {fetch_one}
+            facet_fields: {facet_fields if facet_fields else None}
+            bucket_field: {bucket_field if bucket_field else None}
+            union_collection: {union_collection if union_collection else None}
+            graph_from: {graph_from if graph_from else None}
+            graph_start: {graph_start if graph_start else None}
+            graph_connect_from: {graph_connect_from if graph_connect_from else None}
+            graph_connect_to: {graph_connect_to if graph_connect_to else None}
+            window_field: {window_field if window_field else None}
+            window_size: {window_size if window_size else None}
+            window_unit: {window_unit if window_unit else None}
+            trend_field: {trend_field if trend_field else None}
+            trend_period: {trend_period if trend_period else None}
+            trend_metric: {trend_metric if trend_metric else None}
+            anomaly_field: {anomaly_field if anomaly_field else None}
+            anomaly_metric: {anomaly_metric if anomaly_metric else None}
+            anomaly_threshold: {float(anomaly_threshold) if anomaly_threshold is not None else None}
+            forecast_field: {forecast_field if forecast_field else None}
+            forecast_periods: {int(forecast_periods) if forecast_periods is not None else None}
+            ---------------------------
+            """)
 
         return QueryIntent(
             primary_entity=primary,

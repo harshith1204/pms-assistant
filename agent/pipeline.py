@@ -884,7 +884,7 @@ class PipelineGenerator:
                         "intercept": 1
                     }
                 })
-
+        print("The generated pipeline is:",pipeline)
         return pipeline
 
     def _extract_primary_filters(self, filters: Dict[str, Any], collection: str) -> Dict[str, Any]:
