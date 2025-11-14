@@ -76,6 +76,8 @@ const Index = () => {
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -775,11 +777,35 @@ const Index = () => {
     setFeedbackText("");
   };
 
+  // Only show latest turn when at bottom; show all when scrolled up
+  const visibleMessages = useMemo(() => {
+    if (!isAtBottom) return messages;
+    if (messages.length === 0) return messages;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        return messages.slice(i);
+      }
+    }
+    return messages;
+  }, [messages, isAtBottom]);
+
   // Auto-scroll to bottom on message updates
   useEffect(() => {
     if (showGettingStarted || showPersonalization) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading, showGettingStarted, showPersonalization]);
+    if (!isAtBottom) return; // don't auto-scroll when viewing history
+    const timer = setTimeout(() => {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [messages, isLoading, showGettingStarted, showPersonalization, isAtBottom]);
+
+  // Track whether viewport is at bottom to control history reveal
+  const onViewportScroll: React.UIEventHandler<HTMLDivElement> = (e) => {
+    const el = e.currentTarget;
+    const threshold = 8; // px tolerance
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - threshold;
+    setIsAtBottom(atBottom);
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
@@ -850,9 +876,9 @@ const Index = () => {
             </div>
           </div>
         ) : (
-          <ScrollArea className="flex-1 scrollbar-thin">
-            <div className="mx-auto max-w-4xl">
-              {messages.map((message) => (
+          <ScrollArea className="flex-1 scrollbar-thin" viewportRef={viewportRef as any} onViewportScroll={onViewportScroll}>
+            <div className="mx-auto max-w-4xl pb-8">
+              {visibleMessages.map((message) => (
                 <ChatMessage
                   key={message.id}
                   id={message.id}
@@ -870,7 +896,7 @@ const Index = () => {
                   onDislike={handleDislike}
                 />
               ))}
-              <div ref={endRef} />
+              <div ref={endRef} className="h-4" />
             </div>
           </ScrollArea>
         )}
