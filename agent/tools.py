@@ -1387,6 +1387,7 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             response += formatted_result
             elapsed_ms = (perf_counter() - tool_start_time) * 1000
             print(f"mongo_query (including planner) for '{query[:50]}...' took {elapsed_ms:.2f} ms")
+            print(response)
             return response
         else:
             return f"❌ QUERY FAILED:\nQuery: '{query}'\nError: {result['error']}"
