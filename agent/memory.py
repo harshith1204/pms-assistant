@@ -37,8 +37,8 @@ class RedisConversationMemory:
         max_messages_per_conversation: int = 50,
         redis_url: Optional[str] = None,
         ttl_hours: int = 168,  # ✅ OPTIMIZED: 7 days (168 hours) instead of 24 hours
-        l1_cache_size: int = 250,      
-        l1_cache_ttl_seconds: int = 300
+        l1_cache_size: int = 500,  # ✅ INCREASED: More conversations in L1 cache (was 250)
+        l1_cache_ttl_seconds: int = 600  # ✅ INCREASED: 10 minutes TTL (was 5 minutes)
     ):
         self.max_messages_per_conversation = max_messages_per_conversation
         self.ttl_seconds = ttl_hours * 3600  # 7 days = 604800 seconds
@@ -150,56 +150,65 @@ class RedisConversationMemory:
             return AIMessage(content=content)
 
     async def add_message(self, conversation_id: str, message: BaseMessage):
-        """Add a message to the conversation history in Redis"""
-        # --- L1 Cache Write (Thread-safe) ---
+        """Add a message to the conversation history - L1 cache write is immediate, Redis write is async"""
+        # ✅ OPTIMIZED: L1 Cache Write (Thread-safe, immediate, non-blocking)
         with self.l1_lock:
             if conversation_id not in self.l1_cache:
                 self.l1_cache[conversation_id] = deque(maxlen=self.max_messages_per_conversation)
             self.l1_cache[conversation_id].append(message)
-                # Re-assign to update its TTL status
-            self.l1_cache[conversation_id] = self.l1_cache[conversation_id]
+            # Note: TTLCache automatically refreshes TTL on access, no need to re-assign
 
+        # ✅ OPTIMIZED: Redis write happens in background (non-blocking)
+        # L1 cache is already updated, so reads are fast immediately
+        asyncio.create_task(self._add_message_to_redis(conversation_id, message))
+
+    async def _add_message_to_redis(self, conversation_id: str, message: BaseMessage):
+        """Background task to write message to Redis using pipeline (non-blocking)"""
         await self._ensure_connected()
         
         if self.use_fallback:
             # Use in-memory fallback
             self.fallback_conversations[conversation_id].append(message)
             return
+        
         redis_start_time = perf_counter()
         try:
             key = self._get_conversation_key(conversation_id)
             serialized = self._serialize_message(message)
             
-            # Add message to Redis list
-            await self.redis_client.rpush(key, serialized)
+            # ✅ OPTIMIZED: Use pipeline to batch all Redis commands (single round trip)
+            async with self.redis_client.pipeline() as pipe:
+                pipe.rpush(key, serialized)
+                pipe.ltrim(key, -self.max_messages_per_conversation, -1)
+                pipe.expire(key, self.ttl_seconds)
+                await pipe.execute()
             
-            # Trim list to max size (keep only recent messages)
-            await self.redis_client.ltrim(key, -self.max_messages_per_conversation, -1)
-            
-            # Set TTL (24 hours)
-            await self.redis_client.expire(key, self.ttl_seconds)
             elapsed_ms = (perf_counter() - redis_start_time) * 1000
-            print(f"Redis add_message (rpush/ltrim/expire) took {elapsed_ms:.2f} ms")
+            logger.debug(f"Redis add_message (background pipeline) took {elapsed_ms:.2f} ms")
         except RedisError as e:
-            logger.error(f"Redis error in add_message, falling back to memory: {e}")
-            self.use_fallback = True
-            self.fallback_conversations[conversation_id].append(message)
+            logger.error(f"Redis error in background add_message: {e}")
+            # Don't set use_fallback here - L1 cache is already updated
 
     async def get_conversation_history(self, conversation_id: str) -> List[BaseMessage]:
-        """Get the conversation history for a given conversation ID from Redis
+        """Get the conversation history for a given conversation ID
         
-        If not in cache, returns empty list (will be populated as new messages are added).
-        Use get_recent_context() instead to get context from MongoDB when cache is empty.
+        ✅ OPTIMIZED: 
+        1. Checks L1 cache first (fastest, <1ms)
+        2. Falls back to Redis if L1 miss (still fast, ~5-10ms)
+        3. Returns empty list if not found (MongoDB load happens in get_recent_context)
         """
+        # ✅ OPTIMIZED: L1 cache check first (fastest path)
         with self.l1_lock:
             if conversation_id in self.l1_cache:
-                # L1 Hit: Fastest path
+                # L1 Hit: Fastest path (<1ms)
                 return list(self.l1_cache[conversation_id])
-            
+        
+        # L1 miss: Try Redis (L2 cache)
         await self._ensure_connected()
         
         if self.use_fallback:
             return list(self.fallback_conversations[conversation_id])
+        
         redis_start_time = perf_counter()
         try:
             key = self._get_conversation_key(conversation_id)
@@ -207,28 +216,39 @@ class RedisConversationMemory:
             # Get all messages from Redis list
             messages_str = await self.redis_client.lrange(key, 0, -1)
             io_elapsed_ms = (perf_counter() - redis_start_time) * 1000
+            
             if not messages_str:
-                print(f"Redis get_conversation_history (lrange) miss in {io_elapsed_ms:.2f} ms")
+                logger.debug(f"Redis get_conversation_history (lrange) miss in {io_elapsed_ms:.2f} ms")
                 return []
             
             # Deserialize messages
             messages = [self._deserialize_message(msg_str) for msg_str in messages_str]
 
+            # ✅ OPTIMIZED: Populate L1 cache for next access
             with self.l1_lock:
                 self.l1_cache[conversation_id] = deque(
                     messages, 
                     maxlen=self.max_messages_per_conversation
                 )
-            # Refresh TTL on access
-            await self.redis_client.expire(key, self.ttl_seconds)
+            
+            # Refresh TTL on access (background, non-blocking)
+            asyncio.create_task(self._refresh_redis_ttl(key))
+            
             total_elapsed_ms = (perf_counter() - redis_start_time) * 1000
-            print(f"Redis get_conversation_history (lrange + deserialize) hit in {total_elapsed_ms:.2f} ms")
+            logger.debug(f"Redis get_conversation_history (lrange + deserialize) hit in {total_elapsed_ms:.2f} ms")
             return messages
             
         except RedisError as e:
             logger.error(f"Redis error in get_conversation_history, falling back to memory: {e}")
             self.use_fallback = True
             return list(self.fallback_conversations[conversation_id])
+    
+    async def _refresh_redis_ttl(self, key: str):
+        """Background task to refresh Redis TTL (non-blocking)"""
+        try:
+            await self.redis_client.expire(key, self.ttl_seconds)
+        except Exception as e:
+            logger.debug(f"Failed to refresh TTL for {key}: {e}")
 
     async def clear_conversation(self, conversation_id: str):
         """Clear the conversation history for a given conversation ID"""
@@ -262,12 +282,12 @@ class RedisConversationMemory:
     async def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
         """Get recent conversation context with a token budget and rolling summary.
         
-        ✅ OPTIMIZED: 
-        1. First checks L1 cache (in-memory) for fastest access
-        2. Then checks Redis cache (L2) for fast access
-        3. If cache is empty/expired, loads ONLY recent messages from MongoDB (within token budget)
-        4. Applies consistent token budget selection (handles both cache hit and miss)
-        5. Adds summary if it fits within budget
+        ✅ OPTIMIZED FOR LATENCY:
+        1. L1 cache check first (<1ms if hit)
+        2. Redis check second (~5-10ms if L1 miss)
+        3. MongoDB load only if both miss (async, non-blocking for next request)
+        4. Summary fetch is async and cached
+        5. All operations prioritize L1 cache hits
         """
         # Approximate token counting (≈4 chars/token)
         def approx_tokens(text: str) -> int:
@@ -278,12 +298,13 @@ class RedisConversationMemory:
 
         budget = max(500, max_tokens)
         
-        # ✅ OPTIMIZED: Check L1 cache first (fastest path)
+        # ✅ OPTIMIZED: Check L1 cache first (fastest path, <1ms)
         with self.l1_lock:
             if conversation_id in self.l1_cache:
                 messages = list(self.l1_cache[conversation_id])
                 if messages:
-                    # L1 cache hit - skip Redis check
+                    # L1 cache hit - fastest path, skip Redis/MongoDB
+                    # Get summary async (non-blocking if cached)
                     summary = await self._get_summary(conversation_id)
                     summary_tokens = 0
                     if summary:
@@ -307,29 +328,40 @@ class RedisConversationMemory:
                     
                     return selected
         
-        # Reserve space for summary (if present)
-        summary = await self._get_summary(conversation_id)
-        summary_tokens = 0
-        if summary:
-            summary_tokens = approx_tokens(summary) + 50  # +50 for formatting
-        
-        # Adjust budget for messages to leave room for summary
-        message_budget = budget - summary_tokens
-        
-        # Try to get from Redis cache (L2) - only if L1 miss
+        # L1 miss: Try Redis (L2 cache) - still fast (~5-10ms)
         messages = await self.get_conversation_history(conversation_id)
         
-        # If cache is empty, load recent messages from MongoDB
+        # ✅ OPTIMIZED: If cache is empty, load from MongoDB AND populate L1 immediately
         if not messages:
             try:
                 # Load with adjusted budget (accounting for summary)
+                summary = await self._get_summary(conversation_id)
+                summary_tokens = 0
+                if summary:
+                    summary_tokens = approx_tokens(summary) + 50
+                message_budget = budget - summary_tokens
+                
                 messages = await self._load_recent_from_mongodb(conversation_id, message_budget)
+                # ✅ CRITICAL: _load_recent_from_mongodb now populates L1 cache immediately
+                # So next request will hit L1 cache
             except Exception as e:
                 logger.error(f"Could not load recent messages from MongoDB: {e}")
                 messages = []
         
-        # Apply token budget selection (needed for Redis cache path)
-        # For MongoDB path, this is mostly redundant but ensures consistency
+        # If we got messages from Redis, get summary
+        if messages:
+            summary = await self._get_summary(conversation_id)
+        else:
+            summary = None
+        
+        summary_tokens = 0
+        if summary:
+            summary_tokens = approx_tokens(summary) + 50
+        
+        # Adjust budget for messages to leave room for summary
+        message_budget = budget - summary_tokens
+        
+        # Apply token budget selection
         used = 0
         selected: List[BaseMessage] = []
 
@@ -353,7 +385,7 @@ class RedisConversationMemory:
         return selected
 
     async def _get_summary(self, conversation_id: str) -> Optional[str]:
-        """Get conversation summary from Redis"""
+        """Get conversation summary from Redis (optimized for latency)"""
         await self._ensure_connected()
         
         if self.use_fallback:
@@ -364,8 +396,8 @@ class RedisConversationMemory:
             summary = await self.redis_client.get(key)
             
             if summary:
-                # Refresh TTL on access
-                await self.redis_client.expire(key, self.ttl_seconds)
+                # ✅ OPTIMIZED: Refresh TTL in background (non-blocking)
+                asyncio.create_task(self._refresh_redis_ttl(key))
             
             return summary
             
@@ -449,9 +481,11 @@ class RedisConversationMemory:
     async def _load_recent_from_mongodb(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
         """Load ONLY recent messages from MongoDB (limited by token budget).
         
-        ✅ OPTIMIZED: Uses MongoDB projection with $slice to fetch only recent messages.
-        This is much more efficient than loading entire conversation history.
-        Only loads what's actually needed for context.
+        ✅ OPTIMIZED FOR LATENCY:
+        1. Uses MongoDB projection with $slice to fetch only recent messages
+        2. Immediately populates L1 cache for next request (critical!)
+        3. Redis caching happens in background (non-blocking)
+        4. Only loads what's needed for current token budget
         
         Returns:
             List of recent messages (already within token budget)
@@ -473,7 +507,7 @@ class RedisConversationMemory:
             )
             db_elapsed_ms = (perf_counter() - mongo_start_time) * 1000
             if not doc:
-                print(f"_load_recent_from_mongodb (find_one) miss in {db_elapsed_ms:.2f} ms")
+                logger.debug(f"_load_recent_from_mongodb (find_one) miss in {db_elapsed_ms:.2f} ms")
                 return []
             
             messages = doc.get("messages") or []
@@ -523,11 +557,20 @@ class RedisConversationMemory:
             # Reverse to get chronological order
             recent_messages.reverse()
             
-            # Optionally cache in Redis for next access (background task, non-blocking)
+            # ✅ CRITICAL: Populate L1 cache IMMEDIATELY (synchronous)
+            # This ensures next request hits L1 cache (<1ms instead of MongoDB query)
+            with self.l1_lock:
+                self.l1_cache[conversation_id] = deque(
+                    recent_messages,
+                    maxlen=self.max_messages_per_conversation
+                )
+            
+            # ✅ OPTIMIZED: Cache in Redis in background (non-blocking)
             if recent_messages:
                 asyncio.create_task(self._cache_messages_background(conversation_id, recent_messages))
+            
             total_elapsed_ms = (perf_counter() - mongo_start_time) * 1000
-            print(f"_load_recent_from_mongodb (find_one + process) took {total_elapsed_ms:.2f} ms. Found {len(recent_messages)} messages.")
+            logger.debug(f"_load_recent_from_mongodb (find_one + process) took {total_elapsed_ms:.2f} ms. Found {len(recent_messages)} messages.")
             return recent_messages
             
         except Exception as e:
