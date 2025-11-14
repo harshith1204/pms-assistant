@@ -22,6 +22,7 @@ from qdrant_client.models import (
 )
 from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
 from sentence_transformers import SentenceTransformer
+from huggingface_hub import login
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -92,6 +93,19 @@ class RAGTool:
             return
         try:
             self.qdrant_client = QdrantClient(url=mongo.constants.QDRANT_URL, api_key=mongo.constants.QDRANT_API_KEY)
+            
+            # Authenticate with HuggingFace if token is available (required for gated models)
+            hf_token = (
+                os.getenv("HuggingFace_API_KEY")
+            )
+            if hf_token:
+                try:
+                    login(token=hf_token, add_to_git_credential=False)
+                    print("✓ Authenticated with HuggingFace")
+                except Exception as auth_exc:
+                    logger.warning(f"⚠ HuggingFace authentication failed: {auth_exc}")
+            
+            model_name = mongo.constants.EMBEDDING_MODEL
             try:
                 self.embedding_client = SentenceTransformer(mongo.constants.EMBEDDING_MODEL)
             except Exception as e:
