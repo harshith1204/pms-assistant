@@ -1326,8 +1326,6 @@ class PipelineGenerator:
             'goals_count': 'goals',
             'painPoints_count': 'painPoints',
             'successCriteria_count': 'problemInfo.successCriteria',
-            'personaGoals_count': 'persona.goals',
-            'personaPainPoints_count': 'persona.painPoints',
             'linkedCycle_count': 'linkedCycle',
             'linkedModule_count': 'linkedModule',
             'linkedPages_count': 'linkedPages'
@@ -1361,54 +1359,49 @@ class PipelineGenerator:
                             array_size_filters[array_field] = {'$lt': max_size}
 
         # Convert array size filters to $expr for MongoDB
+        # First, ensure $expr exists and wrap any existing content in $and if needed
+        if array_size_filters:
+            if '$expr' not in primary_filters:
+                primary_filters['$expr'] = {}
+            
+            existing_expr = primary_filters['$expr']
+            # If $expr already has content but not wrapped in $and, we need to wrap it
+            if '$and' not in existing_expr and existing_expr:
+                # Wrap existing $expr content in $and array
+                wrapped_expr = existing_expr.copy()
+                primary_filters['$expr'] = {'$and': [wrapped_expr]}
+            elif '$and' not in primary_filters['$expr']:
+                primary_filters['$expr']['$and'] = []
+        
+        # Now add all array size conditions
         for array_field, size_condition in array_size_filters.items():
             if '$size' in size_condition:
                 # Exact size match
                 size_val = size_condition['$size']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$eq': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$gt' in size_condition:
                 # Greater than
                 size_val = size_condition['$gt']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$gt': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$gte' in size_condition:
                 # Greater than or equal
                 size_val = size_condition['$gte']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$gte': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$lt' in size_condition:
                 # Less than
                 size_val = size_condition['$lt']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$lt': [{'$size': f'${array_field}'}, size_val]
                 })
             elif '$lte' in size_condition:
                 # Less than or equal
                 size_val = size_condition['$lte']
-                if '$expr' not in primary_filters:
-                    primary_filters['$expr'] = {}
-                if '$and' not in primary_filters['$expr']:
-                    primary_filters['$expr']['$and'] = []
                 primary_filters['$expr']['$and'].append({
                     '$lte': [{'$size': f'${array_field}'}, size_val]
                 })
@@ -1425,19 +1418,6 @@ class PipelineGenerator:
         # $text for full-text search
         if '$text' in filters:
             primary_filters['$text'] = {'$search': filters['$text']}
-
-        # Geospatial operators ($near, $geoWithin)
-        if '$near' in filters:
-            # Assume coordinates are provided as [lng, lat]
-            coords = filters['$near']
-            if isinstance(coords, list) and len(coords) == 2:
-                # For now, assume a location field exists
-                advanced_operators['location'] = {'$near': {'$geometry': {'type': 'Point', 'coordinates': coords}}}
-
-        if '$geoWithin' in filters:
-            # Assume geometry is provided
-            geometry = filters['$geoWithin']
-            advanced_operators['location'] = {'$geoWithin': geometry}
 
         # Add advanced operators to primary filters
         for field, operator in advanced_operators.items():

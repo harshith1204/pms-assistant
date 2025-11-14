@@ -624,7 +624,6 @@ class LLMIntentParser:
             "functionalRequirements_count", "nonFunctionalRequirements_count",
             "dependencies_count", "risks_count", "workItems_count", "userStories_count",
             "goals_count", "painPoints_count", "successCriteria_count",
-            "personaGoals_count", "personaPainPoints_count",
             "linkedCycle_count", "linkedModule_count", "linkedPages_count",
             # Advanced MongoDB operator filters (CRITICAL - must be in known_filter_keys)
             "$text",  # Full-text search

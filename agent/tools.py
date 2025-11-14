@@ -812,6 +812,16 @@ async def mongo_query(query: str, show_all: bool = False) -> str:
             except Exception:
                 parsed = rows
 
+            # Handle count results specially
+            if isinstance(parsed, list) and len(parsed) > 0:
+                first_item = parsed[0]
+                if isinstance(first_item, dict) and "total" in first_item and len(first_item) == 1:
+                    # This is a count result
+                    count = first_item["total"]
+                    response += f"📊 RESULT:\n"
+                    response += f"Total count: {count}\n\n"
+                    return response
+
             # Handle the specific MongoDB response format
             if isinstance(parsed, list) and len(parsed) > 0:
                 # Check if first element is a string (like "Found X documents...")

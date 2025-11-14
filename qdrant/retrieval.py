@@ -126,9 +126,12 @@ class ChunkAwareRetriever:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
 
         # Business-level scoping
+        # Note: business_id in Qdrant is stored as normalized UUID string from MongoDB Binary
+        # We need to normalize it the same way as insertdocs.py does
         business_uuid = BUSINESS_UUID()
         if business_uuid:
-            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
+            normalized_business_id = self._normalize_business_id(business_uuid)
+            must_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=normalized_business_id)))
 
         # Member-level project RBAC scoping
         # ✅ OPTIMIZED: Cache member projects at request start
@@ -396,7 +399,8 @@ class ChunkAwareRetriever:
                 conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
             
             if business_uuid:
-                conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
+                normalized_business_id = self._normalize_business_id(business_uuid)
+                conditions.append(FieldCondition(key="business_id", match=MatchValue(value=normalized_business_id)))
             
             # Add member project filter if applicable
             if member_projects:
@@ -467,7 +471,16 @@ class ChunkAwareRetriever:
                     if content_type:
                         filter_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
                     if business_uuid:
-                        filter_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=business_uuid)))
+                        normalized_business_id = self._normalize_business_id(business_uuid)
+                        filter_conditions.append(FieldCondition(key="business_id", match=MatchValue(value=normalized_business_id)))
+                    
+                    # Add member project filter if applicable (RBAC compliance)
+                    if member_projects:
+                        project_content_types = {"page", "work_item", "cycle", "module", "epic", "feature", "user_story"}
+                        if content_type is None or content_type in project_content_types:
+                            filter_conditions.append(FieldCondition(key="project_id", match=MatchAny(any=member_projects)))
+                        elif content_type == "project":
+                            filter_conditions.append(FieldCondition(key="mongo_id", match=MatchAny(any=member_projects)))
                     
                     scroll_result = self.qdrant_client.scroll(
                         collection_name=collection_name,
@@ -726,6 +739,27 @@ class ChunkAwareRetriever:
         elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
             return str(uuid.UUID(bytes=mongo_id))
         return str(mongo_id)
+    
+    def _normalize_business_id(self, business_uuid: str) -> str:
+        """Normalize business_id UUID string the same way it's stored in Qdrant.
+        
+        When storing in Qdrant, business_id comes from MongoDB Binary UUID which is
+        normalized using normalize_mongo_id(). This function replicates that normalization
+        for filtering purposes.
+        
+        Args:
+            business_uuid: UUID string (e.g., "1eedcb26-d23a-688a-bd63-579d19dab229")
+            
+        Returns:
+            Normalized UUID string as stored in Qdrant
+        """
+        try:
+            from mongo.constants import uuid_str_to_mongo_binary
+            business_bin = uuid_str_to_mongo_binary(business_uuid)
+            return str(uuid.UUID(bytes=business_bin))
+        except Exception as e:
+            logger.warning(f"Failed to normalize business_id '{business_uuid}': {e}, using as-is")
+            return business_uuid
 
     async def _get_member_projects(self, member_uuid: str, business_uuid: str) -> List[str]:
         """
@@ -744,22 +778,47 @@ class ChunkAwareRetriever:
             from mongo.constants import uuid_str_to_mongo_binary
 
             # Query MongoDB to get projects the member is associated with
+            # memberId is the staff ID (staff identifier)
+            member_bin = uuid_str_to_mongo_binary(member_uuid)
             pipeline = [
                 {
                     "$match": {
-                        "staff._id": uuid_str_to_mongo_binary(member_uuid)
-                    }
-                },
-                {
-                    "$project": {
-                        "project_id": "$project._id"
+                        "$or": [
+                            {"memberId": member_bin},
+                            {"staff._id": member_bin}
+                        ]
                     }
                 }
             ]
 
-            # Add business scoping if available
+            # Add business scoping if available - need to join with project collection first
             if business_uuid:
-                pipeline[0]["$match"]["project.business._id"] = uuid_str_to_mongo_binary(business_uuid)
+                biz_bin = uuid_str_to_mongo_binary(business_uuid)
+                pipeline.extend([
+                    {
+                        "$lookup": {
+                            "from": "project",
+                            "localField": "project._id",
+                            "foreignField": "_id",
+                            "as": "__biz_proj__"
+                        }
+                    },
+                    {
+                        "$match": {
+                            "__biz_proj__.business._id": biz_bin
+                        }
+                    },
+                    {
+                        "$unset": "__biz_proj__"
+                    }
+                ])
+
+            # Project the project_id
+            pipeline.append({
+                "$project": {
+                    "project_id": "$project._id"
+                }
+            })
 
             results = await direct_mongo_client.aggregate("ProjectManagement", "members", pipeline)
 

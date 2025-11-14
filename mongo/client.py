@@ -155,13 +155,21 @@ class DirectMongoClient:
                                     "as": "__mem__",
                                 }},
                                 # Ensure at least one membership document for this member
-                                {"$match": {"__mem__": {"$elemMatch": {"staff._id": mem_bin}}}},
+                                # memberId is the staff ID (staff identifier)
+                                {"$match": {"__mem__": {"$elemMatch": {"$or": [
+                                    {"memberId": mem_bin},
+                                    {"staff._id": mem_bin}
+                                ]}}}},
                                 {"$unset": "__mem__"},
                             ]
 
                         if collection == "members":
                             # Only allow viewing own memberships
-                            injected_stages.append({"$match": {"staff._id": mem_bin}})
+                            # memberId is the staff ID (staff identifier)
+                            injected_stages.append({"$match": {"$or": [
+                                {"memberId": mem_bin},
+                                {"staff._id": mem_bin}
+                            ]}})
                         elif collection == "project":
                             injected_stages.extend(_membership_join("_id"))
                         elif collection in ("workItem", "cycle", "module", "page"):
