@@ -160,30 +160,36 @@ class RedisConversationMemory:
             self.l1_cache[conversation_id] = self.l1_cache[conversation_id]
 
         await self._ensure_connected()
-        
+
         if self.use_fallback:
             # Use in-memory fallback
             self.fallback_conversations[conversation_id].append(message)
             return
+
+        # ✅ OPTIMIZATION: Write to Redis in background (non-blocking)
+        # L1 cache is already updated, so reads are fast
+        # Redis write happens async without blocking the request
+        asyncio.create_task(self._add_message_to_redis(conversation_id, message))
+
+    async def _add_message_to_redis(self, conversation_id: str, message: BaseMessage):
+        """Background task to write message to Redis using pipeline"""
         redis_start_time = perf_counter()
         try:
             key = self._get_conversation_key(conversation_id)
             serialized = self._serialize_message(message)
-            
-            # Add message to Redis list
-            await self.redis_client.rpush(key, serialized)
-            
-            # Trim list to max size (keep only recent messages)
-            await self.redis_client.ltrim(key, -self.max_messages_per_conversation, -1)
-            
-            # Set TTL (24 hours)
-            await self.redis_client.expire(key, self.ttl_seconds)
+
+            # Use pipeline to batch all Redis commands (single round trip)
+            async with self.redis_client.pipeline() as pipe:
+                pipe.rpush(key, serialized)
+                pipe.ltrim(key, -self.max_messages_per_conversation, -1)
+                pipe.expire(key, self.ttl_seconds)
+                await pipe.execute()
+
             elapsed_ms = (perf_counter() - redis_start_time) * 1000
-            print(f"Redis add_message (rpush/ltrim/expire) took {elapsed_ms:.2f} ms")
+            print(f"Redis add_message (background pipeline) took {elapsed_ms:.2f} ms")
         except RedisError as e:
-            logger.error(f"Redis error in add_message, falling back to memory: {e}")
-            self.use_fallback = True
-            self.fallback_conversations[conversation_id].append(message)
+            logger.error(f"Redis error in background add_message: {e}")
+            # Don't set use_fallback here - L1 cache is already updated
 
     async def get_conversation_history(self, conversation_id: str) -> List[BaseMessage]:
         """Get the conversation history for a given conversation ID from Redis
