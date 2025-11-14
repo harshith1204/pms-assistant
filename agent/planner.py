@@ -54,10 +54,7 @@ class QueryIntent:
     fetch_one: bool  # Whether the user wants a single specific item
     # Advanced aggregation fields
     facet_fields: Optional[List[str]] = None  # Fields for $facet operation
-    bucket_field: Optional[str] = None  # Field for $bucket operation
-    bucket_boundaries: Optional[List[Any]] = None  # Boundaries for $bucket
-    sort_by_field: Optional[str] = None  # Field for $sortByCount
-    new_root: Optional[str] = None  # Expression for $replaceRoot
+    bucket_field: Optional[str] = None  # Field for $bucketAuto operation
     union_collection: Optional[str] = None  # Collection for $unionWith
     graph_from: Optional[str] = None  # From collection for $graphLookup
     graph_start: Optional[str] = None  # Start expression for $graphLookup

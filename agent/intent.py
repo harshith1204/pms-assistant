@@ -262,36 +262,34 @@ class LLMIntentParser:
             "- workLogs: array of work log entries with user, hours, minutes, description, loggedAt (for workItem)\n\n"
             "- state_name: Backlog|New|Started|Unstarted|Completed (for epic)\n"
             "- priority: URGENT|HIGH|MEDIUM|LOW (for epic)\n\n"
-            "## ARRAY SIZE FILTERING (CRITICAL)\n"
-            "Support filtering by array field sizes using natural language:\n"
-            "- 'multiple assignees' / 'more than one assignee' → assignee_count > 1\n"
-            "- 'with assignees' / 'assigned' → assignee_count >= 1\n"
-            "- 'unassigned' / 'no assignees' → assignee_count = 0\n"
-            "- 'more than N assignees' → assignee_count > N\n"
-            "- 'exactly N assignees' → assignee_count = N\n"
-            "- 'at least N assignees' → assignee_count >= N\n"
-            "- Same patterns work for: labels, customProperties, functionalRequirements, dependencies, risks, goals, painPoints, etc.\n"
-            "- Array size filters use keys like: assignee_count, label_count, customProperties_count, etc.\n\n"
-            "## ADVANCED MONGODB OPERATORS\n"
-            "Support for complex query operators:\n"
-            "- 'items with assignees matching X' → $elemMatch on assignee array\n"
-            "- 'items with all labels in [A,B,C]' → $all operator\n"
-            "- 'items with string fields' → $type operator for type checking\n"
-            "- 'items with even/odd IDs' → $mod operator for modulo\n"
-            "- 'items containing text X' → $text operator for full-text search\n"
-            "- 'items near location' → $near for geospatial queries\n"
-            "- 'items within area' → $geoWithin for geospatial containment\n"
-            "- Use natural language to express these complex conditions\n\n"
+            "## ARRAY SIZE FILTERING (CRITICAL - MANDATORY DETECTION)\n"
+            "YOU MUST ALWAYS DETECT array field quantity patterns and add the appropriate _count filter.\n"
+            "This is NOT optional - if the user mentions array field quantities, you MUST add the filter.\n\n"
+            "PATTERNS TO DETECT (MANDATORY):\n"
+            "- 'multiple X' / 'more than one X' → MUST add: X_count: \">1\"\n"
+            "- 'more than N X' → MUST add: X_count: \">N\" (where N is the number)\n"
+            "- 'at least N X' → MUST add: X_count: \">=N\"\n"
+            "- 'exactly N X' / 'N X' (when referring to count) → MUST add: X_count: \"N\"\n"
+            "- 'no X' / 'unassigned' / 'without X' → MUST add: X_count: \"0\"\n"
+            "- 'with X' / 'has X' (when X is an array field) → MUST add: X_count: \">=1\"\n\n"
+            "ARRAY FIELD MAPPINGS (USE THESE EXACT KEYS):\n"
+            "- assignee/assignees → assignee_count\n"
+            "- label/labels → label_count\n"
+            "- dependency/dependencies → dependencies_count (for features/epics)\n"
+            "- custom property/properties → customProperties_count (for epics)\n"
+            "- risk/risks → risks_count (for features)\n"
+            "- goal/goals → goals_count (for features)\n"
+            "- pain point/points → painPoints_count (for features)\n"
+            "- requirement/requirements → functionalRequirements_count (for features)\n"
+            "- workItems → workItems_count (for features)\n"
+            "- userStories → userStories_count (for features)\n\n"
             "## ADVANCED AGGREGATION STAGES\n"
             "Support for complex aggregation operations:\n"
             "- 'break down by priority and status' → $facet for multiple aggregations\n"
-            "- 'group by priority ranges' → $bucket for custom range grouping\n"
             "- 'auto-group by priority' → $bucketAuto for automatic range grouping\n"
-            "- 'sort by frequency' → $sortByCount for counting and sorting\n"
-            "- 'flatten nested results' → $replaceRoot to replace document root\n"
             "- 'combine with other collection' → $unionWith to merge collections\n"
             "- 'graph traversal queries' → $graphLookup for hierarchical data\n"
-            "- Express complex analytical queries using these stages\n\n"
+            "- Use natural language to express these complex analytical queries\n\n"
             "## TIME-SERIES ANALYSIS\n"
             "Support for time-based analytical operations:\n"
             "- 'sliding window of 7 days' → $setWindowFields for moving averages\n"
@@ -380,9 +378,6 @@ class LLMIntentParser:
             '  "fetch_one": false,\n'
             '  "facet_fields": null,\n'
             '  "bucket_field": null,\n'
-            '  "bucket_boundaries": null,\n'
-            '  "sort_by_field": null,\n'
-            '  "new_root": null,\n'
             '  "union_collection": null,\n'
             '  "graph_from": null,\n'
             '  "graph_start": null,\n'
@@ -433,28 +428,40 @@ class LLMIntentParser:
             "- 'find one project named X' → {\"primary_entity\": \"project\", \"filters\": {\"name\": \"X\"}, \"aggregations\": [], \"limit\": 1, \"fetch_one\": true}\n"
             "- 'show work items with estimates' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"estimate\", \"estimateSystem\"], \"aggregations\": []}\n"
             "- 'show work logs for tasks' → {\"primary_entity\": \"workItem\", \"projections\": [\"displayBugNo\", \"title\", \"workLogs\"], \"aggregations\": []}\n\n"
-            "## ARRAY SIZE EXAMPLES\n"
-            "- 'how many work items have multiple assignees' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \">1\"}, \"aggregations\": [\"count\"]}\n"
+            "## ARRAY SIZE EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
+            "- 'how many work items have multiple assignees?' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \">1\"}, \"aggregations\": [\"count\"]}\n"
             "- 'show work items with more than 2 assignees' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \">2\"}, \"aggregations\": []}\n"
+            "- 'work items with at least 2 labels' → {\"primary_entity\": \"workItem\", \"filters\": {\"label_count\": \">=2\"}, \"aggregations\": []}\n"
+            "- 'find work items with exactly 3 labels' → {\"primary_entity\": \"workItem\", \"filters\": {\"label_count\": \"3\"}, \"aggregations\": []}\n"
+            "- 'unassigned work items' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \"0\"}, \"aggregations\": []}\n"
+            "- 'work items with no assignees' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \"0\"}, \"aggregations\": []}\n"
+            "- 'work items with labels' → {\"primary_entity\": \"workItem\", \"filters\": {\"label_count\": \">=1\"}, \"aggregations\": []}\n"
+            "- 'work items with 2 assignees' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_count\": \"2\"}, \"aggregations\": []}\n"
             "- 'find epics with custom properties' → {\"primary_entity\": \"epic\", \"filters\": {\"customProperties_count\": \">=1\"}, \"aggregations\": []}\n"
+            "- 'features with multiple dependencies' → {\"primary_entity\": \"features\", \"filters\": {\"dependencies_count\": \">1\"}, \"aggregations\": []}\n"
             "- 'count features with multiple dependencies' → {\"primary_entity\": \"features\", \"filters\": {\"dependencies_count\": \">1\"}, \"aggregations\": [\"count\"]}\n"
             "- 'show user stories with multiple labels' → {\"primary_entity\": \"userStory\", \"filters\": {\"label_count\": \">1\"}, \"aggregations\": []}\n"
             "- 'find modules with no assignees' → {\"primary_entity\": \"module\", \"filters\": {\"assignee_count\": \"0\"}, \"aggregations\": []}\n"
             "- 'pages linked to exactly 2 cycles' → {\"primary_entity\": \"page\", \"filters\": {\"linkedCycle_count\": \"2\"}, \"aggregations\": []}\n"
             "- 'epics with at least 3 custom properties' → {\"primary_entity\": \"epic\", \"filters\": {\"customProperties_count\": \">=3\"}, \"aggregations\": []}\n\n"
-            "## ADVANCED OPERATOR EXAMPLES\n"
-            "- 'work items with assignees named John' → {\"primary_entity\": \"workItem\", \"filters\": {\"assignee_elemMatch\": {\"name\": \"John\"}}, \"aggregations\": []}\n"
-            "- 'items with all labels bug,urgent' → {\"primary_entity\": \"workItem\", \"filters\": {\"label_all\": [\"bug\", \"urgent\"]}, \"aggregations\": []}\n"
-            "- 'projects with string descriptions' → {\"primary_entity\": \"project\", \"filters\": {\"description_type\": \"string\"}, \"aggregations\": []}\n"
-            "- 'items with even numbered IDs' → {\"primary_entity\": \"workItem\", \"filters\": {\"_id_mod\": [2, 0]}, \"aggregations\": []}\n"
-            "- 'pages containing authentication' → {\"primary_entity\": \"page\", \"filters\": {\"$text\": \"authentication\"}, \"aggregations\": []}\n\n"
-            "## ADVANCED AGGREGATION EXAMPLES\n"
-            "- 'break down work items by priority and status' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"facet\"], \"facet_fields\": [\"priority\", \"status\"]}\n"
-            "- 'group work items by priority ranges' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"bucket\"], \"bucket_field\": \"priority\", \"bucket_boundaries\": [\"LOW\", \"MEDIUM\", \"HIGH\"]}\n"
-            "- 'sort assignees by work item count' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"sortByCount\"], \"sort_by_field\": \"assignee.name\"}\n"
-            "- 'flatten project hierarchy' → {\"primary_entity\": \"project\", \"aggregations\": [\"replaceRoot\"], \"new_root\": \"$project\"}\n"
-            "- 'combine work items with user stories' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"unionWith\"], \"union_collection\": \"userStory\"}\n"
-            "- 'find project dependencies' → {\"primary_entity\": \"project\", \"aggregations\": [\"graphLookup\"], \"graph_from\": \"project\", \"graph_start\": \"$_id\", \"graph_connect_from\": \"_id\", \"graph_connect_to\": \"depends_on\"}\n\n"
+            "CRITICAL: When you see phrases like 'multiple', 'more than', 'at least', 'exactly', 'no', 'unassigned', 'with X', 'has X' combined with array field names (assignees, labels, dependencies, etc.), you MUST add the corresponding _count filter.\n\n"
+            "## ADVANCED OPERATOR EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
+            "- Query: 'work items with assignees matching role Developer'\n"
+            "  → filters: {\"assignee_elemMatch\": {\"role\": \"Developer\"}}\n"
+            "- Query: 'work items with assignees matching name John and role Developer'\n"
+            "  → filters: {\"assignee_elemMatch\": {\"name\": \"John\", \"role\": \"Developer\"}}\n\n"
+            "CRITICAL: When users mention 'matching X', 'assignees matching', etc., you MUST add the appropriate $elemMatch filter.\n\n"
+            "## ADVANCED AGGREGATION EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
+            "- Query: 'break down work items by priority and status'\n"
+            "  → aggregations: [\"facet\"], facet_fields: [\"priority\", \"status\"]\n"
+            "- Query: 'auto-group work items by estimate'\n"
+            "  → aggregations: [\"bucketAuto\"], bucket_field: \"estimate\"\n"
+            "- Query: 'combine work items with user stories'\n"
+            "  → aggregations: [\"unionWith\"], union_collection: \"userStory\"\n"
+            "- Query: 'find project dependencies'\n"
+            "  → aggregations: [\"graphLookup\"], graph_from: \"project\", graph_start: \"$_id\", graph_connect_from: \"_id\", graph_connect_to: \"dependsOn\"\n\n"
+            "CRITICAL: When users mention 'break down by', 'auto-group', 'combine with', 'graph traversal', etc., you MUST add the appropriate aggregation.\n"
+            "Do NOT skip this - these aggregations require special handling that cannot be achieved with basic operations.\n\n"
             "## TIME-SERIES EXAMPLES\n"
             "- '7-day rolling average of work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"timeWindow\"], \"window_field\": \"createdTimeStamp\", \"window_size\": \"7d\", \"window_unit\": \"day\"}\n"
             "- 'trend analysis for last month' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"trend\"], \"trend_field\": \"createdTimeStamp\", \"trend_period\": \"month\", \"trend_metric\": \"count\"}\n"
@@ -612,12 +619,32 @@ class LLMIntentParser:
             "defaultAssignee_name", "defaultAsignee_name", "staff_name",
             # members specific
             "role", "type", "joiningDate", "joiningDate_from", "joiningDate_to",
+            # Array size filters (CRITICAL - must be in known_filter_keys)
+            "assignee_count", "label_count", "customProperties_count",
+            "functionalRequirements_count", "nonFunctionalRequirements_count",
+            "dependencies_count", "risks_count", "workItems_count", "userStories_count",
+            "goals_count", "painPoints_count", "successCriteria_count",
+            "personaGoals_count", "personaPainPoints_count",
+            "linkedCycle_count", "linkedModule_count", "linkedPages_count",
+            # Advanced MongoDB operator filters (CRITICAL - must be in known_filter_keys)
+            "$text",  # Full-text search
+            # Note: _elemMatch is handled dynamically via suffix matching
             #feature_specific
 
         }
-
+        
         # Also accept any allow-listed primary fields directly
         known_filter_keys |= allowed_primary_fields
+        
+        # Also accept $elemMatch operator filters with suffix (_elemMatch)
+        # These are dynamically detected based on field names + suffix
+        for key in list(raw_filters.keys()):
+            if key.endswith('_elemMatch'):
+                # Extract base field name
+                base_field = key[:-len('_elemMatch')]
+                # Add to known_filter_keys if base field is valid
+                if base_field in allowed_primary_fields or base_field in {"assignee", "label", "description", "_id"}:
+                    known_filter_keys.add(key)
         # Add dynamic range keys for each date-like field
         for f in date_like_fields:
             known_filter_keys.add(f + "_from")
@@ -650,6 +677,15 @@ class LLMIntentParser:
                 filters[k] = v.strip()
             elif isinstance(v, str) and k in {"title", "name", "displayBugNo", "projectDisplayId", "email"}:
                 filters[k] = v.strip()
+            elif k.endswith("_count") and isinstance(v, (str, int)):
+                # Array size filters: keep as-is (values like ">1", ">=2", "0", "3", etc.)
+                filters[k] = str(v).strip() if isinstance(v, str) else str(v)
+            elif k == "$text" and isinstance(v, str):
+                # Full-text search: keep as-is
+                filters[k] = v.strip()
+            elif k.endswith("_elemMatch") and isinstance(v, dict):
+                # $elemMatch operator filters: keep as-is (values are objects)
+                filters[k] = v
             else:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
@@ -701,12 +737,103 @@ class LLMIntentParser:
             if "state" not in filters and "state_not" not in filters:
                 filters["state_not"] = ["Completed", "Verified"]
 
+        # 3) Advanced feature detection from query text (heuristic fallback)
+        
+        
+        # Graph lookup detection
+        if re.search(r"\bdependenc(?:y|ies)\b.*\bgraph\b|\bgraph\b.*\bdependenc(?:y|ies)\b|\bdependency\s+chain\b|\bdepends?\s+on\b.*\bgraph\b", oq_text):
+            if "graphLookup" not in (data.get("aggregations") or []):
+                aggregations = data.get("aggregations") or []
+                aggregations.append("graphLookup")
+                data["aggregations"] = aggregations
+            # Infer graph connection fields if not provided
+            if not data.get("graph_connect_to"):
+                if "depends" in oq_text or "dependency" in oq_text:
+                    data["graph_connect_to"] = "dependsOn"
+                elif primary == "project":
+                    data["graph_connect_to"] = "parentProjectId"
+        
+        # Time window detection (rolling/moving averages)
+        if re.search(r"\b(\d+)[\s-]?day\s+rolling\s+averages?\b|\brolling\s+averages?\s+.*\b(\d+)\s+days?\b|\bmoving\s+averages?\s+.*\b(\d+)\s+days?\b|\b(\d+)[\s-]?day\s+window\b", oq_text):
+            if "timeWindow" not in (data.get("aggregations") or []):
+                aggregations = data.get("aggregations") or []
+                aggregations.append("timeWindow")
+                data["aggregations"] = aggregations
+            # Extract window size
+            window_match = re.search(r"\b(\d+)[\s-]?day", oq_text)
+            if window_match and not data.get("window_size"):
+                data["window_size"] = f"{window_match.group(1)}d"
+            # Infer window field from context
+            if not data.get("window_field"):
+                if "created" in oq_text or "creation" in oq_text:
+                    data["window_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
+                elif "updated" in oq_text or "modified" in oq_text:
+                    data["window_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
+        
+        # Trend detection
+        if re.search(r"\btrends?\b|\bmonthly\s+trends?\b|\bweekly\s+trends?\b|\bquarterly\s+trends?\b|\bperiod\s+over\s+period\b", oq_text):
+            if "trend" not in (data.get("aggregations") or []):
+                aggregations = data.get("aggregations") or []
+                aggregations.append("trend")
+                data["aggregations"] = aggregations
+            # Infer trend period
+            if not data.get("trend_period"):
+                if re.search(r"\bmonthly\b|\bmonth\b", oq_text):
+                    data["trend_period"] = "month"
+                elif re.search(r"\bweekly\b|\bweek\b", oq_text):
+                    data["trend_period"] = "week"
+                elif re.search(r"\bquarterly\b|\bquarter\b", oq_text):
+                    data["trend_period"] = "quarter"
+            # Infer trend field
+            if not data.get("trend_field"):
+                if "created" in oq_text or "creation" in oq_text:
+                    data["trend_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
+                elif "updated" in oq_text or "modified" in oq_text:
+                    data["trend_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
+        
+        # Anomaly detection
+        if re.search(r"\banomal(?:y|ies)\b|\bunusual\b|\boutlier\b|\bspike\b|\bdetect.*\banomal\b", oq_text):
+            if "anomaly" not in (data.get("aggregations") or []):
+                aggregations = data.get("aggregations") or []
+                aggregations.append("anomaly")
+                data["aggregations"] = aggregations
+            # Infer anomaly field
+            if not data.get("anomaly_field"):
+                if "created" in oq_text or "creation" in oq_text:
+                    data["anomaly_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
+                elif "updated" in oq_text or "modified" in oq_text:
+                    data["anomaly_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
+                elif "completion" in oq_text:
+                    data["anomaly_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
+        
+        # Forecasting detection
+        if re.search(r"\bforecast\b|\bpredict\b|\bprojection\b|\bprojected\b|\bnext\s+\d+\s+days?\b|\bnext\s+week\b|\bnext\s+month\b", oq_text):
+            if "forecast" not in (data.get("aggregations") or []):
+                aggregations = data.get("aggregations") or []
+                aggregations.append("forecast")
+                data["aggregations"] = aggregations
+            # Extract forecast periods
+            forecast_match = re.search(r"\bnext\s+(\d+)\s+days?\b|\b(\d+)\s+days?\s+ahead\b", oq_text)
+            if forecast_match and not data.get("forecast_periods"):
+                periods = forecast_match.group(1) or forecast_match.group(2)
+                if periods:
+                    data["forecast_periods"] = int(periods)
+            elif re.search(r"\bnext\s+week\b", oq_text) and not data.get("forecast_periods"):
+                data["forecast_periods"] = 7
+            elif re.search(r"\bnext\s+month\b", oq_text) and not data.get("forecast_periods"):
+                data["forecast_periods"] = 30
+            # Infer forecast field
+            if not data.get("forecast_field"):
+                if "created" in oq_text or "creation" in oq_text:
+                    data["forecast_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
+                elif "updated" in oq_text or "modified" in oq_text:
+                    data["forecast_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
 
         # Aggregations - include new advanced aggregation types
         allowed_aggs = {
             "count", "group", "summary",
             "graphLookup", "timeWindow", "trend", "anomaly", "forecast",
-            "facet", "bucket", "bucketAuto", "sortByCount", "replaceRoot", "unionWith"
+            "facet", "bucketAuto", "unionWith"
         }
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
@@ -888,9 +1015,6 @@ class LLMIntentParser:
         # Extract advanced aggregation fields
         facet_fields = data.get("facet_fields")
         bucket_field = data.get("bucket_field")
-        bucket_boundaries = data.get("bucket_boundaries")
-        sort_by_field = data.get("sort_by_field")
-        new_root = data.get("new_root")
         union_collection = data.get("union_collection")
         
         # Graph lookup fields
@@ -927,9 +1051,6 @@ class LLMIntentParser:
             fetch_one=fetch_one,
             facet_fields=facet_fields if facet_fields else None,
             bucket_field=bucket_field if bucket_field else None,
-            bucket_boundaries=bucket_boundaries if bucket_boundaries else None,
-            sort_by_field=sort_by_field if sort_by_field else None,
-            new_root=new_root if new_root else None,
             union_collection=union_collection if union_collection else None,
             graph_from=graph_from if graph_from else None,
             graph_start=graph_start if graph_start else None,
