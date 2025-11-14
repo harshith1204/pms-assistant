@@ -2,16 +2,35 @@ import os
 import uuid
 from bson.binary import Binary, UuidRepresentation
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 # Database configuration
 DATABASE_NAME = os.getenv("MONGODB_DATABASE", "ProjectManagement")
-MONGODB_CONNECTION_STRING = os.getenv(
-    "MONGODB_URI",
-    "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0",
-)
+_DEFAULT_MONGODB_URI = "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0"
+
+def _resolve_mongo_uri() -> str:
+    """Resolve the MongoDB connection string with sane fallbacks."""
+    candidates = [
+        os.getenv("MONGODB_URI"),
+        os.getenv("MONGODB_CONNECTION_STRING"),
+    ]
+
+    for candidate in candidates:
+        if candidate and candidate.strip():
+            return candidate.strip()
+
+    if any(candidate == "" for candidate in candidates):
+        logger.warning("MONGODB connection string env var was empty; falling back to default URI.")
+
+    return _DEFAULT_MONGODB_URI
+
+MONGODB_CONNECTION_STRING = _resolve_mongo_uri()
 
 # Qdrant configuration
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
