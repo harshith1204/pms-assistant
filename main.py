@@ -288,15 +288,24 @@ async def get_conversation(conversation_id: str):
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.get("/conversations/{user_id}/{business_id}")
-async def get_conversation(user_id: str, business_id: str):
+async def get_conversations_by_ids(user_id: str, business_id: str):
     """Get all conversations' messages for a given member_id and business_id."""
     try:
+        from mongo.constants import uuid_str_to_mongo_binary
+        
         coll = await conversation_mongo_client.get_collection(
             CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
         )
 
-        # Find all matching conversations
-        cursor = coll.find({"memberId": user_id, "businessId": business_id})
+        # Convert string UUIDs to Binary format for MongoDB query
+        try:
+            member_binary = uuid_str_to_mongo_binary(user_id)
+            business_binary = uuid_str_to_mongo_binary(business_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid UUID format: {e}")
+
+        # Find all matching conversations using Binary IDs
+        cursor = coll.find({"memberId": member_binary, "businessId": business_binary})
         docs = await cursor.to_list(length=None)
 
         if not docs:
