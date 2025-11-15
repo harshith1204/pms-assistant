@@ -21,7 +21,8 @@ from qdrant_client.models import (
     SparseVector,
 )
 from embedding.service_client import EmbeddingServiceClient, EmbeddingServiceError
-
+from sentence_transformers import SentenceTransformer
+from huggingface_hub import login
 
 # Configure logging
 logger = logging.getLogger(__name__)
