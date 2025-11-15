@@ -104,3 +104,26 @@ def uuid_str_to_mongo_binary(uuid_str: str) -> Binary:
     except ValueError as e:
         raise ValueError(f"Invalid UUID format '{uuid_str}': {e}") from e
 
+
+def mongo_binary_to_uuid_str(binary: Binary) -> str:
+    """Convert MongoDB Binary UUID (subtype 3) back to UUID string.
+
+    This is the reverse of uuid_str_to_mongo_binary. The returned UUID string
+    can be used to query MongoDB when converted back using uuid_str_to_mongo_binary.
+    
+    Note: Due to JAVA_LEGACY representation, the returned UUID string may differ
+    from the original UUID string, but it will convert back to the same Binary.
+    """
+    if not isinstance(binary, Binary):
+        raise ValueError("binary must be a Binary object")
+    
+    if binary.subtype != 3 or len(binary) != 16:
+        raise ValueError(f"Binary must be subtype 3 (UUID) with 16 bytes, got subtype {binary.subtype} with {len(binary)} bytes")
+    
+    try:
+        # Use Binary.as_uuid() with JAVA_LEGACY representation to properly convert back
+        uuid_obj = Binary.as_uuid(uuid_representation=UuidRepresentation.JAVA_LEGACY)
+        return str(uuid_obj)
+    except Exception as e:
+        raise ValueError(f"Failed to convert Binary to UUID: {e}") from e
+

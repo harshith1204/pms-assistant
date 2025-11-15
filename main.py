@@ -222,11 +222,45 @@ async def health_check():
 
 
 @app.get("/conversations")
-async def list_conversations():
-    """List conversation ids and titles from Mongo."""
+async def list_conversations(user_id: Optional[str] = None, business_id: Optional[str] = None):
+    """List conversation ids and titles from Mongo.
+    
+    Query parameters:
+    - user_id: Optional member/user ID to filter conversations
+    - business_id: Optional business ID to filter conversations
+    """
     try:
+        from bson.binary import Binary
+        from mongo.constants import mongo_binary_to_uuid_str, uuid_str_to_mongo_binary
+        
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
-        cursor = coll.find({}, {"conversationId": 1, "messages": {"$slice": -1}, "updatedAt": 1}).sort("updatedAt", -1).limit(100)
+        
+        # Build query filter
+        query_filter = {}
+        
+        # Convert string UUIDs to Binary format for filtering
+        if user_id:
+            try:
+                member_binary = uuid_str_to_mongo_binary(user_id)
+                query_filter["memberId"] = member_binary
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid user_id UUID format: {e}")
+        
+        if business_id:
+            try:
+                business_binary = uuid_str_to_mongo_binary(business_id)
+                query_filter["businessId"] = business_binary
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid business_id UUID format: {e}")
+        
+        cursor = coll.find(query_filter, {
+            "conversationId": 1, 
+            "messages": {"$slice": -1}, 
+            "updatedAt": 1,
+            "memberId": 1,
+            "businessId": 1
+        }).sort("updatedAt", -1).limit(100)
+        
         results = []
         async for doc in cursor:
             conv_id = doc.get("conversationId")
@@ -236,12 +270,35 @@ async def list_conversations():
                 content = str(last.get("content") or "").strip()
                 if content:
                     title = content[:60]
+            
+            # Convert Binary IDs to UUID strings
+            member_id = None
+            business_id_str = None
+            
+            member_binary = doc.get("memberId")
+            if isinstance(member_binary, Binary):
+                try:
+                    member_id = mongo_binary_to_uuid_str(member_binary)
+                except Exception:
+                    pass
+            
+            business_binary = doc.get("businessId")
+            if isinstance(business_binary, Binary):
+                try:
+                    business_id_str = mongo_binary_to_uuid_str(business_binary)
+                except Exception:
+                    pass
+            
             results.append({
                 "id": conv_id,
                 "title": title or f"Conversation {conv_id}",
                 "updatedAt": doc.get("updatedAt"),
+                "memberId": member_id,
+                "businessId": business_id_str,
             })
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
