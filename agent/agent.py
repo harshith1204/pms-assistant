@@ -342,8 +342,10 @@ class AgentExecutor:
 
             try:
                 result = await actual_tool.ainvoke(tool_call["args"])
+                success = True
             except Exception as tool_exc:
                 result = f"Tool execution error: {tool_exc}"
+                success = False
 
             tool_message = ToolMessage(
                 content=str(result),
@@ -351,7 +353,7 @@ class AgentExecutor:
             )
             tool_elapsed_ms = (perf_counter() - tool_start_time) * 1000
             print(f"Tool '{tool_call['name']}' executed in {tool_elapsed_ms:.2f} ms")
-            return tool_message, True
+            return tool_message, success
 
     async def connect(self):
         """Connect to MongoDB MCP server"""
