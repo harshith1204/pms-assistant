@@ -63,7 +63,7 @@ _encoder_singleton: "SpladeEncoder | None" = None
 class SpladeEncoder:
     """SPLADE encoder producing sparse (indices, values) vectors."""
 
-    def _init_(self, model_name: str = "naver/splade-cocondenser-ensembledistil") -> None:
+    def __init__(self, model_name: str = "naver/splade-cocondenser-ensembledistil") -> None:
         # Lazy imports keep startup fast when SPLADE isn't used
         from transformers import AutoTokenizer, AutoModelForMaskedLM  # type: ignore
         import torch  # type: ignore
