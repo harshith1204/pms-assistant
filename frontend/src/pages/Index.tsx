@@ -75,12 +75,14 @@ const Index = () => {
   const isEmpty = messages.length === 0 && !activeConversationId;
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>("");
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const topRef = useRef<HTMLDivElement | null>(null);
 
   // Track the current streaming assistant message id
   const streamingAssistantIdRef = useRef<string | null>(null);
   // Track the current active conversation id to avoid stale closures
   const activeConversationIdRef = useRef<string | null>(null);
+  // Track latest user message to position assistant replies beneath it
+  const lastUserMessageIdRef = useRef<string | null>(null);
 
   // URL helpers for syncing conversation id
   const getConversationIdFromUrl = () => {
@@ -249,14 +251,21 @@ const Index = () => {
       return;
     }
     if (evt.type === "llm_start") {
-      // Start a new assistant streaming message if not present
+      // Start a new assistant streaming message beneath the latest user message
       if (!streamingAssistantIdRef.current) {
         const id = `assistant-${Date.now()}`;
         streamingAssistantIdRef.current = id;
-        setMessages((prev) => [
-          ...prev,
-          { id, role: "assistant", content: "", isStreaming: true, internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" } },
-        ]);
+        setMessages((prev) => {
+          // Insert just after the most recent user message (top of list)
+          const insertIndex = prev.findIndex((m) => m.role === "user");
+          const draft = { id, role: "assistant" as const, content: "", isStreaming: true, internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" } };
+          if (insertIndex === -1) return [draft, ...prev];
+          return [
+            ...prev.slice(0, insertIndex + 1),
+            draft,
+            ...prev.slice(insertIndex + 1),
+          ];
+        });
       }
     } else if (evt.type === "token") {
       const id = streamingAssistantIdRef.current;
@@ -306,7 +315,7 @@ const Index = () => {
           },
         };
 
-        // De-duplicate against the tail of current list to prevent duplicates
+        // De-duplicate against the most recent items to prevent duplicates
         setMessages((prev) => {
           const hash = (wi: NonNullable<Message['workItem']>) => [
             (wi.title || '').trim(),
@@ -316,9 +325,9 @@ const Index = () => {
             wi.link || ''
           ].join('|');
           const candidateHash = hash(candidate.workItem);
-          const exists = prev.slice(-10).some((m) => m.workItem && hash(m.workItem) === candidateHash);
+          const exists = prev.slice(0, 10).some((m) => m.workItem && hash(m.workItem) === candidateHash);
           if (exists) return prev;
-          return [...prev, candidate];
+          return [candidate, ...prev];
         });
       } else if (evt.content_type === "page" && evt.success && (evt as any).data) {
         const data: any = (evt as any).data;
@@ -339,9 +348,9 @@ const Index = () => {
             JSON.stringify((pg.blocks && Array.isArray(pg.blocks.blocks)) ? pg.blocks.blocks : [])
           ].join('|');
           const candidateHash = hash(candidate.page!);
-          const exists = prev.slice(-10).some((m) => m.page && hash(m.page) === candidateHash);
+          const exists = prev.slice(0, 10).some((m) => m.page && hash(m.page) === candidateHash);
           if (exists) return prev;
-          return [...prev, candidate];
+          return [candidate, ...prev];
         });
       } else if (evt.content_type === "cycle" && evt.success && (evt as any).data) {
         const data: any = (evt as any).data;
@@ -405,7 +414,6 @@ const Index = () => {
       } else {
         const id = `assistant-${Date.now()}`;
         setMessages((prev) => [
-          ...prev,
           {
             id,
             role: "assistant",
@@ -413,14 +421,12 @@ const Index = () => {
               ? `Generated ${String(evt.content_type || "content").replace("_", " ")} content.`
               : `Generation failed: ${(evt as any).error || "Unknown error"}`,
           },
+          ...prev,
         ]);
       }
     } else if (evt.type === "error") {
       const id = `assistant-${Date.now()}`;
-      setMessages((prev) => [
-        ...prev,
-        { id, role: "assistant", content: `Error: ${evt.message}` },
-      ]);
+      setMessages((prev) => [{ id, role: "assistant", content: `Error: ${evt.message}` }, ...prev]);
       setIsLoading(false);
       streamingAssistantIdRef.current = null;
     } else if (evt.type === "complete") {
@@ -487,7 +493,8 @@ const Index = () => {
               const remainingEphemeralPages = prev.filter((m) => m.page)
                 .filter((m) => !serverPageHashes.has(hashPage(m.page!)));
 
-              return [...transformed, ...remainingEphemeralWorkItems, ...remainingEphemeralPages];
+              // Newest first for top-of-page layout
+              return [...transformed.reverse(), ...remainingEphemeralWorkItems, ...remainingEphemeralPages];
             });
           } catch {
             // ignore
@@ -548,7 +555,8 @@ const Index = () => {
       (async () => {
         try {
           const msgs = await getConversationMessages(id);
-          setMessages(transformConversationMessages(msgs));
+          // Newest first for top-of-page layout
+          setMessages(transformConversationMessages(msgs).reverse());
         } catch {
           setMessages([]);
         }
@@ -586,7 +594,8 @@ const Index = () => {
         (async () => {
           try {
             const msgs = await getConversationMessages(id);
-            setMessages(transformConversationMessages(msgs));
+            // Newest first for top-of-page layout
+            setMessages(transformConversationMessages(msgs).reverse());
           } catch {
             setMessages([]);
           }
@@ -624,7 +633,8 @@ const Index = () => {
     setShowPersonalization(false);
     try {
       const msgs = await getConversationMessages(id);
-      setMessages(transformConversationMessages(msgs));
+      // Newest first for top-of-page layout
+      setMessages(transformConversationMessages(msgs).reverse());
     } catch (e) {
       setMessages([]);
     }
@@ -657,7 +667,9 @@ const Index = () => {
       content,
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    lastUserMessageIdRef.current = userMessage.id;
+    // Prepend so newest appears first (top)
+    setMessages((prev) => [userMessage, ...prev]);
     setIsLoading(true);
 
     // Ensure we have an active conversation id
@@ -696,11 +708,21 @@ const Index = () => {
     if (!ok) {
       // Fallback: show error and stop loading
       setMessages((prev) => [
-        ...prev,
         { id: `assistant-${Date.now()}`, role: "assistant", content: "Connection error. Please try again." },
+        ...prev,
       ]);
       setIsLoading(false);
     }
+
+    // Scroll to top to reveal the newest query immediately
+    setTimeout(() => {
+      try {
+        topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {}
+      try {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch {}
+    }, 0);
   };
 
   const handleLike = async (messageId: string) => {
@@ -775,11 +797,7 @@ const Index = () => {
     setFeedbackText("");
   };
 
-  // Auto-scroll to bottom on message updates
-  useEffect(() => {
-    if (showGettingStarted || showPersonalization) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading, showGettingStarted, showPersonalization]);
+  // No auto-scroll-to-bottom; we'll scroll to top on new send
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
@@ -852,6 +870,7 @@ const Index = () => {
         ) : (
           <ScrollArea className="flex-1 scrollbar-thin">
             <div className="mx-auto max-w-4xl">
+              <div ref={topRef} />
               {messages.map((message) => (
                 <ChatMessage
                   key={message.id}
@@ -870,7 +889,6 @@ const Index = () => {
                   onDislike={handleDislike}
                 />
               ))}
-              <div ref={endRef} />
             </div>
           </ScrollArea>
         )}
