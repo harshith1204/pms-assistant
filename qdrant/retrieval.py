@@ -116,7 +116,7 @@ class ChunkAwareRetriever:
         
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
         vectors = self.embedding_client.encode([query])
-        if not vectors:
+        if vectors is None or len(vectors) == 0:
             raise RuntimeError("Embedding service returned empty vector")
         query_embedding = vectors[0]
         
