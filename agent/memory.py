@@ -29,19 +29,15 @@ class ScenarioOptimizedMemory:
         self.max_messages_per_conversation = max_messages_per_conversation
         self.ttl_seconds = ttl_hours * 3600
         
-        # L1 Cache - stores (messages, summary) tuple for instant access
-        # Summary is cached to avoid Redis calls on every L1 hit
         self.l1_cache: TTLCache[str, Tuple[deque[BaseMessage], Optional[str]]] = TTLCache(
             maxsize=l1_cache_size,
             ttl=l1_cache_ttl_seconds
         )
         self.l1_lock = RLock()
         
-        # ✅ NEW: Track loading state to prevent duplicate loads
         self._loading_conversations: Set[str] = set()
         self._loading_lock = asyncio.Lock()
         
-        # ✅ NEW: Track new conversations (no DB record yet)
         self._new_conversations: Set[str] = set()
         self._new_conversations_lock = RLock()
         
@@ -80,7 +76,7 @@ class ScenarioOptimizedMemory:
                     self.redis_url,
                     encoding="utf-8",
                     decode_responses=True,
-                    max_connections=50,  # Increased for concurrent loads
+                    max_connections=50,
                     socket_connect_timeout=2,
                     socket_keepalive=True,
                     health_check_interval=30,
@@ -138,23 +134,15 @@ class ScenarioOptimizedMemory:
         else:
             return AIMessage(content=content)
 
-    # ============================================================================
-    # SCENARIO 1: NEW CONVERSATION - Optimized for instant first message
-    # ============================================================================
-    
     def mark_as_new_conversation(self, conversation_id: str):
-        """✅ OPTIMIZATION: Mark conversation as new (no DB record yet)
-        
-        Call this when creating a new conversation to skip expensive DB lookups.
-        """
+        """Mark conversation as new (no DB record yet)"""
         with self._new_conversations_lock:
             self._new_conversations.add(conversation_id)
         
-        # Initialize empty L1 cache for this conversation (no summary yet)
         with self.l1_lock:
             self.l1_cache[conversation_id] = (
                 deque(maxlen=self.max_messages_per_conversation),
-                None  # No summary for new conversations
+                None
             )
 
     def _is_new_conversation(self, conversation_id: str) -> bool:
@@ -163,24 +151,16 @@ class ScenarioOptimizedMemory:
             return conversation_id in self._new_conversations
 
     async def add_message(self, conversation_id: str, message: BaseMessage):
-        """✅ OPTIMIZED: Ultra-fast for both new and existing conversations"""
-        
-        # Update L1 cache immediately (0.5-2ms)
         with self.l1_lock:
-            # Get existing summary if present, preserve it when adding message
             existing_summary = None
             if conversation_id in self.l1_cache:
                 messages_deque, existing_summary = self.l1_cache[conversation_id]
             else:
                 messages_deque = deque(maxlen=self.max_messages_per_conversation)
             
-            # Add new message
             messages_deque.append(message)
-            
-            # Store back with preserved summary
-            self.l1_cache[conversation_id] = (messages_deque, existing_summary)  # Refresh TTL
+            self.l1_cache[conversation_id] = (messages_deque, existing_summary)
 
-        # Background Redis write (non-blocking)
         asyncio.create_task(self._add_message_to_redis_safe(conversation_id, message))
 
     async def _add_message_to_redis_safe(self, conversation_id: str, message: BaseMessage):
@@ -204,85 +184,56 @@ class ScenarioOptimizedMemory:
         except Exception as e:
             logger.warning(f"Background Redis write failed: {e}")
 
-    # ============================================================================
-    # SCENARIO 2: LOADING OLD CONVERSATION - Pre-warm cache before first message
-    # ============================================================================
-    
     async def pre_warm_conversation(self, conversation_id: str) -> bool:
-        """✅ OPTIMIZATION: Eagerly load conversation into cache when user opens it
-        
-        Call this when:
-        - User opens a conversation from the sidebar
-        - User navigates to a conversation URL
-        - Before the first message is sent
-        
-        This ensures the conversation is ready in L1 cache when user sends first message.
-        
-        Returns:
-            bool: True if successfully loaded, False if conversation doesn't exist
-        """
-        # Check if already cached in L1
         with self.l1_lock:
             if conversation_id in self.l1_cache:
                 return True
         
-        # Check if this is a new conversation
         if self._is_new_conversation(conversation_id):
             return True
         
-        # Prevent duplicate concurrent loads
         async with self._loading_lock:
             if conversation_id in self._loading_conversations:
-                # Wait for the other load to complete
                 while conversation_id in self._loading_conversations:
                     await asyncio.sleep(0.01)
                 
-                # Check if it's now in cache
                 with self.l1_lock:
                     if conversation_id in self.l1_cache:
                         return True
                 return False
             
-            # Mark as loading
             self._loading_conversations.add(conversation_id)
         
         try:
-            # ✅ OPTIMIZATION: Try Redis first (fast path, 5-20ms)
             messages = await self._load_from_redis_fast(conversation_id)
             
             if messages:
-                # Redis hit - populate L1 with messages AND summary
-                summary = await self._get_summary_fast(conversation_id)  # Fetch once
+                summary = await self._get_summary_fast(conversation_id)
                 with self.l1_lock:
                     self.l1_cache[conversation_id] = (
                         deque(messages, maxlen=self.max_messages_per_conversation),
-                        summary  # ✅ Cache summary in L1
+                        summary
                     )
                 return True
             
-            # ✅ OPTIMIZATION: Load from MongoDB with parallel operations
             messages = await self._load_from_mongodb_optimized(conversation_id)
             
             if not messages:
-                # ✅ CRITICAL FIX: Cache "not found" result to prevent repeated Redis/MongoDB lookups
-                # Use empty deque + None summary to mark as "not found" (cached for short time via TTL)
                 with self.l1_lock:
                     self.l1_cache[conversation_id] = (
                         deque(maxlen=self.max_messages_per_conversation),
-                        None  # No summary = not found
+                        None
                     )
                 return False
             
-            # Immediately populate L1 cache with messages AND summary
-            summary = await self._get_summary_fast(conversation_id)  # Fetch once
+            summary = await self._get_summary_fast(conversation_id)
             with self.l1_lock:
                 self.l1_cache[conversation_id] = (
                     deque(messages[-self.max_messages_per_conversation:],
                           maxlen=self.max_messages_per_conversation),
-                    summary  # ✅ Cache summary in L1
+                    summary
                 )
             
-            # Background: populate Redis for next access
             asyncio.create_task(self._cache_to_redis_background(conversation_id, messages))
             
             return True
@@ -291,7 +242,6 @@ class ScenarioOptimizedMemory:
             logger.error(f"Pre-warm failed for {conversation_id}: {e}")
             return False
         finally:
-            # Remove from loading set
             async with self._loading_lock:
                 self._loading_conversations.discard(conversation_id)
 
@@ -304,7 +254,6 @@ class ScenarioOptimizedMemory:
             
             key = self._get_conversation_key(conversation_id)
             
-            # Use pipeline for atomic read + TTL refresh
             async with self.redis_client.pipeline() as pipe:
                 pipe.lrange(key, 0, -1)
                 pipe.expire(key, self.ttl_seconds)
@@ -321,20 +270,17 @@ class ScenarioOptimizedMemory:
             return []
 
     async def _load_from_mongodb_optimized(self, conversation_id: str) -> List[BaseMessage]:
-        """✅ OPTIMIZED: Fast MongoDB load with projection and timeout"""
         try:
             from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
             
             coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
             
-            # ✅ OPTIMIZATION: Only fetch recent messages (not entire history)
-            # This is much faster for conversations with thousands of messages
             doc = await asyncio.wait_for(
                 coll.find_one(
-                {"conversationId": conversation_id},
-                    {"messages": {"$slice": -100}}  # Last 100 messages only
+                    {"conversationId": conversation_id},
+                    {"messages": {"$slice": -100}}
                 ),
-                timeout=3.0  # 3 second timeout
+                timeout=3.0
             )
             
             if not doc:
@@ -344,7 +290,6 @@ class ScenarioOptimizedMemory:
             if not messages:
                 return []
             
-            # Convert to LangChain messages
             lc_messages: List[BaseMessage] = []
             for msg in messages:
                 if not isinstance(msg, dict):
@@ -360,7 +305,7 @@ class ScenarioOptimizedMemory:
                 elif msg_type == "system":
                     lc_message = SystemMessage(content=content)
                 else:
-                    continue  # Skip tool/action messages
+                    continue
                 
                 lc_messages.append(lc_message)
             
@@ -392,84 +337,60 @@ class ScenarioOptimizedMemory:
         except Exception as e:
             logger.warning(f"Background Redis cache failed: {e}")
 
-    # ============================================================================
-    # EXISTING METHODS (with optimizations)
-    # ============================================================================
-
     async def get_recent_context(self, conversation_id: str, max_tokens: int = 3000) -> List[BaseMessage]:
-        """✅ OPTIMIZED: Fast context retrieval with L1 priority"""
-        
         def approx_tokens(text: str) -> int:
             return max(1, math.ceil(len(text) / 4))
 
         budget = max(500, max_tokens)
         
-        # Fast path: L1 cache (0.5-2ms) - NOW WITH CACHED SUMMARY!
         with self.l1_lock:
             if conversation_id in self.l1_cache:
                 messages_deque, cached_summary = self.l1_cache[conversation_id]
                 messages = list(messages_deque)
                 if messages:
-                    # ✅ NO REDIS CALL! Use cached summary from L1
                     return self._apply_token_budget(messages, cached_summary, budget, approx_tokens)
         
-        # ✅ OPTIMIZATION: If new conversation, return empty immediately
         if self._is_new_conversation(conversation_id):
             return []
         
-        # Slow path: Load from cache/DB
         messages = await self._load_from_redis_fast(conversation_id)
         
         if not messages:
-            # Load from MongoDB with budget
             messages = await self._load_from_mongodb_with_budget(conversation_id, budget)
             
-            # Populate L1 cache with messages AND summary
             if messages:
-                # Fetch summary once and cache it
                 summary = await self._get_summary_fast(conversation_id)
                 with self.l1_lock:
                     self.l1_cache[conversation_id] = (
                         deque(messages[-self.max_messages_per_conversation:],
                               maxlen=self.max_messages_per_conversation),
-                        summary  # ✅ Cache summary in L1
+                        summary
                     )
                 return self._apply_token_budget(messages, summary, budget, approx_tokens)
         
-        # Redis hit path - also cache summary
         summary = await self._get_summary_fast(conversation_id)
         with self.l1_lock:
             self.l1_cache[conversation_id] = (
                 deque(messages[-self.max_messages_per_conversation:],
                       maxlen=self.max_messages_per_conversation),
-                summary  # ✅ Cache summary
+                summary
             )
         
         return self._apply_token_budget(messages, summary, budget, approx_tokens)
 
     async def _load_from_mongodb_with_budget(self, conversation_id: str, max_tokens: int) -> List[BaseMessage]:
-        """✅ OPTIMIZED: Load only what's needed from MongoDB with streaming response
-        
-        When L1 and L2 both miss, this is the slow path (100-500ms).
-        Optimizations:
-        1. Use projection to fetch only recent messages (not entire history)
-        2. Add timeout to prevent hanging
-        3. Immediately populate L1 cache for instant subsequent access
-        4. Background populate Redis for next session
-        """
         try:
             from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
             
             estimated_messages = max(10, min(50, max_tokens // 100))
             coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
             
-            # ✅ OPTIMIZATION: Use projection + index for fast query
             doc = await asyncio.wait_for(
                 coll.find_one(
                     {"conversationId": conversation_id},
-                    {"messages": {"$slice": -estimated_messages}}  # Only recent messages
+                    {"messages": {"$slice": -estimated_messages}}
                 ),
-                timeout=3.0  # Fail fast if MongoDB is slow
+                timeout=3.0
             )
             
             if not doc:
@@ -478,7 +399,6 @@ class ScenarioOptimizedMemory:
             messages = doc.get("messages") or []
             lc_messages: List[BaseMessage] = []
             
-            # Convert to LangChain messages
             for msg in messages:
                 if not isinstance(msg, dict):
                     continue
@@ -493,18 +413,15 @@ class ScenarioOptimizedMemory:
                 elif msg_type == "system":
                     lc_messages.append(SystemMessage(content=content))
             
-            # ✅ CRITICAL: Immediately populate L1 cache for next access (with summary)
             if lc_messages:
-                # Fetch summary once and cache it
                 summary = await self._get_summary_fast(conversation_id)
                 with self.l1_lock:
                     self.l1_cache[conversation_id] = (
                         deque(lc_messages[-self.max_messages_per_conversation:],
                               maxlen=self.max_messages_per_conversation),
-                        summary  # ✅ Cache summary in L1
+                        summary
                     )
                 
-                # ✅ OPTIMIZATION: Background populate Redis for next session
                 asyncio.create_task(
                     self._cache_to_redis_background(conversation_id, lc_messages)
                 )
@@ -570,5 +487,4 @@ class ScenarioOptimizedMemory:
             await self.redis_client.close()
             self._connected = False
 
-# Global instance
 conversation_memory = ScenarioOptimizedMemory()
