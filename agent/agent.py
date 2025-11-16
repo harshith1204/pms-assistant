@@ -19,6 +19,7 @@ from agent import tools as agent_tools
 from datetime import datetime
 import time
 from collections import defaultdict, deque
+import math
 import os
 import json
 
@@ -282,6 +283,14 @@ class AgentExecutor:
             max_items=tool_cache_size,
             ttl_seconds=tool_cache_ttl,
         )
+        try:
+            self.context_window_tokens = max(500, int(os.getenv("AGENT_CONTEXT_MAX_TOKENS", "1500")))
+        except (TypeError, ValueError):
+            self.context_window_tokens = 1500
+        try:
+            self.context_window_messages = max(1, int(os.getenv("AGENT_CONTEXT_MAX_MESSAGES", "20")))
+        except (TypeError, ValueError):
+            self.context_window_messages = 20
 
     def _should_cache_tool(self, tool_name: str) -> bool:
         return tool_name in {"mongo_query", "rag_search"}
@@ -300,13 +309,55 @@ class AgentExecutor:
             serialized_args = repr(args)
         return f"{tool_name}:{serialized_args}"
 
+    def _apply_context_window(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        if not messages:
+            return []
+
+        def approx_tokens(text: str) -> int:
+            try:
+                return max(1, math.ceil(len(text) / 4))
+            except Exception:
+                return max(1, len(text) // 4)
+
+        summary_msg: Optional[BaseMessage] = None
+        body: List[BaseMessage] = list(messages)
+
+        if body and isinstance(body[0], SystemMessage) and str(body[0].content or "").startswith("Conversation summary"):
+            summary_msg = body[0]
+            body = body[1:]
+
+        if self.context_window_messages and len(body) > self.context_window_messages:
+            body = body[-self.context_window_messages:]
+
+        trimmed: List[BaseMessage] = []
+        used_tokens = 0
+        token_budget = max(500, self.context_window_tokens)
+
+        for msg in reversed(body):
+            content = getattr(msg, "content", "")
+            msg_tokens = approx_tokens(str(content)) + 8
+            if used_tokens + msg_tokens > token_budget and trimmed:
+                break
+            trimmed.append(msg)
+            used_tokens += msg_tokens
+
+        trimmed.reverse()
+
+        if summary_msg:
+            return [summary_msg] + trimmed
+        return trimmed
+
     async def _get_conversation_context_cached(self, conversation_id: str) -> List[BaseMessage]:
         cached = self._conversation_context_cache.get(conversation_id)
         if cached is not None:
             return list(cached)
-        context = await conversation_memory.get_recent_context(conversation_id)
-        self._conversation_context_cache.set(conversation_id, list(context))
-        return context
+        context = await conversation_memory.get_recent_context(
+            conversation_id,
+            max_tokens=self.context_window_tokens,
+        )
+        optimized = self._apply_context_window(list(context))
+        self._conversation_context_cache.set(conversation_id, list(optimized))
+        return optimized
 
     def _append_conversation_cache(self, conversation_id: str, message: BaseMessage) -> None:
         cached = self._conversation_context_cache.get(conversation_id)
@@ -314,7 +365,8 @@ class AgentExecutor:
             return
         updated = list(cached)
         updated.append(message)
-        self._conversation_context_cache.set(conversation_id, updated)
+        optimized = self._apply_context_window(updated)
+        self._conversation_context_cache.set(conversation_id, optimized)
 
     def _schedule_conversation_cache_refresh(self, conversation_id: str) -> None:
         existing = self._conversation_cache_tasks.get(conversation_id)
@@ -323,8 +375,12 @@ class AgentExecutor:
 
         async def _refresh():
             try:
-                context = await conversation_memory.get_recent_context(conversation_id)
-                self._conversation_context_cache.set(conversation_id, list(context))
+                context = await conversation_memory.get_recent_context(
+                    conversation_id,
+                    max_tokens=self.context_window_tokens,
+                )
+                optimized = self._apply_context_window(list(context))
+                self._conversation_context_cache.set(conversation_id, optimized)
             except Exception as exc:
                 logger.error("Failed to refresh conversation cache for %s: %s", conversation_id, exc)
             finally:
