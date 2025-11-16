@@ -307,6 +307,12 @@ async def list_conversations(user_id: Optional[str] = None, business_id: Optiona
 async def get_conversation(conversation_id: str):
     """Get a conversation's messages and cache it in Redis for fast access."""
     try:
+        # ✅ NEW: Pre-warm cache when user opens conversation
+        from agent.memory import conversation_memory
+        asyncio.create_task(
+            conversation_memory.pre_warm_conversation(conversation_id)
+        )
+
         # Note: Cache is populated automatically when conversation is used
         # No need to pre-load - it happens on-demand during get_recent_context()
         
