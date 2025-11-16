@@ -265,8 +265,18 @@ const Index = () => {
     } else if (evt.type === "llm_end") {
       // Keep loader and streaming state until we receive the final 'complete' event
     } else if (evt.type === "agent_action") {
+      // Create streaming assistant message if it doesn't exist yet
+      // This allows actions to appear immediately when tools start executing,
+      // even before llm_start is sent (which only happens during finalization)
+      if (!streamingAssistantIdRef.current) {
+        const id = `assistant-${Date.now()}`;
+        streamingAssistantIdRef.current = id;
+        setMessages((prev) => [
+          ...prev,
+          { id, role: "assistant", content: "", isStreaming: true, internalActivity: { summary: "Actions", bullets: [], doneLabel: "Done" } },
+        ]);
+      }
       const id = streamingAssistantIdRef.current;
-      if (!id) return;
       setMessages((prev) => prev.map((m) => (
         m.id === id
           ? {
