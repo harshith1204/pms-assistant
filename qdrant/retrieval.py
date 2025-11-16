@@ -874,31 +874,38 @@ class ChunkAwareRetriever:
             ]
 
             # Add business scoping if available - need to join with project collection first
+            # IMPORTANT: We need to lookup the actual project document to get its _id (ObjectId)
+            # because project._id in members might be stored as Binary UUID reference
+            pipeline.extend([
+                {
+                    "$lookup": {
+                        "from": "project",
+                        "localField": "project._id",
+                        "foreignField": "_id",
+                        "as": "__project_doc__"
+                    }
+                },
+                {
+                    "$unwind": {
+                        "path": "$__project_doc__",
+                        "preserveNullAndEmptyArrays": True
+                    }
+                }
+            ])
+            
             if business_uuid:
                 biz_bin = uuid_str_to_mongo_binary(business_uuid)
-                pipeline.extend([
-                    {
-                        "$lookup": {
-                            "from": "project",
-                            "localField": "project._id",
-                            "foreignField": "_id",
-                            "as": "__biz_proj__"
-                        }
-                    },
-                    {
-                        "$match": {
-                            "__biz_proj__.business._id": biz_bin
-                        }
-                    },
-                    {
-                        "$unset": "__biz_proj__"
+                pipeline.append({
+                    "$match": {
+                        "__project_doc__.business._id": biz_bin
                     }
-                ])
+                })
 
-            # Project the project_id
+            # Project the project_id from the actual project document's _id
+            # This ensures we get the ObjectId format that matches Qdrant storage
             pipeline.append({
                 "$project": {
-                    "project_id": "$project._id"
+                    "project_id": "$__project_doc__._id"
                 }
             })
 
@@ -908,7 +915,18 @@ class ChunkAwareRetriever:
             project_ids = []
             for result in results:
                 if result.get("project_id"):
-                    project_ids.append(self._normalize_mongo_id(result["project_id"]))
+                    # Normalize the project _id to match how it's stored in Qdrant
+                    raw_id = result["project_id"]
+                    normalized_id = self._normalize_mongo_id(raw_id)
+                    if normalized_id:
+                        project_ids.append(normalized_id)
+                    else:
+                        logger.warning(f"Failed to normalize project_id: {raw_id} (type: {type(raw_id)})")
+
+            if project_ids:
+                logger.debug(f"Found {len(project_ids)} accessible projects for member {member_uuid}: {project_ids[:3]}...")
+            else:
+                logger.warning(f"No accessible projects found for member {member_uuid}")
 
             return project_ids
 
