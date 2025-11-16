@@ -15,6 +15,7 @@ const App = () => {
   // Listen for messages from the wrapper
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      console.log('event', event.data);
       if (event.data.type === 'set_path') {
         // Store the current path for navigation
         localStorage.setItem('wrapper_path', event.data.path);
@@ -41,7 +42,14 @@ const App = () => {
             }
           }
           if (typeof value === 'object' && value) {
+            // Store in bDetails for backward compatibility
             localStorage.setItem('bDetails', JSON.stringify(value));
+            // Also store under UUID key if we have an id field (matches expected localStorage structure)
+            if (value.id && typeof value.id === 'string') {
+              localStorage.setItem(value.id, JSON.stringify(value));
+            }
+            // Dispatch event to trigger WebSocket reconnection with new IDs
+            window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: { type: 'businessDetails' } }));
           } else if (typeof value === 'string') {
             localStorage.setItem('bDetails', value);
           }
@@ -55,6 +63,8 @@ const App = () => {
         localStorage.setItem('staffType', event.data.data);
       } else if (event.data.type === 'staffId') {
         localStorage.setItem('staffId', event.data.data);
+        // Dispatch event to trigger WebSocket reconnection with new staff ID
+        window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: { type: 'staffId' } }));
       } else if (event.data.type === 'staffName') {
         localStorage.setItem('staffName', event.data.data);
       } else if (event.data.type === 'staff_data') {
@@ -62,20 +72,28 @@ const App = () => {
         if (event.data.staffId !== undefined) {
           const v = typeof event.data.staffId === 'string' ? event.data.staffId : JSON.stringify(event.data.staffId);
           localStorage.setItem('staffId', v);
+          // Dispatch event to trigger WebSocket reconnection with new staff ID
+          window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: { type: 'staffId' } }));
         }
         if (event.data.businessId !== undefined) {
           const v = typeof event.data.businessId === 'string' ? event.data.businessId : JSON.stringify(event.data.businessId);
           localStorage.setItem('businessId', v);
+          // Dispatch event to trigger WebSocket reconnection with new business ID
+          window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: { type: 'businessId' } }));
         }
       } else if (event.data.type === 'business_staff_data') {
         // Combined payload from parent with business and staff info
         if (event.data.staffId !== undefined) {
           const v = typeof event.data.staffId === 'string' ? event.data.staffId : JSON.stringify(event.data.staffId);
           localStorage.setItem('staffId', v);
+          // Dispatch event to trigger WebSocket reconnection with new staff ID
+          window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: { type: 'staffId' } }));
         }
         if (event.data.businessId !== undefined) {
           const v = typeof event.data.businessId === 'string' ? event.data.businessId : JSON.stringify(event.data.businessId);
           localStorage.setItem('businessId', v);
+          // Dispatch event to trigger WebSocket reconnection with new business ID
+          window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: { type: 'businessId' } }));
         }
         if (event.data.businessName !== undefined) {
           localStorage.setItem('businessName', String(event.data.businessName));

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_WS_URL } from "@/config";
+import { API_WS_URL, getMemberId, getBusinessId } from "@/config";
 
 export type ChatEvent =
   | { type: "connected"; user_id: string; business_id?: string; timestamp: string }
@@ -64,18 +64,21 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
 
       ws.onopen = () => {
         setConnected(true);
-        // Send initial handshake with member_id and business_id
-        if (member_id || business_id) {
-          try {
-            ws.send(JSON.stringify({
-              type: "handshake",
-              member_id,
-              business_id,
-              timestamp: new Date().toISOString()
-            }));
-          } catch (e) {
-            // Failed to send handshake
-          }
+        // Read member_id and business_id dynamically from localStorage when connecting
+        // This ensures we get the latest values even if they were set after component mount
+        const currentMemberId = member_id || getMemberId();
+        const currentBusinessId = business_id || getBusinessId();
+        
+        // Always send handshake (even if IDs are empty, server can respond with proper error)
+        try {
+          ws.send(JSON.stringify({
+            type: "handshake",
+            member_id: currentMemberId,
+            business_id: currentBusinessId,
+            timestamp: new Date().toISOString()
+          }));
+        } catch (e) {
+          // Failed to send handshake
         }
       };
 
@@ -110,12 +113,45 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
         reconnectRef.current = window.setTimeout(connect, 1000);
       }
     }
-  }, [autoReconnect, cleanup, onEvent, url]);
+  }, [autoReconnect, cleanup, onEvent, url, member_id, business_id]);
 
   useEffect(() => {
     connect();
     return () => cleanup();
   }, [connect, cleanup]);
+
+  // Listen for localStorage updates and reconnect if IDs become available
+  useEffect(() => {
+    const handleStorageUpdate = () => {
+      // Check if we now have IDs available
+      const currentMemberId = member_id || getMemberId();
+      const currentBusinessId = business_id || getBusinessId();
+      
+      // If we have IDs now but weren't connected (or connection failed), reconnect
+      if ((currentMemberId || currentBusinessId) && (!connected || !wsRef.current)) {
+        // Small delay to ensure localStorage is fully updated
+        setTimeout(() => {
+          connect();
+        }, 100);
+      } else if (connected && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        // If already connected but IDs changed, send handshake again
+        try {
+          wsRef.current.send(JSON.stringify({
+            type: "handshake",
+            member_id: currentMemberId,
+            business_id: currentBusinessId,
+            timestamp: new Date().toISOString()
+          }));
+        } catch (e) {
+          // If send fails, reconnect
+          connect();
+        }
+      }
+    };
+
+    window.addEventListener('localStorageUpdated', handleStorageUpdate);
+    return () => window.removeEventListener('localStorageUpdated', handleStorageUpdate);
+  }, [connected, connect, member_id, business_id]);
 
   // Keep-alive ping every 25s
   useEffect(() => {

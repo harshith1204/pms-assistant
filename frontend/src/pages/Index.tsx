@@ -5,7 +5,6 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sparkles } from "lucide-react";
-import PromptLibrary from "@/components/PromptLibrary";
 import Settings from "@/pages/Settings";
 import { useChatSocket, type ChatEvent } from "@/hooks/useChatSocket";
 import { getConversations, getConversationMessages, reactToMessage } from "@/api/conversations";
@@ -61,14 +60,12 @@ interface Conversation {
 const CONV_QUERY_PARAM = "conversationId";
 const VIEW_QUERY_PARAM = "view";
 const VIEW_SETTINGS = "settings";
-const VIEW_GETTING_STARTED = "getting-started";
 
 const Index = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [showGettingStarted, setShowGettingStarted] = useState<boolean>(false);
   const [showPersonalization, setShowPersonalization] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   // Consider empty only when no active conversation is selected
@@ -115,7 +112,7 @@ const Index = () => {
     try {
       const url = new URL(window.location.href);
       const view = url.searchParams.get(VIEW_QUERY_PARAM);
-      if (view === VIEW_SETTINGS || view === VIEW_GETTING_STARTED) return view;
+      if (view === VIEW_SETTINGS) return view;
       return null;
     } catch {
       return null;
@@ -123,7 +120,7 @@ const Index = () => {
   };
 
   const setViewInUrl = (
-    view: typeof VIEW_SETTINGS | typeof VIEW_GETTING_STARTED | null,
+    view: typeof VIEW_SETTINGS | null,
     options?: { replace?: boolean }
   ) => {
     try {
@@ -265,9 +262,6 @@ const Index = () => {
     } else if (evt.type === "llm_end") {
       // Keep loader and streaming state until we receive the final 'complete' event
     } else if (evt.type === "agent_action") {
-      // Create streaming assistant message if it doesn't exist yet
-      // This allows actions to appear immediately when tools start executing,
-      // even before llm_start is sent (which only happens during finalization)
       if (!streamingAssistantIdRef.current) {
         const id = `assistant-${Date.now()}`;
         streamingAssistantIdRef.current = id;
@@ -537,14 +531,6 @@ const Index = () => {
     const view = getViewFromUrl();
     if (view === VIEW_SETTINGS) {
       setShowPersonalization(true);
-      setShowGettingStarted(false);
-      setActiveConversationId(null);
-      setMessages([]);
-      return;
-    }
-    if (view === VIEW_GETTING_STARTED) {
-      setShowGettingStarted(true);
-      setShowPersonalization(false);
       setActiveConversationId(null);
       setMessages([]);
       return;
@@ -553,7 +539,6 @@ const Index = () => {
     const id = getConversationIdFromUrl();
     if (id) {
       setActiveConversationId(id);
-      setShowGettingStarted(false);
       setShowPersonalization(false);
       (async () => {
         try {
@@ -575,14 +560,6 @@ const Index = () => {
 
       if (view === VIEW_SETTINGS) {
         setShowPersonalization(true);
-        setShowGettingStarted(false);
-        if (current) setActiveConversationId(null);
-        setMessages([]);
-        return;
-      }
-      if (view === VIEW_GETTING_STARTED) {
-        setShowGettingStarted(true);
-        setShowPersonalization(false);
         if (current) setActiveConversationId(null);
         setMessages([]);
         return;
@@ -591,7 +568,6 @@ const Index = () => {
       // No view param: show conversation if present, otherwise clear
       if (id && id !== current) {
         setActiveConversationId(id);
-        setShowGettingStarted(false);
         setShowPersonalization(false);
         (async () => {
           try {
@@ -603,7 +579,6 @@ const Index = () => {
         })();
       } else if (!id) {
         if (current) setActiveConversationId(null);
-        setShowGettingStarted(false);
         setShowPersonalization(false);
         setMessages([]);
       }
@@ -615,7 +590,6 @@ const Index = () => {
   const handleNewChat = () => {
     setActiveConversationId(null);
     setMessages([]);
-    setShowGettingStarted(false);
     setShowPersonalization(false);
     // Remove conversation id from URL
     setConversationIdInUrl(null);
@@ -629,7 +603,6 @@ const Index = () => {
     // Clear any view param so conversation is shown
     setViewInUrl(null);
     setActiveConversationId(id);
-    setShowGettingStarted(false);
     // Ensure we exit the settings view when a conversation is selected
     setShowPersonalization(false);
     try {
@@ -640,19 +613,8 @@ const Index = () => {
     }
   };
 
-  const handleShowGettingStarted = () => {
-    setShowGettingStarted(true);
-    setShowPersonalization(false);
-    setActiveConversationId(null);
-    setMessages([]);
-    // Update URL to reflect getting started view and clear any conversation
-    setConversationIdInUrl(null);
-    setViewInUrl(VIEW_GETTING_STARTED);
-  };
-
   const handleShowPersonalization = () => {
     setShowPersonalization(true);
-    setShowGettingStarted(false);
     setActiveConversationId(null);
     setMessages([]);
     // Update URL to reflect settings view and clear any conversation
@@ -787,9 +749,9 @@ const Index = () => {
 
   // Auto-scroll to bottom on message updates
   useEffect(() => {
-    if (showGettingStarted || showPersonalization) return;
+    if (showPersonalization) return;
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading, showGettingStarted, showPersonalization]);
+  }, [messages, isLoading, showPersonalization]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background relative pb-4 pt-3">
@@ -829,15 +791,12 @@ const Index = () => {
           activeConversationId={activeConversationId}
           onNewChat={handleNewChat}
           onSelectConversation={handleSelectConversation}
-          onShowGettingStarted={handleShowGettingStarted}
           onShowPersonalization={handleShowPersonalization}
         />
       </div>
 
       <div className="flex flex-1 flex-col relative z-10">
-        {showGettingStarted ? (
-          <PromptLibrary onSelectPrompt={() => setShowGettingStarted(false)} />
-        ) : showPersonalization ? (
+        {showPersonalization ? (
           <div className="flex items-start justify-center p-6 h-full">
             <div className="w-full max-w-3xl">
               <Settings />
@@ -885,7 +844,7 @@ const Index = () => {
           </ScrollArea>
         )}
 
-        {!showGettingStarted && !showPersonalization && (
+        {!showPersonalization && (
           <div
             className={cn(
               "relative z-20 transition-transform duration-500 ease-out",

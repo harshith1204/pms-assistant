@@ -1,10 +1,25 @@
-import { API_HTTP_URL } from "@/config";
+import { API_HTTP_URL, getMemberId, getBusinessId } from "@/config";
 
 export async function getConversations(): Promise<Array<{ id: string; title: string; updatedAt?: string }>> {
-  // Backend doesn't yet expose list; return empty for now to avoid breaking UI.
-  // Hooked for future extension when endpoints are available.
   try {
-    const res = await fetch(`${API_HTTP_URL}/conversations`);
+    const userId = getMemberId();
+    const businessId = getBusinessId();
+    
+    if (!userId || !businessId) {
+      console.warn("Missing user_id or business_id for conversations API");
+      return [];
+    }
+    
+    const url = new URL(`${API_HTTP_URL}/conversations`);
+    url.searchParams.set('user_id', userId);
+    url.searchParams.set('business_id', businessId);
+    
+    const res = await fetch(url.toString(), {
+      headers: {
+        'accept': 'application/json',
+      },
+    });
+    
     if (!res.ok) throw new Error("failed");
     const data = await res.json();
     return Array.isArray(data) ? data : [];

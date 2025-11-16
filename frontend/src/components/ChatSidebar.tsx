@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, MessageSquare, History, Compass, Search, Settings as SettingsIcon } from "lucide-react";
+import { Plus, MessageSquare, History, Search, Settings as SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,6 @@ interface ChatSidebarProps {
   activeConversationId: string | null;
   onNewChat: () => void;
   onSelectConversation: (id: string) => void;
-  onShowGettingStarted?: () => void;
   onShowPersonalization?: () => void;
 }
 
@@ -25,7 +24,6 @@ export const ChatSidebar = ({
   activeConversationId,
   onNewChat,
   onSelectConversation,
-  onShowGettingStarted,
   onShowPersonalization,
 }: ChatSidebarProps) => {
   const [query, setQuery] = useState("");
@@ -48,36 +46,6 @@ export const ChatSidebar = ({
 
       <ScrollArea className="flex-1 scrollbar-thin">
         <div className="p-2 space-y-1">
-          <button
-            onClick={onShowGettingStarted}
-            className={cn(
-              "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
-              "hover:bg-sidebar-accent group text-sidebar-foreground"
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <Compass className="h-4 w-4 flex-shrink-0 opacity-70" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">Getting Started</p>
-                <p className="text-xs text-muted-foreground">Explore prompts</p>
-              </div>
-            </div>
-          </button>
-          <button
-            onClick={onShowPersonalization}
-            className={cn(
-              "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
-              "hover:bg-sidebar-accent group text-sidebar-foreground"
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <SettingsIcon className="h-4 w-4 flex-shrink-0 opacity-70" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">Settings</p>
-                <p className="text-xs text-muted-foreground">Personalize the AI agent</p>
-              </div>
-            </div>
-          </button>
           <div className="px-3 pb-2 pt-1">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -118,6 +86,24 @@ export const ChatSidebar = ({
           ))}
         </div>
       </ScrollArea>
+
+      <div className="p-2 border-t border-sidebar-border">
+        <button
+          onClick={onShowPersonalization}
+          className={cn(
+            "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
+            "hover:bg-sidebar-accent group text-sidebar-foreground"
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <SettingsIcon className="h-4 w-4 flex-shrink-0 opacity-70" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">Settings</p>
+              <p className="text-xs text-muted-foreground">Personalize the AI agent</p>
+            </div>
+          </div>
+        </button>
+      </div>
     </div>
   );
 };
