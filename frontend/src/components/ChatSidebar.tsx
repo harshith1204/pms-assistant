@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, MessageSquare, History, Compass, Search, Settings as SettingsIcon } from "lucide-react";
+import { Plus, MessageSquare, History, Compass, Search, Settings as SettingsIcon, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ interface ChatSidebarProps {
   onSelectConversation: (id: string) => void;
   onShowGettingStarted?: () => void;
   onShowPersonalization?: () => void;
+  onShowAnalytics?: () => void;
 }
 
 export const ChatSidebar = ({
@@ -27,6 +28,7 @@ export const ChatSidebar = ({
   onSelectConversation,
   onShowGettingStarted,
   onShowPersonalization,
+  onShowAnalytics,
 }: ChatSidebarProps) => {
   const [query, setQuery] = useState("");
   const filteredConversations = useMemo(() => {
@@ -60,6 +62,21 @@ export const ChatSidebar = ({
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">Getting Started</p>
                 <p className="text-xs text-muted-foreground">Explore prompts</p>
+              </div>
+            </div>
+          </button>
+          <button
+            onClick={() => onShowAnalytics ? onShowAnalytics() : navigate("/analytics")}
+            className={cn(
+              "w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200",
+              "hover:bg-sidebar-accent group text-sidebar-foreground"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 flex-shrink-0 opacity-70" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">Analytics</p>
+                <p className="text-xs text-muted-foreground">Dynamic dashboards</p>
               </div>
             </div>
           </button>

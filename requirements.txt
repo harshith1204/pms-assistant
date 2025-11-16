@@ -19,6 +19,7 @@ python-dateutil
 # Web framework
 fastapi
 uvicorn[standard]
+PyJWT
 
 # Development and testing
 groq

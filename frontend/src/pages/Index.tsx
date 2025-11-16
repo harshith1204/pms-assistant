@@ -821,6 +821,12 @@ const Index = () => {
           onSelectConversation={handleSelectConversation}
           onShowGettingStarted={handleShowGettingStarted}
           onShowPersonalization={handleShowPersonalization}
+          onShowAnalytics={() => {
+            // clear any overlays then navigate
+            setShowGettingStarted(false);
+            setShowPersonalization(false);
+            window.location.href = "/analytics";
+          }}
         />
       </div>
 

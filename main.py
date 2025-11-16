@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
 from generate.router import router as generate_router
+from analytics.router import router as analytics_router
 
 # Load environment variables from .env file
 load_dotenv()
@@ -205,6 +206,7 @@ app.add_middleware(
 
 # Include generation-related API routes
 app.include_router(generate_router)
+app.include_router(analytics_router)
 
 # Include template generator API routes
 from template_generator.router import router as template_router, set_template_generator as set_template_generator_instance
