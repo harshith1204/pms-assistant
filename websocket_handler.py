@@ -210,6 +210,14 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
                 # Mark as authenticated now that handshake is complete
                 authenticated = True
 
+                # ✅ NEW: Pre-warm conversation when user connects
+                from agent.memory import conversation_memory
+                conversation_id = data.get("conversation_id")
+                if conversation_id:
+                    asyncio.create_task(
+                        conversation_memory.pre_warm_conversation(conversation_id)
+                    )
+
                 await websocket.send_json({
                     "type": "handshake_ack",
                     "user_id": user_context["user_id"],
@@ -243,6 +251,18 @@ async def handle_chat_websocket(websocket: WebSocket, mongodb_agent):
             message = data.get("message", "")
             conversation_id = data.get("conversation_id") or f"conv_{user_id}"
             force_planner = data.get("planner", False)
+
+            # ✅ NEW: Handle new vs existing conversations
+            from agent.memory import conversation_memory
+
+            if not data.get("conversation_id"):
+                # New conversation - mark to skip DB lookups
+                conversation_memory.mark_as_new_conversation(conversation_id)
+            else:
+                # Existing conversation - ensure it's pre-warmed
+                asyncio.create_task(
+                    conversation_memory.pre_warm_conversation(conversation_id)
+                )
 
             await websocket.send_json({
                 "type": "user_message",

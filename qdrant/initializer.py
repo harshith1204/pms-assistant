@@ -133,7 +133,7 @@ class RAGTool:
         try:
             # Generate embedding for the query
             query_vectors = self.embedding_client.encode([query])
-            if not query_vectors:
+            if query_vectors is None or len(query_vectors) == 0:
                 return []
             query_embedding = query_vectors[0]
             # Build filter if content_type is specified

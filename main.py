@@ -12,8 +12,8 @@ from generate.router import router as generate_router
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configure logging - set to INFO to see RAG diagnostic messages
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 from agent.agent import AgentExecutor
@@ -222,11 +222,45 @@ async def health_check():
 
 
 @app.get("/conversations")
-async def list_conversations():
-    """List conversation ids and titles from Mongo."""
+async def list_conversations(user_id: Optional[str] = None, business_id: Optional[str] = None):
+    """List conversation ids and titles from Mongo.
+    
+    Query parameters:
+    - user_id: Optional member/user ID to filter conversations
+    - business_id: Optional business ID to filter conversations
+    """
     try:
+        from bson.binary import Binary
+        from mongo.constants import mongo_binary_to_uuid_str, uuid_str_to_mongo_binary
+        
         coll = await conversation_mongo_client.get_collection(CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME)
-        cursor = coll.find({}, {"conversationId": 1, "messages": {"$slice": -1}, "updatedAt": 1}).sort("updatedAt", -1).limit(100)
+        
+        # Build query filter
+        query_filter = {}
+        
+        # Convert string UUIDs to Binary format for filtering
+        if user_id:
+            try:
+                member_binary = uuid_str_to_mongo_binary(user_id)
+                query_filter["memberId"] = member_binary
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid user_id UUID format: {e}")
+        
+        if business_id:
+            try:
+                business_binary = uuid_str_to_mongo_binary(business_id)
+                query_filter["businessId"] = business_binary
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid business_id UUID format: {e}")
+        
+        cursor = coll.find(query_filter, {
+            "conversationId": 1, 
+            "messages": {"$slice": -1}, 
+            "updatedAt": 1,
+            "memberId": 1,
+            "businessId": 1
+        }).sort("updatedAt", -1).limit(100)
+        
         results = []
         async for doc in cursor:
             conv_id = doc.get("conversationId")
@@ -236,12 +270,35 @@ async def list_conversations():
                 content = str(last.get("content") or "").strip()
                 if content:
                     title = content[:60]
+            
+            # Convert Binary IDs to UUID strings
+            member_id = None
+            business_id_str = None
+            
+            member_binary = doc.get("memberId")
+            if isinstance(member_binary, Binary):
+                try:
+                    member_id = mongo_binary_to_uuid_str(member_binary)
+                except Exception:
+                    pass
+            
+            business_binary = doc.get("businessId")
+            if isinstance(business_binary, Binary):
+                try:
+                    business_id_str = mongo_binary_to_uuid_str(business_binary)
+                except Exception:
+                    pass
+            
             results.append({
                 "id": conv_id,
                 "title": title or f"Conversation {conv_id}",
                 "updatedAt": doc.get("updatedAt"),
+                "memberId": member_id,
+                "businessId": business_id_str,
             })
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -250,6 +307,12 @@ async def list_conversations():
 async def get_conversation(conversation_id: str):
     """Get a conversation's messages and cache it in Redis for fast access."""
     try:
+        # ✅ NEW: Pre-warm cache when user opens conversation
+        from agent.memory import conversation_memory
+        asyncio.create_task(
+            conversation_memory.pre_warm_conversation(conversation_id)
+        )
+
         # Note: Cache is populated automatically when conversation is used
         # No need to pre-load - it happens on-demand during get_recent_context()
         
@@ -288,15 +351,24 @@ async def get_conversation(conversation_id: str):
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.get("/conversations/{user_id}/{business_id}")
-async def get_conversation(user_id: str, business_id: str):
+async def get_conversations_by_ids(user_id: str, business_id: str):
     """Get all conversations' messages for a given member_id and business_id."""
     try:
+        from mongo.constants import uuid_str_to_mongo_binary
+        
         coll = await conversation_mongo_client.get_collection(
             CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME
         )
 
-        # Find all matching conversations
-        cursor = coll.find({"memberId": user_id, "businessId": business_id})
+        # Convert string UUIDs to Binary format for MongoDB query
+        try:
+            member_binary = uuid_str_to_mongo_binary(user_id)
+            business_binary = uuid_str_to_mongo_binary(business_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid UUID format: {e}")
+
+        # Find all matching conversations using Binary IDs
+        cursor = coll.find({"memberId": member_binary, "businessId": business_binary})
         docs = await cursor.to_list(length=None)
 
         if not docs:

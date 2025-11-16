@@ -120,33 +120,60 @@ def _ensure_message_shape(message: Dict[str, Any]) -> Dict[str, Any]:
     return enriched
 
 
-def _resolve_business_and_member_ids() -> Dict[str, str]:
+def _resolve_business_and_member_ids() -> Dict[str, Any]:
     """Resolve business and member identifiers from runtime websocket context or environment.
 
-    Returns keys: 'businessId' and 'memberId' with string values (possibly empty when unavailable).
+    Returns keys: 'businessId' and 'memberId' with Binary (MongoDB UUID) or string values.
+    Converts UUID strings from websocket context to MongoDB Binary format for proper storage.
     """
-    business_id: str = ""
-    member_id: str = ""
+    business_id: Any = None
+    member_id: Any = None
 
     # Prefer runtime websocket context if available (set by websocket_handler)
     try:
         import websocket_handler as _ws_ctx  # dynamic import to avoid circular dependency at module import time
-        from constants import uuid_str_to_mongo_binary
+        from .constants import uuid_str_to_mongo_binary  # Fixed: use relative import
         ws_business = getattr(_ws_ctx, "business_id_global", None)
         ws_member = getattr(_ws_ctx, "user_id_global", None)
-        if isinstance(ws_business, str) and ws_business:
-            business_id = uuid_str_to_mongo_binary(ws_business)
-        if isinstance(ws_member, str) and ws_member:
-            member_id = uuid_str_to_mongo_binary(ws_member)
-    except Exception:
+        if isinstance(ws_business, str) and ws_business.strip():
+            try:
+                business_id = uuid_str_to_mongo_binary(ws_business)
+            except (ValueError, Exception) as e:
+                logger.warning(f"Failed to convert business_id '{ws_business}' to MongoDB Binary: {e}")
+                # Keep as string if conversion fails
+                business_id = ws_business
+        if isinstance(ws_member, str) and ws_member.strip():
+            try:
+                member_id = uuid_str_to_mongo_binary(ws_member)
+            except (ValueError, Exception) as e:
+                logger.warning(f"Failed to convert member_id '{ws_member}' to MongoDB Binary: {e}")
+                # Keep as string if conversion fails
+                member_id = ws_member
+    except Exception as e:
+        # Log the error for debugging
+        logger.warning(f"Failed to resolve IDs from websocket context: {e}")
         # Best-effort: fall back to environment below
         pass
 
     # Fall back to environment variables when not present in runtime context
     if not business_id:
-        business_id = os.getenv("BUSINESS_UUID") or os.getenv("BUSINESS_ID") or ""
+        env_business = os.getenv("BUSINESS_UUID") or os.getenv("BUSINESS_ID") or ""
+        if env_business:
+            try:
+                from .constants import uuid_str_to_mongo_binary
+                business_id = uuid_str_to_mongo_binary(env_business)
+            except (ValueError, Exception) as e:
+                logger.warning(f"Failed to convert env business_id to MongoDB Binary: {e}")
+                business_id = env_business
     if not member_id:
-        member_id = os.getenv("MEMBER_UUID") or os.getenv("STAFF_ID") or ""
+        env_member = os.getenv("MEMBER_UUID") or os.getenv("STAFF_ID") or ""
+        if env_member:
+            try:
+                from .constants import uuid_str_to_mongo_binary
+                member_id = uuid_str_to_mongo_binary(env_member)
+            except (ValueError, Exception) as e:
+                logger.warning(f"Failed to convert env member_id to MongoDB Binary: {e}")
+                member_id = env_member
 
     return {"businessId": business_id, "memberId": member_id}
 
