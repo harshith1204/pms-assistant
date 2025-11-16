@@ -742,24 +742,18 @@ class ChunkAwareRetriever:
     
     def _normalize_business_id(self, business_uuid: str) -> str:
         """Normalize business_id UUID string the same way it's stored in Qdrant.
-        
-        When storing in Qdrant, business_id comes from MongoDB Binary UUID which is
-        normalized using normalize_mongo_id(). This function replicates that normalization
-        for filtering purposes.
-        
+
+        When storing in Qdrant, business_id comes from the business field in the document,
+        which may be a string UUID or an embedded document with uuid field.
+        This function returns the UUID string as-is, assuming it's already in the correct format.
+
         Args:
             business_uuid: UUID string (e.g., "1eedcb26-d23a-688a-bd63-579d19dab229")
-            
+
         Returns:
-            Normalized UUID string as stored in Qdrant
+            UUID string as stored in Qdrant
         """
-        try:
-            from mongo.constants import uuid_str_to_mongo_binary
-            business_bin = uuid_str_to_mongo_binary(business_uuid)
-            return str(uuid.UUID(bytes=business_bin))
-        except Exception as e:
-            logger.warning(f"Failed to normalize business_id '{business_uuid}': {e}, using as-is")
-            return business_uuid
+        return business_uuid
 
     async def _get_member_projects(self, member_uuid: str, business_uuid: str) -> List[str]:
         """

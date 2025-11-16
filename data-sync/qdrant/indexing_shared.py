@@ -1673,8 +1673,17 @@ def _aggregate_text_parts(doc: Dict[str, Any], *, excluded_fields: set[str]) -> 
 def _build_metadata_with_business(doc: Dict[str, Any]) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
     business = doc.get("business")
-    if isinstance(business, dict):
+    if isinstance(business, str):
+        # Business is a UUID string directly
+        metadata["business_id"] = business
+    elif isinstance(business, dict):
         metadata["business_name"] = business.get("name")
-        if business.get("_id") is not None:
-            metadata["business_id"] = normalize_mongo_id(business.get("_id"))
+        # Prefer uuid field over _id for business_id, as _id might be ObjectId while uuid is the identifier used in filtering
+        business_id_value = (
+            business.get("uuid") or
+            business.get("businessId") or
+            (normalize_mongo_id(business.get("_id")) if business.get("_id") is not None else None)
+        )
+        if business_id_value is not None:
+            metadata["business_id"] = business_id_value
     return metadata
