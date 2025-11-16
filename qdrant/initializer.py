@@ -299,11 +299,44 @@ class RAGTool:
         return "\n".join(context_parts) if context_parts else "No relevant content found."
 
     def _normalize_mongo_id(self, mongo_id) -> str:
-        """Convert Mongo _id (ObjectId or Binary UUID) into a safe string like Qdrant expects."""
+        """Convert Mongo _id (ObjectId or Binary UUID) into a safe string like Qdrant expects.
+        
+        This must match the normalization logic used in:
+        - qdrant/insertdocs.py::normalize_mongo_id
+        - data-sync/qdrant/indexing_shared.py::normalize_mongo_id
+        
+        For consistency, ObjectId -> str(ObjectId), Binary UUID -> str(uuid.UUID(bytes=binary))
+        """
+        if mongo_id is None:
+            return ""
         if isinstance(mongo_id, ObjectId):
             return str(mongo_id)
-        elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
-            return str(uuid.UUID(bytes=mongo_id))
+        if isinstance(mongo_id, Binary):
+            if mongo_id.subtype in (3, 4) and len(mongo_id) == 16:
+                try:
+                    return str(uuid.UUID(bytes=mongo_id))
+                except Exception:
+                    pass
+            return mongo_id.hex()
+        # Handle dict representations (extended JSON from MongoDB connector)
+        if isinstance(mongo_id, dict):
+            # Check for $oid format
+            if "$oid" in mongo_id:
+                return str(mongo_id["$oid"])
+            if "oid" in mongo_id:
+                return str(mongo_id["oid"])
+            # Check for $binary format
+            if "$binary" in mongo_id:
+                import base64
+                binary_section = mongo_id.get("$binary")
+                if isinstance(binary_section, str):
+                    try:
+                        data = base64.b64decode(binary_section)
+                        if len(data) == 16:
+                            return str(uuid.UUID(bytes=data))
+                        return data.hex()
+                    except Exception:
+                        pass
         return str(mongo_id)
     
     def _normalize_business_id(self, business_uuid: str) -> str:
