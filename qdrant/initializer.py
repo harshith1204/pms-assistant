@@ -320,23 +320,71 @@ class RAGTool:
             return mongo_id.hex()
         # Handle dict representations (extended JSON from MongoDB connector)
         if isinstance(mongo_id, dict):
-            # Check for $oid format
-            if "$oid" in mongo_id:
-                return str(mongo_id["$oid"])
-            if "oid" in mongo_id:
-                return str(mongo_id["oid"])
-            # Check for $binary format
+            # Check for $oid, oid, $uuid, uuid, value keys
+            for key in ("$oid", "oid", "$uuid", "uuid", "value"):
+                if key in mongo_id and mongo_id[key] is not None:
+                    try:
+                        return str(mongo_id[key])
+                    except Exception:
+                        continue
+            
+            # Extended JSON binary variations
             if "$binary" in mongo_id:
                 import base64
                 binary_section = mongo_id.get("$binary")
-                if isinstance(binary_section, str):
+                subtype = (
+                    mongo_id.get("$type")
+                    or mongo_id.get("type")
+                    or mongo_id.get("subType")
+                    or mongo_id.get("subtype")
+                )
+                
+                base64_value = None
+                if isinstance(binary_section, dict):
+                    base64_value = (
+                        binary_section.get("base64")
+                        or binary_section.get("$base64")
+                        or binary_section.get("data")
+                    )
+                    subtype = (
+                        binary_section.get("subType")
+                        or binary_section.get("subtype")
+                        or binary_section.get("$type")
+                        or subtype
+                    )
+                elif isinstance(binary_section, str):
+                    base64_value = binary_section
+                
+                if base64_value:
                     try:
-                        data = base64.b64decode(binary_section)
+                        data = base64.b64decode(base64_value)
                         if len(data) == 16:
                             return str(uuid.UUID(bytes=data))
                         return data.hex()
                     except Exception:
                         pass
+                
+                if subtype and isinstance(subtype, str):
+                    subtype_lower = subtype.lower()
+                    if subtype_lower in {"03", "3", "04", "4"} and base64_value:
+                        try:
+                            data = base64.b64decode(base64_value)
+                            if len(data) == 16:
+                                return str(uuid.UUID(bytes=data))
+                        except Exception:
+                            pass
+            
+            # Legacy Mongo export format
+            if "binary" in mongo_id and isinstance(mongo_id["binary"], str):
+                try:
+                    import base64
+                    data = base64.b64decode(mongo_id["binary"])
+                    if len(data) == 16:
+                        return str(uuid.UUID(bytes=data))
+                except Exception:
+                    pass
+            
+            return json.dumps(mongo_id, sort_keys=True)
         return str(mongo_id)
     
     def _normalize_business_id(self, business_uuid: str) -> str:
