@@ -68,6 +68,8 @@ const Index = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [showPersonalization, setShowPersonalization] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
+  // ✅ NEW: Track selected project for conversation context
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   // Consider empty only when no active conversation is selected
   const isEmpty = messages.length === 0 && !activeConversationId;
   const [feedbackTargetId, setFeedbackTargetId] = useState<string | null>(null);
@@ -663,7 +665,8 @@ const Index = () => {
       message: content,
       conversation_id: convId,
       member_id: mid,
-      business_id: bid
+      business_id: bid,
+      project_id: selectedProjectId || undefined, // ✅ NEW: Include project context
     });
     if (!ok) {
       // Fallback: show error and stop loading

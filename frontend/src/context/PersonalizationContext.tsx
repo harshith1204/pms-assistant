@@ -61,6 +61,16 @@ export const PersonalizationProvider = ({ children }: { children: React.ReactNod
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    
+    // ✅ NEW: Sync preferences to backend when they change
+    if (settings.rememberLongTermContext && settings.longTermContext) {
+      // Sync long-term context to backend
+      import("@/api/userPreferences").then(({ saveLongTermContext }) => {
+        saveLongTermContext(settings.longTermContext).catch((err) => {
+          console.warn("Failed to sync long-term context:", err);
+        });
+      });
+    }
   }, [settings]);
 
   const updateSettings = (partial: Partial<PersonalizationSettings>) => {

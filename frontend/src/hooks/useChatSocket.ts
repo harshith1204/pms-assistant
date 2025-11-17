@@ -25,6 +25,8 @@ export type SendMessagePayload = {
   planner?: boolean;
   member_id?: string;
   business_id?: string;
+  preferences?: Record<string, any>; // ✅ NEW: User preferences
+  project_id?: string; // ✅ NEW: Project context
 };
 
 type UseChatSocketOptions = {
@@ -69,12 +71,25 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
         const currentMemberId = member_id || getMemberId();
         const currentBusinessId = business_id || getBusinessId();
         
+        // ✅ NEW: Get user preferences from localStorage
+        const preferencesKey = "personalization-settings:v1";
+        let preferences = null;
+        try {
+          const prefsStr = localStorage.getItem(preferencesKey);
+          if (prefsStr) {
+            preferences = JSON.parse(prefsStr);
+          }
+        } catch (e) {
+          // Failed to parse preferences
+        }
+        
         // Always send handshake (even if IDs are empty, server can respond with proper error)
         try {
           ws.send(JSON.stringify({
             type: "handshake",
             member_id: currentMemberId,
             business_id: currentBusinessId,
+            preferences: preferences, // ✅ NEW: Include preferences in handshake
             timestamp: new Date().toISOString()
           }));
         } catch (e) {
@@ -172,6 +187,8 @@ export function useChatSocket(options: UseChatSocketOptions = {}) {
       planner: !!payload.planner,
       member_id: payload.member_id,
       business_id: payload.business_id,
+      project_id: payload.project_id, // ✅ NEW: Include project_id
+      preferences: payload.preferences, // ✅ NEW: Include preferences if provided
     };
     try {
       wsRef.current.send(JSON.stringify(body));

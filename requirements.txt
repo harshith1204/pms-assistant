@@ -22,9 +22,11 @@ uvicorn[standard]==0.29.0
 # Development and testing
 groq
 pytest
+pytest-asyncio
+pytest-mock  # For mocking in tests
+pytest-cov  # For test coverage
 pymongo
 motor  # Async MongoDB driver (replaces MongoDB MCP + Smithery)
-pytest-asyncio
 websockets  # For WebSocket testing
 
 # Qdrant and RAG dependencies
@@ -41,6 +43,9 @@ safetensors==0.4.5
 redis
 redis[hiredis]
 cachetools
+
+# Mem0 for user memory and context management
+mem0ai
 
 # Kafka dependencies
 kafka-python>=2.0.2

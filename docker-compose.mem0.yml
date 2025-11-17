@@ -1,0 +1,37 @@
+name: mem0-custom
+
+services:
+  mem0:
+    build:
+      context: .
+      dockerfile: Dockerfile.mem0
+    container_name: mem0-server
+    ports:
+      - "6000:8000"  # Map container port 8000 to host port 6000
+    env_file:
+      - .env.mem0
+    environment:
+      # Override with custom config
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./mem0_data/history:/app/history  # Persist history database
+      - ./mem0_custom_main.py:/app/main.py  # Override main.py with Qdrant/MongoDB config
+    restart: unless-stopped
+    networks:
+      - mem0_network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  mem0_network:
+    driver: bridge
+
+volumes:
+  mem0_history:
+    driver: local
+
