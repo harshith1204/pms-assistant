@@ -286,13 +286,10 @@ class LLMIntentParser:
             "## ADVANCED AGGREGATION STAGES\n"
             "Support for complex aggregation operations:\n"
             "- 'break down by priority and status' → $facet for multiple aggregations\n"
-            "- 'auto-group by priority' → $bucketAuto for automatic range grouping\n"
             "- 'combine with other collection' → $unionWith to merge collections\n"
-            "- 'graph traversal queries' → $graphLookup for hierarchical data\n"
             "- Use natural language to express these complex analytical queries\n\n"
             "## TIME-SERIES ANALYSIS\n"
             "Support for time-based analytical operations:\n"
-            "- 'sliding window of 7 days' → $setWindowFields for moving averages\n"
             "- 'rolling average over 30 days' → time window aggregations\n"
             "- 'trend analysis for last quarter' → period-over-period comparisons\n"
             "- 'anomaly detection in work items' → statistical outlier detection\n"
@@ -377,12 +374,7 @@ class LLMIntentParser:
             '  "wants_count": false,\n'
             '  "fetch_one": false,\n'
             '  "facet_fields": null,\n'
-            '  "bucket_field": null,\n'
             '  "union_collection": null,\n'
-            '  "graph_from": null,\n'
-            '  "graph_start": null,\n'
-            '  "graph_connect_from": null,\n'
-            '  "graph_connect_to": null,\n'
             '  "window_field": null,\n'
             '  "window_size": null,\n'
             '  "window_unit": null,\n'
@@ -445,22 +437,12 @@ class LLMIntentParser:
             "- 'pages linked to exactly 2 cycles' → {\"primary_entity\": \"page\", \"filters\": {\"linkedCycle_count\": \"2\"}, \"aggregations\": []}\n"
             "- 'epics with at least 3 custom properties' → {\"primary_entity\": \"epic\", \"filters\": {\"customProperties_count\": \">=3\"}, \"aggregations\": []}\n\n"
             "CRITICAL: When you see phrases like 'multiple', 'more than', 'at least', 'exactly', 'no', 'unassigned', 'with X', 'has X' combined with array field names (assignees, labels, dependencies, etc.), you MUST add the corresponding _count filter.\n\n"
-            "## ADVANCED OPERATOR EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
-            "- Query: 'work items with assignees matching role Developer'\n"
-            "  → filters: {\"assignee_elemMatch\": {\"role\": \"Developer\"}}\n"
-            "- Query: 'work items with assignees matching name John and role Developer'\n"
-            "  → filters: {\"assignee_elemMatch\": {\"name\": \"John\", \"role\": \"Developer\"}}\n\n"
-            "CRITICAL: When users mention 'matching X', 'assignees matching', etc., you MUST add the appropriate $elemMatch filter.\n\n"
             "## ADVANCED AGGREGATION EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
             "- Query: 'break down work items by priority and status'\n"
             "  → aggregations: [\"facet\"], facet_fields: [\"priority\", \"status\"]\n"
-            "- Query: 'auto-group work items by estimate'\n"
-            "  → aggregations: [\"bucketAuto\"], bucket_field: \"estimate\"\n"
             "- Query: 'combine work items with user stories'\n"
             "  → aggregations: [\"unionWith\"], union_collection: \"userStory\"\n"
-            "- Query: 'find project dependencies'\n"
-            "  → aggregations: [\"graphLookup\"], graph_from: \"project\", graph_start: \"$_id\", graph_connect_from: \"_id\", graph_connect_to: \"dependsOn\"\n\n"
-            "CRITICAL: When users mention 'break down by', 'auto-group', 'combine with', 'graph traversal', etc., you MUST add the appropriate aggregation.\n"
+            "CRITICAL: When users mention 'break down by',  'combine with',  etc., you MUST add the appropriate aggregation.\n"
             "Do NOT skip this - these aggregations require special handling that cannot be achieved with basic operations.\n\n"
             "## TIME-SERIES EXAMPLES\n"
             "- '7-day rolling average of work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"timeWindow\"], \"window_field\": \"createdTimeStamp\", \"window_size\": \"7d\", \"window_unit\": \"day\"}\n"
@@ -635,15 +617,7 @@ class LLMIntentParser:
         # Also accept any allow-listed primary fields directly
         known_filter_keys |= allowed_primary_fields
         
-        # Also accept $elemMatch operator filters with suffix (_elemMatch)
-        # These are dynamically detected based on field names + suffix
-        for key in list(raw_filters.keys()):
-            if key.endswith('_elemMatch'):
-                # Extract base field name
-                base_field = key[:-len('_elemMatch')]
-                # Add to known_filter_keys if base field is valid
-                if base_field in allowed_primary_fields or base_field in {"assignee", "label", "description", "_id"}:
-                    known_filter_keys.add(key)
+        
         # Add dynamic range keys for each date-like field
         for f in date_like_fields:
             known_filter_keys.add(f + "_from")
@@ -682,9 +656,6 @@ class LLMIntentParser:
             elif k == "$text" and isinstance(v, str):
                 # Full-text search: keep as-is
                 filters[k] = v.strip()
-            elif k.endswith("_elemMatch") and isinstance(v, dict):
-                # $elemMatch operator filters: keep as-is (values are objects)
-                filters[k] = v
             else:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
@@ -739,18 +710,6 @@ class LLMIntentParser:
         # 3) Advanced feature detection from query text (heuristic fallback)
         
         
-        # Graph lookup detection
-        if re.search(r"\bdependenc(?:y|ies)\b.*\bgraph\b|\bgraph\b.*\bdependenc(?:y|ies)\b|\bdependency\s+chain\b|\bdepends?\s+on\b.*\bgraph\b", oq_text):
-            if "graphLookup" not in (data.get("aggregations") or []):
-                aggregations = data.get("aggregations") or []
-                aggregations.append("graphLookup")
-                data["aggregations"] = aggregations
-            # Infer graph connection fields if not provided
-            if not data.get("graph_connect_to"):
-                if "depends" in oq_text or "dependency" in oq_text:
-                    data["graph_connect_to"] = "dependsOn"
-                elif primary == "project":
-                    data["graph_connect_to"] = "parentProjectId"
         
         # Time window detection (rolling/moving averages)
         if re.search(r"\b(\d+)[\s-]?day\s+rolling\s+averages?\b|\brolling\s+averages?\s+.*\b(\d+)\s+days?\b|\bmoving\s+averages?\s+.*\b(\d+)\s+days?\b|\b(\d+)[\s-]?day\s+window\b", oq_text):
@@ -831,8 +790,8 @@ class LLMIntentParser:
         # Aggregations - include new advanced aggregation types
         allowed_aggs = {
             "count", "group", "summary",
-            "graphLookup", "timeWindow", "trend", "anomaly", "forecast",
-            "facet", "bucketAuto", "unionWith"
+            "timeWindow", "trend", "anomaly", "forecast",
+            "facet", "unionWith"
         }
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
@@ -1013,14 +972,14 @@ class LLMIntentParser:
 
         # Extract advanced aggregation fields
         facet_fields = data.get("facet_fields")
-        bucket_field = data.get("bucket_field")
+
         union_collection = data.get("union_collection")
         
         # Graph lookup fields
-        graph_from = data.get("graph_from")
-        graph_start = data.get("graph_start")
-        graph_connect_from = data.get("graph_connect_from")
-        graph_connect_to = data.get("graph_connect_to")
+        # graph_from = data.get("graph_from")
+        # graph_start = data.get("graph_start")
+        # graph_connect_from = data.get("graph_connect_from")
+        # graph_connect_to = data.get("graph_connect_to")
         
         # Time-series analysis fields
         window_field = data.get("window_field")
@@ -1049,12 +1008,7 @@ class LLMIntentParser:
             wants_count: {wants_count}
             fetch_one: {fetch_one}
             facet_fields: {facet_fields if facet_fields else None}
-            bucket_field: {bucket_field if bucket_field else None}
             union_collection: {union_collection if union_collection else None}
-            graph_from: {graph_from if graph_from else None}
-            graph_start: {graph_start if graph_start else None}
-            graph_connect_from: {graph_connect_from if graph_connect_from else None}
-            graph_connect_to: {graph_connect_to if graph_connect_to else None}
             window_field: {window_field if window_field else None}
             window_size: {window_size if window_size else None}
             window_unit: {window_unit if window_unit else None}
@@ -1083,12 +1037,7 @@ class LLMIntentParser:
             wants_count=wants_count,
             fetch_one=fetch_one,
             facet_fields=facet_fields if facet_fields else None,
-            bucket_field=bucket_field if bucket_field else None,
             union_collection=union_collection if union_collection else None,
-            graph_from=graph_from if graph_from else None,
-            graph_start=graph_start if graph_start else None,
-            graph_connect_from=graph_connect_from if graph_connect_from else None,
-            graph_connect_to=graph_connect_to if graph_connect_to else None,
             window_field=window_field if window_field else None,
             window_size=window_size if window_size else None,
             window_unit=window_unit if window_unit else None,

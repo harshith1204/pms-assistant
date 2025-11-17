@@ -519,21 +519,8 @@ class PipelineGenerator:
 
         # Add advanced aggregation stages (check these BEFORE regular group aggregation)
         if intent.aggregations:
-            # $bucketAuto - automatic range grouping
-            if "bucketAuto" in intent.aggregations and intent.bucket_field:
-                bucket_auto_stage = {
-                    "$bucketAuto": {
-                        "groupBy": f"${intent.bucket_field}",
-                        "buckets": 5,
-                        "output": {"count": {"$sum": 1}}
-                    }
-                }
-                pipeline.append(bucket_auto_stage)
-                # Skip regular group_by handling when using $bucketAuto
-                intent.group_by = []
-
             # $facet - multiple aggregations
-            elif "facet" in intent.aggregations and intent.facet_fields:
+            if "facet" in intent.aggregations and intent.facet_fields:
                 facet_stage = {"$facet": {}}
                 for field in intent.facet_fields:
                     facet_stage["$facet"][f"{field}_breakdown"] = [
@@ -548,59 +535,59 @@ class PipelineGenerator:
         # $graphLookup - graph traversal
         # Check if graph lookup is requested (either explicitly or inferred from query)
         # Improved detection: check aggregations, explicit graph fields, or query context
-        has_graph_aggregation = "graphLookup" in intent.aggregations
-        has_explicit_graph_fields = (
-            intent.graph_from and intent.graph_start and 
-            intent.graph_connect_from and intent.graph_connect_to
-        )
-        # Check filters for dependency-related terms
-        filters_str = str(intent.filters).lower() if intent.filters else ""
-        has_dependency_context = (
-            "dependency" in filters_str or 
-            "depends" in filters_str or
-            "graph" in filters_str or
-            "chain" in filters_str or
-            "relationship" in filters_str
-        )
+        # has_graph_aggregation = "graphLookup" in intent.aggregations
+        # has_explicit_graph_fields = (
+        #     intent.graph_from and intent.graph_start and 
+        #     intent.graph_connect_from and intent.graph_connect_to
+        # )
+        # # Check filters for dependency-related terms
+        # filters_str = str(intent.filters).lower() if intent.filters else ""
+        # has_dependency_context = (
+        #     "dependency" in filters_str or 
+        #     "depends" in filters_str or
+        #     "graph" in filters_str or
+        #     "chain" in filters_str or
+        #     "relationship" in filters_str
+        # )
         
-        needs_graph_lookup = has_graph_aggregation or has_explicit_graph_fields or has_dependency_context
+        # needs_graph_lookup = has_graph_aggregation or has_explicit_graph_fields or has_dependency_context
         
-        if needs_graph_lookup:
-            # Set defaults based on primary entity
-            graph_from = intent.graph_from or intent.primary_entity
-            graph_start = intent.graph_start or "$_id"
+        # if needs_graph_lookup:
+        #     # Set defaults based on primary entity
+        #     graph_from = intent.graph_from or intent.primary_entity
+        #     graph_start = intent.graph_start or "$_id"
             
-            # Try to infer connection fields based on common patterns
-            if not intent.graph_connect_from or not intent.graph_connect_to:
-                # Common dependency patterns
-                if "dependency" in str(intent.filters).lower() or "depends" in str(intent.filters).lower():
-                    graph_connect_from = intent.graph_connect_from or "_id"
-                    graph_connect_to = intent.graph_connect_to or "dependsOn"
-                elif intent.primary_entity == "project":
-                    graph_connect_from = intent.graph_connect_from or "_id"
-                    graph_connect_to = intent.graph_connect_to or "parentProjectId"
-                elif intent.primary_entity == "workItem":
-                    graph_connect_from = intent.graph_connect_from or "_id"
-                    graph_connect_to = intent.graph_connect_to or "dependsOn"
-                else:
-                    graph_connect_from = intent.graph_connect_from or "_id"
-                    graph_connect_to = intent.graph_connect_to or "relatedId"
-            else:
-                graph_connect_from = intent.graph_connect_from
-                graph_connect_to = intent.graph_connect_to
+        #     # Try to infer connection fields based on common patterns
+        #     if not intent.graph_connect_from or not intent.graph_connect_to:
+        #         # Common dependency patterns
+        #         if "dependency" in str(intent.filters).lower() or "depends" in str(intent.filters).lower():
+        #             graph_connect_from = intent.graph_connect_from or "_id"
+        #             graph_connect_to = intent.graph_connect_to or "dependsOn"
+        #         elif intent.primary_entity == "project":
+        #             graph_connect_from = intent.graph_connect_from or "_id"
+        #             graph_connect_to = intent.graph_connect_to or "parentProjectId"
+        #         elif intent.primary_entity == "workItem":
+        #             graph_connect_from = intent.graph_connect_from or "_id"
+        #             graph_connect_to = intent.graph_connect_to or "dependsOn"
+        #         else:
+        #             graph_connect_from = intent.graph_connect_from or "_id"
+        #             graph_connect_to = intent.graph_connect_to or "relatedId"
+        #     else:
+        #         graph_connect_from = intent.graph_connect_from
+        #         graph_connect_to = intent.graph_connect_to
             
-            graph_lookup_stage = {
-                "$graphLookup": {
-                    "from": graph_from,
-                    "startWith": graph_start,
-                    "connectFromField": graph_connect_from,
-                    "connectToField": graph_connect_to,
-                    "as": "graph_path",
-                    "maxDepth": 5,
-                    "depthField": "depth"
-                }
-            }
-            pipeline.append(graph_lookup_stage)
+        #     graph_lookup_stage = {
+        #         "$graphLookup": {
+        #             "from": graph_from,
+        #             "startWith": graph_start,
+        #             "connectFromField": graph_connect_from,
+        #             "connectToField": graph_connect_to,
+        #             "as": "graph_path",
+        #             "maxDepth": 5,
+        #             "depthField": "depth"
+        #         }
+        #     }
+        #     pipeline.append(graph_lookup_stage)
 
         # Add time-series analysis stages (can be combined, so use separate if statements)
         if intent.aggregations:
