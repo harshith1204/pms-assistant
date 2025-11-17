@@ -7,7 +7,7 @@ export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "ht
 
 export const getMemberId = () => {
   // HARDCODED FOR TESTING - REMOVE AFTER
-   return '1eff7f64-08ea-6fdc-99d0-3f7ae8229af5';
+   return '1eff982e-749f-6652-99d0-a1fb0d5128f4';
   
   // const stored = localStorage.getItem('staffId');
   // if (!stored) return '';
@@ -24,7 +24,7 @@ export const getMemberId = () => {
 
 export const getBusinessId = () => {
   // HARDCODED FOR TESTING - REMOVE AFTER
-   return '1eff7f64-09ef-670e-8c7c-2b9676f8dbb6';
+   return '1f0a7f43-8793-6a04-9ec9-3125e1eff878';
   
   // // First, try the bDetails key (for backward compatibility)
   // const raw = localStorage.getItem('bDetails');

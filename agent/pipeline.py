@@ -321,7 +321,7 @@ class PipelineGenerator:
                 }
             }
             pipeline.append(union_with_stage)
-
+            
         # Add grouping if requested
         if intent.group_by:
             # Pre-group unwind for embedded arrays that are used as grouping keys
@@ -495,99 +495,6 @@ class PipelineGenerator:
                     if alias_name:
                         projected_aliases.add(alias_name)
                     current_collection = relationship["target"]
-
-        # Add projections after sorting so computed fields can be hidden
-        if effective_projections and not intent.group_by:
-            projection = self._generate_projection(effective_projections, sorted(list(projected_aliases)), intent.primary_entity)
-            # Ensure we exclude helper fields from output
-            pipeline.append({"$project": projection})
-        # Always remove priority rank helper if it was added
-        if added_priority_rank:
-            pipeline.append({"$unset": "_priorityRank"})
-
-        # Add pagination: skip then limit (only for non-grouped queries; grouped handled above)
-        if not intent.group_by:
-            # Apply skip before limit
-            try:
-                if intent.skip and int(intent.skip) > 0:
-                    pipeline.append({"$skip": int(intent.skip)})
-            except Exception:
-                pass
-            effective_limit = 1 if intent.fetch_one else (intent.limit or None)
-            if effective_limit:
-                pipeline.append({"$limit": int(effective_limit)})
-
-        # Add advanced aggregation stages (check these BEFORE regular group aggregation)
-        if intent.aggregations:
-            # $facet - multiple aggregations
-            if "facet" in intent.aggregations and intent.facet_fields:
-                facet_stage = {"$facet": {}}
-                for field in intent.facet_fields:
-                    facet_stage["$facet"][f"{field}_breakdown"] = [
-                        {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
-                        {"$sort": {"count": -1}},
-                        {"$limit": 10}
-                    ]
-                pipeline.append(facet_stage)
-                # Skip regular group_by handling when using $facet
-                intent.group_by = []
-
-        # $graphLookup - graph traversal
-        # Check if graph lookup is requested (either explicitly or inferred from query)
-        # Improved detection: check aggregations, explicit graph fields, or query context
-        # has_graph_aggregation = "graphLookup" in intent.aggregations
-        # has_explicit_graph_fields = (
-        #     intent.graph_from and intent.graph_start and 
-        #     intent.graph_connect_from and intent.graph_connect_to
-        # )
-        # # Check filters for dependency-related terms
-        # filters_str = str(intent.filters).lower() if intent.filters else ""
-        # has_dependency_context = (
-        #     "dependency" in filters_str or 
-        #     "depends" in filters_str or
-        #     "graph" in filters_str or
-        #     "chain" in filters_str or
-        #     "relationship" in filters_str
-        # )
-        
-        # needs_graph_lookup = has_graph_aggregation or has_explicit_graph_fields or has_dependency_context
-        
-        # if needs_graph_lookup:
-        #     # Set defaults based on primary entity
-        #     graph_from = intent.graph_from or intent.primary_entity
-        #     graph_start = intent.graph_start or "$_id"
-            
-        #     # Try to infer connection fields based on common patterns
-        #     if not intent.graph_connect_from or not intent.graph_connect_to:
-        #         # Common dependency patterns
-        #         if "dependency" in str(intent.filters).lower() or "depends" in str(intent.filters).lower():
-        #             graph_connect_from = intent.graph_connect_from or "_id"
-        #             graph_connect_to = intent.graph_connect_to or "dependsOn"
-        #         elif intent.primary_entity == "project":
-        #             graph_connect_from = intent.graph_connect_from or "_id"
-        #             graph_connect_to = intent.graph_connect_to or "parentProjectId"
-        #         elif intent.primary_entity == "workItem":
-        #             graph_connect_from = intent.graph_connect_from or "_id"
-        #             graph_connect_to = intent.graph_connect_to or "dependsOn"
-        #         else:
-        #             graph_connect_from = intent.graph_connect_from or "_id"
-        #             graph_connect_to = intent.graph_connect_to or "relatedId"
-        #     else:
-        #         graph_connect_from = intent.graph_connect_from
-        #         graph_connect_to = intent.graph_connect_to
-            
-        #     graph_lookup_stage = {
-        #         "$graphLookup": {
-        #             "from": graph_from,
-        #             "startWith": graph_start,
-        #             "connectFromField": graph_connect_from,
-        #             "connectToField": graph_connect_to,
-        #             "as": "graph_path",
-        #             "maxDepth": 5,
-        #             "depthField": "depth"
-        #         }
-        #     }
-        #     pipeline.append(graph_lookup_stage)
 
         # Add time-series analysis stages (can be combined, so use separate if statements)
         if intent.aggregations:
@@ -871,6 +778,25 @@ class PipelineGenerator:
                         "intercept": 1
                     }
                 })
+        # Add projections after sorting so computed fields can be hidden
+        if effective_projections and not intent.group_by:
+            projection = self._generate_projection(effective_projections, sorted(list(projected_aliases)), intent.primary_entity)
+            # Ensure we exclude helper fields from output
+            pipeline.append({"$project": projection})
+        # Always remove priority rank helper if it was added
+        if added_priority_rank:
+            pipeline.append({"$unset": "_priorityRank"})
+        # Add pagination: skip then limit (only for non-grouped queries; grouped handled above)
+        if not intent.group_by:
+            # Apply skip before limit
+            try:
+                if intent.skip and int(intent.skip) > 0:
+                    pipeline.append({"$skip": int(intent.skip)})
+            except Exception:
+                pass
+            effective_limit = 1 if intent.fetch_one else (intent.limit or None)
+            if effective_limit:
+                pipeline.append({"$limit": int(effective_limit)})
         print("The generated pipeline is:",pipeline)
         return pipeline
 

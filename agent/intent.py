@@ -285,7 +285,6 @@ class LLMIntentParser:
             "- userStories → userStories_count (for features)\n\n"
             "## ADVANCED AGGREGATION STAGES\n"
             "Support for complex aggregation operations:\n"
-            "- 'break down by priority and status' → $facet for multiple aggregations\n"
             "- 'combine with other collection' → $unionWith to merge collections\n"
             "- Use natural language to express these complex analytical queries\n\n"
             "## TIME-SERIES ANALYSIS\n"
@@ -373,7 +372,6 @@ class LLMIntentParser:
             '  "wants_details": true,\n'
             '  "wants_count": false,\n'
             '  "fetch_one": false,\n'
-            '  "facet_fields": null,\n'
             '  "union_collection": null,\n'
             '  "window_field": null,\n'
             '  "window_size": null,\n'
@@ -438,8 +436,6 @@ class LLMIntentParser:
             "- 'epics with at least 3 custom properties' → {\"primary_entity\": \"epic\", \"filters\": {\"customProperties_count\": \">=3\"}, \"aggregations\": []}\n\n"
             "CRITICAL: When you see phrases like 'multiple', 'more than', 'at least', 'exactly', 'no', 'unassigned', 'with X', 'has X' combined with array field names (assignees, labels, dependencies, etc.), you MUST add the corresponding _count filter.\n\n"
             "## ADVANCED AGGREGATION EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
-            "- Query: 'break down work items by priority and status'\n"
-            "  → aggregations: [\"facet\"], facet_fields: [\"priority\", \"status\"]\n"
             "- Query: 'combine work items with user stories'\n"
             "  → aggregations: [\"unionWith\"], union_collection: \"userStory\"\n"
             "CRITICAL: When users mention 'break down by',  'combine with',  etc., you MUST add the appropriate aggregation.\n"
@@ -708,9 +704,6 @@ class LLMIntentParser:
                 filters["state_not"] = ["Completed", "Verified"]
 
         # 3) Advanced feature detection from query text (heuristic fallback)
-        
-        
-        
         # Time window detection (rolling/moving averages)
         if re.search(r"\b(\d+)[\s-]?day\s+rolling\s+averages?\b|\brolling\s+averages?\s+.*\b(\d+)\s+days?\b|\bmoving\s+averages?\s+.*\b(\d+)\s+days?\b|\b(\d+)[\s-]?day\s+window\b", oq_text):
             if "timeWindow" not in (data.get("aggregations") or []):
@@ -791,7 +784,7 @@ class LLMIntentParser:
         allowed_aggs = {
             "count", "group", "summary",
             "timeWindow", "trend", "anomaly", "forecast",
-            "facet", "unionWith"
+            "unionWith"
         }
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
@@ -969,18 +962,7 @@ class LLMIntentParser:
 
         # Fetch one heuristic
         fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
-
-        # Extract advanced aggregation fields
-        facet_fields = data.get("facet_fields")
-
         union_collection = data.get("union_collection")
-        
-        # Graph lookup fields
-        # graph_from = data.get("graph_from")
-        # graph_start = data.get("graph_start")
-        # graph_connect_from = data.get("graph_connect_from")
-        # graph_connect_to = data.get("graph_connect_to")
-        
         # Time-series analysis fields
         window_field = data.get("window_field")
         window_size = data.get("window_size")
@@ -1007,7 +989,6 @@ class LLMIntentParser:
             wants_details: {wants_details}
             wants_count: {wants_count}
             fetch_one: {fetch_one}
-            facet_fields: {facet_fields if facet_fields else None}
             union_collection: {union_collection if union_collection else None}
             window_field: {window_field if window_field else None}
             window_size: {window_size if window_size else None}
@@ -1036,7 +1017,6 @@ class LLMIntentParser:
             wants_details=wants_details,
             wants_count=wants_count,
             fetch_one=fetch_one,
-            facet_fields=facet_fields if facet_fields else None,
             union_collection=union_collection if union_collection else None,
             window_field=window_field if window_field else None,
             window_size=window_size if window_size else None,
