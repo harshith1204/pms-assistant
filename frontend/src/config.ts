@@ -1,42 +1,74 @@
+//export const API_HTTP_URL = import.meta.env.VITE_API_HTTP_URL || "http://4.213.16.145:8000";
 export const API_HTTP_URL = import.meta.env.VITE_API_HTTP_URL || "http://localhost:8000";
 export const API_WS_URL = import.meta.env.VITE_API_WS_URL || `${API_HTTP_URL.replace(/^http/, "ws")}/ws/chat`;
 
 // Stage Project API Configuration
-export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://stage-project.simpo.ai";
-
-// Get staff and business details dynamically from postMessage/localStorage (set by parent wrapper)
-// Note: Hardcoded fallbacks are intentionally commented out to avoid accidental misuse
-const DEFAULT_MEMBER_ID = '1effc4a4-3c0f-67a5-99d0-374369aad116';
-const DEFAULT_BUSINESS_ID = '1eedcb26-d23a-688a-bd63-579d19dab229';
+export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://dev-api.simpo.ai/pms";
 
 export const getMemberId = () => {
-  const stored = localStorage.getItem('staffId');
-  if (!stored) return DEFAULT_MEMBER_ID;
-  // Support values sent as JSON strings (e.g., '"uuid"')
-  try {
-    const parsed = JSON.parse(stored);
-    if (typeof parsed === 'string') return parsed.trim();
-  } catch {}
-  return stored.trim();
+  // HARDCODED FOR TESTING - REMOVE AFTER
+   return '1eff7f64-08ea-6fdc-99d0-3f7ae8229af5';
+  
+  // const stored = localStorage.getItem('staffId');
+  // if (!stored) return '';
+  
+  // // Handle case where staffId might be stored as JSON string
+  // try {
+  //   const parsed = JSON.parse(stored);
+  //   return typeof parsed === 'string' ? parsed.trim() : String(parsed).trim();
+  // } catch {
+  //   // If not JSON, return as-is
+  //   return stored.trim();
+  // }
 };
 
 export const getBusinessId = () => {
-  const raw = localStorage.getItem('bDetails');
-  if (!raw) return DEFAULT_BUSINESS_ID;
+  // HARDCODED FOR TESTING - REMOVE AFTER
+   return '1eff7f64-09ef-670e-8c7c-2b9676f8dbb6';
+  
+  // // First, try the bDetails key (for backward compatibility)
+  // const raw = localStorage.getItem('bDetails');
+  // if (raw) {
+  //   try {
+  //     const parsedData = JSON.parse(raw);
+  //     if (parsedData && typeof parsedData === 'object' && parsedData.id) {
+  //       return String(parsedData.id).trim();
+  //     }
+  //     if (typeof parsedData === 'string' && parsedData.trim()) {
+  //       return parsedData.trim();
+  //     }
+  //   } catch {
+  //     // If parsing fails, treat as string
+  //     if (typeof raw === 'string' && raw.trim()) {
+  //       return raw.trim();
+  //     }
+  //   }
+  // }
 
-  // try {
-  //   const parsed = JSON.parse(raw);
-  //   // bDetails is a business object with an 'id' field
-  //   if (parsed && typeof parsed === 'object' && parsed.id) {
-  //     return String(parsed.id).trim();
+  // // If bDetails doesn't exist, look for business details stored under UUID key
+  // // Business details are stored with the business ID as the key
+  // const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  
+  // for (let i = 0; i < localStorage.length; i++) {
+  //   const key = localStorage.key(i);
+  //   if (!key) continue;
+    
+  //   // Check if key matches UUID pattern (likely a business ID)
+  //   if (uuidPattern.test(key)) {
+  //     try {
+  //       const value = localStorage.getItem(key);
+  //       if (value) {
+  //         const parsed = JSON.parse(value);
+  //         // Check if this looks like a business object (has id field matching the key)
+  //         if (parsed && typeof parsed === 'object' && parsed.id === key) {
+  //           return String(parsed.id).trim();
+  //         }
+  //       }
+  //     } catch {
+  //       // Continue searching if this key doesn't contain valid JSON
+  //       continue;
+  //     }
   //   }
-  //   // Fallback: some wrappers may send businessId as a simple string
-  //   if (typeof parsed === 'string' && parsed.trim()) {
-  //     return parsed.trim();
-  //   }
-  // } catch {
-  //   // Not JSON, treat as direct string
-  //   return raw.trim();
   // }
 
   // return '';
@@ -51,6 +83,7 @@ export const getStaffName = () => {
 };
 
 export const getBusinessDetails = () => {
+  // First, try the bDetails key (for backward compatibility)
   const fromStorage = localStorage.getItem('bDetails');
   if (fromStorage) {
     try {
@@ -59,6 +92,32 @@ export const getBusinessDetails = () => {
       return { id: fromStorage };
     }
   }
+
+  // If bDetails doesn't exist, look for business details stored under UUID key
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    
+    // Check if key matches UUID pattern (likely a business ID)
+    if (uuidPattern.test(key)) {
+      try {
+        const value = localStorage.getItem(key);
+        if (value) {
+          const parsed = JSON.parse(value);
+          // Check if this looks like a business object (has id field matching the key)
+          if (parsed && typeof parsed === 'object' && parsed.id === key) {
+            return parsed;
+          }
+        }
+      } catch {
+        // Continue searching if this key doesn't contain valid JSON
+        continue;
+      }
+    }
+  }
+
   return null;
 };
 

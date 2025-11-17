@@ -601,10 +601,8 @@ class AgentExecutor:
                     messages.append(clean_response)
                     did_any_tool = False
                     if len(response.tool_calls) > 1:
-                    
-                        tool_tasks = []
+                        # ✅ EMIT ACTIONS FIRST - Before tool execution starts
                         for tool_call in response.tool_calls:
-                            # Emit action before starting tool execution
                             if callback_handler:
                                 try:
                                     await callback_handler.on_tool_start(
@@ -613,7 +611,12 @@ class AgentExecutor:
                                     )
                                 except Exception:
                                     pass
-                            tool_tasks.append(self._execute_single_tool(None, tool_call, selected_tools, None))
+                        
+                        # NOW build and execute tool tasks in parallel
+                        tool_tasks = [
+                            self._execute_single_tool(None, tool_call, selected_tools, None)
+                            for tool_call in response.tool_calls
+                        ]
                         
                         tool_results = await asyncio.gather(*tool_tasks, return_exceptions=True)
                         
@@ -625,19 +628,20 @@ class AgentExecutor:
                                     content=f"Tool execution error: {result}",
                                     tool_call_id=response.tool_calls[i].get("id", ""),
                                 )
-                                await callback_handler.on_tool_end(error_msg.content)
+                                if callback_handler:
+                                    await callback_handler.on_tool_end(error_msg.content)
                                 messages.append(error_msg)
                                 await conversation_memory.add_message(conversation_id, error_msg)
                             else:
                                 tool_message, success = result
-                                await callback_handler.on_tool_end(tool_message.content)
+                                if callback_handler:
+                                    await callback_handler.on_tool_end(tool_message.content)
                                 messages.append(tool_message)
                                 await conversation_memory.add_message(conversation_id, tool_message)
                                 if success:
                                     did_any_tool = True
                     else:
-                        # Single tool execution
-                        # Emit action before starting tool execution
+                        # Single tool execution - this part is already correct
                         for tool_call in response.tool_calls:
                             if callback_handler:
                                 try:
@@ -649,10 +653,10 @@ class AgentExecutor:
                                     pass
                             
                             tool_message, success = await self._execute_single_tool(None, tool_call, selected_tools, None)
-                            await callback_handler.on_tool_end(tool_message.content)
+                            if callback_handler:
+                                await callback_handler.on_tool_end(tool_message.content)
                             messages.append(tool_message)
                             await self._add_message_to_memory(conversation_id, tool_message)
-                            # Skip saving 'result' events to DB
                             if success:
                                 did_any_tool = True
                     

@@ -16,26 +16,8 @@ const Settings = () => {
       <div className="w-full max-w-3xl space-y-3">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">AI Agent Personalization</h1>
-          <p className="text-sm text-muted-foreground">Control how the agent remembers and responds, and provide long-term context it can learn from.</p>
+          <p className="text-sm text-muted-foreground">Control how the agent remembers and responds, and provide context it can learn from.</p>
         </div>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle>Memory & Context Features</CardTitle>
-            <CardDescription>How these features enhance your AI agent's capabilities.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-1 pt-0">
-            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
-              <h4 className="font-medium text-sm">Key Benefits</h4>
-              <div className="text-xs text-muted-foreground space-y-0.5">
-                <p>• Remembers context and preferences</p>
-                <p>• Retains ongoing work across sessions</p>
-                <p>• Understands your goals and work style</p>
-                <p>• Delivers personalized, consistent help</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
         <Card>
           <CardHeader className="pb-3">
@@ -45,7 +27,7 @@ const Settings = () => {
           <CardContent className="space-y-3 pt-0">
             <div className="flex items-center justify-between">
               <div>
-                <Label htmlFor="remember">Remember long-term context</Label>
+                <Label htmlFor="remember">Remember context</Label>
                 <p className="text-xs text-muted-foreground">Enable to let the agent learn from your saved context.</p>
               </div>
               <Switch id="remember" checked={settings.rememberLongTermContext} onCheckedChange={(checked) => updateSettings({ rememberLongTermContext: checked })} />
@@ -65,7 +47,7 @@ const Settings = () => {
           <CardHeader className={`pb-3 ${!settings.rememberLongTermContext ? "opacity-50" : ""}`}>
             <div className="flex items-center gap-2">
               <CardTitle className={!settings.rememberLongTermContext ? "text-muted-foreground" : ""}>
-                Long-term Context
+                 Context
               </CardTitle>
               {!settings.rememberLongTermContext && (
                 <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 rounded-full text-xs text-muted-foreground">
@@ -76,7 +58,7 @@ const Settings = () => {
             </div>
             <CardDescription className={!settings.rememberLongTermContext ? "text-muted-foreground" : ""}>
               {!settings.rememberLongTermContext
-                ? "Enable memory above to provide long-term context for the agent."
+                ? "Enable memory above to provide context for the agent."
                 : "Provide background, preferences, team norms, or product details the agent should consider."
               }
             </CardDescription>
@@ -86,7 +68,7 @@ const Settings = () => {
               value={settings.longTermContext}
               onChange={(e) => updateSettings({ longTermContext: e.target.value })}
               placeholder={!settings.rememberLongTermContext ? "Enable memory to edit context..." : "e.g., Our team prefers concise weekly updates; we use Jira and GitHub Projects; primary KPIs are activation and retention; tone should be professional but empathetic; we release on Thursdays."}
-              className="min-h-[120px]"
+              className="min-h-[100px]"
               disabled={!settings.rememberLongTermContext}
             />
             <div className="flex gap-2">
@@ -104,6 +86,24 @@ const Settings = () => {
               >
                 Reset all
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle>Memory & Context Features</CardTitle>
+            <CardDescription>How these features enhance your AI agent's capabilities.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-1 pt-0">
+            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+              <h4 className="font-medium text-sm">Key Benefits</h4>
+              <div className="text-xs text-muted-foreground space-y-0.5">
+                <p>• Remembers context and preferences</p>
+                <p>• Retains ongoing work across sessions</p>
+                <p>• Understands your goals and work style</p>
+                <p>• Delivers personalized, consistent help</p>
+              </div>
             </div>
           </CardContent>
         </Card>

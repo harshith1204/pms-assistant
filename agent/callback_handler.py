@@ -230,27 +230,26 @@ class AgentCallbackHandler(AsyncCallbackHandler):
         return {}
 
     async def _emit_action(self, text: str) -> None:
-        if not self.websocket:
-            # Still log action to DB if possible
+        self._step_counter += 1
+        
+        # Send to WebSocket first (if available)
+        if self.websocket:
+            payload = {
+                "type": "agent_action",
+                "text": text,
+                "step": self._step_counter,
+                "timestamp": datetime.now().isoformat(),
+            }
+            await self.websocket.send_json(payload)
+        
+        # Fire-and-forget DB save (don't block UI)
+        if self.conversation_id:
             try:
-                if self.conversation_id:
-                    await save_action_event(self.conversation_id, "action", text, step=self._step_counter + 1)
+                asyncio.create_task(
+                    save_action_event(self.conversation_id, "action", text, step=self._step_counter)
+                )
             except Exception:
                 pass
-            return
-        self._step_counter += 1
-        payload = {
-            "type": "agent_action",
-            "text": text,
-            "step": self._step_counter,
-            "timestamp": datetime.now().isoformat(),
-        }
-        await self.websocket.send_json(payload)
-        try:
-            if self.conversation_id:
-                await save_action_event(self.conversation_id, "action", text, step=self._step_counter)
-        except Exception:
-            pass
 
     async def _emit_result(self, text: str) -> None:
         # No-op: disable sending and persisting 'result' events
@@ -310,9 +309,7 @@ class AgentCallbackHandler(AsyncCallbackHandler):
             # Generate natural, human-like action text based on tool and args
             action_text = _generate_natural_action_text(tool_name, tool_args)
             
-            # Emit action synchronously (await) for real-time delivery
-            # Each tool gets its own action - no need to check _dynamic_action_emitted
-            # as we want parallel tools to each show their progress
+            # Emit action immediately - this is fast (~1ms)
             await self._emit_action(action_text)
         except Exception as e:
             # Fallback to simple action if generation fails
