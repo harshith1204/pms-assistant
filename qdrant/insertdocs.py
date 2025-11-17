@@ -1893,7 +1893,7 @@ if __name__ == "__main__":
     print("Starting indexing process...")
     
     try:
-        embedder = SentenceTransformer(os.getenv("EMBEDDING_SERVICE_URL"))
+        embedder = SentenceTransformer(os.getenv("EMBEDDING_MODEL"))
         EMBEDDING_DIMENSION ="768"
     except ( ValueError) as exc:
         print(f"ERROR: Failed to initialize embedding service: {exc}")
