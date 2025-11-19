@@ -23,6 +23,7 @@ from qdrant.indexing_shared import normalize_document_ids, point_id_from_seed, n
 # Import Qdrant client to check for existing data
 try:
     from qdrant_client import QdrantClient
+    from qdrant_client.http import models as qmodels
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
@@ -45,7 +46,7 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC_PREFIX = os.getenv("KAFKA_TOPIC_PREFIX", "ProjectManagement.")
 
 # Collections to backfill - configurable via environment
-BACKFILL_COLLECTIONS_STR = os.getenv("BACKFILL_COLLECTIONS", "epic,features,cycle,module,project,members,workItem,userStory,page")
+BACKFILL_COLLECTIONS_STR = os.getenv("BACKFILL_COLLECTIONS", "epic,features,cycle,module,project,workItem,userStory,page")
 COLLECTIONS_TO_BACKFILL = [col.strip() for col in BACKFILL_COLLECTIONS_STR.split(",") if col.strip()]
 
 # Batch size for processing
@@ -163,6 +164,107 @@ class MongoDBBackfill:
             logger.warning(f"Failed to check existing points: {e}, assuming none exist")
             return set()
 
+    def check_documents_exist(self, mongo_ids: List[str]) -> set:
+        """Check which documents already exist in Qdrant by mongo_id.
+
+        Args:
+            mongo_ids: List of MongoDB document IDs to check
+
+        Returns:
+            Set of mongo_ids that have at least one point in Qdrant
+        """
+        if not self.qdrant_client or not mongo_ids:
+            return set()
+
+        try:
+            # Check if any points exist with these mongo_ids
+            # We use a filter query to find points with matching mongo_id
+            existing_mongo_ids = set()
+
+            # Process in batches to avoid overwhelming Qdrant filter queries
+            batch_size = 100
+            for i in range(0, len(mongo_ids), batch_size):
+                batch_mongo_ids = mongo_ids[i:i + batch_size]
+                batch_found = set()  # Track found mongo_ids for this batch
+
+                # Build filter for this batch
+                should_conditions = []
+                for mongo_id in batch_mongo_ids:
+                    should_conditions.append(
+                        qmodels.FieldCondition(
+                            key="mongo_id",
+                            match=qmodels.MatchValue(value=mongo_id),
+                        )
+                    )
+
+                filter_query = qmodels.Filter(should=should_conditions)
+
+                # Scroll with pagination to handle documents with multiple chunks
+                # Limit per page: assume max 5 chunks per document
+                scroll_limit = len(batch_mongo_ids) * 5
+                next_page_offset = None
+                max_pages = 100  # Safety limit to prevent infinite loops
+                page_count = 0
+
+                try:
+                    while page_count < max_pages:
+                        page_count += 1
+                        
+                        # Scroll with current offset
+                        scroll_kwargs = {
+                            "collection_name": QDRANT_COLLECTION,
+                            "scroll_filter": filter_query,
+                            "limit": scroll_limit,
+                            "with_payload": True,  # Get full payload to access mongo_id
+                            "with_vectors": False
+                        }
+                        if next_page_offset is not None:
+                            scroll_kwargs["offset"] = next_page_offset
+
+                        result = self.qdrant_client.scroll(**scroll_kwargs)
+
+                        # Check if result exists and has points
+                        if not result or not result[0]:
+                            break
+
+                        # Extract unique mongo_ids from results
+                        for point in result[0]:
+                            if hasattr(point, 'payload') and point.payload:
+                                mongo_id = point.payload.get('mongo_id')
+                                if mongo_id:
+                                    batch_found.add(mongo_id)
+                                    existing_mongo_ids.add(mongo_id)
+
+                        # Early exit: if we've found all mongo_ids in this batch, stop paginating
+                        if len(batch_found) >= len(batch_mongo_ids):
+                            break
+
+                        # Check for next page
+                        # Scroll always returns a tuple: (points, next_page_offset)
+                        if len(result) > 1:
+                            next_offset = result[1]
+                            # If next_offset is None, we've reached the end
+                            if next_offset is None:
+                                break
+                            # Safety check: if offset hasn't changed, break to avoid infinite loop
+                            if next_offset == next_page_offset:
+                                logger.warning(f"Offset unchanged at {next_offset}, stopping pagination")
+                                break
+                            next_page_offset = next_offset
+                        else:
+                            # No more pages (shouldn't happen with proper Qdrant client, but safe check)
+                            break
+
+                except Exception as e:
+                    logger.warning(f"Failed to check batch {i//batch_size + 1}: {e}")
+                    continue
+
+            return existing_mongo_ids
+
+        except Exception as e:
+            logger.warning(f"Failed to check existing documents: {e}, assuming none exist")
+            return set()
+
     def generate_point_id_for_document(self, collection_name: str, document: Dict[str, Any]) -> Optional[str]:
         """Generate the deterministic point ID that would be used for this document in Qdrant.
         
@@ -252,47 +354,39 @@ class MongoDBBackfill:
         errors = 0
 
         try:
-            # If incremental mode is enabled and Qdrant is available, check for existing points
+            # If incremental mode is enabled and Qdrant is available, check for existing documents
             if incremental and self.qdrant_client:
-                logger.info(f"🔍 Checking Qdrant for existing points from '{collection_name}'...")
-                
-                # Fetch all documents and generate their point IDs
+                logger.info(f"🔍 Checking Qdrant for existing documents from '{collection_name}'...")
+
+                # Fetch all documents and their mongo_ids
                 cursor = collection.find({}, batch_size=BATCH_SIZE)
                 documents_to_process = []
-                
+
                 for document in cursor:
-                    point_id = self.generate_point_id_for_document(collection_name, document)
-                    if point_id:
+                    mongo_id = normalize_mongo_id(document.get("_id"))
+                    if mongo_id:
                         documents_to_process.append({
                             "document": document,
-                            "point_id": point_id
+                            "mongo_id": mongo_id
                         })
-                
-                logger.info(f"📝 Generated point IDs for {len(documents_to_process)} documents")
-                
-                # Check existing points in batches
-                all_point_ids = [item["point_id"] for item in documents_to_process]
-                existing_points = set()
-                
-                for i in range(0, len(all_point_ids), QDRANT_CHECK_BATCH_SIZE):
-                    batch_ids = all_point_ids[i:i + QDRANT_CHECK_BATCH_SIZE]
-                    batch_existing = self.check_points_exist(batch_ids)
-                    existing_points.update(batch_existing)
-                    
-                    if (i + QDRANT_CHECK_BATCH_SIZE) % (QDRANT_CHECK_BATCH_SIZE * 5) == 0:
-                        logger.info(f"  Checked {min(i + QDRANT_CHECK_BATCH_SIZE, len(all_point_ids))}/{len(all_point_ids)} points...")
-                
-                logger.info(f"✅ Found {len(existing_points)} existing points in Qdrant")
-                logger.info(f"📤 Will backfill {len(documents_to_process) - len(existing_points)} missing documents")
-                
+
+                logger.info(f"📝 Found {len(documents_to_process)} documents to check")
+
+                # Check existing documents in batches by mongo_id
+                all_mongo_ids = [item["mongo_id"] for item in documents_to_process]
+                existing_mongo_ids = self.check_documents_exist(all_mongo_ids)
+
+                logger.info(f"✅ Found {len(existing_mongo_ids)} existing documents in Qdrant")
+                logger.info(f"📤 Will backfill {len(documents_to_process) - len(existing_mongo_ids)} missing documents")
+
                 # Process only documents that don't exist in Qdrant
                 for i, item in enumerate(documents_to_process):
                     document = item["document"]
-                    point_id = item["point_id"]
-                    
+                    mongo_id = item["mongo_id"]
+
                     try:
                         # Skip if already exists in Qdrant
-                        if point_id in existing_points:
+                        if mongo_id in existing_mongo_ids:
                             skipped += 1
                             continue
                         

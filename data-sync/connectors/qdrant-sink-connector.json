@@ -6,7 +6,7 @@
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "value.converter": "org.apache.kafka.connect.json.JsonConverter",
     "qdrant.grpc.url": "http://qdrant:6334",
-    "qdrant.collection.name": "pmscollection",
+    "qdrant.collection.name": "ProjectManagement",
     "qdrant.vectors.field": "vector",
     "qdrant.payload.fields": "id,text,payload,source_collection",
     "qdrant.id.field": "id",
