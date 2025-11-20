@@ -310,17 +310,6 @@ class PipelineGenerator:
                     "projectBusinessName": {"$ifNull": ["$project.business.name", {"$first": "$projectDoc.business.name"}]}
                 }
             })
-
-        # $unionWith - combine with another collection (MUST come BEFORE grouping)
-        # This allows grouping the combined results from multiple collections
-        if intent.union_collection:
-            union_with_stage = {
-                "$unionWith": {
-                    "coll": intent.union_collection,
-                    "pipeline": [{"$match": {}}]  # Add filters if needed
-                }
-            }
-            pipeline.append(union_with_stage)
             
         # Add grouping if requested
         if intent.group_by:
@@ -345,50 +334,12 @@ class PipelineGenerator:
                 pass
             else:
                 group_id_expr = list(id_fields.values())[0] if len(id_fields) == 1 else id_fields
-
-                # Special handling: for timeline TIME_LOGGED breakdowns, sum parsed minutes from newValue
-                is_timeline_time_logged = (
-                    intent.primary_entity == 'timeline' and (
-                        isinstance(intent.filters.get('type'), str) and 'time_logged' in str(intent.filters.get('type')).lower()
-                    )
-                )
-                if is_timeline_time_logged:
-                    # Compute parsed minutes from strings like "1 hr 30 min", "45 min", "2 hr"
-                    pipeline.append({
-                        "$addFields": {
-                            "_parsedMinutes": {
-                                "$let": {
-                                    "vars": {
-                                        "h": {"$regexFind": {"input": "$newValue", "regex": "([0-9]+)\\s*(?:h|hr|hrs|hour|hours)"}},
-                                        "m": {"$regexFind": {"input": "$newValue", "regex": "([0-9]+)\\s*(?:m|min|mins|minute|minutes)"}}
-                                    },
-                                    "in": {
-                                        "$add": [
-                                            {"$multiply": [
-                                                {"$toInt": {"$ifNull": [{"$arrayElemAt": ["$$h.captures", 0]}, 0]}}, 60
-                                            ]},
-                                            {"$toInt": {"$ifNull": [{"$arrayElemAt": ["$$m.captures", 0]}, 0]}}
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    group_stage: Dict[str, Any] = {
-                        "$group": {
-                            "_id": group_id_expr,
-                            "totalMinutes": {"$sum": "$__parsedMinutes__"}  # placeholder to be replaced
-                        }
+                group_stage: Dict[str, Any] = {
+                    "$group": {
+                        "_id": group_id_expr,
+                        "count": {"$sum": 1},
                     }
-                    # Replace placeholder key with the actual parsed minutes field name
-                    group_stage["$group"]["totalMinutes"] = {"$sum": "$_parsedMinutes"}
-                else:
-                    group_stage: Dict[str, Any] = {
-                        "$group": {
-                            "_id": group_id_expr,
-                            "count": {"$sum": 1},
-                        }
-                    }
+                }
                 if intent.wants_details:
                     group_stage["$group"]["items"] = {
                         "$push": {
@@ -412,24 +363,14 @@ class PipelineGenerator:
                         else:
                             pipeline.append({"$sort": {f"_id.{sort_key}": sort_dir}})
                     else:
-                        # Default to the primary metric
-                        if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
-                            pipeline.append({"$sort": {"totalMinutes": -1}})
-                        else:
-                            pipeline.append({"$sort": {"count": -1}})
-                else:
-                    if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
-                        pipeline.append({"$sort": {"totalMinutes": -1}})
-                    else:
                         pipeline.append({"$sort": {"count": -1}})
+                else:
+                    pipeline.append({"$sort": {"count": -1}})
                 # Present a tidy shape
                 project_shape: Dict[str, Any] = {"count": 1}
                 if intent.wants_details:
                     project_shape["items"] = 1
                 project_shape["group"] = "$_id"
-                # Expose totalMinutes when computed
-                if intent.primary_entity == 'timeline' and ('work_item_title' in (intent.group_by or [])) and is_timeline_time_logged:
-                    project_shape["totalMinutes"] = 1
                 pipeline.append({"$project": project_shape})
                 # Respect limit on grouped results
                 if intent.limit:
@@ -496,289 +437,6 @@ class PipelineGenerator:
                         projected_aliases.add(alias_name)
                     current_collection = relationship["target"]
 
-        # Add time-series analysis stages (can be combined, so use separate if statements)
-        if intent.aggregations:
-            # Time window aggregations ($setWindowFields)
-            # Support multiple aggregation name variations
-            has_time_window = (
-                "timeWindow" in intent.aggregations or 
-                "timewindow" in [a.lower() for a in intent.aggregations] or
-                "rolling" in [a.lower() for a in intent.aggregations] or
-                "moving" in [a.lower() for a in intent.aggregations]
-            )
-            if has_time_window and intent.window_field and intent.window_size:
-                # Parse window size (supports "7d", "30d", "14", etc.)
-                window_size_str = str(intent.window_size).strip().lower()
-                window_days = 7  # default
-                try:
-                    if window_size_str.endswith('d'):
-                        window_days = int(window_size_str.rstrip('d'))
-                    elif window_size_str.isdigit():
-                        window_days = int(window_size_str)
-                    else:
-                        # Try to extract number
-                        import re
-                        match = re.search(r'(\d+)', window_size_str)
-                        if match:
-                            window_days = int(match.group(1))
-                except (ValueError, AttributeError):
-                    window_days = 7  # fallback to default
-                
-                # Determine what to aggregate (count for creation rates, or the field itself)
-                # For date fields, we want to count occurrences per day
-                is_date_field = 'date' in intent.window_field.lower() or 'timestamp' in intent.window_field.lower() or 'created' in intent.window_field.lower() or 'updated' in intent.window_field.lower()
-                
-                if is_date_field:
-                    # For date fields, group by day first, then calculate rolling average of counts
-                    pipeline.append({
-                        "$group": {
-                            "_id": {
-                                "$dateTrunc": {
-                                    "date": f"${intent.window_field}",
-                                    "unit": "day"
-                                }
-                            },
-                            "count": {"$sum": 1}
-                        }
-                    })
-                    pipeline.append({"$sort": {"_id": 1}})
-                    window_stage = {
-                        "$setWindowFields": {
-                            "sortBy": {"_id": 1},
-                            "output": {
-                                "rollingAvg": {
-                                    "$avg": "$count",
-                                    "window": {
-                                        "range": [-window_days, "current"]
-                                    }
-                                },
-                                "rollingSum": {
-                                    "$sum": "$count",
-                                    "window": {
-                                        "range": [-window_days, "current"]
-                                    }
-                                }
-                            }
-                        }
-                    }
-                else:
-                    # For numeric fields, calculate rolling average directly
-                    window_stage = {
-                        "$setWindowFields": {
-                            "sortBy": {intent.window_field: 1},
-                            "output": {
-                                "rollingAvg": {
-                                    "$avg": f"${intent.window_field}",
-                                    "window": {
-                                        "range": [-window_days, "current"]
-                                    }
-                                }
-                            }
-                        }
-                    }
-                pipeline.append(window_stage)
-
-            # Trend analysis - period over period comparison
-            # Support multiple aggregation name variations
-            has_trend = (
-                "trend" in [a.lower() for a in intent.aggregations] or
-                "trends" in [a.lower() for a in intent.aggregations]
-            )
-            if has_trend and intent.trend_field and intent.trend_period:
-                # Group by time periods and calculate metrics
-                period_group = {}
-                trend_period = str(intent.trend_period).lower()
-                if trend_period == "week" or trend_period == "weekly":
-                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "week"}}
-                elif trend_period == "month" or trend_period == "monthly":
-                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "month"}}
-                elif trend_period == "quarter" or trend_period == "quarterly":
-                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "quarter"}}
-                elif trend_period == "day" or trend_period == "daily":
-                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "day"}}
-                else:
-                    # Default to month
-                    period_group = {"$dateTrunc": {"date": f"${intent.trend_field}", "unit": "month"}}
-
-                trend_stage = {
-                    "$group": {
-                        "_id": period_group,
-                        "count": {"$sum": 1},
-                        "period": {"$first": period_group}
-                    }
-                }
-                pipeline.append(trend_stage)
-                pipeline.append({"$sort": {"_id": 1}})
-
-            # Anomaly detection using statistical methods
-            # Support multiple aggregation name variations
-            has_anomaly = (
-                "anomaly" in [a.lower() for a in intent.aggregations] or
-                "anomalies" in [a.lower() for a in intent.aggregations] or
-                "outlier" in [a.lower() for a in intent.aggregations] or
-                "unusual" in [a.lower() for a in intent.aggregations]
-            )
-            if has_anomaly and intent.anomaly_field:
-                # For date fields (like creation rates), first group by day to get counts
-                anomaly_field = intent.anomaly_field
-                is_date_field = 'date' in anomaly_field.lower() or 'timestamp' in anomaly_field.lower() or 'created' in anomaly_field.lower()
-                
-                if is_date_field:
-                    # Group by day first to get daily counts
-                    pipeline.append({
-                        "$group": {
-                            "_id": {
-                                "$dateTrunc": {
-                                    "date": f"${anomaly_field}",
-                                    "unit": "day"
-                                }
-                            },
-                            "count": {"$sum": 1}
-                        }
-                    })
-                    pipeline.append({"$sort": {"_id": 1}})
-                    # Then calculate stats on counts
-                    stats_field = "$count"
-                else:
-                    # For numeric fields, use directly
-                    stats_field = f"${anomaly_field}"
-                
-                # Use default threshold if not provided
-                threshold = intent.anomaly_threshold if intent.anomaly_threshold is not None else 2.0
-                
-                # Calculate mean and standard deviation across all values
-                # First, collect all values with their original documents
-                stats_stage = {
-                    "$group": {
-                        "_id": None,
-                        "avg": {"$avg": stats_field},
-                        "std": {"$stdDevSamp": stats_field},
-                        "values": {"$push": {"value": stats_field, "doc": "$$ROOT"}}
-                    }
-                }
-                pipeline.append(stats_stage)
-
-                # Flag anomalies based on threshold (values that deviate more than threshold * std from mean)
-                anomaly_stage = {
-                    "$project": {
-                        "anomalies": {
-                            "$filter": {
-                                "input": "$values",
-                                "as": "item",
-                                "cond": {
-                                    "$and": [
-                                        # Check if std is valid (not null/zero)
-                                        {"$gt": ["$std", 0]},
-                                        # Check if deviation exceeds threshold
-                                        {
-                                            "$gt": [
-                                                {"$abs": {"$subtract": ["$$item.value", "$avg"]}},
-                                                {"$multiply": ["$std", threshold]}
-                                            ]
-                                        }
-                                    ]
-                                }
-                            }
-                        },
-                        "avg": 1,
-                        "std": 1,
-                        "threshold": threshold,
-                        "total_values": {"$size": "$values"}
-                    }
-                }
-                pipeline.append(anomaly_stage)
-
-            # Simple forecasting using linear trend
-            # Support multiple aggregation name variations
-            has_forecast = (
-                "forecast" in [a.lower() for a in intent.aggregations] or
-                "predict" in [a.lower() for a in intent.aggregations] or
-                "projection" in [a.lower() for a in intent.aggregations]
-            )
-            if has_forecast and intent.forecast_field and intent.forecast_periods:
-                # Calculate trend line and project forward
-                forecast_periods = int(intent.forecast_periods) if intent.forecast_periods else 7
-                
-                # Group by day to get historical counts
-                forecast_stage = {
-                    "$group": {
-                        "_id": {
-                            "$dateTrunc": {
-                                "date": f"${intent.forecast_field}",
-                                "unit": "day"
-                            }
-                        },
-                        "count": {"$sum": 1}
-                    }
-                }
-                pipeline.append(forecast_stage)
-                pipeline.append({"$sort": {"_id": 1}})
-
-                # Calculate linear regression coefficients
-                pipeline.append({
-                    "$setWindowFields": {
-                        "sortBy": {"_id": 1},
-                        "output": {
-                            "linreg": {
-                                "$linreg": {
-                                    "x": {"$toLong": "$_id"},
-                                    "y": "$count"
-                                }
-                            }
-                        }
-                    }
-                })
-                
-                # Get the last document with regression coefficients
-                pipeline.append({
-                    "$group": {
-                        "_id": None,
-                        "last_date": {"$last": "$_id"},
-                        "last_count": {"$last": "$count"},
-                        "slope": {"$last": "$linreg.slope"},
-                        "intercept": {"$last": "$linreg.intercept"},
-                        "historical": {"$push": {"date": "$_id", "count": "$count"}}
-                    }
-                })
-                
-                # Generate forecasted periods
-                # Note: This is a simplified forecast. For production, consider using more sophisticated methods
-                pipeline.append({
-                    "$project": {
-                        "historical": 1,
-                        "forecast": {
-                            "$map": {
-                                "input": {"$range": [1, forecast_periods + 1]},
-                                "as": "day",
-                                "in": {
-                                    "date": {
-                                        "$add": [
-                                            "$last_date",
-                                            {"$multiply": ["$$day", 86400000]}  # Add days in milliseconds
-                                        ]
-                                    },
-                                    "predicted_count": {
-                                        "$add": [
-                                            "$intercept",
-                                            {
-                                                "$multiply": [
-                                                    "$slope",
-                                                    {"$add": [
-                                                        {"$toLong": "$last_date"},
-                                                        {"$multiply": ["$$day", 86400000]}
-                                                    ]}
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        },
-                        "slope": 1,
-                        "intercept": 1
-                    }
-                })
-        # Add projections after sorting so computed fields can be hidden
         if effective_projections and not intent.group_by:
             projection = self._generate_projection(effective_projections, sorted(list(projected_aliases)), intent.primary_entity)
             # Ensure we exclude helper fields from output
@@ -1322,12 +980,6 @@ class PipelineGenerator:
         # Handle advanced MongoDB operators
         advanced_operators = {}
 
-        # $elemMatch for complex array element matching
-        for key, value in filters.items():
-            if key.endswith('_elemMatch') and isinstance(value, dict):
-                array_field = key.replace('_elemMatch', '')
-                advanced_operators[array_field] = {'$elemMatch': value}
-
         # $text for full-text search
         if '$text' in filters:
             primary_filters['$text'] = {'$search': filters['$text']}
@@ -1526,11 +1178,8 @@ class PipelineGenerator:
         # Date bucket helper
         def date_field_for(entity: str, which: str) -> Optional[str]:
             # which: 'created' | 'updated'
-            if entity == 'page':
+            if entity == 'page' or entity == 'features' or entity == 'userStory':
                 return 'createdAt' if which == 'created' else 'updatedAt'
-            if entity == 'timeline':
-                # timeline stores a single 'timestamp' field for event time
-                return 'timestamp'
             # Default to *TimeStamp for other entities
             return 'createdTimeStamp' if which == 'created' else 'updatedTimeStamp'
 
@@ -1612,17 +1261,6 @@ class PipelineGenerator:
             'projectState': {
                 'project': 'project.name',
                 'business': 'project.business.name',
-            },
-            'timeline': {
-                'project': 'project.name',
-                'status': 'type',
-                'assignee': 'user.name',
-                'created_day': bucket_expr('timeline', 'created', 'day'),
-                'created_week': bucket_expr('timeline', 'created', 'week'),
-                'created_month': bucket_expr('timeline', 'created', 'month'),
-                'updated_day': bucket_expr('timeline', 'updated', 'day'),
-                'updated_week': bucket_expr('timeline', 'updated', 'week'),
-                'updated_month': bucket_expr('timeline', 'updated', 'month'),
             },
         }
         entity_map = mapping.get(primary_entity, {})
