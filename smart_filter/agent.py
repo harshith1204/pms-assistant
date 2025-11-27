@@ -3,13 +3,22 @@ Smart Filter Agent - Combines RAG retrieval with MongoDB queries for intelligent
 """
 
 import json
+import logging
 import re
 from typing import List, Dict, Any, Optional, Set, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 
 from qdrant.retrieval import ChunkAwareRetriever
-from mongo.constants import mongodb_tools, DATABASE_NAME, uuid_str_to_mongo_binary, BUSINESS_UUID, MEMBER_UUID, COLLECTIONS_WITH_DIRECT_BUSINESS
+from mongo.constants import (
+    mongodb_tools,
+    DATABASE_NAME,
+    uuid_str_to_mongo_binary,
+    mongo_binary_to_uuid_str,
+    BUSINESS_UUID,
+    MEMBER_UUID,
+    COLLECTIONS_WITH_DIRECT_BUSINESS,
+)
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from .tools import SmartFilterTools
@@ -28,6 +37,7 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 if not groq_api_key:
     raise ValueError("FATAL: GROQ_API_KEY environment variable not set.")
 
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -187,9 +197,11 @@ class SmartFilterAgent:
         await self.retriever.ensure_mongodb_connection()
 
         tool_choice, tool_query = await self._determine_tool(normalized_query)
+        is_simple_field_query = self._is_simple_field_query(normalized_query)
+        should_skip_rag = tool_choice == "build_mongo_query" and is_simple_field_query
 
         # Always try RAG search first for semantic understanding, unless it's a very specific direct field query
-        if tool_choice != "build_mongo_query" or self._is_simple_field_query(normalized_query):
+        if not should_skip_rag:
             # Use RAG search as primary method
             rag_result = await self._handle_rag_flow(tool_query, project_id, limit)
             if rag_result.work_items:
@@ -217,8 +229,14 @@ class SmartFilterAgent:
                         return tool, refined_query
                 except Exception:
                     pass
-        except Exception:
-            pass
+        except Exception as err:
+            logger.warning("Tool routing model failed, falling back to heuristics: %s", err)
+
+        # Heuristic fallback: default to mongo for explicit field queries, RAG otherwise
+        if self._is_simple_field_query(query):
+            return "build_mongo_query", query
+
+        return "rag_search", query
 
     async def _handle_mongo_flow(self, query: str, project_id: str, limit: int) -> SmartFilterResult:
         mongo_result = await self.retriever.execute_mongo_query(query, project_id=project_id, limit=limit)
@@ -431,8 +449,8 @@ class SmartFilterAgent:
         }
 
         formatted = {
-            "title": doc.get("title") or doc.get("name") or "",
-            "description": doc.get("description"),
+            "title": self._safe_string(doc.get("title") or doc.get("name") or ""),
+            "description": self._safe_string(doc.get("description")),
             "startDate": self._serialize_datetime(doc.get("startDate")),
             "endDate": self._serialize_datetime(doc.get("endDate")),
             "releaseDate": self._serialize_datetime(doc.get("releaseDate")),
@@ -440,31 +458,31 @@ class SmartFilterAgent:
             "state": state,
             "business": self._format_reference(doc.get("business")),
             "lead": self._format_reference(doc.get("lead")),
-            "priority": doc.get("priority") or "",
+            "priority": self._safe_string(doc.get("priority") or ""),
             "assignee": self._format_assignees(doc.get("assignee")),
             "label": self._format_labels(doc.get("label")),
+            "attachmentUrl": self._format_attachments(doc.get("attachmentUrl")),
             "cycle": self._format_reference(doc.get("cycle"), include_title=True),
             "modules": self._format_reference(doc.get("modules")),
             "parent": self._format_reference(doc.get("parent")),
-            "workLogs": doc.get("workLogs") if isinstance(doc.get("workLogs"), list) else None,
-            "estimateSystem": doc.get("estimateSystem"),
-            "estimate": doc.get("estimate"),
+            "workLogs": self._sanitize_list_data(doc.get("workLogs")) if isinstance(doc.get("workLogs"), list) else None,
+            "estimateSystem": self._safe_string(doc.get("estimateSystem")),
+            "estimate": self._format_estimate(doc.get("estimate")),
             "id": self._stringify_id(doc.get("_id") or doc.get("id")) or "",
             "project": self._format_reference(doc.get("project")),
-            "view": doc.get("view"),
-            "displayBugNo": doc.get("displayBugNo") or doc.get("bugNo") or "",
-            "status": doc.get("status") or "ACCEPTED",  # Default to ACCEPTED if not provided
+            "view": self._safe_string(doc.get("view")),
+            "displayBugNo": self._safe_string(doc.get("displayBugNo") or doc.get("bugNo") or ""),
+            "status": self._safe_string(doc.get("status") or "ACCEPTED"),  # Default to ACCEPTED if not provided
             "createdBy": self._format_reference(doc.get("createdBy")),
-            "updatedBy": self._format_reference(doc.get("updatedBy")),
-            "attachmentUrl": doc.get("attachmentUrl"),
-            "link": doc.get("link"),
-            "userStory": doc.get("userStory"),
-            "feature": doc.get("feature"),
-            "epic": doc.get("epic"),
+            "updatedBy": self._format_updated_by(doc.get("updatedBy")),
+            "link": self._safe_string(doc.get("link")),
+            "userStory": self._format_reference(doc.get("userStory")),
+            "feature": self._format_reference(doc.get("feature")),
+            "epic": self._format_reference(doc.get("epic")),
             "createdTimeStamp": self._serialize_datetime(doc.get("createdTimeStamp")) or self._serialize_datetime(doc.get("createdOn")),
             "updatedTimeStamp": self._serialize_datetime(doc.get("updatedTimeStamp")) or self._serialize_datetime(doc.get("updatedOn")),
-            "subWorkItems": doc.get("subWorkItems") if isinstance(doc.get("subWorkItems"), list) else None,
-            "timeline": doc.get("timeline") if isinstance(doc.get("timeline"), list) else None,
+            "subWorkItems": self._sanitize_list_data(doc.get("subWorkItems")) if isinstance(doc.get("subWorkItems"), list) else None,
+            "timeline": self._sanitize_list_data(doc.get("timeline")) if isinstance(doc.get("timeline"), list) else None,
         }
 
         return formatted
@@ -480,7 +498,7 @@ class SmartFilterAgent:
         for entry in data:
             if isinstance(entry, dict):
                 assignee_id = self._stringify_id(entry.get("id") or entry.get("_id")) or ""
-                name = entry.get("name") or entry.get("title") or ""
+                name = self._safe_string(entry.get("name") or entry.get("title") or "")
                 if name:
                     result.append({"id": assignee_id, "name": name})
             elif isinstance(entry, str) and entry.strip():
@@ -499,12 +517,93 @@ class SmartFilterAgent:
         for entry in data:
             if isinstance(entry, dict):
                 label_id = self._stringify_id(entry.get("id") or entry.get("_id")) or ""
-                name = entry.get("name") or entry.get("title") or ""
-                color = entry.get("color")
+                name = self._safe_string(entry.get("name") or entry.get("title") or "")
+                color = self._safe_string(entry.get("color"))
                 if name:
                     result.append({"id": label_id, "name": name, "color": color})
 
         return result
+
+    def _format_attachments(self, value: Any) -> List[Dict[str, str]]:
+        result: List[Dict[str, str]] = []
+        data = value
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            return result
+
+        for entry in data:
+            if isinstance(entry, dict):
+                attachment_id = self._stringify_id(entry.get("id") or entry.get("_id")) or ""
+                name = self._safe_string(entry.get("name") or entry.get("title") or "")
+                if name:
+                    result.append({"id": attachment_id, "name": name})
+            elif isinstance(entry, str) and entry.strip():
+                result.append({"id": "", "name": entry.strip()})
+
+        return result
+
+    def _format_updated_by(self, value: Any) -> List[Dict[str, str]]:
+        result: List[Dict[str, str]] = []
+        data = value
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            return result
+
+        for entry in data:
+            if isinstance(entry, dict):
+                updated_by_id = self._stringify_id(entry.get("id") or entry.get("_id")) or ""
+                name = self._safe_string(entry.get("name") or entry.get("title") or "")
+                if name:
+                    result.append({"id": updated_by_id, "name": name})
+            elif isinstance(entry, str) and entry.strip():
+                result.append({"id": "", "name": entry.strip()})
+
+        return result
+
+    def _safe_string(self, value: Any) -> Optional[str]:
+        """Safely convert any value to a string, handling Binary objects and encoding issues."""
+        if value is None:
+            return None
+        if isinstance(value, (Binary, ObjectId)):
+            return self._stringify_id(value)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, bytes):
+            try:
+                # Try to decode as UTF-8 first
+                return value.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    # Fall back to Latin-1 which can handle any byte sequence
+                    return value.decode('latin-1')
+                except UnicodeDecodeError:
+                    # Last resort: encode as base64
+                    import base64
+                    return base64.b64encode(value).decode('ascii')
+        # For any other type, convert to string
+        return str(value)
+
+    def _sanitize_list_data(self, value: Any) -> Any:
+        """Recursively sanitize list data to handle Binary objects and encoding issues."""
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return [self._sanitize_list_data(item) for item in value]
+        if isinstance(value, dict):
+            return {k: self._sanitize_list_data(v) for k, v in value.items()}
+        # For primitive values, use safe string conversion
+        return self._safe_string(value)
+
+    def _format_estimate(self, value: Any) -> Optional[Dict[str, str]]:
+        if not isinstance(value, dict):
+            return None
+
+        return {
+            "hr": self._safe_string(value.get("hr")),
+            "min": self._safe_string(value.get("min"))
+        }
 
     def _format_reference(self, value: Any, include_title: bool = False) -> Optional[Dict[str, Any]]:
         ref = value
@@ -514,7 +613,7 @@ class SmartFilterAgent:
             return None
 
         ref_id = self._stringify_id(ref.get("id") or ref.get("_id")) or ""
-        ref_name = ref.get("name") or ref.get("title") or ""
+        ref_name = self._safe_string(ref.get("name") or ref.get("title") or "")
 
         if not ref_id and not ref_name:
             return None
@@ -523,7 +622,7 @@ class SmartFilterAgent:
         if include_title:
             title_val = ref.get("title")
             if title_val:
-                payload["title"] = title_val
+                payload["title"] = self._safe_string(title_val)
 
         return payload
 
@@ -542,10 +641,10 @@ class SmartFilterAgent:
             except Exception:
                 return str(value)
         if isinstance(value, dict) and "$date" in value:
-            return str(value["$date"])
+            return self._safe_string(value["$date"])
         if isinstance(value, str):
             return value
-        return str(value)
+        return self._safe_string(value)
 
     def _stringify_id(self, value: Any) -> Optional[str]:
         if value is None:
@@ -554,8 +653,7 @@ class SmartFilterAgent:
             return str(value)
         if isinstance(value, Binary):
             try:
-                uuid_obj = value.as_uuid()
-                return str(uuid_obj)
+                return mongo_binary_to_uuid_str(value)
             except Exception:
                 try:
                     # If UUID conversion fails, return hex representation
@@ -563,7 +661,7 @@ class SmartFilterAgent:
                 except Exception:
                     # Last resort: encode as base64 to avoid UTF-8 issues
                     import base64
-                    return base64.b64encode(value).decode('ascii')
+                    return base64.b64encode(value).decode("ascii")
         return str(value)
 
     def _clean_model_output(self, content: Optional[str]) -> str:

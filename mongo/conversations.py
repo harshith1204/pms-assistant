@@ -86,7 +86,7 @@ class ConversationMongoClient:
 # Initialize conversations client with the provided connection string
 CONVERSATIONS_CONNECTION_STRING = os.getenv(
     "CONVERSATIONS_MONGODB_URI",
-    os.getenv("MONGODB_URI", "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0"),
+    os.getenv("MONGODB_URI", "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017,172.191.50.113:27017,172.174.50.239:27017/?replicaSet=rs0&authSource=admin"),
 )
 conversation_mongo_client = ConversationMongoClient(CONVERSATIONS_CONNECTION_STRING)
 

@@ -5,7 +5,7 @@ import logging
 import re
 import sys
 import uuid
-from bson.binary import Binary, UUID_SUBTYPE
+from bson.binary import Binary, UuidRepresentation
 
 
 logger = logging.getLogger(__name__)
@@ -22,10 +22,11 @@ def mongo_uuid_converter(input_str: str) -> str:
             binary_data = base64.b64decode(base64_data)
             if len(binary_data) != 16:
                 raise ValueError("Invalid binary UUID length")
-            return str(uuid.UUID(bytes=binary_data))
+            binary = Binary(binary_data, subtype=3)
+            return str(binary.as_uuid(uuid_representation=UuidRepresentation.JAVA_LEGACY))
 
         uuid_obj = uuid.UUID(input_str)
-        binary_uuid = Binary(uuid_obj.bytes, subtype=UUID_SUBTYPE)
+        binary_uuid = Binary.from_uuid(uuid_obj, uuid_representation=UuidRepresentation.JAVA_LEGACY)
         encoded = base64.b64encode(binary_uuid).decode()
         return f"Binary.createFromBase64('{encoded}', 3)"
 
