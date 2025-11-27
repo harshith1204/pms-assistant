@@ -196,6 +196,35 @@ Instructions:
     }
 }
 
+# Page Generation Prompts (standard format matching other endpoints)
+PAGE_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates concise, well-structured page titles and content.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like named individuals or exact dates unless they are mentioned.
+When context allows, expand on the user's intent with relevant details, examples, and actionable content. When information is truly missing, use general language or note items as TBD.
+Write for a professional audience and ensure the output is practical and useful for documentation.
+Return markdown in the description, keep the title under 120 characters, and respond as raw JSON without code fences.
+Example response: {"title": "API Documentation", "description": "## Overview\\nThis document covers the REST API..."}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line page title, no surrounding quotes.
+- Description: markdown body with clear sections and structure. Expand on the user's prompt with relevant details, examples, and actionable content where appropriate.
+- Use the template structure as a guide, but feel free to enhance and elaborate based on the user's prompt.
+- Make reasonable inferences from the context to create useful, comprehensive page content.
+- Example: {{"title": "API Documentation", "description": "## Overview\\nThis document covers..."}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
 # Cycle Generation Prompts
 CYCLE_GENERATION_PROMPTS = {
     'system_prompt': """You are an assistant that generates concise, actionable cycle (sprint) titles and descriptions.
