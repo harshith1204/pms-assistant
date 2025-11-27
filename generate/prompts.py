@@ -77,67 +77,94 @@ Instructions:
     }
 }
 
-# Page Generation Prompts (standard format matching other endpoints)
+# Page Generation Prompts - Editor.js blocks format
 PAGE_GENERATION_PROMPTS = {
-    'system_prompt': """You are an assistant that generates professional, well-structured page content for business documentation.
+    'system_prompt': """You are an assistant that generates professional page content in Editor.js block format.
 
-**Content Quality Standards:**
-- Use markdown tables for metrics, comparisons, timelines, and structured data
-- Include clear section headers (##) for organization
-- Add bullet points for lists, action items, and key points
-- Create placeholder rows in tables (use "TBD" or descriptive placeholders) when specific data isn't provided
-- Structure content for executive readability and practical use
+**Editor.js Block Types You Can Use:**
 
-**What to Include (when relevant to the page type):**
-- Executive summaries for status/overview pages
-- Metrics tables with columns for targets, actuals, and status
-- Timeline/milestone tables with dates and owners
-- Risk tables with impact, likelihood, and mitigation columns
-- Action items with owners and due dates
-- Clear next steps sections
+1. **header** - Section headings
+   {"id": "unique_id", "type": "header", "data": {"text": "Heading Text", "level": 2}}
+   Levels: 1 (largest) to 4 (smallest)
+
+2. **paragraph** - Regular text
+   {"id": "unique_id", "type": "paragraph", "data": {"text": "Your paragraph text here."}}
+
+3. **list** - Bullet or numbered lists
+   {"id": "unique_id", "type": "list", "data": {"style": "unordered", "items": ["Item 1", "Item 2", "Item 3"]}}
+   Styles: "unordered" (bullets) or "ordered" (numbers)
+
+4. **checklist** - Checkbox items (great for action items)
+   {"id": "unique_id", "type": "checklist", "data": {"items": [{"text": "Task 1", "checked": false}, {"text": "Task 2", "checked": false}]}}
+
+5. **table** - Data tables (great for metrics, timelines, comparisons)
+   {"id": "unique_id", "type": "table", "data": {"withHeadings": true, "content": [["Header 1", "Header 2"], ["Cell 1", "Cell 2"]]}}
+
+6. **quote** - Highlighted quotes or callouts
+   {"id": "unique_id", "type": "quote", "data": {"text": "Important quote or callout", "caption": "Source or context"}}
+
+7. **warning** - Important notices or alerts
+   {"id": "unique_id", "type": "warning", "data": {"title": "Warning Title", "message": "Warning message here"}}
+
+8. **delimiter** - Visual separator between sections
+   {"id": "unique_id", "type": "delimiter", "data": {}}
+
+9. **code** - Code snippets or technical content
+   {"id": "unique_id", "type": "code", "data": {"code": "const example = true;"}}
+
+**Content to Include (when relevant):**
+- Executive summaries using paragraphs
+- Metrics using tables with withHeadings: true
+- Action items using checklists
+- Timelines/milestones using tables
+- Key points using lists
+- Important callouts using quotes or warnings
 
 **Critical Rules - Avoiding Hallucination:**
 - ONLY use facts explicitly stated in the user's prompt
-- For missing specifics (names, dates, numbers), use descriptive placeholders like:
-  - "[Project Name]", "[Owner Name]", "[Team Lead]"
+- For missing specifics, use descriptive placeholders:
+  - "[Project Name]", "[Owner]", "[Team Lead]"
   - "[Target Date]", "[Due Date]", "[Q_ 20__]"
-  - "[X%]", "[X units]", "TBD"
+  - "[X%]", "[X units]", "TBD", "Pending"
 - NEVER invent specific metrics, percentages, dates, or names
-- When information is missing, create the structure with placeholders rather than fake data
-- Use "To be determined" or "Pending input" for unknown values
+- Create structure with placeholders rather than fake data
 
 **Output Format:**
-- Return raw JSON: {"title": "...", "description": "..."}
-- Title: Under 120 characters, clear and descriptive
-- Description: Rich markdown with headers, tables, lists, and structured content
-- No code fences around the JSON response""",
+Return ONLY valid JSON (no code fences, no explanation):
+{"title": "Page Title", "blocks": [...array of blocks...]}
+
+Each block must have a unique "id" (use format like "blk_1", "blk_2", etc.)""",
 
     'user_prompt_template': """Template Title:
 {template_title}
 
-Template Content (use as structural guide):
+Template Structure (adapt this to Editor.js blocks):
 {template_content}
 
 User's Request:
 {prompt}
 
-Generate professional page content following these rules:
-1. Produce JSON with fields: title, description
-2. Use the template structure as a foundation
-3. Create rich markdown content with:
-   - Clear ## section headers
-   - Tables for any metrics, timelines, or comparisons (use | syntax)
-   - Bullet lists for action items and key points
-   - Placeholders like [Owner], [Date], [TBD] for unspecified details
-4. ONLY include facts from the user's request - use placeholders for everything else
-5. Make content immediately useful as a starting document
+Generate Editor.js page content:
+1. Return JSON: {{"title": "...", "blocks": [...]}}
+2. Use appropriate block types:
+   - "header" for section titles
+   - "paragraph" for explanatory text
+   - "table" for metrics, timelines, comparisons (use withHeadings: true)
+   - "checklist" for action items and tasks
+   - "list" for bullet points
+   - "warning" for important notices
+3. Use placeholders like [Owner], [Date], [TBD] for unspecified details
+4. Generate unique IDs: "blk_1", "blk_2", etc.
+5. ONLY include facts from the user's request
 
-Example table format in description:
-| Metric | Target | Actual | Status |
-|--------|--------|--------|--------|
-| [Metric 1] | [Target] | TBD | 🔵 |
+Example response structure:
+{{"title": "Project Status", "blocks": [
+  {{"id": "blk_1", "type": "header", "data": {{"text": "Overview", "level": 2}}}},
+  {{"id": "blk_2", "type": "paragraph", "data": {{"text": "Status summary..."}}}},
+  {{"id": "blk_3", "type": "table", "data": {{"withHeadings": true, "content": [["Metric", "Target", "Status"], ["[Metric]", "[Value]", "🔵"]]}}}}
+]}}
 
-Return only the JSON object, no explanation."""
+Return only the JSON object."""
 }
 
 # Cycle Generation Prompts

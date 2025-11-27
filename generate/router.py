@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from .models import (
     GenerateRequest,
     GenerateResponse,
+    PageGenerateResponse,
     WorkItemSurpriseMeRequest,
     CycleSurpriseMeRequest,
     ModuleSurpriseMeRequest,
@@ -164,9 +165,9 @@ async def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> Gene
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 
-@router.post("/page", response_model=GenerateResponse)
-async def generate_page(req: GenerateRequest) -> GenerateResponse:
-    """Generate page content from a template and user prompt."""
+@router.post("/page", response_model=PageGenerateResponse)
+async def generate_page(req: GenerateRequest) -> PageGenerateResponse:
+    """Generate page content in Editor.js blocks format."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -195,32 +196,49 @@ async def generate_page(req: GenerateRequest) -> GenerateResponse:
     )
     content = completion.choices[0].message.content or ""
 
-    # Parse JSON response
+    # Parse JSON response with Editor.js blocks
     title = req.template.title
-    description = req.template.content
-    parsed = None
+    blocks = []
+    
     try:
+        # Extract JSON from response
         start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            parsed = json.loads(content[start : end + 1])
+        end = content.rfind("}") + 1
+        if start != -1 and end > start:
+            parsed = json.loads(content[start:end])
+            
+            if isinstance(parsed, dict):
+                title = parsed.get("title") or title
+                raw_blocks = parsed.get("blocks", [])
+                
+                # Validate and clean blocks
+                if isinstance(raw_blocks, list):
+                    for i, block in enumerate(raw_blocks):
+                        if isinstance(block, dict) and "type" in block and "data" in block:
+                            # Ensure block has an ID
+                            if "id" not in block:
+                                block["id"] = f"blk_{i+1}"
+                            blocks.append(block)
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:200]}")
-        parsed = None
 
-    if isinstance(parsed, dict):
-        title = parsed.get("title") or title
-        description = parsed.get("description") or description
-    else:
-        if content.strip():
-            description = content.strip()
-            first_line = description.splitlines()[0] if description else req.prompt
-            title = first_line[:120] if len(first_line) > 120 else first_line
-        else:
-            description = req.template.content
-            title = req.template.title
+    # Fallback: if no valid blocks, create a simple paragraph block
+    if not blocks:
+        fallback_text = content.strip() if content.strip() else "Content generation in progress. Please add your content here."
+        blocks = [
+            {
+                "id": "blk_1",
+                "type": "header",
+                "data": {"text": title, "level": 2}
+            },
+            {
+                "id": "blk_2", 
+                "type": "paragraph",
+                "data": {"text": fallback_text}
+            }
+        ]
 
-    return GenerateResponse(title=title.strip(), description=description.strip())
+    return PageGenerateResponse(title=title.strip(), blocks=blocks)
 
 
 @router.post("/cycle", response_model=GenerateResponse)
