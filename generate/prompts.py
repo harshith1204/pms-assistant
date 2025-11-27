@@ -425,3 +425,162 @@ Instructions:
     }
 }
 
+
+# User Story Generation Prompts
+USER_STORY_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates clear, actionable user stories.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like exact metrics, named users, or specific business data unless they are mentioned.
+When context allows, expand on the user's intent with relevant persona details, clear goals, and testable acceptance criteria. When information is truly missing, use general language or note items as TBD.
+Write for cross-functional audiences and ensure the output follows the "As a [persona], I want [goal] so that [benefit]" format.
+Keep the title under 100 characters, and respond as raw JSON without code fences.
+Example response: {"title": "View Order History", "description": "As a customer, I want to view my past orders so that I can track my purchases.", "persona": "Returning customer who makes frequent purchases", "user_goal": "Access and review historical order information", "demographics": "Online shoppers, all age groups, desktop and mobile", "acceptance_criteria": ["User can see list of past orders", "Orders show date, items, and total", "User can filter by date range"]}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description, persona, user_goal, demographics, acceptance_criteria.
+- Title: one line user story summary, no surrounding quotes.
+- Description: user story in "As a [persona], I want [goal] so that [benefit]" format with additional context.
+- Persona: description of the target user (role, characteristics, technical level).
+- User Goal: what the user wants to achieve and why.
+- Demographics: target user segment, industry, usage context.
+- Acceptance Criteria: array of 3-5 specific, testable conditions for "done".
+- Use the template structure as a guide, but feel free to enhance based on the user's prompt.
+- Make reasonable inferences from the context to create a useful, actionable user story.
+- Example: {{"title": "View Order History", "description": "As a customer, I want to view my past orders so that I can track my purchases.", "persona": "Returning customer", "user_goal": "Access order history", "demographics": "Online shoppers", "acceptance_criteria": ["Can see past orders", "Shows order details", "Can filter by date"]}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+# User Story Surprise-Me Prompts
+USER_STORY_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances user story descriptions to make them more detailed, actionable, and useful.
+Build upon the provided context with relevant details, persona characteristics, and testable acceptance criteria. Make reasonable inferences based on the title and description provided.
+Expand on persona, goals, and acceptance criteria with practical details that would be helpful for development teams.
+Avoid inventing specific named individuals or exact metrics unless mentioned, but feel free to suggest reasonable user characteristics or outcomes based on the context.
+Return ONLY valid JSON with fields: title, description, persona, user_goal, demographics, acceptance_criteria.
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Description:
+{description}
+
+Current Persona:
+{persona}
+
+Instructions:
+- Enhance the existing user story to make it more detailed, structured, and actionable
+- Expand on the provided context with relevant persona details and clear goals
+- Ensure description follows "As a [persona], I want [goal] so that [benefit]" format
+- Add 3-5 specific, testable acceptance criteria
+- Make reasonable inferences from the title and description to create a comprehensive user story
+- Output JSON with fields: title, description, persona, user_goal, demographics, acceptance_criteria
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates comprehensive, actionable user stories from a title.
+Create a detailed user story with clear persona, goals, demographics, and testable acceptance criteria.
+Make reasonable inferences from the title to create a useful user story. Use specific, actionable language rather than overly generic placeholders.
+Expand on the title with relevant details that would help development teams understand and implement the story.
+Return ONLY valid JSON with fields: title, description, persona, user_goal, demographics, acceptance_criteria.
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate a comprehensive user story for this title
+- Create description in "As a [persona], I want [goal] so that [benefit]" format
+- Define a clear persona with relevant characteristics
+- Specify the user goal and expected outcome
+- Add target demographics (segment, industry, usage context)
+- Create 3-5 specific, testable acceptance criteria
+- Output JSON with fields: title, description, persona, user_goal, demographics, acceptance_criteria
+"""
+    }
+}
+
+
+# Feature Generation Prompts
+FEATURE_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates comprehensive feature specifications.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like exact metrics, percentages, or timelines unless they are mentioned.
+When context allows, expand on the user's intent with clear problem statements, objectives, and prioritized requirements. When information is truly missing, use general language or note items as TBD.
+Write for cross-functional audiences (product, engineering, design, leadership) and ensure the output is practical and actionable.
+Requirements should be categorized by type: "must_have" (critical), "should_have" (important), "nice_to_have" (desired).
+Respond as raw JSON without code fences.
+Example response: {"feature_name": "User Dashboard", "description": "Centralized dashboard for users to view key metrics and activities.", "problem_statement": "Users lack a single view of their data and activities.", "objective": "Provide a unified interface for monitoring user activity.", "success_criteria": ["Users can view all metrics in one place", "Page loads under 2 seconds"], "goals": ["Improve user engagement", "Reduce support tickets"], "pain_points": ["Data scattered across multiple pages", "No quick overview available"], "in_scope": ["Dashboard UI", "Basic metrics display", "Activity feed"], "out_of_scope": ["Advanced analytics", "Custom widgets"], "functional_requirements": [{"requirement": "Display user metrics", "type": "must_have"}], "non_functional_requirements": [{"requirement": "Page load under 3 seconds", "type": "must_have"}]}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: feature_name, description, problem_statement, objective, success_criteria, goals, pain_points, in_scope, out_of_scope, functional_requirements, non_functional_requirements.
+- Feature Name: clear, concise name (2-5 words).
+- Description: comprehensive overview of what the feature does and who it's for.
+- Problem Statement: what problem this feature solves and why it matters.
+- Objective: primary goal and expected outcome.
+- Success Criteria: array of 3-5 measurable conditions for success.
+- Goals: array of 2-4 goals (business, UX, technical).
+- Pain Points: array of 2-4 current problems being addressed.
+- In Scope: array of 3-5 items included in this feature.
+- Out of Scope: array of 2-4 items explicitly excluded.
+- Functional Requirements: array of objects with "requirement" and "type" (must_have, should_have, nice_to_have).
+- Non-Functional Requirements: array of objects with "requirement" and "type" (must_have, should_have, nice_to_have).
+- Use the template structure as a guide, but feel free to enhance based on the user's prompt.
+- Make reasonable inferences from the context to create a useful, actionable feature specification.
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+
+# Project Generation Prompts
+PROJECT_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates clear, well-structured project definitions.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like exact dates, budgets, or named team members unless they are mentioned.
+When context allows, expand on the user's intent with relevant goals, scope definitions, and success criteria. When information is truly missing, use general language or note items as TBD.
+Write for cross-functional audiences and ensure the output is practical and useful for project planning.
+The project_id should be the first 5 letters of the project name in UPPERCASE (remove spaces/special characters).
+Return markdown in the description, and respond as raw JSON without code fences.
+Example response: {"project_name": "Customer Portal Redesign", "project_id": "CUSTO", "description": "## Overview\\nRedesign the customer portal to improve user experience.\\n\\n## Goals\\n- Improve customer satisfaction\\n- Reduce support tickets\\n\\n## Scope\\n- New dashboard design\\n- Mobile responsiveness"}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: project_name, project_id, description.
+- Project Name: clear, professional name (2-5 words), no surrounding quotes.
+- Project ID: first 5 letters of project name in UPPERCASE (e.g., "Customer Portal" → "CUSTO").
+- Description: markdown body with sections for Overview, Goals, Scope, Stakeholders, and Success Criteria. Expand on the user's prompt with relevant details.
+- Use the template structure as a guide, but feel free to enhance and elaborate based on the user's prompt.
+- Make reasonable inferences from the context to create a useful, actionable project definition.
+- Example: {{"project_name": "Mobile App Launch", "project_id": "MOBIL", "description": "## Overview\\nLaunch mobile app for iOS and Android.\\n\\n## Goals\\n- Reach 10K downloads in first month"}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+

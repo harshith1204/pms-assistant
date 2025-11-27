@@ -278,5 +278,173 @@
       "template_type": "epic",
       "content": "## Initiative Overview\nWhat organizational change are we driving?\n\n## Current State\n- Team size: \n- Key challenges: \n- Culture assessment: \n\n## Goals\n- Goal 1: \n- Goal 2: \n\n## Focus Areas\n- [ ] Hiring & growth\n- [ ] Learning & development\n- [ ] Culture & engagement\n- [ ] Processes & tools\n\n## Timeline\n| Phase | Focus | Duration |\n|-------|-------|----------|\n|       |       |          |\n\n## Success Metrics\n- Employee satisfaction: \n- Retention rate: \n- Team performance: "
     }
+  ],
+  "user_story": [
+    {
+      "id": "feature-user-story",
+      "name": "Feature User Story",
+      "title": "📖 Feature User Story",
+      "description": "User story for a new feature or capability.",
+      "priority": "High",
+      "template_type": "user_story",
+      "content": "## User Story\nAs a [persona], I want [goal] so that [benefit].\n\n## Persona\n- Role: \n- Technical level: \n- Key needs: \n\n## User Goal\nWhat the user wants to achieve.\n\n## Demographics\n- Segment: \n- Industry: \n- Usage context: \n\n## Acceptance Criteria\n- [ ] Criterion 1\n- [ ] Criterion 2\n- [ ] Criterion 3"
+    },
+    {
+      "id": "improvement-user-story",
+      "name": "Improvement User Story",
+      "title": "✨ Improvement User Story",
+      "description": "User story for improving existing functionality.",
+      "priority": "Medium",
+      "template_type": "user_story",
+      "content": "## User Story\nAs a [persona], I want [improvement] so that [benefit].\n\n## Persona\n- Current user of: \n- Pain point: \n- Expected outcome: \n\n## User Goal\nHow should the experience be better?\n\n## Demographics\n- User segment: \n- Frequency of use: \n- Platform: \n\n## Acceptance Criteria\n- [ ] Current pain point is resolved\n- [ ] No regression in existing functionality\n- [ ] Performance maintained or improved"
+    },
+    {
+      "id": "integration-user-story",
+      "name": "Integration User Story",
+      "title": "🔗 Integration User Story",
+      "description": "User story for integrations or connecting systems.",
+      "priority": "Medium",
+      "template_type": "user_story",
+      "content": "## User Story\nAs a [persona], I want [integration] so that [benefit].\n\n## Persona\n- Role: \n- Systems currently used: \n- Integration need: \n\n## User Goal\nWhat workflow or data flow needs to be connected?\n\n## Demographics\n- Organization type: \n- Technical environment: \n- Compliance needs: \n\n## Acceptance Criteria\n- [ ] Data syncs correctly between systems\n- [ ] Error handling works properly\n- [ ] User can configure the integration"
+    },
+    {
+      "id": "mobile-user-story",
+      "name": "Mobile User Story",
+      "title": "📱 Mobile User Story",
+      "description": "User story for mobile-specific experiences.",
+      "priority": "Medium",
+      "template_type": "user_story",
+      "content": "## User Story\nAs a [mobile user], I want [capability] so that [benefit on the go].\n\n## Persona\n- Device type: iOS / Android / Both\n- Usage context: On-the-go / Quick access / Offline\n- Technical comfort: \n\n## User Goal\nWhat needs to work on mobile?\n\n## Demographics\n- Primary use case: \n- Network conditions: \n- Device capabilities needed: \n\n## Acceptance Criteria\n- [ ] Works on target devices\n- [ ] Responsive and fast\n- [ ] Touch-friendly interface\n- [ ] Works offline (if applicable)"
+    },
+    {
+      "id": "admin-user-story",
+      "name": "Admin User Story",
+      "title": "⚙️ Admin User Story",
+      "description": "User story for administrative or configuration features.",
+      "priority": "Medium",
+      "template_type": "user_story",
+      "content": "## User Story\nAs an [admin/manager], I want [capability] so that [business benefit].\n\n## Persona\n- Admin type: System Admin / Team Lead / Manager\n- Responsibilities: \n- Technical level: \n\n## User Goal\nWhat administrative task needs to be accomplished?\n\n## Demographics\n- Organization size: \n- Number of users managed: \n- Compliance requirements: \n\n## Acceptance Criteria\n- [ ] Admin can perform the action\n- [ ] Appropriate permissions enforced\n- [ ] Audit trail captured\n- [ ] Bulk operations supported (if applicable)"
+    },
+    {
+      "id": "accessibility-user-story",
+      "name": "Accessibility User Story",
+      "title": "♿ Accessibility User Story",
+      "description": "User story focused on accessibility needs.",
+      "priority": "High",
+      "template_type": "user_story",
+      "content": "## User Story\nAs a [user with specific needs], I want [accessible feature] so that [I can use the product effectively].\n\n## Persona\n- Accessibility need: Visual / Motor / Cognitive / Auditory\n- Assistive technology used: \n- Usage context: \n\n## User Goal\nWhat task needs to be accessible?\n\n## Demographics\n- Compliance standard: WCAG 2.1 AA / Section 508\n- User environment: \n- Device/browser requirements: \n\n## Acceptance Criteria\n- [ ] Screen reader compatible\n- [ ] Keyboard navigable\n- [ ] Sufficient color contrast\n- [ ] Focus indicators visible\n- [ ] Error messages accessible"
+    }
+  ],
+  "project": [
+    {
+      "id": "software-project",
+      "name": "Software Project",
+      "title": "💻 Software Project",
+      "description": "Template for software development projects.",
+      "priority": "High",
+      "template_type": "project",
+      "content": "## Overview\nBrief description of the software project.\n\n## Goals\n- Primary goal\n- Secondary goals\n\n## Scope\n**In Scope:**\n- Item 1\n- Item 2\n\n**Out of Scope:**\n- Item 1\n\n## Team\n- Project Lead: [Name]\n- Developers: [Team]\n- QA: [Team]\n\n## Timeline\n- Start: [Date]\n- Target completion: [Date]\n\n## Success Criteria\n- Criterion 1\n- Criterion 2"
+    },
+    {
+      "id": "marketing-project",
+      "name": "Marketing Project",
+      "title": "📣 Marketing Project",
+      "description": "Template for marketing campaigns and initiatives.",
+      "priority": "Medium",
+      "template_type": "project",
+      "content": "## Overview\nBrief description of the marketing initiative.\n\n## Goals\n- Awareness target: \n- Lead generation: \n- Conversion goal: \n\n## Target Audience\n- Primary segment: \n- Secondary segment: \n\n## Channels\n- [ ] Email\n- [ ] Social media\n- [ ] Paid advertising\n- [ ] Content marketing\n\n## Budget\n- Total budget: [Amount]\n- Allocation: \n\n## Timeline\n- Campaign start: [Date]\n- Campaign end: [Date]\n\n## Success Metrics\n- KPI 1: Target\n- KPI 2: Target"
+    },
+    {
+      "id": "operations-project",
+      "name": "Operations Project",
+      "title": "⚙️ Operations Project",
+      "description": "Template for operational improvement projects.",
+      "priority": "Medium",
+      "template_type": "project",
+      "content": "## Overview\nBrief description of the operational project.\n\n## Problem Statement\nWhat operational challenge are we solving?\n\n## Goals\n- Efficiency target: \n- Cost reduction: \n- Quality improvement: \n\n## Scope\n- Departments affected: \n- Processes involved: \n- Systems impacted: \n\n## Approach\n1. Phase 1: Assessment\n2. Phase 2: Implementation\n3. Phase 3: Optimization\n\n## Resources\n- Team: [Members]\n- Budget: [Amount]\n- Tools: [List]\n\n## Success Metrics\n- Metric 1: Before → After\n- Metric 2: Before → After"
+    },
+    {
+      "id": "research-project",
+      "name": "Research Project",
+      "title": "🔬 Research Project",
+      "description": "Template for research and discovery projects.",
+      "priority": "Medium",
+      "template_type": "project",
+      "content": "## Overview\nBrief description of the research initiative.\n\n## Research Questions\n1. Primary question\n2. Secondary questions\n\n## Methodology\n- Approach: Qualitative / Quantitative / Mixed\n- Methods: Surveys / Interviews / Analysis\n- Sample size: \n\n## Scope\n- Focus areas: \n- Limitations: \n\n## Timeline\n- Research period: [Start] to [End]\n- Analysis: [Duration]\n- Report: [Date]\n\n## Deliverables\n- Research report\n- Recommendations\n- Presentation\n\n## Success Criteria\n- Questions answered\n- Actionable insights generated"
+    },
+    {
+      "id": "event-project",
+      "name": "Event Project",
+      "title": "🎉 Event Project",
+      "description": "Template for planning events and conferences.",
+      "priority": "Medium",
+      "template_type": "project",
+      "content": "## Overview\nBrief description of the event.\n\n## Event Details\n- Type: Conference / Workshop / Meetup / Webinar\n- Date: [Date]\n- Location: [Venue / Virtual]\n- Expected attendance: [Number]\n\n## Goals\n- Primary goal: \n- Engagement target: \n- Lead generation: \n\n## Budget\n- Total budget: [Amount]\n- Venue: \n- Catering: \n- Marketing: \n\n## Team\n- Event lead: [Name]\n- Logistics: [Team]\n- Marketing: [Team]\n\n## Timeline\n| Milestone | Date | Owner |\n|-----------|------|-------|\n| Planning complete | | |\n| Registration open | | |\n| Event day | | |\n\n## Success Metrics\n- Attendance: Target\n- Satisfaction: Target\n- Leads generated: Target"
+    },
+    {
+      "id": "compliance-project",
+      "name": "Compliance Project",
+      "title": "📋 Compliance Project",
+      "description": "Template for compliance and regulatory projects.",
+      "priority": "High",
+      "template_type": "project",
+      "content": "## Overview\nBrief description of the compliance initiative.\n\n## Compliance Requirements\n- Regulation: [Name]\n- Deadline: [Date]\n- Certification needed: Yes / No\n\n## Scope\n- Systems affected: \n- Processes affected: \n- Data involved: \n\n## Gap Analysis\n| Requirement | Current State | Gap | Priority |\n|-------------|---------------|-----|----------|\n|             |               |     |          |\n\n## Remediation Plan\n1. Phase 1: Assessment\n2. Phase 2: Implementation\n3. Phase 3: Audit preparation\n\n## Resources\n- Compliance lead: [Name]\n- Legal: [Contact]\n- External auditor: [Firm]\n\n## Timeline\n- Assessment complete: [Date]\n- Implementation complete: [Date]\n- Audit date: [Date]\n\n## Success Criteria\n- All gaps remediated\n- Audit passed\n- Documentation complete"
+    }
+  ],
+  "feature": [
+    {
+      "id": "product-feature",
+      "name": "Product Feature",
+      "title": "🚀 Product Feature",
+      "description": "Template for new product features or capabilities.",
+      "priority": "High",
+      "template_type": "feature",
+      "content": "## Feature Name\n[Feature Name]\n\n## Description\nComprehensive description of the feature and how it works.\n\n## Problem Statement\nWhat problem does this feature solve for users?\n\n## Objective\nPrimary objective and expected outcome.\n\n## Success Criteria\n- Criterion 1\n- Criterion 2\n- Criterion 3\n\n## Goals\n- Business goal\n- User experience goal\n- Technical goal\n\n## Pain Points\n- Pain point 1\n- Pain point 2\n\n## In Scope\n- Included item 1\n- Included item 2\n- Included item 3\n\n## Out of Scope\n- Excluded item 1\n- Excluded item 2\n\n## Functional Requirements\n**Must Have:**\n- Requirement 1\n- Requirement 2\n\n**Should Have:**\n- Requirement 1\n\n**Nice to Have:**\n- Requirement 1\n\n## Non-Functional Requirements\n**Must Have:**\n- Performance: [Target]\n- Security: [Requirement]\n\n**Should Have:**\n- Scalability: [Target]"
+    },
+    {
+      "id": "integration-feature",
+      "name": "Integration Feature",
+      "title": "🔗 Integration Feature",
+      "description": "Template for integration or connectivity features.",
+      "priority": "High",
+      "template_type": "feature",
+      "content": "## Feature Name\n[Integration Name]\n\n## Description\nDescription of the integration and what systems it connects.\n\n## Problem Statement\nWhat workflow or data gap does this integration address?\n\n## Objective\nEnable seamless data flow and workflow automation between systems.\n\n## Success Criteria\n- Data syncs accurately\n- Users can configure without technical help\n- Error rate below [Target]%\n\n## Goals\n- Eliminate manual data entry\n- Improve data consistency\n- Reduce workflow time\n\n## Pain Points\n- Manual copy/paste between systems\n- Data inconsistencies\n- Time wasted on repetitive tasks\n\n## In Scope\n- Initial sync setup\n- Bi-directional sync\n- Field mapping configuration\n\n## Out of Scope\n- Legacy system support\n- Custom transformations\n\n## Functional Requirements\n**Must Have:**\n- Authentication with target system\n- Basic field mapping\n- Sync status visibility\n\n**Should Have:**\n- Conflict resolution options\n- Sync scheduling\n\n**Nice to Have:**\n- Advanced filtering\n\n## Non-Functional Requirements\n**Must Have:**\n- API rate limit compliance\n- Data encryption in transit\n\n**Should Have:**\n- Sync latency under [X] seconds"
+    },
+    {
+      "id": "ux-improvement-feature",
+      "name": "UX Improvement Feature",
+      "title": "✨ UX Improvement Feature",
+      "description": "Template for user experience improvements.",
+      "priority": "Medium",
+      "template_type": "feature",
+      "content": "## Feature Name\n[UX Improvement Name]\n\n## Description\nDescription of the UX improvement and affected user flows.\n\n## Problem Statement\nWhat usability issues or friction points exist today?\n\n## Objective\nImprove user satisfaction and task completion rates.\n\n## Success Criteria\n- Task completion time reduced by [X]%\n- User satisfaction score increases\n- Support tickets for this area decrease\n\n## Goals\n- Simplify user workflow\n- Reduce cognitive load\n- Improve accessibility\n\n## Pain Points\n- Confusing navigation\n- Too many clicks to complete task\n- Unclear feedback/status\n\n## In Scope\n- Redesigned workflow\n- Updated UI components\n- Improved feedback messages\n\n## Out of Scope\n- Backend performance changes\n- New functionality beyond UX\n\n## Functional Requirements\n**Must Have:**\n- Clearer visual hierarchy\n- Reduced steps to complete task\n- Accessible to keyboard users\n\n**Should Have:**\n- Progress indicators\n- Undo capability\n\n**Nice to Have:**\n- Customizable layout\n\n## Non-Functional Requirements\n**Must Have:**\n- Page load under [X] seconds\n- WCAG 2.1 AA compliance\n\n**Should Have:**\n- Responsive design for mobile"
+    },
+    {
+      "id": "performance-feature",
+      "name": "Performance Feature",
+      "title": "⚡ Performance Feature",
+      "description": "Template for performance optimization features.",
+      "priority": "High",
+      "template_type": "feature",
+      "content": "## Feature Name\n[Performance Optimization Name]\n\n## Description\nDescription of the performance improvement and technical approach.\n\n## Problem Statement\nWhat performance issues are users experiencing?\n\n## Objective\nImprove system responsiveness and reduce resource consumption.\n\n## Success Criteria\n- Response time reduced by [X]%\n- Throughput increased to [Target]\n- Resource usage reduced by [X]%\n\n## Goals\n- Faster page loads\n- Better scalability\n- Reduced infrastructure costs\n\n## Pain Points\n- Slow page loads\n- Timeouts during peak usage\n- High server costs\n\n## In Scope\n- Query optimization\n- Caching implementation\n- Code optimization\n\n## Out of Scope\n- Infrastructure changes\n- Feature changes\n\n## Functional Requirements\n**Must Have:**\n- No change to existing functionality\n- Performance monitoring in place\n- Rollback capability\n\n**Should Have:**\n- A/B testing support\n- Gradual rollout\n\n**Nice to Have:**\n- Performance dashboard\n\n## Non-Functional Requirements\n**Must Have:**\n- P95 latency under [X]ms\n- Zero data loss\n- Backward compatible\n\n**Should Have:**\n- Auto-scaling support"
+    },
+    {
+      "id": "security-feature",
+      "name": "Security Feature",
+      "title": "🔒 Security Feature",
+      "description": "Template for security enhancements and compliance features.",
+      "priority": "High",
+      "template_type": "feature",
+      "content": "## Feature Name\n[Security Feature Name]\n\n## Description\nDescription of the security enhancement and protection it provides.\n\n## Problem Statement\nWhat security vulnerabilities or compliance gaps exist?\n\n## Objective\nEnhance security posture and meet compliance requirements.\n\n## Success Criteria\n- Vulnerability addressed\n- Compliance requirement met\n- Security audit passed\n\n## Goals\n- Protect user data\n- Meet regulatory requirements\n- Reduce security risk\n\n## Pain Points\n- Known vulnerability\n- Compliance gap\n- Security audit finding\n\n## In Scope\n- Security control implementation\n- Testing and validation\n- Documentation\n\n## Out of Scope\n- Unrelated security items\n- Infrastructure changes\n\n## Functional Requirements\n**Must Have:**\n- Security control active\n- Audit logging\n- Admin configuration\n\n**Should Have:**\n- User notification\n- Reporting\n\n**Nice to Have:**\n- Self-service security settings\n\n## Non-Functional Requirements\n**Must Have:**\n- [Compliance standard] compliant\n- Data encrypted at rest and in transit\n- No performance degradation\n\n**Should Have:**\n- Security monitoring integration"
+    },
+    {
+      "id": "analytics-feature",
+      "name": "Analytics Feature",
+      "title": "📊 Analytics Feature",
+      "description": "Template for analytics, reporting, and insights features.",
+      "priority": "Medium",
+      "template_type": "feature",
+      "content": "## Feature Name\n[Analytics Feature Name]\n\n## Description\nDescription of the analytics capability and insights provided.\n\n## Problem Statement\nWhat visibility or insights are users lacking?\n\n## Objective\nProvide actionable insights to improve decision-making.\n\n## Success Criteria\n- Users can answer key business questions\n- Report generation time acceptable\n- Data accuracy validated\n\n## Goals\n- Enable data-driven decisions\n- Reduce time to insights\n- Improve business outcomes\n\n## Pain Points\n- No visibility into [area]\n- Manual report generation\n- Inconsistent metrics\n\n## In Scope\n- Dashboard creation\n- Key metrics definition\n- Export capabilities\n\n## Out of Scope\n- Real-time analytics\n- Predictive analytics\n\n## Functional Requirements\n**Must Have:**\n- Core metrics display\n- Date range filtering\n- Data export\n\n**Should Have:**\n- Drill-down capability\n- Scheduled reports\n\n**Nice to Have:**\n- Custom dashboard builder\n- Alerts and notifications\n\n## Non-Functional Requirements\n**Must Have:**\n- Report loads under [X] seconds\n- Data refreshes within [X] hours\n\n**Should Have:**\n- Handle [X] concurrent users\n- Mobile-friendly display"
+    }
   ]
 }
