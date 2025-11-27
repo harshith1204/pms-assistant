@@ -7,64 +7,55 @@
       "description": "Template for implementing new features or capabilities.",
       "priority": "High",
       "template_type": "work_item",
-      "content": "## Objective\nBriefly describe what this feature accomplishes and the value it delivers.\n\n## Requirements\n- [ ] Core functionality requirement\n- [ ] User experience requirement\n- [ ] Technical requirement\n\n## Implementation Plan\nOutline the key steps and approach.\n\n## Done When\n- [ ] Feature works as specified\n- [ ] Tests pass\n- [ ] Code reviewed and merged"
+      "content": "## Objective\nDescribe what this feature accomplishes and the value it delivers.\n\n## Requirements\n- [ ] Core functionality requirement\n- [ ] User experience requirement\n- [ ] Success criteria\n\n## Implementation Plan\nOutline the key steps and approach.\n\n## Done When\n- [ ] Feature works as specified\n- [ ] Reviewed and approved\n- [ ] Documentation updated"
     },
     {
       "id": "bug-fix",
       "name": "Bug Fix",
       "title": "🐛 Bug Fix",
-      "description": "Template for tracking and resolving bugs.",
+      "description": "Template for tracking and resolving issues or bugs.",
       "priority": "High",
       "template_type": "work_item",
-      "content": "## Problem\nDescribe the bug: what's happening vs what should happen.\n\n## Steps to Reproduce\n1. First step\n2. Second step\n3. Observe the issue\n\n## Root Cause\n(Fill in after investigation)\n\n## Solution\n- [ ] Fix implemented\n- [ ] Regression test added\n- [ ] Verified fix works"
+      "content": "## Problem\nDescribe the issue: what's happening vs what should happen.\n\n## Steps to Reproduce\n1. First step\n2. Second step\n3. Observe the issue\n\n## Root Cause\n(Fill in after investigation)\n\n## Solution\n- [ ] Fix implemented\n- [ ] Tested and verified\n- [ ] Ready for review"
     },
     {
-      "id": "technical-improvement",
-      "name": "Technical Improvement",
-      "title": "🔧 Technical Improvement",
-      "description": "Template for refactoring, optimization, or tech debt work.",
+      "id": "task-action-item",
+      "name": "Task / Action Item",
+      "title": "✅ Task / Action Item",
+      "description": "General-purpose task template for any team or department.",
       "priority": "Medium",
       "template_type": "work_item",
-      "content": "## Current State\nDescribe what exists today and why it needs improvement.\n\n## Proposed Change\nWhat will be different after this work?\n\n## Impact Assessment\n- Performance: \n- Maintainability: \n- Risk level: \n\n## Validation\nHow will we verify this worked?"
+      "content": "## Task Description\nWhat needs to be done and why?\n\n## Details\n- Owner: \n- Due date: \n- Priority: \n\n## Steps\n- [ ] Step 1\n- [ ] Step 2\n- [ ] Step 3\n\n## Notes\nAny additional context or information."
     },
     {
-      "id": "api-integration",
-      "name": "API Integration",
-      "title": "🔌 API Integration",
-      "description": "Template for integrating with external APIs or services.",
+      "id": "research-analysis",
+      "name": "Research & Analysis",
+      "title": "🔍 Research & Analysis",
+      "description": "Template for research tasks, market analysis, or investigations.",
       "priority": "Medium",
       "template_type": "work_item",
-      "content": "## Integration Overview\nWhat API/service are we integrating with and why?\n\n## API Details\n- Endpoint: \n- Authentication: \n- Rate limits: \n\n## Implementation Tasks\n- [ ] Set up authentication\n- [ ] Implement API client\n- [ ] Add error handling\n- [ ] Write tests\n\n## Testing Plan\nHow will we test this integration?"
+      "content": "## Research Question\nWhat are we trying to learn or understand?\n\n## Background\nContext and why this research matters.\n\n## Approach\n- [ ] Data sources to review\n- [ ] People to interview\n- [ ] Analysis to perform\n\n## Deliverables\n- [ ] Summary report\n- [ ] Recommendations\n- [ ] Presentation (if needed)"
     },
     {
-      "id": "security-task",
-      "name": "Security Task",
-      "title": "🔒 Security Task",
-      "description": "Template for security-related work items.",
-      "priority": "High",
-      "template_type": "work_item",
-      "content": "## Security Context\nDescribe the security concern or requirement.\n\n## Risk Assessment\n- Severity: High / Medium / Low\n- Attack vector: \n- Affected systems: \n\n## Remediation Steps\n- [ ] Implement fix\n- [ ] Security testing\n- [ ] Code review\n\n## Verification\nHow do we confirm the issue is resolved?"
-    },
-    {
-      "id": "database-change",
-      "name": "Database Change",
-      "title": "🗄️ Database Change",
-      "description": "Template for database migrations, schema changes, or optimizations.",
+      "id": "content-creation",
+      "name": "Content Creation",
+      "title": "📝 Content Creation",
+      "description": "Template for marketing content, documentation, or communications.",
       "priority": "Medium",
       "template_type": "work_item",
-      "content": "## Change Description\nWhat database changes are needed and why?\n\n## Migration Plan\n- [ ] Create migration script\n- [ ] Test on staging\n- [ ] Plan rollback strategy\n- [ ] Schedule production deployment\n\n## Impact\n- Downtime required: Yes / No\n- Data migration needed: Yes / No\n- Breaking changes: Yes / No\n\n## Rollback Plan\nHow do we revert if something goes wrong?"
+      "content": "## Content Overview\nWhat content are we creating and for whom?\n\n## Details\n- Type: Blog / Email / Social / Documentation / Other\n- Target audience: \n- Key message: \n\n## Checklist\n- [ ] Draft created\n- [ ] Reviewed by stakeholder\n- [ ] Final edits complete\n- [ ] Published/delivered\n\n## Assets Needed\nImages, links, or supporting materials."
+    },
+    {
+      "id": "process-improvement",
+      "name": "Process Improvement",
+      "title": "📈 Process Improvement",
+      "description": "Template for operational improvements and efficiency initiatives.",
+      "priority": "Medium",
+      "template_type": "work_item",
+      "content": "## Current Process\nDescribe how things work today.\n\n## Problem Statement\nWhat's inefficient, slow, or broken?\n\n## Proposed Improvement\nHow should it work instead?\n\n## Impact\n- Time saved: \n- Cost reduction: \n- Quality improvement: \n\n## Implementation Steps\n- [ ] Document new process\n- [ ] Get stakeholder approval\n- [ ] Roll out change\n- [ ] Measure results"
     }
   ],
   "page": [
-    {
-      "id": "project-overview",
-      "name": "Project Overview",
-      "title": "📋 Project Overview",
-      "description": "High-level summary of a project or initiative.",
-      "priority": "Medium",
-      "template_type": "page",
-      "content": "## Summary\nOne paragraph explaining what this project is and why it matters.\n\n## Goals\n- Primary goal\n- Secondary goal\n\n## Key Milestones\n| Milestone | Target Date | Status |\n|-----------|-------------|--------|\n| Phase 1   |             | 🔵     |\n| Phase 2   |             | ⚪     |\n\n## Team\n- Owner: \n- Contributors: "
-    },
     {
       "id": "meeting-notes",
       "name": "Meeting Notes",
@@ -72,43 +63,52 @@
       "description": "Capture meeting discussions, decisions, and action items.",
       "priority": "Low",
       "template_type": "page",
-      "content": "## Meeting Info\n- **Date:** \n- **Attendees:** \n- **Purpose:** \n\n## Key Discussion Points\nSummarize the main topics discussed.\n\n## Decisions Made\n- Decision 1: \n- Decision 2: \n\n## Action Items\n- [ ] @person - Task (due: date)\n- [ ] @person - Task (due: date)"
+      "content": "## Meeting Info\n- **Date:** \n- **Attendees:** \n- **Purpose:** \n\n## Key Discussion Points\nSummarize the main topics discussed.\n\n## Decisions Made\n- Decision 1: \n- Decision 2: \n\n## Action Items\n- [ ] @person - Task (due: date)\n- [ ] @person - Task (due: date)\n\n## Next Meeting\nDate and agenda items for follow-up."
+    },
+    {
+      "id": "project-overview",
+      "name": "Project Overview",
+      "title": "📋 Project Overview",
+      "description": "High-level summary of any project or initiative.",
+      "priority": "Medium",
+      "template_type": "page",
+      "content": "## Summary\nOne paragraph explaining what this project is and why it matters.\n\n## Goals\n- Primary goal\n- Secondary goal\n\n## Timeline\n| Milestone | Target Date | Status |\n|-----------|-------------|--------|\n| Kickoff   |             | ✅     |\n| Phase 1   |             | 🔵     |\n| Complete  |             | ⚪     |\n\n## Team\n- Owner: \n- Contributors: \n\n## Resources\nLinks to related documents, tools, or references."
+    },
+    {
+      "id": "standard-operating-procedure",
+      "name": "Standard Operating Procedure",
+      "title": "📖 Standard Operating Procedure",
+      "description": "Document standard processes for any team or function.",
+      "priority": "Medium",
+      "template_type": "page",
+      "content": "## Purpose\nWhat process does this document cover and why is it important?\n\n## Scope\nWho should follow this procedure? When does it apply?\n\n## Prerequisites\n- Required access or permissions\n- Tools or systems needed\n\n## Procedure\n1. **Step 1:** Description\n2. **Step 2:** Description\n3. **Step 3:** Description\n\n## Troubleshooting\n| Issue | Solution |\n|-------|----------|\n|       |          |\n\n## Contact\nWho to reach out to with questions."
+    },
+    {
+      "id": "business-report",
+      "name": "Business Report",
+      "title": "📊 Business Report",
+      "description": "Template for status reports, performance reviews, or business updates.",
+      "priority": "Medium",
+      "template_type": "page",
+      "content": "## Executive Summary\nKey highlights and takeaways.\n\n## Performance Metrics\n| Metric | Target | Actual | Status |\n|--------|--------|--------|--------|\n|        |        |        |        |\n\n## Highlights\n- Achievement 1\n- Achievement 2\n\n## Challenges\n- Challenge 1 and mitigation\n- Challenge 2 and mitigation\n\n## Next Steps\n- Upcoming priorities\n- Decisions needed\n\n## Appendix\nSupporting data or detailed breakdowns."
+    },
+    {
+      "id": "team-wiki",
+      "name": "Team Wiki",
+      "title": "👥 Team Wiki",
+      "description": "Central knowledge page for team information and resources.",
+      "priority": "Low",
+      "template_type": "page",
+      "content": "## About the Team\nBrief description of the team's mission and responsibilities.\n\n## Team Members\n| Name | Role | Contact |\n|------|------|----------|\n|      |      |          |\n\n## How We Work\n- Meeting schedule: \n- Communication channels: \n- Key tools: \n\n## Quick Links\n- [Important Resource 1]()\n- [Important Resource 2]()\n\n## FAQs\n**Q: Common question?**\nA: Answer here.\n\n## Onboarding\nWhat new team members need to know."
     },
     {
       "id": "technical-spec",
-      "name": "Technical Spec",
+      "name": "Technical Specification",
       "title": "📘 Technical Specification",
-      "description": "Technical specification for a feature or system.",
+      "description": "Technical documentation for features or systems.",
       "priority": "High",
       "template_type": "page",
-      "content": "## Overview\nWhat problem does this solve? What's the proposed solution?\n\n## Design\nHigh-level architecture and key components.\n\n## API / Interface\n```\nDescribe the public interface\n```\n\n## Considerations\n- **Security:** \n- **Performance:** \n- **Edge cases:** "
-    },
-    {
-      "id": "runbook",
-      "name": "Runbook",
-      "title": "📖 Runbook",
-      "description": "Operational runbook for handling incidents or processes.",
-      "priority": "Medium",
-      "template_type": "page",
-      "content": "## Purpose\nWhen should this runbook be used?\n\n## Prerequisites\n- Access required: \n- Tools needed: \n\n## Steps\n1. First step with details\n2. Second step with details\n3. Verification step\n\n## Troubleshooting\n| Symptom | Likely Cause | Solution |\n|---------|--------------|----------|\n|         |              |          |\n\n## Escalation\nWho to contact if this doesn't resolve the issue."
-    },
-    {
-      "id": "architecture-decision",
-      "name": "Architecture Decision",
-      "title": "🏗️ Architecture Decision Record",
-      "description": "Document an important architectural decision.",
-      "priority": "Medium",
-      "template_type": "page",
-      "content": "## Context\nWhat situation or problem prompted this decision?\n\n## Decision\nWhat is the change we're making?\n\n## Alternatives Considered\n| Option | Pros | Cons |\n|--------|------|------|\n| Option A |   |   |\n| Option B |   |   |\n\n## Consequences\nWhat are the implications of this decision?\n\n## Status\nProposed / Accepted / Deprecated"
-    },
-    {
-      "id": "release-notes",
-      "name": "Release Notes",
-      "title": "🚀 Release Notes",
-      "description": "Communicate what's new in a release.",
-      "priority": "Medium",
-      "template_type": "page",
-      "content": "## Release v0.0.0\n**Release Date:** \n\n## ✨ New Features\n- Feature 1: Brief description\n- Feature 2: Brief description\n\n## 🐛 Bug Fixes\n- Fixed issue with...\n\n## ⚠️ Breaking Changes\n- None / List any breaking changes\n\n## 📝 Notes\nAny additional information users should know."
+      "content": "## Overview\nWhat problem does this solve? What's the proposed solution?\n\n## Background\nContext and motivation for this work.\n\n## Design\nHigh-level architecture and key components.\n\n## Interface\n```\nDescribe the public interface or API\n```\n\n## Considerations\n- **Security:** \n- **Performance:** \n- **Scalability:** \n\n## Open Questions\nItems that still need to be resolved."
     }
   ],
   "cycle": [
@@ -116,46 +116,55 @@
       "id": "sprint-planning",
       "name": "Sprint Planning",
       "title": "🏃 Sprint Planning",
-      "description": "Plan and track a development sprint.",
+      "description": "Plan and track a development or work sprint.",
       "priority": "High",
       "template_type": "cycle",
-      "content": "## Sprint Goal\nOne sentence describing what success looks like.\n\n## Committed Work\n- [ ] Item 1 (X points)\n- [ ] Item 2 (X points)\n- [ ] Item 3 (X points)\n\n## Capacity\n- Team capacity: X points\n- Committed: X points\n- Buffer: X points\n\n## Risks & Dependencies\nAnything that might block us?"
+      "content": "## Sprint Goal\nOne sentence describing what success looks like.\n\n## Committed Work\n- [ ] Item 1\n- [ ] Item 2\n- [ ] Item 3\n\n## Team Capacity\n- Available capacity: \n- Committed: \n- Buffer for unexpected: \n\n## Risks & Dependencies\nAnything that might block progress.\n\n## Definition of Done\nWhat criteria must be met for items to be complete?"
     },
     {
       "id": "release-cycle",
       "name": "Release Cycle",
       "title": "🚀 Release Cycle",
-      "description": "Track a release from development to deployment.",
+      "description": "Track a release or launch from planning to completion.",
       "priority": "High",
       "template_type": "cycle",
-      "content": "## Release Info\n- **Version:** \n- **Target Date:** \n- **Release Manager:** \n\n## Scope\n- Feature/fix 1\n- Feature/fix 2\n\n## Checklist\n- [ ] Code complete\n- [ ] QA sign-off\n- [ ] Documentation updated\n- [ ] Staging verified\n- [ ] Production deployed\n- [ ] Stakeholders notified"
+      "content": "## Release Info\n- **Version/Name:** \n- **Target Date:** \n- **Owner:** \n\n## Scope\n- Item 1\n- Item 2\n\n## Checklist\n- [ ] Work complete\n- [ ] Quality reviewed\n- [ ] Stakeholders notified\n- [ ] Documentation updated\n- [ ] Launched\n\n## Communication Plan\nWho needs to know and when?"
     },
     {
-      "id": "discovery-cycle",
-      "name": "Discovery Cycle",
-      "title": "🔍 Discovery Cycle",
-      "description": "Research and exploration cycle for new initiatives.",
-      "priority": "Medium",
+      "id": "quarterly-planning",
+      "name": "Quarterly Planning",
+      "title": "📅 Quarterly Planning",
+      "description": "Plan objectives and key results for the quarter.",
+      "priority": "High",
       "template_type": "cycle",
-      "content": "## Discovery Goal\nWhat questions are we trying to answer?\n\n## Research Activities\n- [ ] User interviews\n- [ ] Technical spike\n- [ ] Competitive analysis\n- [ ] Data analysis\n\n## Key Questions\n1. Question 1?\n2. Question 2?\n\n## Deliverables\n- [ ] Research summary\n- [ ] Recommendations document\n- [ ] Go/no-go decision"
+      "content": "## Quarter Overview\n- **Period:** Q_ 20__\n- **Theme:** \n\n## Objectives\n### Objective 1: [Name]\n- KR 1: \n- KR 2: \n\n### Objective 2: [Name]\n- KR 1: \n- KR 2: \n\n## Key Initiatives\n| Initiative | Owner | Priority |\n|------------|-------|----------|\n|            |       |          |\n\n## Resources & Budget\n- Headcount: \n- Budget: \n\n## Risks\nWhat could prevent us from achieving our goals?"
     },
     {
-      "id": "maintenance-cycle",
-      "name": "Maintenance Cycle",
-      "title": "🔧 Maintenance Cycle",
-      "description": "Dedicated time for maintenance and tech debt.",
+      "id": "campaign-cycle",
+      "name": "Campaign Cycle",
+      "title": "📣 Campaign Cycle",
+      "description": "Plan and execute marketing or outreach campaigns.",
       "priority": "Medium",
       "template_type": "cycle",
-      "content": "## Focus Areas\n- Dependency updates\n- Performance improvements\n- Code cleanup\n- Documentation\n\n## Planned Work\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n\n## Success Metrics\n- Metric 1: before → target\n- Metric 2: before → target\n\n## Learnings\nCapture insights for future cycles."
+      "content": "## Campaign Overview\n- **Name:** \n- **Duration:** \n- **Goal:** \n\n## Target Audience\nWho are we trying to reach?\n\n## Channels\n- [ ] Email\n- [ ] Social media\n- [ ] Paid ads\n- [ ] Events\n- [ ] Other: \n\n## Content & Assets\n| Asset | Owner | Due Date | Status |\n|-------|-------|----------|--------|\n|       |       |          |        |\n\n## Success Metrics\n- Target: \n- How we'll measure: \n\n## Budget\n- Allocated: \n- Spent: "
     },
     {
-      "id": "onboarding-cycle",
-      "name": "Onboarding Cycle",
-      "title": "👋 Onboarding Cycle",
-      "description": "Structured onboarding for new team members.",
+      "id": "hiring-cycle",
+      "name": "Hiring Cycle",
+      "title": "👋 Hiring Cycle",
+      "description": "Manage the hiring process for open positions.",
       "priority": "Medium",
       "template_type": "cycle",
-      "content": "## New Team Member\n- **Name:** \n- **Role:** \n- **Start Date:** \n- **Buddy:** \n\n## Week 1: Setup & Orientation\n- [ ] Access and accounts\n- [ ] Development environment\n- [ ] Team introductions\n- [ ] Codebase walkthrough\n\n## Week 2: First Contribution\n- [ ] Starter task assigned\n- [ ] First PR merged\n- [ ] Process review\n\n## Week 3-4: Independence\n- [ ] Regular work items\n- [ ] 30-day check-in scheduled"
+      "content": "## Position Details\n- **Role:** \n- **Department:** \n- **Hiring Manager:** \n- **Target Start Date:** \n\n## Pipeline\n| Stage | Count | Notes |\n|-------|-------|-------|\n| Applied |     |       |\n| Screening |   |       |\n| Interview |   |       |\n| Offer |       |       |\n\n## Interview Panel\n- Interviewer 1: Focus area\n- Interviewer 2: Focus area\n\n## Timeline\n- [ ] Job posted\n- [ ] Sourcing complete\n- [ ] Interviews complete\n- [ ] Offer extended\n- [ ] Candidate starts"
+    },
+    {
+      "id": "review-cycle",
+      "name": "Review Cycle",
+      "title": "🔄 Review Cycle",
+      "description": "Periodic review cycle for performance, projects, or processes.",
+      "priority": "Medium",
+      "template_type": "cycle",
+      "content": "## Review Period\n- **Cycle:** \n- **Review Date:** \n\n## What Went Well\n- Success 1\n- Success 2\n\n## What Could Be Better\n- Challenge 1\n- Challenge 2\n\n## Key Learnings\nInsights to carry forward.\n\n## Action Items\n- [ ] Improvement 1 - Owner\n- [ ] Improvement 2 - Owner\n\n## Goals for Next Cycle\n- Goal 1\n- Goal 2"
     }
   ],
   "module": [
@@ -166,43 +175,52 @@
       "description": "Documentation for a backend service or API.",
       "priority": "High",
       "template_type": "module",
-      "content": "## Purpose\nWhat does this service do? What problem does it solve?\n\n## API Overview\n| Endpoint | Method | Description |\n|----------|--------|-------------|\n| /api/... | GET    |             |\n| /api/... | POST   |             |\n\n## Dependencies\n- Database: \n- External services: \n- Internal services: \n\n## Configuration\nKey environment variables and settings."
+      "content": "## Purpose\nWhat does this service do? What problem does it solve?\n\n## API Overview\n| Endpoint | Method | Description |\n|----------|--------|-------------|\n| /api/... | GET    |             |\n| /api/... | POST   |             |\n\n## Dependencies\n- Upstream: \n- Downstream: \n\n## Configuration\nKey settings and environment variables.\n\n## Monitoring\n- Health check: \n- Key metrics: "
     },
     {
       "id": "frontend-component",
       "name": "Frontend Component",
       "title": "🎨 Frontend Component",
-      "description": "Documentation for a UI component.",
+      "description": "Documentation for a UI component or interface.",
       "priority": "Medium",
       "template_type": "module",
-      "content": "## Component Overview\nWhat does this component do?\n\n## Props\n| Prop | Type | Required | Description |\n|------|------|----------|-------------|\n|      |      |          |             |\n\n## Usage Example\n```jsx\n<Component prop=\"value\" />\n```\n\n## Variants\nDescribe different states or variations.\n\n## Accessibility\nKeyboard navigation and screen reader considerations."
+      "content": "## Component Overview\nWhat does this component do?\n\n## Usage\n```\nExample of how to use this component\n```\n\n## Properties/Options\n| Property | Type | Description |\n|----------|------|-------------|\n|          |      |             |\n\n## Variants\nDescribe different states or variations.\n\n## Accessibility\nKeyboard and screen reader considerations."
     },
     {
-      "id": "data-pipeline",
-      "name": "Data Pipeline",
-      "title": "📊 Data Pipeline",
-      "description": "Documentation for a data processing pipeline.",
+      "id": "business-process",
+      "name": "Business Process",
+      "title": "🔄 Business Process",
+      "description": "Document a business workflow or operational process.",
       "priority": "Medium",
       "template_type": "module",
-      "content": "## Pipeline Overview\nWhat data does this process and why?\n\n## Data Flow\n```\nSource → Transform → Destination\n```\n\n## Schedule\n- Frequency: \n- Duration: \n- SLA: \n\n## Monitoring\n- Success metrics: \n- Alert conditions: \n- Dashboard link: "
+      "content": "## Process Overview\nWhat business function does this process support?\n\n## Process Flow\n1. **Trigger:** What initiates this process?\n2. **Step 1:** Action and responsible party\n3. **Step 2:** Action and responsible party\n4. **Outcome:** What's the end result?\n\n## Roles & Responsibilities\n| Role | Responsibility |\n|------|----------------|\n|      |                |\n\n## Tools & Systems\nWhat tools support this process?\n\n## SLAs & Metrics\n- Target turnaround: \n- Quality measure: "
     },
     {
-      "id": "shared-library",
-      "name": "Shared Library",
-      "title": "📚 Shared Library",
-      "description": "Documentation for a shared/utility library.",
+      "id": "training-program",
+      "name": "Training Program",
+      "title": "🎓 Training Program",
+      "description": "Structure for training, onboarding, or learning programs.",
       "priority": "Medium",
       "template_type": "module",
-      "content": "## Purpose\nWhat utilities does this library provide?\n\n## Installation\n```\nnpm install @company/library\n```\n\n## Key Functions\n| Function | Description |\n|----------|-------------|\n|          |             |\n\n## Usage Examples\n```javascript\nimport { util } from '@company/library';\nutil.doSomething();\n```\n\n## Contributing\nHow to add new utilities."
+      "content": "## Program Overview\n- **Name:** \n- **Duration:** \n- **Target Audience:** \n\n## Learning Objectives\nBy the end, participants will be able to:\n- Objective 1\n- Objective 2\n\n## Curriculum\n| Module | Topic | Duration |\n|--------|-------|----------|\n| 1      |       |          |\n| 2      |       |          |\n\n## Resources\n- Materials: \n- Tools: \n- Facilitator: \n\n## Assessment\nHow will learning be evaluated?"
     },
     {
-      "id": "integration-module",
-      "name": "Integration Module",
-      "title": "🔗 Integration Module",
-      "description": "Documentation for third-party integrations.",
+      "id": "vendor-integration",
+      "name": "Vendor / Partner Integration",
+      "title": "🤝 Vendor Integration",
+      "description": "Document third-party vendor or partner integrations.",
       "priority": "Medium",
       "template_type": "module",
-      "content": "## Integration Overview\nWhat external service does this connect to?\n\n## Authentication\n- Method: OAuth2 / API Key / etc.\n- Credentials location: \n\n## Capabilities\n- [ ] Read data\n- [ ] Write data\n- [ ] Webhooks\n\n## Rate Limits\n| Endpoint | Limit |\n|----------|-------|\n|          |       |\n\n## Error Handling\nCommon errors and how to handle them."
+      "content": "## Integration Overview\n- **Vendor:** \n- **Purpose:** \n- **Owner:** \n\n## Contract Details\n- Start date: \n- Renewal date: \n- Cost: \n\n## Integration Points\nHow do we connect with this vendor?\n\n## Data Exchange\n| Data | Direction | Frequency |\n|------|-----------|----------|\n|      |           |          |\n\n## Support\n- Vendor contact: \n- Internal owner: \n- Escalation path: "
+    },
+    {
+      "id": "support-workflow",
+      "name": "Support Workflow",
+      "title": "🎧 Support Workflow",
+      "description": "Customer support or internal helpdesk workflow.",
+      "priority": "Medium",
+      "template_type": "module",
+      "content": "## Workflow Overview\nWhat type of support does this cover?\n\n## Triage Process\n| Priority | Response Time | Resolution Time |\n|----------|---------------|------------------|\n| Critical |               |                  |\n| High     |               |                  |\n| Normal   |               |                  |\n\n## Escalation Path\n1. Level 1: Frontline support\n2. Level 2: Specialist team\n3. Level 3: Engineering/Management\n\n## Common Issues & Solutions\n| Issue | Solution |\n|-------|----------|\n|       |          |\n\n## Tools\n- Ticketing system: \n- Knowledge base: "
     }
   ],
   "epic": [
@@ -210,46 +228,55 @@
       "id": "product-initiative",
       "name": "Product Initiative",
       "title": "🎯 Product Initiative",
-      "description": "Large product initiative spanning multiple sprints.",
+      "description": "Large product or feature initiative spanning multiple cycles.",
       "priority": "High",
       "template_type": "epic",
-      "content": "## Vision\nWhat are we building and why? What does success look like?\n\n## Scope\n**In scope:**\n- Item 1\n- Item 2\n\n**Out of scope:**\n- Item 1\n\n## Milestones\n1. **Phase 1:** Description (ETA: )\n2. **Phase 2:** Description (ETA: )\n3. **Phase 3:** Description (ETA: )\n\n## Success Metrics\n- Metric 1: Current → Target\n- Metric 2: Current → Target"
+      "content": "## Vision\nWhat are we building and why? What does success look like?\n\n## Problem Statement\nWhat user or business problem are we solving?\n\n## Scope\n**In scope:**\n- Item 1\n- Item 2\n\n**Out of scope:**\n- Item 1\n\n## Milestones\n1. **Phase 1:** Description (ETA: )\n2. **Phase 2:** Description (ETA: )\n\n## Success Metrics\n- Metric 1: Current → Target\n- Metric 2: Current → Target"
     },
     {
       "id": "platform-migration",
-      "name": "Platform Migration",
+      "name": "Platform / System Migration",
       "title": "🔄 Platform Migration",
-      "description": "Large-scale migration or platform transition.",
+      "description": "Large-scale migration, upgrade, or system transition.",
       "priority": "High",
       "template_type": "epic",
-      "content": "## Migration Overview\nWhat are we migrating from and to? Why?\n\n## Current State\nDescribe the existing system.\n\n## Target State\nDescribe the desired end state.\n\n## Migration Strategy\n- [ ] Phase 1: Preparation\n- [ ] Phase 2: Parallel running\n- [ ] Phase 3: Cutover\n- [ ] Phase 4: Cleanup\n\n## Risks & Mitigations\n| Risk | Impact | Mitigation |\n|------|--------|------------|\n|      |        |            |\n\n## Rollback Plan\nHow do we revert if needed?"
+      "content": "## Migration Overview\nWhat are we migrating and why?\n\n## Current State\nDescribe the existing system or process.\n\n## Target State\nDescribe the desired end state.\n\n## Migration Strategy\n- [ ] Phase 1: Preparation\n- [ ] Phase 2: Parallel operation\n- [ ] Phase 3: Cutover\n- [ ] Phase 4: Cleanup\n\n## Risks & Mitigations\n| Risk | Impact | Mitigation |\n|------|--------|------------|\n|      |        |            |\n\n## Rollback Plan\nHow do we revert if needed?"
     },
     {
-      "id": "performance-initiative",
-      "name": "Performance Initiative",
-      "title": "⚡ Performance Initiative",
-      "description": "Initiative focused on improving system performance.",
+      "id": "market-expansion",
+      "name": "Market Expansion",
+      "title": "🌍 Market Expansion",
+      "description": "Initiative to enter new markets, segments, or geographies.",
       "priority": "High",
       "template_type": "epic",
-      "content": "## Problem Statement\nWhat performance issues are we addressing?\n\n## Current Metrics\n| Metric | Current | Target |\n|--------|---------|--------|\n| p50 latency |    |    |\n| p99 latency |    |    |\n| Throughput  |    |    |\n\n## Improvement Areas\n1. Area 1: Approach\n2. Area 2: Approach\n\n## Measurement Plan\nHow will we track progress?\n\n## Success Criteria\nWhen is this epic complete?"
+      "content": "## Expansion Overview\n- **Target Market:** \n- **Timeline:** \n- **Investment:** \n\n## Market Analysis\n- Size: \n- Competition: \n- Opportunity: \n\n## Go-to-Market Strategy\n- Positioning: \n- Channels: \n- Pricing: \n\n## Requirements\n- [ ] Legal/compliance\n- [ ] Localization\n- [ ] Partnerships\n- [ ] Hiring\n\n## Success Metrics\n- Revenue target: \n- Customer acquisition: \n- Market share: "
     },
     {
-      "id": "security-initiative",
-      "name": "Security Initiative",
-      "title": "🛡️ Security Initiative",
-      "description": "Security hardening or compliance initiative.",
-      "priority": "High",
-      "template_type": "epic",
-      "content": "## Security Objective\nWhat security goal are we achieving?\n\n## Compliance Requirements\n- Requirement 1\n- Requirement 2\n\n## Scope\n- Systems affected: \n- Data affected: \n\n## Work Streams\n1. **Authentication:** Improvements\n2. **Authorization:** Improvements\n3. **Audit:** Improvements\n\n## Verification\nHow will we validate security improvements?"
-    },
-    {
-      "id": "user-experience-epic",
-      "name": "UX Improvement Epic",
-      "title": "✨ UX Improvement Epic",
-      "description": "Initiative to improve user experience across the product.",
+      "id": "operational-excellence",
+      "name": "Operational Excellence",
+      "title": "⚡ Operational Excellence",
+      "description": "Initiative to improve efficiency, quality, or reduce costs.",
       "priority": "Medium",
       "template_type": "epic",
-      "content": "## Vision\nWhat user experience are we trying to achieve?\n\n## User Research\n- Key pain points discovered\n- User feedback themes\n\n## Improvements\n| Area | Current State | Target State |\n|------|---------------|---------------|\n|      |               |               |\n\n## Design Deliverables\n- [ ] User flows\n- [ ] Wireframes\n- [ ] High-fidelity designs\n- [ ] Prototype\n\n## Success Metrics\n- User satisfaction: Current → Target\n- Task completion rate: Current → Target"
+      "content": "## Initiative Overview\nWhat operational improvements are we targeting?\n\n## Current State\n- Pain points: \n- Inefficiencies: \n- Costs: \n\n## Target Improvements\n| Area | Current | Target | Impact |\n|------|---------|--------|--------|\n|      |         |        |        |\n\n## Approach\n1. Phase 1: Assessment\n2. Phase 2: Implementation\n3. Phase 3: Optimization\n\n## Change Management\nHow will we manage the transition?\n\n## Success Metrics\n- Efficiency gain: \n- Cost reduction: \n- Quality improvement: "
+    },
+    {
+      "id": "customer-experience",
+      "name": "Customer Experience",
+      "title": "💝 Customer Experience",
+      "description": "Initiative to improve customer satisfaction and experience.",
+      "priority": "High",
+      "template_type": "epic",
+      "content": "## Vision\nWhat customer experience are we creating?\n\n## Current State\n- NPS/CSAT: \n- Key complaints: \n- Churn rate: \n\n## Customer Journey Focus\n| Touchpoint | Current Experience | Target Experience |\n|------------|--------------------|--------------------|n|            |                    |                    |\n\n## Initiatives\n- Initiative 1: \n- Initiative 2: \n\n## Success Metrics\n- Customer satisfaction: Current → Target\n- Retention rate: Current → Target\n- Support tickets: Current → Target"
+    },
+    {
+      "id": "organizational-development",
+      "name": "Organizational Development",
+      "title": "🏢 Organizational Development",
+      "description": "Initiative for team growth, culture, or organizational change.",
+      "priority": "Medium",
+      "template_type": "epic",
+      "content": "## Initiative Overview\nWhat organizational change are we driving?\n\n## Current State\n- Team size: \n- Key challenges: \n- Culture assessment: \n\n## Goals\n- Goal 1: \n- Goal 2: \n\n## Focus Areas\n- [ ] Hiring & growth\n- [ ] Learning & development\n- [ ] Culture & engagement\n- [ ] Processes & tools\n\n## Timeline\n| Phase | Focus | Duration |\n|-------|-------|----------|\n|       |       |          |\n\n## Success Metrics\n- Employee satisfaction: \n- Retention rate: \n- Team performance: "
     }
   ]
 }

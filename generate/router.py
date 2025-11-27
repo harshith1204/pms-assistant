@@ -19,7 +19,6 @@ from .prompts import (
     WORK_ITEM_SURPRISE_ME_PROMPTS,
     PAGE_CONTENT_GENERATION_PROMPTS,
     PAGE_GENERATION_PROMPTS,
-    PAGE_SURPRISE_ME_PROMPTS,
     CYCLE_GENERATION_PROMPTS,
     CYCLE_SURPRISE_ME_PROMPTS,
     MODULE_GENERATION_PROMPTS,
@@ -225,46 +224,6 @@ async def generate_page(req: GenerateRequest) -> GenerateResponse:
             title = req.template.title
 
     return GenerateResponse(title=title.strip(), description=description.strip())
-
-
-@router.post("/page-surprise-me", response_model=GenerateResponse)
-async def generate_page_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateResponse:
-    """Generate or enhance page content with the 'surprise me' feature."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
-
-    if Groq is None:
-        raise HTTPException(status_code=500, detail="groq package not installed on server")
-
-    client = Groq(api_key=api_key)
-
-    provided_description = (req.description or "").strip()
-    if provided_description:
-        system_prompt = PAGE_SURPRISE_ME_PROMPTS['with_description']['system_prompt']
-        user_prompt = PAGE_SURPRISE_ME_PROMPTS['with_description']['user_prompt_template'].format(
-            title=req.title,
-            description=provided_description
-        )
-    else:
-        system_prompt = PAGE_SURPRISE_ME_PROMPTS['without_description']['system_prompt']
-        user_prompt = PAGE_SURPRISE_ME_PROMPTS['without_description']['user_prompt_template'].format(
-            title=req.title
-        )
-
-    completion = await call_groq_with_timeout(
-        client=client,
-        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        temperature=0.4,
-        max_tokens=512,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-    )
-    generated_description = (completion.choices[0].message.content or "").strip()
-
-    return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 
 # Legacy endpoint for backward compatibility
