@@ -3,6 +3,7 @@ Smart Filter Agent - Combines RAG retrieval with MongoDB queries for intelligent
 """
 
 import json
+import logging
 import re
 from typing import List, Dict, Any, Optional, Set, Tuple
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 if not groq_api_key:
     raise ValueError("FATAL: GROQ_API_KEY environment variable not set.")
 
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -187,9 +189,11 @@ class SmartFilterAgent:
         await self.retriever.ensure_mongodb_connection()
 
         tool_choice, tool_query = await self._determine_tool(normalized_query)
+        is_simple_field_query = self._is_simple_field_query(normalized_query)
+        should_skip_rag = tool_choice == "build_mongo_query" and is_simple_field_query
 
         # Always try RAG search first for semantic understanding, unless it's a very specific direct field query
-        if tool_choice != "build_mongo_query" or self._is_simple_field_query(normalized_query):
+        if not should_skip_rag:
             # Use RAG search as primary method
             rag_result = await self._handle_rag_flow(tool_query, project_id, limit)
             if rag_result.work_items:
@@ -217,8 +221,14 @@ class SmartFilterAgent:
                         return tool, refined_query
                 except Exception:
                     pass
-        except Exception:
-            pass
+        except Exception as err:
+            logger.warning("Tool routing model failed, falling back to heuristics: %s", err)
+
+        # Heuristic fallback: default to mongo for explicit field queries, RAG otherwise
+        if self._is_simple_field_query(query):
+            return "build_mongo_query", query
+
+        return "rag_search", query
 
     async def _handle_mongo_flow(self, query: str, project_id: str, limit: int) -> SmartFilterResult:
         mongo_result = await self.retriever.execute_mongo_query(query, project_id=project_id, limit=limit)
