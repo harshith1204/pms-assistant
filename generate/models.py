@@ -73,3 +73,25 @@ class ProjectResponse(BaseModel):
     project_id: str  # CAPS of first 5 letters
     description: str
 
+
+# Feature Models
+class Requirement(BaseModel):
+    """Requirement with priority type"""
+    requirement: str
+    type: str  # "must_have", "should_have", "nice_to_have"
+
+
+class FeatureResponse(BaseModel):
+    """Response model for feature generation"""
+    feature_name: str
+    description: str
+    problem_statement: str
+    objective: str
+    success_criteria: List[str]
+    goals: List[str]
+    pain_points: List[str]
+    in_scope: List[str]
+    out_of_scope: List[str]
+    functional_requirements: List[Requirement]
+    non_functional_requirements: List[Requirement]
+

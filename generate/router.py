@@ -11,6 +11,8 @@ from .models import (
     UserStoryResponse,
     UserStorySurpriseMeRequest,
     ProjectResponse,
+    FeatureResponse,
+    Requirement,
     WorkItemSurpriseMeRequest,
     CycleSurpriseMeRequest,
     ModuleSurpriseMeRequest,
@@ -28,6 +30,7 @@ from .prompts import (
     EPIC_SURPRISE_ME_PROMPTS,
     USER_STORY_GENERATION_PROMPTS,
     USER_STORY_SURPRISE_ME_PROMPTS,
+    FEATURE_GENERATION_PROMPTS,
     PROJECT_GENERATION_PROMPTS,
 )
 
@@ -731,4 +734,104 @@ async def generate_project(req: GenerateRequest) -> ProjectResponse:
         project_name=fallback_name,
         project_id=generate_project_id(fallback_name),
         description="## Overview\n[Project description]\n\n## Goals\n- [Goal 1]\n- [Goal 2]\n\n## Scope\n[Define project scope]"
+    )
+
+
+# ============== Feature Endpoints ==============
+
+@router.post("/feature", response_model=FeatureResponse)
+async def generate_feature(req: GenerateRequest) -> FeatureResponse:
+    """Generate a complete feature specification with requirements, scope, and goals."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    system_prompt = FEATURE_GENERATION_PROMPTS['system_prompt']
+    user_prompt = FEATURE_GENERATION_PROMPTS['user_prompt_template'].format(
+        template_title=req.template.title,
+        template_content=req.template.content,
+        prompt=req.prompt
+    )
+
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.4,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
+
+    # Parse JSON response
+    try:
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start != -1 and end > start:
+            parsed = json.loads(content[start:end])
+            
+            # Parse functional requirements
+            func_reqs = []
+            for req_item in parsed.get("functional_requirements", []):
+                if isinstance(req_item, dict):
+                    func_reqs.append(Requirement(
+                        requirement=req_item.get("requirement", "[Requirement]"),
+                        type=req_item.get("type", "should_have")
+                    ))
+            
+            # Parse non-functional requirements
+            non_func_reqs = []
+            for req_item in parsed.get("non_functional_requirements", []):
+                if isinstance(req_item, dict):
+                    non_func_reqs.append(Requirement(
+                        requirement=req_item.get("requirement", "[Requirement]"),
+                        type=req_item.get("type", "should_have")
+                    ))
+            
+            return FeatureResponse(
+                feature_name=parsed.get("feature_name", req.template.title),
+                description=parsed.get("description", "[Feature description]"),
+                problem_statement=parsed.get("problem_statement", "[Problem statement]"),
+                objective=parsed.get("objective", "[Objective]"),
+                success_criteria=parsed.get("success_criteria", ["[Success criterion 1]", "[Success criterion 2]"]),
+                goals=parsed.get("goals", ["[Goal 1]", "[Goal 2]"]),
+                pain_points=parsed.get("pain_points", ["[Pain point 1]", "[Pain point 2]"]),
+                in_scope=parsed.get("in_scope", ["[In scope item 1]", "[In scope item 2]"]),
+                out_of_scope=parsed.get("out_of_scope", ["[Out of scope item 1]"]),
+                functional_requirements=func_reqs if func_reqs else [
+                    Requirement(requirement="[Functional requirement]", type="must_have")
+                ],
+                non_functional_requirements=non_func_reqs if non_func_reqs else [
+                    Requirement(requirement="[Non-functional requirement]", type="must_have")
+                ]
+            )
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse feature JSON: {e}. Content preview: {content[:200]}")
+
+    # Fallback response
+    return FeatureResponse(
+        feature_name=req.template.title or "[Feature Name]",
+        description="[Provide a comprehensive description of the feature]",
+        problem_statement="[Describe the problem this feature solves]",
+        objective="[State the primary objective]",
+        success_criteria=["[Success criterion 1]", "[Success criterion 2]", "[Success criterion 3]"],
+        goals=["[Goal 1]", "[Goal 2]"],
+        pain_points=["[Pain point 1]", "[Pain point 2]"],
+        in_scope=["[In scope item 1]", "[In scope item 2]", "[In scope item 3]"],
+        out_of_scope=["[Out of scope item 1]", "[Out of scope item 2]"],
+        functional_requirements=[
+            Requirement(requirement="[Must-have functional requirement]", type="must_have"),
+            Requirement(requirement="[Should-have functional requirement]", type="should_have"),
+            Requirement(requirement="[Nice-to-have functional requirement]", type="nice_to_have")
+        ],
+        non_functional_requirements=[
+            Requirement(requirement="[Performance requirement]", type="must_have"),
+            Requirement(requirement="[Security requirement]", type="must_have")
+        ]
     )

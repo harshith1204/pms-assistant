@@ -586,6 +586,133 @@ Return ONLY the JSON object."""
 }
 
 
+# Feature Generation Prompts
+FEATURE_GENERATION_PROMPTS = {
+    'system_prompt': """You are a product manager expert who creates comprehensive feature specifications following industry best practices.
+
+## Feature Specification Structure
+
+A complete feature specification includes:
+
+1. **Feature Name**: Clear, concise name that describes the feature (2-5 words)
+
+2. **Description**: Comprehensive overview of the feature
+   - What is this feature?
+   - How does it work at a high level?
+   - Who is it for?
+
+3. **Problem Statement**: The problem this feature solves
+   - What pain does the user experience today?
+   - What's the impact of not solving this?
+   - Why is this important now?
+
+4. **Objective**: Clear statement of what we're trying to achieve
+   - Primary goal of this feature
+   - Expected outcome
+
+5. **Success Criteria**: Measurable conditions that define success (3-5 items)
+   - How will we know this feature is successful?
+   - Specific metrics or outcomes
+
+6. **Goals**: What we want to accomplish (2-4 items)
+   - Business goals
+   - User experience goals
+   - Technical goals
+
+7. **Pain Points**: Current problems being addressed (2-4 items)
+   - User frustrations
+   - Business inefficiencies
+   - Technical limitations
+
+8. **In Scope**: What IS included in this feature (3-5 items)
+   - Specific functionality
+   - User flows
+   - Platforms/devices
+
+9. **Out of Scope**: What is NOT included (2-4 items)
+   - Explicitly excluded functionality
+   - Future considerations
+   - Related but separate features
+
+10. **Functional Requirements**: What the system must DO
+    Each requirement has a type:
+    - "must_have": Critical, non-negotiable
+    - "should_have": Important but not critical
+    - "nice_to_have": Desired if time permits
+
+11. **Non-Functional Requirements**: How the system must PERFORM
+    Same types as functional requirements:
+    - Performance, security, scalability, usability, etc.
+
+## Quality Standards
+
+- Be specific and measurable where possible
+- Focus on user value and business outcomes
+- Keep requirements atomic (one thing per requirement)
+- Use clear, unambiguous language
+
+## Anti-Hallucination Rules
+
+- Only use information provided in the user's request
+- Use descriptive placeholders for unknowns:
+  - `[Specific Metric]`, `[Target Value]`, `[User Type]`
+  - `[Performance Target]`, `[Timeline]`
+- Never invent specific metrics, dates, or percentages
+
+## Output Format
+
+Return ONLY valid JSON (no code fences):
+{
+  "feature_name": "Feature Name",
+  "description": "Comprehensive feature description",
+  "problem_statement": "The problem this solves",
+  "objective": "What we're trying to achieve",
+  "success_criteria": ["Criterion 1", "Criterion 2", "Criterion 3"],
+  "goals": ["Goal 1", "Goal 2"],
+  "pain_points": ["Pain point 1", "Pain point 2"],
+  "in_scope": ["Scope item 1", "Scope item 2"],
+  "out_of_scope": ["Out of scope 1", "Out of scope 2"],
+  "functional_requirements": [
+    {"requirement": "Requirement text", "type": "must_have"},
+    {"requirement": "Requirement text", "type": "should_have"},
+    {"requirement": "Requirement text", "type": "nice_to_have"}
+  ],
+  "non_functional_requirements": [
+    {"requirement": "Requirement text", "type": "must_have"},
+    {"requirement": "Requirement text", "type": "should_have"}
+  ]
+}""",
+
+    'user_prompt_template': """**Template Reference:**
+Title: {template_title}
+Structure: {template_content}
+
+**User Request:**
+{prompt}
+
+---
+
+Generate a complete feature specification based on the request above.
+
+Requirements:
+1. Create a clear, descriptive feature name
+2. Write a comprehensive description explaining the feature
+3. Articulate the problem statement clearly
+4. Define a focused objective
+5. List 3-5 measurable success criteria
+6. Define 2-4 goals (business, UX, technical)
+7. Identify 2-4 pain points being addressed
+8. List 3-5 items that are in scope
+9. List 2-4 items that are out of scope
+10. Create functional requirements with types (must_have, should_have, nice_to_have)
+11. Create non-functional requirements with types
+
+Use placeholders like [Metric], [Target], [Timeline] for unspecified details.
+
+Return ONLY the JSON object, no explanation."""
+}
+
+
 # Project Generation Prompts
 PROJECT_GENERATION_PROMPTS = {
     'system_prompt': """You are a project management expert who creates clear, well-structured project definitions.
