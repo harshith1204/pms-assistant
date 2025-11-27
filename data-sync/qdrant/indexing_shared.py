@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from bson.binary import Binary
 from bson.objectid import ObjectId
+from mongo.constants import mongo_binary_to_uuid_str, uuid_str_to_mongo_binary
 from qdrant_client.http import models as qmodels
 
 # Configure logging
@@ -250,7 +251,7 @@ def normalize_mongo_id(mongo_id: Any) -> str:
     if isinstance(mongo_id, Binary):
         if mongo_id.subtype in (3, 4) and len(mongo_id) == 16:
             try:
-                return str(uuid.UUID(bytes=mongo_id))
+                return mongo_binary_to_uuid_str(mongo_id)
             except Exception:
                 pass
         return mongo_id.hex()

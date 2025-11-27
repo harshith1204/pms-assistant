@@ -38,6 +38,7 @@ from huggingface_hub import login
 import re
 import html as html_lib
 from qdrant.encoder import get_splade_encoder
+from mongo.constants import mongo_binary_to_uuid_str
 
 # Load .env file and authenticate HuggingFace
 load_dotenv()
@@ -215,8 +216,11 @@ def normalize_mongo_id(mongo_id) -> str:
     """Convert Mongo _id (ObjectId or Binary UUID) into a safe string."""
     if isinstance(mongo_id, ObjectId):
         return str(mongo_id)
-    elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
-        return str(uuid.UUID(bytes=mongo_id))
+    if isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
+        try:
+            return mongo_binary_to_uuid_str(mongo_id)
+        except Exception:
+            return mongo_id.hex()
     return str(mongo_id)
 
 def html_to_text(html: str) -> str:
