@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -11,65 +11,65 @@ class SmartFilterRequest(BaseModel):
 
 
 class WorkItemState(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemStateMaster(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemAssignee(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemLabel(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
     color: Optional[str] = None
 
 
 class WorkItemModules(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemCycle(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
     title: Optional[str] = None
 
 
 class WorkItemBusiness(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemLead(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemProject(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemCreatedBy(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemUpdatedBy(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItemParent(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class WorkItem(BaseModel):
@@ -80,23 +80,23 @@ class WorkItem(BaseModel):
     releaseDate: Optional[str] = None
     stateMaster: WorkItemStateMaster
     state: WorkItemState
-    business: WorkItemBusiness
+    business: Optional[WorkItemBusiness] = None
     lead: Optional[WorkItemLead] = None
-    priority: str
-    assignee: List[WorkItemAssignee]
-    label: List[WorkItemLabel]
+    priority: Optional[str] = None
+    assignee: List[WorkItemAssignee] = Field(default_factory=list)
+    label: List[WorkItemLabel] = Field(default_factory=list)
     cycle: Optional[WorkItemCycle] = None
     modules: Optional[WorkItemModules] = None
     parent: Optional[WorkItemParent] = None
     workLogs: Optional[List[Any]] = None
     estimateSystem: Optional[str] = None
     estimate: Optional[str] = None
-    id: str
-    project: WorkItemProject
+    id: Optional[str] = None
+    project: Optional[WorkItemProject] = None
     view: Optional[str] = None
-    displayBugNo: str
-    status: str
-    createdBy: WorkItemCreatedBy
+    displayBugNo: Optional[str] = None
+    status: Optional[str] = None
+    createdBy: Optional[WorkItemCreatedBy] = None
     updatedBy: Optional[WorkItemUpdatedBy] = None
     attachmentUrl: Optional[str] = None
     link: Optional[str] = None
