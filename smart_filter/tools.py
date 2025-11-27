@@ -531,8 +531,12 @@ class SmartFilterTools:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
 
         if project_id:
-            # For Qdrant filtering, use string UUID directly (Qdrant stores UUIDs as strings, not binary)
-            must_conditions.append(FieldCondition(key="project_id", match=MatchValue(value=project_id)))
+            variants = self._project_id_variants(project_id)
+            if len(variants) == 1:
+                match = MatchValue(value=variants[0])
+            else:
+                match = MatchAny(any=variants)
+            must_conditions.append(FieldCondition(key="project_id", match=match))
 
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
@@ -1017,9 +1021,31 @@ class SmartFilterTools:
         """Convert Mongo _id (ObjectId or Binary UUID) into a safe string like Qdrant expects."""
         if isinstance(mongo_id, ObjectId):
             return str(mongo_id)
-        elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
-            return str(uuid.UUID(bytes=mongo_id))
+        if isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
+            try:
+                return mongo_binary_to_uuid_str(mongo_id)
+            except Exception:
+                return mongo_id.hex()
         return str(mongo_id)
+
+    def _project_id_variants(self, project_id: str) -> List[str]:
+        """Return legacy + canonical UUID strings for robust project_id filtering."""
+        variants: Set[str] = set()
+        if not project_id:
+            return []
+        cleaned = project_id.strip()
+        if cleaned:
+            variants.add(cleaned)
+        try:
+            binary = uuid_str_to_mongo_binary(cleaned)
+            variants.add(mongo_binary_to_uuid_str(binary))
+            try:
+                variants.add(str(uuid.UUID(bytes=bytes(binary))))
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return list(variants)
 
 
     def format_reconstructed_results(

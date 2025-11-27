@@ -7,6 +7,7 @@ import re
 import uuid
 import logging
 from bson import ObjectId, Binary
+from mongo.constants import mongo_binary_to_uuid_str, uuid_str_to_mongo_binary
 # Qdrant and RAG dependencies
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -303,8 +304,30 @@ class RAGTool:
         if isinstance(mongo_id, ObjectId):
             return str(mongo_id)
         elif isinstance(mongo_id, Binary) and mongo_id.subtype == 3:
-            return str(uuid.UUID(bytes=mongo_id))
+            try:
+                return mongo_binary_to_uuid_str(mongo_id)
+            except Exception:
+                return mongo_id.hex()
         return str(mongo_id)
+
+    def _project_id_variants(self, project_id: str) -> List[str]:
+        """Return canonical + legacy byte-order UUID strings for compatibility."""
+        variants: Set[str] = set()
+        if not project_id:
+            return []
+        cleaned = project_id.strip()
+        if cleaned:
+            variants.add(cleaned)
+        try:
+            binary = uuid_str_to_mongo_binary(cleaned)
+            variants.add(mongo_binary_to_uuid_str(binary))
+            try:
+                variants.add(str(uuid.UUID(bytes=bytes(binary))))
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return list(variants)
     
     def _normalize_business_id(self, business_uuid: str) -> str:
         """Normalize business_id UUID string the same way it's stored in Qdrant.
@@ -320,9 +343,8 @@ class RAGTool:
             Normalized UUID string as stored in Qdrant
         """
         try:
-            from mongo.constants import uuid_str_to_mongo_binary
             business_bin = uuid_str_to_mongo_binary(business_uuid)
-            return str(uuid.UUID(bytes=business_bin))
+            return mongo_binary_to_uuid_str(business_bin)
         except Exception as e:
             logger.warning(f"Failed to normalize business_id '{business_uuid}': {e}, using as-is")
             return business_uuid
@@ -389,12 +411,21 @@ class RAGTool:
             results = await direct_mongo_client.aggregate("ProjectManagement", "members", pipeline)
 
             # Extract project IDs and convert back to string format using same normalization as Qdrant
-            project_ids = []
+            project_ids: List[str] = []
             for result in results:
                 if result.get("project_id"):
-                    project_ids.append(self._normalize_mongo_id(result["project_id"]))
+                    normalized = self._normalize_mongo_id(result["project_id"])
+                    project_ids.extend(self._project_id_variants(normalized))
 
-            return project_ids
+            # Deduplicate while preserving order
+            seen: Set[str] = set()
+            ordered: List[str] = []
+            for pid in project_ids:
+                if pid and pid not in seen:
+                    seen.add(pid)
+                    ordered.append(pid)
+
+            return ordered
 
         except Exception as e:
             logger.error(f"Error querying member projects: {e}")
