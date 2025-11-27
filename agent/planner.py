@@ -53,26 +53,6 @@ class QueryIntent:
     wants_details: bool  # Prefer detailed documents over counts
     wants_count: bool  # Whether the user asked for a count
     fetch_one: bool  # Whether the user wants a single specific item
-    # Advanced aggregation fields
-    facet_fields: Optional[List[str]] = None  # Fields for $facet operation
-    bucket_field: Optional[str] = None  # Field for $bucketAuto operation
-    union_collection: Optional[str] = None  # Collection for $unionWith
-    graph_from: Optional[str] = None  # From collection for $graphLookup
-    graph_start: Optional[str] = None  # Start expression for $graphLookup
-    graph_connect_from: Optional[str] = None  # Connect from field for $graphLookup
-    graph_connect_to: Optional[str] = None  # Connect to field for $graphLookup
-    # Time-series analysis fields
-    window_field: Optional[str] = None  # Field for time window operations
-    window_size: Optional[str] = None  # Size of sliding window (e.g., "7d", "30d")
-    window_unit: Optional[str] = None  # Unit for window (day, week, month)
-    trend_field: Optional[str] = None  # Field for trend analysis
-    trend_period: Optional[str] = None  # Period for trend (week, month, quarter)
-    trend_metric: Optional[str] = None  # Metric to trend (count, sum, avg)
-    anomaly_field: Optional[str] = None  # Field for anomaly detection
-    anomaly_metric: Optional[str] = None  # Metric for anomaly detection
-    anomaly_threshold: Optional[float] = None  # Standard deviation threshold
-    forecast_field: Optional[str] = None  # Field for forecasting
-    forecast_periods: Optional[int] = None  # Number of periods to forecast
 
 @dataclass
 class RelationshipPath:

@@ -283,22 +283,7 @@ class LLMIntentParser:
             "- requirement/requirements → functionalRequirements_count (for features)\n"
             "- workItems → workItems_count (for features)\n"
             "- userStories → userStories_count (for features)\n\n"
-            "## ADVANCED AGGREGATION STAGES\n"
-            "Support for complex aggregation operations:\n"
-            "- 'break down by priority and status' → $facet for multiple aggregations\n"
-            "- 'auto-group by priority' → $bucketAuto for automatic range grouping\n"
-            "- 'combine with other collection' → $unionWith to merge collections\n"
-            "- 'graph traversal queries' → $graphLookup for hierarchical data\n"
-            "- Use natural language to express these complex analytical queries\n\n"
-            "## TIME-SERIES ANALYSIS\n"
-            "Support for time-based analytical operations:\n"
-            "- 'sliding window of 7 days' → $setWindowFields for moving averages\n"
-            "- 'rolling average over 30 days' → time window aggregations\n"
-            "- 'trend analysis for last quarter' → period-over-period comparisons\n"
-            "- 'anomaly detection in work items' → statistical outlier detection\n"
-            "- 'time series forecasting' → trend projection and prediction\n"
-            "- Express temporal analysis queries with sliding windows and trends\n"
-
+            
             "## TIME-BASED SORTING (CRITICAL)\n"
             "Infer sort_order from phrasing when the user implies recency or age.\n"
             "- 'recent', 'latest', 'newest', 'most recent' → {\"createdTimeStamp\": -1}\n"
@@ -376,24 +361,6 @@ class LLMIntentParser:
             '  "wants_details": true,\n'
             '  "wants_count": false,\n'
             '  "fetch_one": false,\n'
-            '  "facet_fields": null,\n'
-            '  "bucket_field": null,\n'
-            '  "union_collection": null,\n'
-            '  "graph_from": null,\n'
-            '  "graph_start": null,\n'
-            '  "graph_connect_from": null,\n'
-            '  "graph_connect_to": null,\n'
-            '  "window_field": null,\n'
-            '  "window_size": null,\n'
-            '  "window_unit": null,\n'
-            '  "trend_field": null,\n'
-            '  "trend_period": null,\n'
-            '  "trend_metric": null,\n'
-            '  "anomaly_field": null,\n'
-            '  "anomaly_metric": null,\n'
-            '  "anomaly_threshold": null,\n'
-            '  "forecast_field": null,\n'
-            '  "forecast_periods": null\n'
             "}\n\n"
 
             "## EXAMPLES\n"
@@ -445,28 +412,6 @@ class LLMIntentParser:
             "- 'pages linked to exactly 2 cycles' → {\"primary_entity\": \"page\", \"filters\": {\"linkedCycle_count\": \"2\"}, \"aggregations\": []}\n"
             "- 'epics with at least 3 custom properties' → {\"primary_entity\": \"epic\", \"filters\": {\"customProperties_count\": \">=3\"}, \"aggregations\": []}\n\n"
             "CRITICAL: When you see phrases like 'multiple', 'more than', 'at least', 'exactly', 'no', 'unassigned', 'with X', 'has X' combined with array field names (assignees, labels, dependencies, etc.), you MUST add the corresponding _count filter.\n\n"
-            "## ADVANCED OPERATOR EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
-            "- Query: 'work items with assignees matching role Developer'\n"
-            "  → filters: {\"assignee_elemMatch\": {\"role\": \"Developer\"}}\n"
-            "- Query: 'work items with assignees matching name John and role Developer'\n"
-            "  → filters: {\"assignee_elemMatch\": {\"name\": \"John\", \"role\": \"Developer\"}}\n\n"
-            "CRITICAL: When users mention 'matching X', 'assignees matching', etc., you MUST add the appropriate $elemMatch filter.\n\n"
-            "## ADVANCED AGGREGATION EXAMPLES (MUST FOLLOW THESE PATTERNS)\n"
-            "- Query: 'break down work items by priority and status'\n"
-            "  → aggregations: [\"facet\"], facet_fields: [\"priority\", \"status\"]\n"
-            "- Query: 'auto-group work items by estimate'\n"
-            "  → aggregations: [\"bucketAuto\"], bucket_field: \"estimate\"\n"
-            "- Query: 'combine work items with user stories'\n"
-            "  → aggregations: [\"unionWith\"], union_collection: \"userStory\"\n"
-            "- Query: 'find project dependencies'\n"
-            "  → aggregations: [\"graphLookup\"], graph_from: \"project\", graph_start: \"$_id\", graph_connect_from: \"_id\", graph_connect_to: \"dependsOn\"\n\n"
-            "CRITICAL: When users mention 'break down by', 'auto-group', 'combine with', 'graph traversal', etc., you MUST add the appropriate aggregation.\n"
-            "Do NOT skip this - these aggregations require special handling that cannot be achieved with basic operations.\n\n"
-            "## TIME-SERIES EXAMPLES\n"
-            "- '7-day rolling average of work items' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"timeWindow\"], \"window_field\": \"createdTimeStamp\", \"window_size\": \"7d\", \"window_unit\": \"day\"}\n"
-            "- 'trend analysis for last month' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"trend\"], \"trend_field\": \"createdTimeStamp\", \"trend_period\": \"month\", \"trend_metric\": \"count\"}\n"
-            "- 'detect anomalies in work item creation' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"anomaly\"], \"anomaly_field\": \"createdTimeStamp\", \"anomaly_metric\": \"count\", \"anomaly_threshold\": 2.0}\n"
-            "- 'forecast work item creation for next week' → {\"primary_entity\": \"workItem\", \"aggregations\": [\"forecast\"], \"forecast_field\": \"createdTimeStamp\", \"forecast_periods\": 7, \"forecast_metric\": \"count\"}\n\n"
 
             "Always output valid JSON. No explanations, no thinking, just the JSON object."
         )
@@ -635,15 +580,7 @@ class LLMIntentParser:
         # Also accept any allow-listed primary fields directly
         known_filter_keys |= allowed_primary_fields
         
-        # Also accept $elemMatch operator filters with suffix (_elemMatch)
-        # These are dynamically detected based on field names + suffix
-        for key in list(raw_filters.keys()):
-            if key.endswith('_elemMatch'):
-                # Extract base field name
-                base_field = key[:-len('_elemMatch')]
-                # Add to known_filter_keys if base field is valid
-                if base_field in allowed_primary_fields or base_field in {"assignee", "label", "description", "_id"}:
-                    known_filter_keys.add(key)
+        
         # Add dynamic range keys for each date-like field
         for f in date_like_fields:
             known_filter_keys.add(f + "_from")
@@ -682,9 +619,6 @@ class LLMIntentParser:
             elif k == "$text" and isinstance(v, str):
                 # Full-text search: keep as-is
                 filters[k] = v.strip()
-            elif k.endswith("_elemMatch") and isinstance(v, dict):
-                # $elemMatch operator filters: keep as-is (values are objects)
-                filters[k] = v
             else:
                 # Keep other valid filters (including direct field filters and date range tokens)
                 filters[k] = v
@@ -736,103 +670,9 @@ class LLMIntentParser:
             if "state" not in filters and "state_not" not in filters:
                 filters["state_not"] = ["Completed", "Verified"]
 
-        # 3) Advanced feature detection from query text (heuristic fallback)
-        
-        
-        # Graph lookup detection
-        if re.search(r"\bdependenc(?:y|ies)\b.*\bgraph\b|\bgraph\b.*\bdependenc(?:y|ies)\b|\bdependency\s+chain\b|\bdepends?\s+on\b.*\bgraph\b", oq_text):
-            if "graphLookup" not in (data.get("aggregations") or []):
-                aggregations = data.get("aggregations") or []
-                aggregations.append("graphLookup")
-                data["aggregations"] = aggregations
-            # Infer graph connection fields if not provided
-            if not data.get("graph_connect_to"):
-                if "depends" in oq_text or "dependency" in oq_text:
-                    data["graph_connect_to"] = "dependsOn"
-                elif primary == "project":
-                    data["graph_connect_to"] = "parentProjectId"
-        
-        # Time window detection (rolling/moving averages)
-        if re.search(r"\b(\d+)[\s-]?day\s+rolling\s+averages?\b|\brolling\s+averages?\s+.*\b(\d+)\s+days?\b|\bmoving\s+averages?\s+.*\b(\d+)\s+days?\b|\b(\d+)[\s-]?day\s+window\b", oq_text):
-            if "timeWindow" not in (data.get("aggregations") or []):
-                aggregations = data.get("aggregations") or []
-                aggregations.append("timeWindow")
-                data["aggregations"] = aggregations
-            # Extract window size
-            window_match = re.search(r"\b(\d+)[\s-]?day", oq_text)
-            if window_match and not data.get("window_size"):
-                data["window_size"] = f"{window_match.group(1)}d"
-            # Infer window field from context
-            if not data.get("window_field"):
-                if "created" in oq_text or "creation" in oq_text:
-                    data["window_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
-                elif "updated" in oq_text or "modified" in oq_text:
-                    data["window_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
-        
-        # Trend detection
-        if re.search(r"\btrends?\b|\bmonthly\s+trends?\b|\bweekly\s+trends?\b|\bquarterly\s+trends?\b|\bperiod\s+over\s+period\b", oq_text):
-            if "trend" not in (data.get("aggregations") or []):
-                aggregations = data.get("aggregations") or []
-                aggregations.append("trend")
-                data["aggregations"] = aggregations
-            # Infer trend period
-            if not data.get("trend_period"):
-                if re.search(r"\bmonthly\b|\bmonth\b", oq_text):
-                    data["trend_period"] = "month"
-                elif re.search(r"\bweekly\b|\bweek\b", oq_text):
-                    data["trend_period"] = "week"
-                elif re.search(r"\bquarterly\b|\bquarter\b", oq_text):
-                    data["trend_period"] = "quarter"
-            # Infer trend field
-            if not data.get("trend_field"):
-                if "created" in oq_text or "creation" in oq_text:
-                    data["trend_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
-                elif "updated" in oq_text or "modified" in oq_text:
-                    data["trend_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
-        
-        # Anomaly detection
-        if re.search(r"\banomal(?:y|ies)\b|\bunusual\b|\boutlier\b|\bspike\b|\bdetect.*\banomal\b", oq_text):
-            if "anomaly" not in (data.get("aggregations") or []):
-                aggregations = data.get("aggregations") or []
-                aggregations.append("anomaly")
-                data["aggregations"] = aggregations
-            # Infer anomaly field
-            if not data.get("anomaly_field"):
-                if "created" in oq_text or "creation" in oq_text:
-                    data["anomaly_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
-                elif "updated" in oq_text or "modified" in oq_text:
-                    data["anomaly_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
-                elif "completion" in oq_text:
-                    data["anomaly_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
-        
-        # Forecasting detection
-        if re.search(r"\bforecast\b|\bpredict\b|\bprojection\b|\bprojected\b|\bnext\s+\d+\s+days?\b|\bnext\s+week\b|\bnext\s+month\b", oq_text):
-            if "forecast" not in (data.get("aggregations") or []):
-                aggregations = data.get("aggregations") or []
-                aggregations.append("forecast")
-                data["aggregations"] = aggregations
-            # Extract forecast periods
-            forecast_match = re.search(r"\bnext\s+(\d+)\s+days?\b|\b(\d+)\s+days?\s+ahead\b", oq_text)
-            if forecast_match and not data.get("forecast_periods"):
-                periods = forecast_match.group(1) or forecast_match.group(2)
-                if periods:
-                    data["forecast_periods"] = int(periods)
-            elif re.search(r"\bnext\s+week\b", oq_text) and not data.get("forecast_periods"):
-                data["forecast_periods"] = 7
-            elif re.search(r"\bnext\s+month\b", oq_text) and not data.get("forecast_periods"):
-                data["forecast_periods"] = 30
-            # Infer forecast field
-            if not data.get("forecast_field"):
-                if "created" in oq_text or "creation" in oq_text:
-                    data["forecast_field"] = "createdTimeStamp" if primary != "page" else "createdAt"
-                elif "updated" in oq_text or "modified" in oq_text:
-                    data["forecast_field"] = "updatedTimeStamp" if primary != "page" else "updatedAt"
-
         # Aggregations - include new advanced aggregation types
         allowed_aggs = {
-            "count", "group", "summary",
-            "graphLookup", "timeWindow", "trend", "anomaly", "forecast",
-            "facet", "bucketAuto", "unionWith"
+            "count", "group", "summary"
         }
         aggregations = [a for a in (data.get("aggregations") or []) if a in allowed_aggs]
 
@@ -876,15 +716,6 @@ class LLMIntentParser:
                     "time": "createdAt",
                     "date": "createdAt",
                     "timestamp": "updatedAt",
-                }
-            elif primary == "timeline":
-                key_map = {
-                    "created": "timestamp",
-                    "createdAt": "timestamp",
-                    "created_time": "timestamp",
-                    "time": "timestamp",
-                    "date": "timestamp",
-                    "timestamp": "timestamp",
                 }
             else:
                 key_map = {
@@ -962,47 +793,11 @@ class LLMIntentParser:
             if group_by and wants_details_raw is None:
                 wants_details = False
 
-        # Heuristic: timeline TIME_LOGGED queries that mention per-task breakdown should group by work item
-        # This enables questions like "amount of time logged by <user> per task for today"
-        if primary == "timeline":
-            tval = str(filters.get("type", "")).lower()
-            mentions_time = any(k in oq for k in ["time logged", "amount of time", "time spent", "logged time"]) or ("time_logged" in tval)
-            mentions_per_task = any(k in oq for k in ["per task", "by task", "per work item", "by work item", "per ticket", "by ticket", "breakdown"])
-            if mentions_time and (mentions_per_task or ("time_logged" in tval and not group_by)):
-                if "group" not in aggregations:
-                    aggregations = ["group"] + [a for a in aggregations if a != "group"]
-                if not group_by:
-                    group_by = ["work_item_title"]
-                # Grouped summaries don't need wants_details by default
-                wants_details = False
-
-            # Infer missing time window for timeline when the query includes relative periods
-            has_time_window = any(k in filters for k in [
-                "timestamp_from", "timestamp_to", "timestamp_within", "timestamp_duration"
-            ])
-            if not has_time_window:
-                if re.search(r"\btoday\b", oq):
-                    filters["timestamp_within"] = "today"
-                elif re.search(r"\byesterday\b", oq):
-                    filters["timestamp_within"] = "yesterday"
-                elif re.search(r"\bthis\s+week\b", oq):
-                    filters["timestamp_within"] = "this_week"
-                elif re.search(r"\blast\s+week\b", oq):
-                    filters["timestamp_within"] = "last_week"
-                elif re.search(r"\bthis\s+month\b", oq):
-                    filters["timestamp_within"] = "this_month"
-                elif re.search(r"\blast\s+month\b", oq):
-                    filters["timestamp_within"] = "last_month"
-
         # If no explicit sort provided and no grouping/count, infer time-based sort from phrasing
         if not sort_order and not group_by and not wants_count:
             inferred_sort = self._infer_sort_order_from_query(original_query or "")
             if inferred_sort:
-                # If timeline → map createdTimeStamp to timestamp
-                if primary == "timeline" and "createdTimeStamp" in inferred_sort:
-                    dirv = inferred_sort.get("createdTimeStamp", -1)
-                    sort_order = {"timestamp": dirv}
-                elif primary in ("page", "userStory", "features") and "createdTimeStamp" in inferred_sort:
+                if primary in ("page", "userStory", "features") and "createdTimeStamp" in inferred_sort:
                     dirv = inferred_sort.get("createdTimeStamp", -1)
                     sort_order = {"createdAt": dirv}
                 else:
@@ -1010,30 +805,6 @@ class LLMIntentParser:
 
         # Fetch one heuristic
         fetch_one = bool(data.get("fetch_one", False)) or (limit == 1)
-
-        # Extract advanced aggregation fields
-        facet_fields = data.get("facet_fields")
-        bucket_field = data.get("bucket_field")
-        union_collection = data.get("union_collection")
-        
-        # Graph lookup fields
-        graph_from = data.get("graph_from")
-        graph_start = data.get("graph_start")
-        graph_connect_from = data.get("graph_connect_from")
-        graph_connect_to = data.get("graph_connect_to")
-        
-        # Time-series analysis fields
-        window_field = data.get("window_field")
-        window_size = data.get("window_size")
-        window_unit = data.get("window_unit")
-        trend_field = data.get("trend_field")
-        trend_period = data.get("trend_period")
-        trend_metric = data.get("trend_metric")
-        anomaly_field = data.get("anomaly_field")
-        anomaly_metric = data.get("anomaly_metric")
-        anomaly_threshold = data.get("anomaly_threshold")
-        forecast_field = data.get("forecast_field")
-        forecast_periods = data.get("forecast_periods")
         print(f"""
             ---- QueryIntent DEBUG ----
             primary_entity: {primary}
@@ -1048,24 +819,6 @@ class LLMIntentParser:
             wants_details: {wants_details}
             wants_count: {wants_count}
             fetch_one: {fetch_one}
-            facet_fields: {facet_fields if facet_fields else None}
-            bucket_field: {bucket_field if bucket_field else None}
-            union_collection: {union_collection if union_collection else None}
-            graph_from: {graph_from if graph_from else None}
-            graph_start: {graph_start if graph_start else None}
-            graph_connect_from: {graph_connect_from if graph_connect_from else None}
-            graph_connect_to: {graph_connect_to if graph_connect_to else None}
-            window_field: {window_field if window_field else None}
-            window_size: {window_size if window_size else None}
-            window_unit: {window_unit if window_unit else None}
-            trend_field: {trend_field if trend_field else None}
-            trend_period: {trend_period if trend_period else None}
-            trend_metric: {trend_metric if trend_metric else None}
-            anomaly_field: {anomaly_field if anomaly_field else None}
-            anomaly_metric: {anomaly_metric if anomaly_metric else None}
-            anomaly_threshold: {float(anomaly_threshold) if anomaly_threshold is not None else None}
-            forecast_field: {forecast_field if forecast_field else None}
-            forecast_periods: {int(forecast_periods) if forecast_periods is not None else None}
             ---------------------------
             """)
 
@@ -1082,24 +835,6 @@ class LLMIntentParser:
             wants_details=wants_details,
             wants_count=wants_count,
             fetch_one=fetch_one,
-            facet_fields=facet_fields if facet_fields else None,
-            bucket_field=bucket_field if bucket_field else None,
-            union_collection=union_collection if union_collection else None,
-            graph_from=graph_from if graph_from else None,
-            graph_start=graph_start if graph_start else None,
-            graph_connect_from=graph_connect_from if graph_connect_from else None,
-            graph_connect_to=graph_connect_to if graph_connect_to else None,
-            window_field=window_field if window_field else None,
-            window_size=window_size if window_size else None,
-            window_unit=window_unit if window_unit else None,
-            trend_field=trend_field if trend_field else None,
-            trend_period=trend_period if trend_period else None,
-            trend_metric=trend_metric if trend_metric else None,
-            anomaly_field=anomaly_field if anomaly_field else None,
-            anomaly_metric=anomaly_metric if anomaly_metric else None,
-            anomaly_threshold=float(anomaly_threshold) if anomaly_threshold is not None else None,
-            forecast_field=forecast_field if forecast_field else None,
-            forecast_periods=int(forecast_periods) if forecast_periods is not None else None,
         )
 
     async def _disambiguate_name_entity(self, proposed: Dict[str, str]) -> Optional[str]:
