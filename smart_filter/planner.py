@@ -225,6 +225,32 @@ class LLMIntentParser:
         }
         return priority_map.get(value.lower())
 
+    def _normalize_status_value(self, filter_key: str, value: str) -> Optional[str]:
+        """Normalize status values based on filter type"""
+        if filter_key == "project_status":
+            status_map = {
+                "not_started": "NOT_STARTED",
+                "not started": "NOT_STARTED",
+                "started": "STARTED",
+                "completed": "COMPLETED",
+                "overdue": "OVERDUE"
+            }
+        elif filter_key == "cycle_status":
+            status_map = {
+                "active": "ACTIVE",
+                "upcoming": "UPCOMING",
+                "completed": "COMPLETED"
+            }
+        elif filter_key == "page_visibility":
+            status_map = {
+                "public": "PUBLIC",
+                "private": "PRIVATE",
+                "archived": "ARCHIVED"
+            }
+        else:
+            return None
+
+        return status_map.get(value.lower())
 
     def _normalize_boolean_value(self, value: str) -> Optional[bool]:
         """Normalize string booleans to actual booleans"""
@@ -305,6 +331,10 @@ class LLMIntentParser:
             # "- Epics contain multiple features and belong to a project lifecycle.\n\n"
 
             "## VERY IMPORTANT\n"
+            "## CRITICAL: DO NOT create 'type', 'category', or 'kind' filters for work items!\n"
+            "All work items (bugs, tasks, issues, stories) are the same entity type - just set primary_entity to 'workItem'\n"
+            "❌ WRONG: {\"primary_entity\": \"workItem\", \"filters\": {\"type\": \"bug\"}}\n"
+            "✅ CORRECT: {\"primary_entity\": \"workItem\", \"filters\": {}}\n\n"
             "## AVAILABLE FILTERS (use these exact keys):\n"
             "- state: Open|Completed|Backlog|Re-Raised|In-Progress|Verified (for workItem)\n"
             "- priority: URGENT|HIGH|MEDIUM|LOW|NONE (for workItem)\n"
@@ -341,8 +371,9 @@ class LLMIntentParser:
             "ALWAYS extract ONLY the core entity name, NEVER include descriptive phrases:\n"
             "- Query: 'work items within PMS project' → project_name: 'PMS' (NOT 'PMS project')\n"
             "- Query: 'tasks from test module' → module_name: 'test' (NOT 'test module')\n"
-            "- Query: 'bugs assigned to alice' → assignee_name: 'alice' (NOT 'alice assigned')\n"
-            "- Query: 'items in upcoming cycle' → cycle_name: 'upcoming' (NOT 'upcoming cycle')\n"
+            "- Query: 'bugs assigned to alice' → assignee_name: 'alice' (NOT type=bug + assignee_name)\n"
+            "- Query: 'tasks from test module' → module_name: 'test' (NOT type=task + module_name)\n"
+            "- Query: 'issues in backlog' → state: 'Backlog' (NOT type=issue + state)\n"
             "❌ WRONG: {'project_name': 'PMS project'} - this breaks regex matching!\n"
             "✅ CORRECT: {'project_name': 'PMS'} - this works with regex matching\n\n"
 
@@ -534,6 +565,15 @@ class LLMIntentParser:
             # Also preserve relative window keys so timeline's timestamp_within is not dropped
             known_filter_keys.add(f + "_within")
             known_filter_keys.add(f + "_duration")
+
+        # Convert shorthand keys to full keys where appropriate
+        if "assignee" in raw_filters and isinstance(raw_filters["assignee"], str) and "assignee_name" not in raw_filters:
+            raw_filters["assignee_name"] = raw_filters.pop("assignee")
+
+        # Remove invalid filters that don't correspond to database fields
+        invalid_filters = ["type", "category", "kind"]  # Work items don't have these fields
+        for invalid_key in invalid_filters:
+            raw_filters.pop(invalid_key, None)
 
         for k, v in raw_filters.items():
             if k not in known_filter_keys or self._is_placeholder(v):

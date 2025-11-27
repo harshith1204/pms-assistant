@@ -62,17 +62,20 @@ DEFAULT_SYSTEM_PROMPT = (
 "   - Handles complex boolean logic and date ranges\n"
 "   - Excellent for counts, metrics, and tabular data\n"
 "   - Supports sorting, grouping, and aggregation\n"
-"   WHEN TO USE (RESERVE FOR THESE SPECIFIC CASES ONLY):\n"
-"   - Very simple direct field queries: 'status=open', 'priority=high'\n"
-"   - Exact count/metric requests: 'count open issues', 'list high priority'\n"
-"   - Time-based queries requiring exact date ranges\n"
-"   - Simple attribute filtering without semantic context\n"
+"   - Has its own natural language understanding - just pass the original query\n"
+"   WHEN TO USE:\n"
+"   - Any query that filters by work item attributes (status, priority, assignee, etc.)\n"
+"   - Queries asking for specific types of work items ('bugs', 'tasks', 'issues')\n"
+"   - Queries with assignment filters ('assigned to X', 'created by Y')\n"
+"   - Count or list requests\n"
+"   - Any structured filtering query\n"
+"   RESPONSE FORMAT: {\"tool\": \"build_mongo_query\"}  (no refined_query needed)\n"
 "   EXAMPLES:\n"
-"   ✅ \"status=open\" (direct field query)\n"
-"   ✅ \"count high priority bugs\" (metric request)\n"
-"   ✅ \"list completed tasks\" (simple list)\n\n"
+"   ✅ \"bugs assigned to Vikas\" → {\"tool\": \"build_mongo_query\"}\n"
+"   ✅ \"high priority tasks\" → {\"tool\": \"build_mongo_query\"}\n"
+"   ✅ \"issues created by John\" → {\"tool\": \"build_mongo_query\"}\n\n"
 
-"2. rag_search (PRIMARY METHOD - USE FOR MOST QUERIES)\n"
+"2. rag_search\n"
 "   PURPOSE: Semantic search across work item descriptions, comments, and contextual content\n"
 "   STRENGTHS:\n"
 "   - Understands natural language and intent\n"
@@ -197,17 +200,22 @@ class SmartFilterAgent:
         await self.retriever.ensure_mongodb_connection()
 
         tool_choice, tool_query = await self._determine_tool(normalized_query)
-        is_simple_field_query = self._is_simple_field_query(normalized_query)
-        should_skip_rag = tool_choice == "build_mongo_query" and is_simple_field_query
+        logger.info(f"Query '{normalized_query}' -> Tool: {tool_choice}, Refined: '{tool_query}'")
 
-        # Always try RAG search first for semantic understanding, unless it's a very specific direct field query
-        if not should_skip_rag:
-            # Use RAG search as primary method
-            rag_result = await self._handle_rag_flow(tool_query, project_id, limit)
-            if rag_result.work_items:
-                return rag_result
+        # If LLM explicitly chooses build_mongo_query, use MongoDB directly
+        if tool_choice == "build_mongo_query":
+            logger.info(f"Using MongoDB flow for structured query: {tool_query}")
+            return await self._handle_mongo_flow(tool_query, project_id, limit)
 
-        # Fall back to MongoDB query for direct field operations or when RAG fails
+        # For RAG choice or fallback, try RAG first then MongoDB
+        logger.info(f"Using RAG flow for query: {tool_query}")
+        rag_result = await self._handle_rag_flow(tool_query, project_id, limit)
+        if rag_result.work_items:
+            logger.info(f"RAG found {len(rag_result.work_items)} work items")
+            return rag_result
+
+        # Fall back to MongoDB query when RAG fails to find results
+        logger.warning(f"RAG found no results, falling back to MongoDB for: {tool_query}")
         return await self._handle_mongo_flow(tool_query, project_id, limit)
 
     async def _determine_tool(self, query: str) -> tuple[str, str]:
@@ -224,16 +232,21 @@ class SmartFilterAgent:
                 try:
                     data = json.loads(content)
                     tool = data.get("tool")
-                    refined_query = data.get("refined_query", query)  # fallback to original query
-                    if tool in ("build_mongo_query", "rag_search"):
+                    if tool == "build_mongo_query":
+                        # For MongoDB queries, use the original natural language query
+                        # The planner will handle the natural language parsing
+                        return tool, query
+                    elif tool == "rag_search":
+                        refined_query = data.get("refined_query", query)
                         return tool, refined_query
                 except Exception:
                     pass
         except Exception as err:
             logger.warning("Tool routing model failed, falling back to heuristics: %s", err)
 
-        # Heuristic fallback: default to mongo for explicit field queries, RAG otherwise
-        if self._is_simple_field_query(query):
+        # Heuristic fallback: use MongoDB for structured queries, RAG for semantic search
+        if (self._is_simple_field_query(query) or
+            self._is_structured_filter_query(query)):
             return "build_mongo_query", query
 
         return "rag_search", query
@@ -692,6 +705,21 @@ class SmartFilterAgent:
         ]
 
         return any(re.match(pattern, query_lower) for pattern in simple_patterns)
+
+    def _is_structured_filter_query(self, query: str) -> bool:
+        """Check if query contains structured filtering patterns that should use MongoDB."""
+        query_lower = query.lower().strip()
+
+        # Patterns that indicate structured filtering
+        structured_patterns = [
+            r'\b(assigned to|created by|reported by)\b',  # Assignment filters
+            r'\b(bugs?|tasks?|issues?|stories?)\b.*\b(assigned to|created by)\b',  # Type + assignment
+            r'\b(high|medium|low)\b.*\b(priority|prio)\b',  # Priority filters
+            r'\b(open|closed|resolved|in progress|todo|done|accepted)\b',  # Status filters
+            r'\b(count|list|show me)\b.*\b(bugs?|tasks?|issues?)\b',  # Count/list requests
+        ]
+
+        return any(re.search(pattern, query_lower) for pattern in structured_patterns)
 
     def _is_object_id(self, candidate: str) -> bool:
         if not candidate or len(candidate) != 24:
