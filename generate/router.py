@@ -8,6 +8,9 @@ from .models import (
     GenerateRequest,
     GenerateResponse,
     PageGenerateResponse,
+    UserStoryResponse,
+    UserStorySurpriseMeRequest,
+    ProjectResponse,
     WorkItemSurpriseMeRequest,
     CycleSurpriseMeRequest,
     ModuleSurpriseMeRequest,
@@ -23,6 +26,9 @@ from .prompts import (
     MODULE_SURPRISE_ME_PROMPTS,
     EPIC_GENERATION_PROMPTS,
     EPIC_SURPRISE_ME_PROMPTS,
+    USER_STORY_GENERATION_PROMPTS,
+    USER_STORY_SURPRISE_ME_PROMPTS,
+    PROJECT_GENERATION_PROMPTS,
 )
 
 try:
@@ -531,3 +537,198 @@ async def generate_module_surprise_me(req: ModuleSurpriseMeRequest) -> GenerateR
 
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
+
+# ============== User Story Endpoints ==============
+
+@router.post("/user-story", response_model=UserStoryResponse)
+async def generate_user_story(req: GenerateRequest) -> UserStoryResponse:
+    """Generate a complete user story with persona, goal, demographics, and acceptance criteria."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    system_prompt = USER_STORY_GENERATION_PROMPTS['system_prompt']
+    user_prompt = USER_STORY_GENERATION_PROMPTS['user_prompt_template'].format(
+        template_title=req.template.title,
+        template_content=req.template.content,
+        prompt=req.prompt
+    )
+
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.4,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
+
+    # Parse JSON response
+    try:
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start != -1 and end > start:
+            parsed = json.loads(content[start:end])
+            
+            return UserStoryResponse(
+                title=parsed.get("title", req.template.title),
+                description=parsed.get("description", ""),
+                persona=parsed.get("persona", "[User Persona]"),
+                user_goal=parsed.get("user_goal", "[User Goal]"),
+                demographics=parsed.get("demographics", "[Target Demographics]"),
+                acceptance_criteria=parsed.get("acceptance_criteria", ["[Acceptance Criterion 1]", "[Acceptance Criterion 2]"])
+            )
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse user story JSON: {e}. Content preview: {content[:200]}")
+
+    # Fallback response
+    return UserStoryResponse(
+        title=req.template.title,
+        description=f"As a [user], I want [goal] so that [benefit].",
+        persona="[Define the user persona]",
+        user_goal="[Define the user's goal]",
+        demographics="[Define target demographics]",
+        acceptance_criteria=["[Acceptance Criterion 1]", "[Acceptance Criterion 2]", "[Acceptance Criterion 3]"]
+    )
+
+
+@router.post("/user-story-surprise-me", response_model=UserStoryResponse)
+async def generate_user_story_surprise_me(req: UserStorySurpriseMeRequest) -> UserStoryResponse:
+    """Generate or enhance a user story with the 'surprise me' feature."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    provided_description = (req.description or "").strip()
+    provided_persona = (req.persona or "").strip()
+    
+    if provided_description or provided_persona:
+        system_prompt = USER_STORY_SURPRISE_ME_PROMPTS['with_description']['system_prompt']
+        user_prompt = USER_STORY_SURPRISE_ME_PROMPTS['with_description']['user_prompt_template'].format(
+            title=req.title,
+            description=provided_description or "[Not provided]",
+            persona=provided_persona or "[Not provided]"
+        )
+    else:
+        system_prompt = USER_STORY_SURPRISE_ME_PROMPTS['without_description']['system_prompt']
+        user_prompt = USER_STORY_SURPRISE_ME_PROMPTS['without_description']['user_prompt_template'].format(
+            title=req.title
+        )
+
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.4,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
+
+    # Parse JSON response
+    try:
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start != -1 and end > start:
+            parsed = json.loads(content[start:end])
+            
+            return UserStoryResponse(
+                title=parsed.get("title", req.title),
+                description=parsed.get("description", ""),
+                persona=parsed.get("persona", "[User Persona]"),
+                user_goal=parsed.get("user_goal", "[User Goal]"),
+                demographics=parsed.get("demographics", "[Target Demographics]"),
+                acceptance_criteria=parsed.get("acceptance_criteria", ["[Acceptance Criterion 1]", "[Acceptance Criterion 2]"])
+            )
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse user story JSON: {e}. Content preview: {content[:200]}")
+
+    # Fallback response
+    return UserStoryResponse(
+        title=req.title,
+        description=f"As a [user], I want [goal] so that [benefit].",
+        persona="[Define the user persona]",
+        user_goal="[Define the user's goal]",
+        demographics="[Define target demographics]",
+        acceptance_criteria=["[Acceptance Criterion 1]", "[Acceptance Criterion 2]", "[Acceptance Criterion 3]"]
+    )
+
+
+# ============== Project Endpoints ==============
+
+def generate_project_id(project_name: str) -> str:
+    """Generate project ID from first 5 letters of project name (UPPERCASE)."""
+    # Remove non-alphanumeric characters and take first 5 letters
+    clean_name = ''.join(c for c in project_name if c.isalnum())
+    return clean_name[:5].upper() if clean_name else "PROJE"
+
+
+@router.post("/project", response_model=ProjectResponse)
+async def generate_project(req: GenerateRequest) -> ProjectResponse:
+    """Generate a complete project definition with name, ID, and description."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    system_prompt = PROJECT_GENERATION_PROMPTS['system_prompt']
+    user_prompt = PROJECT_GENERATION_PROMPTS['user_prompt_template'].format(
+        template_title=req.template.title,
+        template_content=req.template.content,
+        prompt=req.prompt
+    )
+
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.4,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
+
+    # Parse JSON response
+    try:
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start != -1 and end > start:
+            parsed = json.loads(content[start:end])
+            
+            project_name = parsed.get("project_name", req.template.title)
+            # Use provided project_id or generate from name
+            project_id = parsed.get("project_id") or generate_project_id(project_name)
+            
+            return ProjectResponse(
+                project_name=project_name,
+                project_id=project_id.upper(),  # Ensure uppercase
+                description=parsed.get("description", "")
+            )
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse project JSON: {e}. Content preview: {content[:200]}")
+
+    # Fallback response
+    fallback_name = req.template.title or "New Project"
+    return ProjectResponse(
+        project_name=fallback_name,
+        project_id=generate_project_id(fallback_name),
+        description="## Overview\n[Project description]\n\n## Goals\n- [Goal 1]\n- [Goal 2]\n\n## Scope\n[Define project scope]"
+    )
