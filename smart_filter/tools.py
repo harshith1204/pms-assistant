@@ -521,7 +521,7 @@ class SmartFilterTools:
         
         # Step 1: Initial vector search (retrieve more chunks to cover more docs)
         vectors = self.embedding_client.encode([query])
-        if not vectors:
+        if len(vectors) == 0:
             raise RuntimeError("Embedding service returned empty vector")
         query_embedding = vectors[0]
         
@@ -531,7 +531,8 @@ class SmartFilterTools:
             must_conditions.append(FieldCondition(key="content_type", match=MatchValue(value=content_type)))
 
         if project_id:
-            must_conditions.append(FieldCondition(key="project_id", match=MatchValue(value=uuid_str_to_mongo_binary(project_id))))
+            # For Qdrant filtering, use string UUID directly (Qdrant stores UUIDs as strings, not binary)
+            must_conditions.append(FieldCondition(key="project_id", match=MatchValue(value=project_id)))
 
         search_filter = Filter(must=must_conditions) if must_conditions else None
 
@@ -1274,7 +1275,7 @@ class SmartFilterTools:
                             limit=limit,
                             chunks_per_doc=3,
                             include_adjacent=True,
-                            min_score=0.1,  # Lower threshold for better recall
+                            min_score=0.01,  # Much lower threshold for better recall
                             min_keyword_overlap=0.0,  # Remove keyword overlap requirement
                             context_token_budget=4000
                         )
@@ -1318,15 +1319,16 @@ class SmartFilterTools:
                         logger.error(f"Direct RAG search failed: {e}")
 
                 # Fallback: use rag_search tool if optimized path failed or no IDs found
-                if not work_item_ids and rag_search:
+                if not work_item_ids:
                     try:
-                        result = await rag_search.ainvoke({
-                            "query": query,
-                            "content_type": content_type,
-                            "limit": limit,
-                            "show_content": False,  # Don't return content to save tokens
-                            "use_chunk_aware": use_chunk_aware
-                        })
+                        result = await self.rag_search(
+                            query=query,
+                            project_id=project_id,
+                            content_type=content_type,
+                            limit=limit,
+                            show_content=False,  # Don't return content to save tokens
+                            use_chunk_aware=use_chunk_aware
+                        )
 
                         # Parse minimal result to extract work item IDs
                         lines = result.split('\n')

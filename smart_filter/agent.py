@@ -52,65 +52,72 @@ DEFAULT_SYSTEM_PROMPT = (
 "   - Handles complex boolean logic and date ranges\n"
 "   - Excellent for counts, metrics, and tabular data\n"
 "   - Supports sorting, grouping, and aggregation\n"
-"   WHEN TO USE:\n"
-"   - Queries mentioning specific attributes: priority, status, assignee, project, module, cycle, label, due_date\n"
-"   - Requests for lists, counts, or metrics\n"
-"   - Time-based queries: \"last week\", \"this month\", \"overdue\"\n"
-"   - Status-based queries: \"open\", \"closed\", \"in progress\"\n"
-"   - Assignment queries: \"assigned to me\", \"my tasks\", \"team workload\"\n"
+"   WHEN TO USE (RESERVE FOR THESE SPECIFIC CASES ONLY):\n"
+"   - Very simple direct field queries: 'status=open', 'priority=high'\n"
+"   - Exact count/metric requests: 'count open issues', 'list high priority'\n"
+"   - Time-based queries requiring exact date ranges\n"
+"   - Simple attribute filtering without semantic context\n"
 "   EXAMPLES:\n"
-"   ✅ \"Show all high-priority bugs assigned to John in the Auth module\"\n"
-"   ✅ \"List completed tasks from last sprint\"\n"
-"   ✅ \"Count open issues by priority level\"\n"
-"   ✅ \"Show work items due this week\"\n"
-"   ✅ \"Find all bugs labeled 'security' in project Alpha\"\n\n"
+"   ✅ \"status=open\" (direct field query)\n"
+"   ✅ \"count high priority bugs\" (metric request)\n"
+"   ✅ \"list completed tasks\" (simple list)\n\n"
 
-"2. rag_search\n"
+"2. rag_search (PRIMARY METHOD - USE FOR MOST QUERIES)\n"
 "   PURPOSE: Semantic search across work item descriptions, comments, and contextual content\n"
 "   STRENGTHS:\n"
 "   - Understands natural language and intent\n"
 "   - Finds conceptually related work items\n"
 "   - Handles vague or descriptive queries\n"
 "   - Good for exploratory discovery\n"
+"   - Provides semantic understanding over strict filtering\n"
 "   WHEN TO USE:\n"
-"   - Queries describing problems, symptoms, or scenarios\n"
+"   - Most natural language queries and problem descriptions\n"
+"   - Queries describing symptoms, scenarios, or concepts\n"
 "   - Conceptual or reasoning-based questions\n"
 "   - When users want summaries or insights\n"
 "   - Queries about \"blocking\", \"causing\", \"related to\"\n"
 "   - Open-ended exploration: \"tell me about\", \"what's happening with\"\n"
+"   - Any query that benefits from semantic understanding\n"
 "   EXAMPLES:\n"
+"   ✅ \"work items\" (general exploration)\n"
 "   ✅ \"Summarize recent login crash reports\"\n"
 "   ✅ \"What's blocking the user registration feature?\"\n"
 "   ✅ \"Find issues related to payment processing timeouts\"\n"
 "   ✅ \"Show me authentication-related bugs\"\n"
-"   ✅ \"What work items mention database connection problems?\"\n\n"
+"   ✅ \"What work items mention database connection problems?\"\n"
+"   ✅ \"high priority bugs\" (semantic understanding)\n\n"
 
 "ROUTING DECISION FRAMEWORK:\n\n"
 
 "STEP 1: Analyze Query Intent\n"
-"- Does the query specify concrete work item attributes? → build_mongo_query\n"
-"- Does the query describe a problem/symptom/concept? → rag_search\n"
-"- Is the query asking for specific metrics/counts? → build_mongo_query\n"
-"- Is the query exploratory or reasoning-based? → rag_search\n\n"
+"- Does the query use direct field syntax (status=open, priority=high)? → build_mongo_query\n"
+"- Does the query describe problems, symptoms, or concepts? → rag_search\n"
+"- Is the query asking for specific counts/metrics? → build_mongo_query\n"
+"- Is the query exploratory or reasoning-based? → rag_search\n"
+"- Most natural language queries → rag_search\n\n"
 
 "STEP 2: Consider Query Complexity\n"
-"- Simple attribute filters (priority=high, status=open) → build_mongo_query\n"
-"- Complex semantic understanding needed → rag_search\n"
-"- Boolean combinations of attributes → build_mongo_query\n"
-"- Natural language problem descriptions → rag_search\n\n"
+"- Direct attribute filters only (status=open, assigned=John) → build_mongo_query\n"
+"- Any semantic understanding needed → rag_search\n"
+"- Simple boolean combinations of attributes → build_mongo_query\n"
+"- Natural language descriptions → rag_search\n\n"
 
 "STEP 3: Evaluate Data Requirements\n"
-"- Needs exact attribute matching → build_mongo_query\n"
-"- Needs conceptual/semantic matching → rag_search\n"
-"- Requires aggregations or calculations → build_mongo_query\n"
+"- Requires exact attribute matching ONLY → build_mongo_query\n"
+"- Benefits from conceptual/semantic matching → rag_search\n"
+"- Requires aggregations/calculations → build_mongo_query\n"
 "- Requires understanding context/relationships → rag_search\n\n"
 
 "CRITICAL RULES:\n"
 "1. Choose EXACTLY ONE tool per query - never both\n"
-"2. When in doubt, prefer build_mongo_query for structured data requests\n"
-"3. Use rag_search for natural language problem descriptions\n"
+"2. Use rag_search as the primary method for most queries to leverage semantic understanding\n"
+"3. Reserve build_mongo_query ONLY for:\n"
+"   - Direct field queries (e.g., 'status=open', 'priority=high')\n"
+"   - Specific attribute filtering (e.g., 'assigned to John')\n"
+"   - Time-based queries requiring exact date ranges\n"
+"   - Count/metric requests\n"
 "4. Consider user intent over literal query structure\n"
-"5. Complex queries may benefit from semantic understanding over strict filtering\n\n"
+"5. Most natural language queries benefit from semantic search over strict filtering\n\n"
 
 "QUERY REFINEMENT:\n"
 "For each query, also provide a 'refined_query' optimized for the selected tool:\n\n"
@@ -169,7 +176,9 @@ class SmartFilterAgent:
         self.orchestrator = Orchestrator(tracer_name="smart_filter_agent", max_parallel=3)
     
     async def smart_filter_work_items(self, query: str, project_id: str ,limit: int = 50) -> SmartFilterResult:
-        """Route query to the appropriate retrieval path and normalize results."""
+        """Route query to the appropriate retrieval path and normalize results.
+        Prioritizes RAG search for semantic understanding, falls back to MongoDB for direct field queries.
+        """
 
         normalized_query = (query or "").strip()
         if not normalized_query:
@@ -179,11 +188,14 @@ class SmartFilterAgent:
 
         tool_choice, tool_query = await self._determine_tool(normalized_query)
 
-        if tool_choice == "rag_search":
+        # Always try RAG search first for semantic understanding, unless it's a very specific direct field query
+        if tool_choice != "build_mongo_query" or self._is_simple_field_query(normalized_query):
+            # Use RAG search as primary method
             rag_result = await self._handle_rag_flow(tool_query, project_id, limit)
             if rag_result.work_items:
                 return rag_result
 
+        # Fall back to MongoDB query for direct field operations or when RAG fails
         return await self._handle_mongo_flow(tool_query, project_id, limit)
 
     async def _determine_tool(self, query: str) -> tuple[str, str]:
@@ -542,12 +554,16 @@ class SmartFilterAgent:
             return str(value)
         if isinstance(value, Binary):
             try:
-                return str(value.as_uuid())
+                uuid_obj = value.as_uuid()
+                return str(uuid_obj)
             except Exception:
                 try:
+                    # If UUID conversion fails, return hex representation
                     return value.hex()
                 except Exception:
-                    return str(value)
+                    # Last resort: encode as base64 to avoid UTF-8 issues
+                    import base64
+                    return base64.b64encode(value).decode('ascii')
         return str(value)
 
     def _clean_model_output(self, content: Optional[str]) -> str:
@@ -562,6 +578,22 @@ class SmartFilterAgent:
                 stripped = stripped[5:]
             text = stripped
         return text.strip()
+
+    def _is_simple_field_query(self, query: str) -> bool:
+        """Check if query is a very simple direct field query that should skip RAG."""
+        query_lower = query.lower().strip()
+
+        # Very simple field queries that are clearly direct field operations
+        simple_patterns = [
+            r'^status\s*=\s*\w+$',
+            r'^priority\s*=\s*\w+$',
+            r'^assignee\s*=\s*\w+$',
+            r'^\w+\s*=\s*\w+$',  # Generic field=value pattern
+            r'^count\s+\w+$',
+            r'^list\s+\w+$',
+        ]
+
+        return any(re.match(pattern, query_lower) for pattern in simple_patterns)
 
     def _is_object_id(self, candidate: str) -> bool:
         if not candidate or len(candidate) != 24:

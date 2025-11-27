@@ -10,7 +10,7 @@ load_dotenv()
 DATABASE_NAME = os.getenv("MONGODB_DATABASE", "ProjectManagement")
 MONGODB_CONNECTION_STRING = os.getenv(
     "MONGODB_URI",
-    "mongodb://WebsiteBuilderAdmin:JfOCiOKMVgSIMPOBUILDERGkli8@13.90.63.91:27017,172.171.192.172:27017/ProjectManagement?authSource=admin&replicaSet=rs0",
+    "mongodb://BeeOSAdmin:Proficornlabs%401118@172.214.123.233:27017,172.191.50.113:27017,172.174.50.239:27017/?replicaSet=rs0&authSource=admin",
 )
 
 # Qdrant configuration
@@ -122,7 +122,7 @@ def mongo_binary_to_uuid_str(binary: Binary) -> str:
     
     try:
         # Use Binary.as_uuid() with JAVA_LEGACY representation to properly convert back
-        uuid_obj = Binary.as_uuid(uuid_representation=UuidRepresentation.JAVA_LEGACY)
+        uuid_obj = binary.as_uuid(uuid_representation=UuidRepresentation.JAVA_LEGACY)
         return str(uuid_obj)
     except Exception as e:
         raise ValueError(f"Failed to convert Binary to UUID: {e}") from e
