@@ -18,6 +18,8 @@ from .prompts import (
     WORK_ITEM_GENERATION_PROMPTS,
     WORK_ITEM_SURPRISE_ME_PROMPTS,
     PAGE_CONTENT_GENERATION_PROMPTS,
+    PAGE_GENERATION_PROMPTS,
+    PAGE_SURPRISE_ME_PROMPTS,
     CYCLE_GENERATION_PROMPTS,
     CYCLE_SURPRISE_ME_PROMPTS,
     MODULE_GENERATION_PROMPTS,
@@ -166,13 +168,114 @@ async def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> Gene
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 
+@router.post("/page", response_model=GenerateResponse)
+async def generate_page(req: GenerateRequest) -> GenerateResponse:
+    """Generate page content from a template and user prompt."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    system_prompt = PAGE_GENERATION_PROMPTS['system_prompt']
+
+    user_prompt = PAGE_GENERATION_PROMPTS['user_prompt_template'].format(
+        template_title=req.template.title,
+        template_content=req.template.content,
+        prompt=req.prompt
+    )
+
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.4,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    content = completion.choices[0].message.content or ""
+
+    # Parse JSON response
+    title = req.template.title
+    description = req.template.content
+    parsed = None
+    try:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            parsed = json.loads(content[start : end + 1])
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:200]}")
+        parsed = None
+
+    if isinstance(parsed, dict):
+        title = parsed.get("title") or title
+        description = parsed.get("description") or description
+    else:
+        if content.strip():
+            description = content.strip()
+            first_line = description.splitlines()[0] if description else req.prompt
+            title = first_line[:120] if len(first_line) > 120 else first_line
+        else:
+            description = req.template.content
+            title = req.template.title
+
+    return GenerateResponse(title=title.strip(), description=description.strip())
+
+
+@router.post("/page-surprise-me", response_model=GenerateResponse)
+async def generate_page_surprise_me(req: WorkItemSurpriseMeRequest) -> GenerateResponse:
+    """Generate or enhance page content with the 'surprise me' feature."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="groq package not installed on server")
+
+    client = Groq(api_key=api_key)
+
+    provided_description = (req.description or "").strip()
+    if provided_description:
+        system_prompt = PAGE_SURPRISE_ME_PROMPTS['with_description']['system_prompt']
+        user_prompt = PAGE_SURPRISE_ME_PROMPTS['with_description']['user_prompt_template'].format(
+            title=req.title,
+            description=provided_description
+        )
+    else:
+        system_prompt = PAGE_SURPRISE_ME_PROMPTS['without_description']['system_prompt']
+        user_prompt = PAGE_SURPRISE_ME_PROMPTS['without_description']['user_prompt_template'].format(
+            title=req.title
+        )
+
+    completion = await call_groq_with_timeout(
+        client=client,
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.4,
+        max_tokens=512,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    generated_description = (completion.choices[0].message.content or "").strip()
+
+    return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
+
+
+# Legacy endpoint for backward compatibility
 @router.options("/stream-page-content")
 async def options_page_content():
     return {"message": "OK"}
 
 
 @router.get("/stream-page-content")
-async def generate_page_content(request: Request):
+async def generate_page_content_legacy(request: Request):
+    """Legacy endpoint for Editor.js block format. Use POST /page for standard format."""
     try:
         data_param = request.query_params.get("data")
         if not data_param:

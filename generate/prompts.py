@@ -196,6 +196,85 @@ Instructions:
     }
 }
 
+# Page Generation Prompts (standard format matching other endpoints)
+PAGE_GENERATION_PROMPTS = {
+    'system_prompt': """You are an assistant that generates concise, well-structured page titles and content.
+Use the provided template as a structure and the user's prompt as the primary source of information.
+Make reasonable inferences based on the context provided, but avoid inventing specific details like named individuals or exact dates unless they are mentioned.
+When context allows, expand on the user's intent with relevant details, examples, and actionable content. When information is truly missing, use general language or note items as TBD.
+Write for a professional audience and ensure the output is practical and useful for documentation.
+Return markdown in the description, keep the title under 120 characters, and respond as raw JSON without code fences.
+Example response: {"title": "API Documentation", "description": "## Overview\\nThis document covers the REST API..."}.""",
+
+    'user_prompt_template': """Template Title:
+{template_title}
+
+Template Content:
+{template_content}
+
+User Prompt:
+{prompt}
+
+Instructions:
+- Produce a JSON object with fields: title, description.
+- Title: one line page title, no surrounding quotes.
+- Description: markdown body with clear sections and structure. Expand on the user's prompt with relevant details, examples, and actionable content where appropriate.
+- Use the template structure as a guide, but feel free to enhance and elaborate based on the user's prompt.
+- Make reasonable inferences from the context to create useful, comprehensive page content.
+- Example: {{"title": "API Documentation", "description": "## Overview\\nThis document covers..."}}
+- Do not wrap the response in code fences or add explanatory text."""
+}
+
+# Page Surprise-Me Prompts
+PAGE_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances page content to make it more detailed, structured, and useful.
+Build upon the provided context with relevant details, examples, and actionable content. Make reasonable inferences based on the title and description provided.
+Expand on objectives, scope, and key information with practical details that would be helpful for readers.
+Avoid inventing specific named individuals or exact dates unless mentioned, but feel free to suggest reasonable structures, formats, or approaches based on the context.
+Return ONLY the markdown description with proper formatting, sections, and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Description:
+{description}
+
+Instructions:
+- Enhance the existing content to make it more detailed, structured, and useful
+- Expand on the provided context with relevant details, examples, and practical information
+- Add sections for overview, key points, details, and next steps where appropriate
+- Make reasonable inferences from the title and description to create comprehensive page content
+- Structure the content with markdown headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates comprehensive, professional page content from a title.
+Create detailed, well-organized content with structured sections appropriate for the page type.
+Make reasonable inferences from the title to create useful page content. Use specific, actionable language rather than overly generic placeholders.
+Expand on the title with relevant details, examples, and practical information that would help readers understand and use the content.
+Return ONLY the markdown description with proper headers and bullet points.
+Do NOT include the title in the output. Do NOT output JSON. Do NOT use code fences.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate comprehensive, organized content for this page
+- Create detailed sections such as Overview, Key Points, Details, and Next Steps as appropriate
+- Make reasonable inferences from the title to add relevant details and examples
+- Use specific, practical language that helps clarify the page's purpose and content
+- Use clear markdown structure with headers and bullet points
+- Output ONLY the description body (no title, no JSON, no code fences)
+"""
+    }
+}
+
 # Cycle Generation Prompts
 CYCLE_GENERATION_PROMPTS = {
     'system_prompt': """You are an assistant that generates concise, actionable cycle (sprint) titles and descriptions.
