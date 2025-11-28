@@ -48,6 +48,36 @@ interface Message {
     description?: string;
     projectName?: string;
   };
+  epic?: {
+    title: string;
+    description?: string;
+  };
+  userStory?: {
+    title: string;
+    description?: string;
+    persona?: string;
+    userGoal?: string;
+    demographics?: string;
+    acceptanceCriteria?: string[];
+  };
+  feature?: {
+    title: string;
+    description?: string;
+    problemStatement?: string;
+    objective?: string;
+    successCriteria?: string[];
+    goals?: string[];
+    painPoints?: string[];
+    inScope?: string[];
+    outOfScope?: string[];
+    functionalRequirements?: Array<{ requirementId: string; priorityLevel: string; description: string }>;
+    nonFunctionalRequirements?: Array<{ requirementId: string; priorityLevel: string; description: string }>;
+  };
+  project?: {
+    name: string;
+    projectId?: string;
+    description?: string;
+  };
 }
 
 interface Conversation {
@@ -143,7 +173,7 @@ const Index = () => {
   };
 
   // Helper: transform backend messages to UI messages with internal actions grouped
-  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any; cycle?: any; module?: any }>): Message[] => {
+  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any; cycle?: any; module?: any; epic?: any; userStory?: any; feature?: any; project?: any }>): Message[] => {
     const result: Message[] = [];
     let pendingActionBullets: string[] = [];
 
@@ -225,6 +255,63 @@ const Index = () => {
       }
       if (type === "module" && (m as any).module) {
         result.push({ id: m.id, role: "assistant", content: "", module: (m as any).module });
+        continue;
+      }
+      if (type === "epic" && (m as any).epic) {
+        result.push({ id: m.id, role: "assistant", content: "", epic: (m as any).epic });
+        continue;
+      }
+      if (type === "user_story" && (m as any).userStory) {
+        const us = (m as any).userStory;
+        result.push({ 
+          id: m.id, 
+          role: "assistant", 
+          content: "", 
+          userStory: {
+            title: us.title || "",
+            description: us.description || "",
+            persona: us.persona || "",
+            userGoal: us.user_goal || us.userGoal || "",
+            demographics: us.demographics || "",
+            acceptanceCriteria: us.acceptance_criteria || us.acceptanceCriteria || [],
+          }
+        });
+        continue;
+      }
+      if (type === "feature" && (m as any).feature) {
+        const ft = (m as any).feature;
+        result.push({ 
+          id: m.id, 
+          role: "assistant", 
+          content: "", 
+          feature: {
+            title: ft.feature_name || ft.title || "",
+            description: ft.description || "",
+            problemStatement: ft.problem_statement || ft.problemStatement || "",
+            objective: ft.objective || "",
+            successCriteria: ft.success_criteria || ft.successCriteria || [],
+            goals: ft.goals || [],
+            painPoints: ft.pain_points || ft.painPoints || [],
+            inScope: ft.in_scope || ft.inScope || [],
+            outOfScope: ft.out_of_scope || ft.outOfScope || [],
+            functionalRequirements: ft.functional_requirements || ft.functionalRequirements || [],
+            nonFunctionalRequirements: ft.non_functional_requirements || ft.nonFunctionalRequirements || [],
+          }
+        });
+        continue;
+      }
+      if (type === "project" && (m as any).project) {
+        const pj = (m as any).project;
+        result.push({ 
+          id: m.id, 
+          role: "assistant", 
+          content: "", 
+          project: {
+            name: pj.project_name || pj.name || "",
+            projectId: pj.project_id || pj.projectId || "",
+            description: pj.description || "",
+          }
+        });
         continue;
       }
       if (type === "project_data_loaded" && (m as any).message) {
@@ -394,6 +481,124 @@ const Index = () => {
           ].join('|');
           const candidateHash = hash(candidate.module);
           const exists = prev.slice(-10).some((m) => m.module && hash(m.module) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
+      } else if (evt.content_type === "epic" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `epic-${Date.now()}`;
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          epic: {
+            title: (data.title as string) || "Epic",
+            description: (data.description as string) || "",
+          },
+        };
+
+        setMessages((prev) => {
+          const hash = (ep: NonNullable<Message['epic']>) => [
+            (ep.title || '').trim(),
+            (ep.description || '').trim()
+          ].join('|');
+          const candidateHash = hash(candidate.epic);
+          const exists = prev.slice(-10).some((m) => m.epic && hash(m.epic) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
+      } else if (evt.content_type === "user_story" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `userstory-${Date.now()}`;
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          userStory: {
+            title: (data.title as string) || "User Story",
+            description: (data.description as string) || "",
+            persona: (data.persona as string) || "",
+            userGoal: (data.user_goal as string) || "",
+            demographics: (data.demographics as string) || "",
+            acceptanceCriteria: Array.isArray(data.acceptance_criteria) ? data.acceptance_criteria : [],
+          },
+        };
+
+        setMessages((prev) => {
+          const hash = (us: NonNullable<Message['userStory']>) => [
+            (us.title || '').trim(),
+            (us.description || '').trim(),
+            (us.persona || '').trim()
+          ].join('|');
+          const candidateHash = hash(candidate.userStory);
+          const exists = prev.slice(-10).some((m) => m.userStory && hash(m.userStory) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
+      } else if (evt.content_type === "feature" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `feature-${Date.now()}`;
+        
+        // Transform functional_requirements to match expected format
+        const transformRequirements = (reqs: any[]): Array<{ requirementId: string; priorityLevel: string; description: string }> => {
+          if (!Array.isArray(reqs)) return [];
+          return reqs.map((req, idx) => ({
+            requirementId: req.requirementId || req.requirement_id || `REQ-${idx + 1}`,
+            priorityLevel: req.priorityLevel || req.priority_level || req.type || "should_have",
+            description: req.description || req.requirement || "",
+          }));
+        };
+        
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          feature: {
+            title: (data.feature_name as string) || "Feature",
+            description: (data.description as string) || "",
+            problemStatement: (data.problem_statement as string) || "",
+            objective: (data.objective as string) || "",
+            successCriteria: Array.isArray(data.success_criteria) ? data.success_criteria : [],
+            goals: Array.isArray(data.goals) ? data.goals : [],
+            painPoints: Array.isArray(data.pain_points) ? data.pain_points : [],
+            inScope: Array.isArray(data.in_scope) ? data.in_scope : [],
+            outOfScope: Array.isArray(data.out_of_scope) ? data.out_of_scope : [],
+            functionalRequirements: transformRequirements(data.functional_requirements),
+            nonFunctionalRequirements: transformRequirements(data.non_functional_requirements),
+          },
+        };
+
+        setMessages((prev) => {
+          const hash = (ft: NonNullable<Message['feature']>) => [
+            (ft.title || '').trim(),
+            (ft.description || '').trim()
+          ].join('|');
+          const candidateHash = hash(candidate.feature);
+          const exists = prev.slice(-10).some((m) => m.feature && hash(m.feature) === candidateHash);
+          if (exists) return prev;
+          return [...prev, candidate];
+        });
+      } else if (evt.content_type === "project" && evt.success && (evt as any).data) {
+        const data: any = (evt as any).data;
+        const id = `project-${Date.now()}`;
+        const candidate = {
+          id,
+          role: "assistant" as const,
+          content: "",
+          project: {
+            name: (data.project_name as string) || "Project",
+            projectId: (data.project_id as string) || "",
+            description: (data.description as string) || "",
+          },
+        };
+
+        setMessages((prev) => {
+          const hash = (pj: NonNullable<Message['project']>) => [
+            (pj.name || '').trim(),
+            (pj.projectId || '').trim()
+          ].join('|');
+          const candidateHash = hash(candidate.project);
+          const exists = prev.slice(-10).some((m) => m.project && hash(m.project) === candidateHash);
           if (exists) return prev;
           return [...prev, candidate];
         });
@@ -865,6 +1070,10 @@ const Index = () => {
                   page={message.page}
                   cycle={message.cycle}
                   module={message.module}
+                  epic={message.epic}
+                  userStory={message.userStory}
+                  feature={message.feature}
+                  project={message.project}
                   conversationId={activeConversationId || undefined}
                   onLike={handleLike}
                   onDislike={handleDislike}

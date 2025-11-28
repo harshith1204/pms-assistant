@@ -12,7 +12,7 @@ export type ChatEvent =
   | { type: "tool_end"; output?: string; output_preview?: string; hidden?: boolean; timestamp: string }
   | { type: "planner_error"; message: string; timestamp: string }
   | { type: "agent_action"; text: string; step: number; timestamp: string }
-  | { type: "content_generated"; content_type: "work_item" | "page" | "cycle" | "module"; data?: any; error?: string; success: boolean }
+  | { type: "content_generated"; content_type: "work_item" | "page" | "cycle" | "module" | "epic" | "user_story" | "feature" | "project"; data?: any; error?: string; success: boolean }
   | { type: "project_data_loaded"; message: string; projectData?: any; timestamp: string }
   | { type: "complete"; conversation_id: string; timestamp: string }
   | { type: "pong"; timestamp: string }
