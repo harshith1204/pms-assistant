@@ -3,11 +3,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { X, Image } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { X, Image, Check, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getBusinessId, getMemberId, getStaffName } from "@/config";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { SavedArtifactData } from "@/api/conversations";
 
 // Common cover images
 const COVER_IMAGES = [
@@ -42,6 +44,8 @@ export type ProjectCreateInlineProps = {
   }) => void;
   onDiscard?: () => void;
   className?: string;
+  isSaved?: boolean;
+  savedData?: SavedArtifactData;
 };
 
 export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
@@ -56,6 +60,8 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
   onSave,
   onDiscard,
   className,
+  isSaved = false,
+  savedData = null
 }) => {
   const [projectName, setProjectName] = React.useState<string>(name);
   const [projectDisplayId, setProjectDisplayId] = React.useState<string>(projectId);
@@ -87,27 +93,31 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
           alt="Project cover"
           className="w-full h-full object-cover opacity-70"
         />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute top-2 right-2 h-8 text-white bg-black/30 hover:bg-black/50"
-          onClick={() => {
-            const currentIndex = COVER_IMAGES.indexOf(coverImage);
-            const nextIndex = (currentIndex + 1) % COVER_IMAGES.length;
-            setCoverImage(COVER_IMAGES[nextIndex]);
-          }}
-        >
-          <Image className="h-4 w-4 mr-1" />
-          Change Cover
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute top-2 right-32 h-8 text-white bg-black/30 hover:bg-black/50"
-          onClick={onDiscard}
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        {!isSaved && (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute top-2 right-2 h-8 text-white bg-black/30 hover:bg-black/50"
+              onClick={() => {
+                const currentIndex = COVER_IMAGES.indexOf(coverImage);
+                const nextIndex = (currentIndex + 1) % COVER_IMAGES.length;
+                setCoverImage(COVER_IMAGES[nextIndex]);
+              }}
+            >
+              <Image className="h-4 w-4 mr-1" />
+              Change Cover
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute top-2 right-32 h-8 text-white bg-black/30 hover:bg-black/50"
+              onClick={onDiscard}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </>
+        )}
         
         <Popover>
           <PopoverTrigger asChild>
@@ -115,29 +125,35 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
               variant="ghost"
               size="sm"
               className="absolute bottom-2 left-2 h-10 w-10 text-2xl bg-white/90 hover:bg-white rounded-lg"
+              disabled={isSaved}
             >
               {projectIcon}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-64 p-2" align="start">
-            <div className="grid grid-cols-5 gap-2">
-              {COMMON_EMOJIS.map((emoji) => (
-                <Button
-                  key={emoji}
-                  variant="ghost"
-                  size="sm"
-                  className={cn("h-10 w-10 text-xl", projectIcon === emoji && "bg-primary/10")}
-                  onClick={() => setProjectIcon(emoji)}
-                >
-                  {emoji}
-                </Button>
-              ))}
-            </div>
-          </PopoverContent>
+          {!isSaved && (
+            <PopoverContent className="w-64 p-2" align="start">
+              <div className="grid grid-cols-5 gap-2">
+                {COMMON_EMOJIS.map((emoji) => (
+                  <Button
+                    key={emoji}
+                    variant="ghost"
+                    size="sm"
+                    className={cn("h-10 w-10 text-xl", projectIcon === emoji && "bg-primary/10")}
+                    onClick={() => setProjectIcon(emoji)}
+                  >
+                    {emoji}
+                  </Button>
+                ))}
+              </div>
+            </PopoverContent>
+          )}
         </Popover>
       </div>
 
       <CardContent className="p-5 space-y-4">
+        <Badge variant="secondary" className="text-xs font-medium">
+          Project
+        </Badge>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium mb-2 block">Project Name <span className="text-red-500">*</span></label>
@@ -146,6 +162,7 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
               onChange={(e) => setProjectName(e.target.value)}
               placeholder="Enter project name"
               className="h-10"
+              disabled={isSaved}
             />
           </div>
           <div>
@@ -155,6 +172,7 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
               onChange={(e) => setProjectDisplayId(e.target.value.toUpperCase())}
               placeholder="Enter project ID"
               className="h-10 uppercase"
+              disabled={isSaved}
             />
           </div>
         </div>
@@ -166,6 +184,7 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
             onChange={(e) => setDesc(e.target.value)}
             placeholder="Enter project description"
             className="min-h-[80px] resize-y"
+            disabled={isSaved}
           />
         </div>
 
@@ -178,6 +197,7 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
                 setSelectedLeadId(value);
                 // In a real app, you'd look up the name from the members list
               }}
+              disabled={isSaved}
             >
               <SelectTrigger className="h-10">
                 <SelectValue placeholder="Select Project Lead" />
@@ -194,6 +214,7 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
                 variant={accessType === "PUBLIC" ? "default" : "outline"}
                 className="flex-1 h-10"
                 onClick={() => setAccessType("PUBLIC")}
+                disabled={isSaved}
               >
                 Public
               </Button>
@@ -201,6 +222,7 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
                 variant={accessType === "PRIVATE" ? "default" : "outline"}
                 className="flex-1 h-10"
                 onClick={() => setAccessType("PRIVATE")}
+                disabled={isSaved}
               >
                 Private
               </Button>
@@ -210,15 +232,37 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
 
         <div className="pt-4 border-t flex items-center justify-end">
           <div className="flex items-center gap-2">
-            {onDiscard && (
-              <Button variant="outline" onClick={onDiscard}>Cancel</Button>
+            {isSaved ? (
+              <>
+                {savedData?.link && (
+                  <a
+                    href={savedData.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View
+                  </a>
+                )}
+                <Button disabled className="bg-green-600 hover:bg-green-600 text-white gap-1">
+                  <Check className="h-4 w-4" />
+                  Saved
+                </Button>
+              </>
+            ) : (
+              <>
+                {onDiscard && (
+                  <Button variant="outline" onClick={onDiscard}>Cancel</Button>
+                )}
+                <Button 
+                  onClick={handleSave} 
+                  disabled={!projectName.trim() || !projectDisplayId.trim()}
+                >
+                  Create Project
+                </Button>
+              </>
             )}
-            <Button 
-              onClick={handleSave} 
-              disabled={!projectName.trim() || !projectDisplayId.trim()}
-            >
-              Create Project
-            </Button>
           </div>
         </div>
       </CardContent>

@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { Calendar, Users, Tag, Boxes, Target, Plus, Trash2, Shuffle, Briefcase, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Calendar, Users, Tag, Boxes, Target, Plus, Trash2, Shuffle, Briefcase, CheckCircle, XCircle, AlertTriangle, Check, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
 import MemberSelector from "@/components/MemberSelector";
@@ -20,6 +21,7 @@ import ModuleSelector from "@/components/ModuleSelector";
 import EpicSelector from "@/components/EpicSelector";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAllProjectData, sendProjectDataToConversation } from "@/api/projectData";
+import { SavedArtifactData } from "@/api/conversations";
 
 type FunctionalRequirement = {
   requirementId: string;
@@ -97,6 +99,8 @@ export type FeatureCreateInlineProps = {
   className?: string;
   conversationId?: string;
   onProjectDataLoaded?: (message: string) => void;
+  isSaved?: boolean;
+  savedData?: SavedArtifactData;
 };
 
 const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
@@ -145,7 +149,9 @@ export const FeatureCreateInline: React.FC<FeatureCreateInlineProps> = ({
   onDiscard,
   className,
   conversationId,
-  onProjectDataLoaded
+  onProjectDataLoaded,
+  isSaved = false,
+  savedData = null
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
@@ -234,7 +240,12 @@ export const FeatureCreateInline: React.FC<FeatureCreateInlineProps> = ({
   return (
     <Card className={cn("border-muted/70", className)}>
       <CardContent className="p-0">
-        <div className="px-5 pt-4 grid grid-cols-2 gap-4">
+        <div className="px-5 pt-4">
+          <Badge variant="secondary" className="mb-2 text-xs font-medium">
+            Feature
+          </Badge>
+        </div>
+        <div className="px-5 pt-2 grid grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium mb-2 block">Feature Name <span className="text-red-500">*</span></label>
             <Input
@@ -242,6 +253,7 @@ export const FeatureCreateInline: React.FC<FeatureCreateInlineProps> = ({
               onChange={(e) => setName(e.target.value)}
               placeholder="Interactive Data Visualizations"
               className="h-10"
+              disabled={isSaved}
             />
           </div>
           <div>
@@ -738,10 +750,32 @@ export const FeatureCreateInline: React.FC<FeatureCreateInlineProps> = ({
 
         <div className="px-5 py-4 border-t flex items-center justify-end">
           <div className="flex items-center gap-2">
-            {onDiscard && (
-              <Button variant="ghost" onClick={onDiscard}>Discard</Button>
+            {isSaved ? (
+              <>
+                {savedData?.link && (
+                  <a
+                    href={savedData.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View
+                  </a>
+                )}
+                <Button disabled className="bg-green-600 hover:bg-green-600 text-white gap-1">
+                  <Check className="h-4 w-4" />
+                  Saved
+                </Button>
+              </>
+            ) : (
+              <>
+                {onDiscard && (
+                  <Button variant="ghost" onClick={onDiscard}>Discard</Button>
+                )}
+                <Button onClick={handleSave}>Save</Button>
+              </>
             )}
-            <Button onClick={handleSave}>Save</Button>
           </div>
         </div>
       </CardContent>

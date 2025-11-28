@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { Calendar, Users, Tag, Boxes, Target, Lightbulb, Shuffle, Wand2, Briefcase } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Calendar, Users, Tag, Boxes, Target, Lightbulb, Shuffle, Wand2, Briefcase, Check, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
 import MemberSelector from "@/components/MemberSelector";
@@ -21,6 +22,7 @@ import ModuleSelector from "@/components/ModuleSelector";
 import EpicSelector from "@/components/EpicSelector";
 import FeatureSelector from "@/components/FeatureSelector";
 import { getAllProjectData, sendProjectDataToConversation } from "@/api/projectData";
+import { SavedArtifactData } from "@/api/conversations";
 
 export type UserStoryCreateInlineProps = {
   title?: string;
@@ -66,6 +68,8 @@ export type UserStoryCreateInlineProps = {
   className?: string;
   conversationId?: string;
   onProjectDataLoaded?: (message: string) => void;
+  isSaved?: boolean;
+  savedData?: SavedArtifactData;
 };
 
 const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
@@ -109,7 +113,9 @@ export const UserStoryCreateInline: React.FC<UserStoryCreateInlineProps> = ({
   onDiscard,
   className,
   conversationId,
-  onProjectDataLoaded
+  onProjectDataLoaded,
+  isSaved = false,
+  savedData = null
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
@@ -169,11 +175,15 @@ export const UserStoryCreateInline: React.FC<UserStoryCreateInlineProps> = ({
     <Card className={cn("border-muted/70", className)}>
       <CardContent className="p-0">
         <div className="px-5 pt-4">
+          <Badge variant="secondary" className="mb-2 text-xs font-medium">
+            User Story
+          </Badge>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Title"
             className="h-11 text-base"
+            disabled={isSaved}
           />
         </div>
 
@@ -367,10 +377,32 @@ export const UserStoryCreateInline: React.FC<UserStoryCreateInlineProps> = ({
 
         <div className="px-5 py-4 border-t flex items-center justify-end">
           <div className="flex items-center gap-2">
-            {onDiscard && (
-              <Button variant="ghost" onClick={onDiscard}>Discard</Button>
+            {isSaved ? (
+              <>
+                {savedData?.link && (
+                  <a
+                    href={savedData.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View
+                  </a>
+                )}
+                <Button disabled className="bg-green-600 hover:bg-green-600 text-white gap-1">
+                  <Check className="h-4 w-4" />
+                  Saved
+                </Button>
+              </>
+            ) : (
+              <>
+                {onDiscard && (
+                  <Button variant="ghost" onClick={onDiscard}>Discard</Button>
+                )}
+                <Button onClick={handleSave}>Save</Button>
+              </>
             )}
-            <Button onClick={handleSave}>Save</Button>
           </div>
         </div>
       </CardContent>
