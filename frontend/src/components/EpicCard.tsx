@@ -39,7 +39,9 @@ export const EpicCard: React.FC<EpicCardProps> = ({
       setCopied(field);
       onCopy?.(field);
       window.setTimeout(() => setCopied(null), 2000);
-    } catch {}
+    } catch {
+      // Clipboard write failed, ignore silently
+    }
   };
 
   return (

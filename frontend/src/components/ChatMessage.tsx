@@ -55,6 +55,54 @@ interface ChatMessageProps {
     dueDate?: string;
     link?: string;
   };
+  userStory?: {
+    title: string;
+    description?: string;
+    persona?: string;
+    userGoal?: string;
+    demographics?: string;
+    acceptanceCriteria?: string;
+    priority?: string;
+    state?: string;
+    assignees?: string[];
+    epicName?: string;
+    featureName?: string;
+    moduleName?: string;
+    labels?: string[];
+    startDate?: string;
+    endDate?: string;
+  };
+  feature?: {
+    title: string;
+    description?: string;
+    problemStatement?: string;
+    objective?: string;
+    successCriteria?: string[];
+    goals?: string[];
+    painPoints?: string[];
+    inScope?: string[];
+    outOfScope?: string[];
+    functionalRequirements?: { requirementId: string; priorityLevel: string; description: string }[];
+    nonFunctionalRequirements?: { requirementId: string; priorityLevel: string; description: string }[];
+    dependencies?: string[];
+    risks?: { riskId: string; problemLevel: string; impactLevel: string; description: string; strategy: string }[];
+    priority?: string;
+    state?: string;
+    epicName?: string;
+    moduleName?: string;
+    labels?: string[];
+    startDate?: string;
+    endDate?: string;
+  };
+  project?: {
+    name: string;
+    projectId?: string;
+    description?: string;
+    imageUrl?: string;
+    icon?: string;
+    access?: "PUBLIC" | "PRIVATE";
+    leadName?: string;
+  };
   conversationId?: string;
 }
 
@@ -68,21 +116,30 @@ import ModuleCreateInline from "@/components/ModuleCreateInline";
 import ModuleCard from "@/components/ModuleCard";
 import EpicCreateInline from "@/components/EpicCreateInline";
 import EpicCard from "@/components/EpicCard";
+import UserStoryCreateInline from "@/components/UserStoryCreateInline";
+import UserStoryCard from "@/components/UserStoryCard";
+import FeatureCreateInline from "@/components/FeatureCreateInline";
+import FeatureCard from "@/components/FeatureCard";
+import ProjectCreateInline from "@/components/ProjectCreateInline";
+import ProjectCard from "@/components/ProjectCard";
 import { createWorkItem, createWorkItemWithMembers } from "@/api/workitems";
 import { createPage } from "@/api/pages";
 import { createCycle } from "@/api/cycles";
 import { createModule, createModuleWithMembers } from "@/api/modules";
-import { createEpic } from "@/api/epics";
+import { createEpic, type Epic } from "@/api/epics";
+import { createUserStory } from "@/api/userStories";
+import { createFeature, type Feature } from "@/api/features";
+import { createProject } from "@/api/projectCreate";
 import { type ProjectMember } from "@/api/members";
 import { type Cycle } from "@/api/cycles";
 import { type SubState } from "@/api/substates";
 import { type Module } from "@/api/modules";
 import { type ProjectLabel } from "@/api/labels";
 import { toast } from "@/components/ui/use-toast";
-import { getBusinessId, getMemberId } from "@/config";
+import { getBusinessId, getMemberId, getStaffName } from "@/config";
 import { invalidateProjectCache } from "@/api/projectData";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, epic, conversationId }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, epic, userStory, feature, project, conversationId }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -94,6 +151,9 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
   const [savedCycle, setSavedCycle] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
   const [savedModule, setSavedModule] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
   const [savedEpic, setSavedEpic] = useState<null | { id: string; title: string; description: string; priority?: string | null; state?: string | null; assignee?: string | null; labels?: string[]; link?: string | null }>(null);
+  const [savedUserStory, setSavedUserStory] = useState<null | { id: string; title: string; description: string; displayBugNo?: string; link?: string }>(null);
+  const [savedFeature, setSavedFeature] = useState<null | { id: string; title: string; description: string; displayBugNo?: string; link?: string }>(null);
+  const [savedProject, setSavedProject] = useState<null | { id: string; projectDisplayId: string; name: string; description: string; imageUrl?: string; icon?: string; access?: string; link?: string }>(null);
 
   // Module sub-state selection state
   const [selectedModuleSubState, setSelectedModuleSubState] = useState<SubState | null>(null);
@@ -148,6 +208,39 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
 
   // Module selection state
   const [selectedModule, setSelectedModule] = useState<Module | null>(null);
+
+  // User Story selection state
+  const [selectedUserStoryEpic, setSelectedUserStoryEpic] = useState<Epic | null>(null);
+  const [selectedUserStoryFeature, setSelectedUserStoryFeature] = useState<Feature | null>(null);
+  const [selectedUserStoryDateRange, setSelectedUserStoryDateRange] = useState<DateRange | undefined>(
+    userStory?.startDate || userStory?.endDate
+      ? {
+          from: userStory?.startDate ? new Date(userStory.startDate) : undefined,
+          to: userStory?.endDate ? new Date(userStory.endDate) : undefined,
+        }
+      : undefined
+  );
+  const [selectedUserStoryAssignees, setSelectedUserStoryAssignees] = useState<ProjectMember[]>([]);
+  const [selectedUserStoryLabels, setSelectedUserStoryLabels] = useState<ProjectLabel[]>([]);
+  const [selectedUserStorySubState, setSelectedUserStorySubState] = useState<SubState | null>(null);
+  const [selectedUserStoryModule, setSelectedUserStoryModule] = useState<Module | null>(null);
+  const [selectedUserStoryProject, setSelectedUserStoryProject] = useState<Project | null>(null);
+
+  // Feature selection state
+  const [selectedFeatureEpic, setSelectedFeatureEpic] = useState<Epic | null>(null);
+  const [selectedFeatureDateRange, setSelectedFeatureDateRange] = useState<DateRange | undefined>(
+    feature?.startDate || feature?.endDate
+      ? {
+          from: feature?.startDate ? new Date(feature.startDate) : undefined,
+          to: feature?.endDate ? new Date(feature.endDate) : undefined,
+        }
+      : undefined
+  );
+  const [selectedFeatureAssignees, setSelectedFeatureAssignees] = useState<ProjectMember[]>([]);
+  const [selectedFeatureLabels, setSelectedFeatureLabels] = useState<ProjectLabel[]>([]);
+  const [selectedFeatureSubState, setSelectedFeatureSubState] = useState<SubState | null>(null);
+  const [selectedFeatureModule, setSelectedFeatureModule] = useState<Module | null>(null);
+  const [selectedFeatureProject, setSelectedFeatureProject] = useState<Project | null>(null);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -537,6 +630,286 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                     });
                   }
                 }}
+              />
+            )
+          ) : userStory ? (
+            savedUserStory ? (
+              <UserStoryCard
+                title={savedUserStory.title}
+                description={savedUserStory.description}
+                displayBugNo={savedUserStory.displayBugNo}
+                persona={userStory.persona}
+                userGoal={userStory.userGoal}
+                demographics={userStory.demographics}
+                acceptanceCriteria={userStory.acceptanceCriteria}
+                priority={userStory.priority}
+                state={selectedUserStorySubState?.name ?? userStory.state}
+                assignees={selectedUserStoryAssignees.map(a => a.displayName || a.name)}
+                epic={selectedUserStoryEpic?.title ?? userStory.epicName}
+                feature={selectedUserStoryFeature?.basicInfo?.title ?? selectedUserStoryFeature?.title ?? userStory.featureName}
+                module={selectedUserStoryModule?.title ?? userStory.moduleName}
+                labels={selectedUserStoryLabels.map(l => l.label)}
+                link={savedUserStory.link}
+                className="mt-1"
+              />
+            ) : (
+              <UserStoryCreateInline
+                title={userStory.title}
+                description={userStory.description}
+                persona={userStory.persona}
+                userGoal={userStory.userGoal}
+                demographics={userStory.demographics}
+                acceptanceCriteria={userStory.acceptanceCriteria}
+                selectedProject={selectedUserStoryProject}
+                selectedAssignees={selectedUserStoryAssignees}
+                selectedLabels={selectedUserStoryLabels}
+                selectedDateRange={selectedUserStoryDateRange}
+                selectedSubState={selectedUserStorySubState}
+                selectedModule={selectedUserStoryModule}
+                selectedEpic={selectedUserStoryEpic}
+                selectedFeature={selectedUserStoryFeature}
+                onProjectSelect={setSelectedUserStoryProject}
+                onAssigneesSelect={setSelectedUserStoryAssignees}
+                onLabelsSelect={setSelectedUserStoryLabels}
+                onDateSelect={setSelectedUserStoryDateRange}
+                onSubStateSelect={setSelectedUserStorySubState}
+                onModuleSelect={setSelectedUserStoryModule}
+                onEpicSelect={setSelectedUserStoryEpic}
+                onFeatureSelect={setSelectedUserStoryFeature}
+                onSave={async ({ title, description, persona, userGoal, demographics, acceptanceCriteria, project, assignees, labels, subState, module: mod, epic: ep, feature: feat, startDate, endDate }) => {
+                  try {
+                    setSaving(true);
+                    const created = await createUserStory({
+                      title,
+                      description,
+                      projectId: project?.projectId,
+                      projectName: project?.projectName,
+                      userGoal,
+                      persona,
+                      demographics,
+                      acceptanceCriteria,
+                      stateId: subState?.id,
+                      stateName: subState?.name,
+                      assignees: assignees?.map(a => ({ id: a.id, name: a.displayName || a.name })),
+                      labels: labels?.map(l => ({ id: l.id, name: l.label, color: l.color })),
+                      epicId: ep?.id,
+                      epicName: ep?.title,
+                      featureId: feat?.id,
+                      featureName: feat?.basicInfo?.title || feat?.title,
+                      moduleId: mod?.id,
+                      moduleName: mod?.title,
+                      startDate,
+                      endDate,
+                      createdBy: { id: getMemberId(), name: getStaffName() }
+                    });
+
+                    setSavedUserStory({
+                      id: created.id,
+                      title: created.title,
+                      description: created.description,
+                      displayBugNo: created.displayBugNo,
+                      link: created.link
+                    });
+
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
+                    toast({ title: "User Story saved", description: "Your user story has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save user story", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
+              />
+            )
+          ) : feature ? (
+            savedFeature ? (
+              <FeatureCard
+                title={savedFeature.title}
+                description={savedFeature.description}
+                displayBugNo={savedFeature.displayBugNo}
+                problemStatement={feature.problemStatement}
+                objective={feature.objective}
+                successCriteria={feature.successCriteria}
+                goals={feature.goals}
+                painPoints={feature.painPoints}
+                inScope={feature.inScope}
+                outOfScope={feature.outOfScope}
+                functionalRequirements={feature.functionalRequirements}
+                nonFunctionalRequirements={feature.nonFunctionalRequirements}
+                dependencies={feature.dependencies}
+                risks={feature.risks}
+                priority={feature.priority}
+                state={selectedFeatureSubState?.name ?? feature.state}
+                epic={selectedFeatureEpic?.title ?? feature.epicName}
+                module={selectedFeatureModule?.title ?? feature.moduleName}
+                labels={selectedFeatureLabels.map(l => l.label)}
+                link={savedFeature.link}
+                className="mt-1"
+              />
+            ) : (
+              <FeatureCreateInline
+                title={feature.title}
+                description={feature.description}
+                problemStatement={feature.problemStatement}
+                objective={feature.objective}
+                successCriteria={feature.successCriteria}
+                goals={feature.goals}
+                painPoints={feature.painPoints}
+                inScope={feature.inScope}
+                outOfScope={feature.outOfScope}
+                functionalRequirements={feature.functionalRequirements}
+                nonFunctionalRequirements={feature.nonFunctionalRequirements}
+                dependencies={feature.dependencies}
+                risks={feature.risks}
+                selectedProject={selectedFeatureProject}
+                selectedAssignees={selectedFeatureAssignees}
+                selectedLabels={selectedFeatureLabels}
+                selectedDateRange={selectedFeatureDateRange}
+                selectedSubState={selectedFeatureSubState}
+                selectedModule={selectedFeatureModule}
+                selectedEpic={selectedFeatureEpic}
+                onProjectSelect={setSelectedFeatureProject}
+                onAssigneesSelect={setSelectedFeatureAssignees}
+                onLabelsSelect={setSelectedFeatureLabels}
+                onDateSelect={setSelectedFeatureDateRange}
+                onSubStateSelect={setSelectedFeatureSubState}
+                onModuleSelect={setSelectedFeatureModule}
+                onEpicSelect={setSelectedFeatureEpic}
+                onSave={async ({ title, description, problemStatement, objective, successCriteria, goals, painPoints, inScope, outOfScope, functionalRequirements, nonFunctionalRequirements, dependencies, risks, project, assignees, labels, subState, module: mod, epic: ep, startDate, endDate }) => {
+                  try {
+                    setSaving(true);
+                    const created = await createFeature({
+                      title,
+                      description,
+                      projectId: project?.projectId,
+                      projectName: project?.projectName,
+                      problemStatement,
+                      objective,
+                      successCriteria,
+                      goals,
+                      painPoints,
+                      inScope,
+                      outOfScope,
+                      functionalRequirements,
+                      nonFunctionalRequirements,
+                      dependencies,
+                      risks,
+                      stateId: subState?.id,
+                      stateName: subState?.name,
+                      assignees: assignees?.map(a => ({ id: a.id, name: a.displayName || a.name })),
+                      labels: labels?.map(l => ({ id: l.id, name: l.label, color: l.color })),
+                      epicId: ep?.id,
+                      epicName: ep?.title,
+                      moduleId: mod?.id,
+                      moduleName: mod?.title,
+                      startDate,
+                      endDate,
+                      createdBy: { id: getMemberId(), name: getStaffName() }
+                    });
+
+                    setSavedFeature({
+                      id: created.id,
+                      title: created.title,
+                      description: created.description,
+                      displayBugNo: created.displayBugNo,
+                      link: created.link
+                    });
+
+                    if (project?.projectId) {
+                      invalidateProjectCache(project.projectId);
+                    }
+
+                    toast({ title: "Feature saved", description: "Your feature has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save feature", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
+                conversationId={conversationId}
+                onProjectDataLoaded={(message) => {
+                  if (conversationId && (window as any).chatSocket) {
+                    (window as any).chatSocket.send({
+                      message: message,
+                      conversation_id: conversationId,
+                    });
+                  }
+                }}
+              />
+            )
+          ) : project ? (
+            savedProject ? (
+              <ProjectCard
+                name={savedProject.name}
+                projectDisplayId={savedProject.projectDisplayId}
+                description={savedProject.description}
+                imageUrl={savedProject.imageUrl}
+                icon={savedProject.icon}
+                access={savedProject.access as "PUBLIC" | "PRIVATE"}
+                leadName={project.leadName}
+                link={savedProject.link}
+                className="mt-1"
+              />
+            ) : (
+              <ProjectCreateInline
+                name={project.name}
+                projectId={project.projectId}
+                description={project.description}
+                imageUrl={project.imageUrl}
+                icon={project.icon}
+                access={project.access}
+                leadName={project.leadName}
+                onSave={async ({ name, projectId, description, imageUrl, icon, access, leadId, leadName }) => {
+                  try {
+                    setSaving(true);
+                    const created = await createProject({
+                      name,
+                      projectId,
+                      description,
+                      imageUrl,
+                      icon,
+                      access,
+                      leadId,
+                      leadName,
+                      createdBy: { id: getMemberId(), name: getStaffName() }
+                    });
+
+                    setSavedProject({
+                      id: created.id,
+                      projectDisplayId: created.projectDisplayId,
+                      name: created.name,
+                      description: created.description,
+                      imageUrl: created.imageUrl,
+                      icon: created.icon,
+                      access: created.access,
+                      link: created.link
+                    });
+
+                    toast({ title: "Project saved", description: "Your project has been created." });
+                  } catch (e: any) {
+                    toast({ title: "Failed to save project", description: String(e?.message || e), variant: "destructive" as any });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                onDiscard={() => { /* no-op for now */ }}
+                className="mt-1"
               />
             )
           ) : (

@@ -15,6 +15,10 @@ export * from "@/api/modules";
 export * from "@/api/pages";
 export * from "@/api/substates";
 export * from "@/api/conversations";
+export * from "@/api/epics";
+export * from "@/api/userStories";
+export * from "@/api/features";
+export * from "@/api/projectCreate";
 
 // Re-export helper functions
 export { getAllCyclesAsArray } from "@/api/cycles";

@@ -176,3 +176,57 @@ export const LABEL_ENDPOINTS = {
   GET_LABELS: (projectId: string) =>
     `${STAGE_API_BASE_URL}/project/${projectId}/label`,
 };
+
+export const EPIC_ENDPOINTS = {
+  // Create epic
+  CREATE_EPIC: () =>
+    `${STAGE_API_BASE_URL}/project/epic/create-epic`,
+
+  // Get epics for a project
+  GET_EPICS: (projectId: string) =>
+    `${STAGE_API_BASE_URL}/project/${projectId}/epic`,
+
+  // Update epic
+  UPDATE_EPIC: (epicId: string) =>
+    `${STAGE_API_BASE_URL}/project/epic/${epicId}`,
+
+  // Delete epic
+  DELETE_EPIC: (epicId: string) =>
+    `${STAGE_API_BASE_URL}/project/epic?id=${epicId}`,
+};
+
+export const USER_STORY_ENDPOINTS = {
+  // Create user story
+  CREATE_USER_STORY: () =>
+    `${STAGE_API_BASE_URL}/user-story/create`,
+
+  // Get user stories for a project
+  GET_USER_STORIES: (projectId: string) =>
+    `${STAGE_API_BASE_URL}/user-story/project/${projectId}`,
+
+  // Update user story
+  UPDATE_USER_STORY: (userStoryId: string) =>
+    `${STAGE_API_BASE_URL}/user-story/${userStoryId}`,
+
+  // Delete user story
+  DELETE_USER_STORY: (userStoryId: string) =>
+    `${STAGE_API_BASE_URL}/user-story?id=${userStoryId}`,
+};
+
+export const FEATURE_ENDPOINTS = {
+  // Create feature
+  CREATE_FEATURE: () =>
+    `${STAGE_API_BASE_URL}/feature/create`,
+
+  // Get features for a project
+  GET_FEATURES: (projectId: string) =>
+    `${STAGE_API_BASE_URL}/feature/project/${projectId}`,
+
+  // Update feature
+  UPDATE_FEATURE: (featureId: string) =>
+    `${STAGE_API_BASE_URL}/feature/${featureId}`,
+
+  // Delete feature
+  DELETE_FEATURE: (featureId: string) =>
+    `${STAGE_API_BASE_URL}/feature?id=${featureId}`,
+};

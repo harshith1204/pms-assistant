@@ -300,7 +300,7 @@ export const EpicCreateInline: React.FC<EpicCreateInlineProps> = ({
             {onDiscard && (
               <Button variant="ghost" onClick={onDiscard}>Discard</Button>
             )}
-            <Button onClick={handleSave}>Save</Button>
+            <Button onClick={handleSave} className="bg-purple-900 hover:bg-purple-800">Save</Button>
           </div>
         </div>
       </CardContent>
