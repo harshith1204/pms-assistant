@@ -95,3 +95,22 @@ class FeatureResponse(BaseModel):
     functional_requirements: List[Requirement]
     non_functional_requirements: List[Requirement]
 
+
+class FeatureSurpriseMeRequest(BaseModel):
+    """Request model for feature surprise-me generation"""
+    feature_name: str
+    description: Optional[str] = None
+    problem_statement: Optional[str] = None
+
+
+class ProjectSurpriseMeRequest(BaseModel):
+    """Request model for project surprise-me generation"""
+    project_name: str
+    description: Optional[str] = None
+
+
+class PageSurpriseMeRequest(BaseModel):
+    """Request model for page surprise-me generation"""
+    title: str
+    content: Optional[str] = None
+

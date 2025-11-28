@@ -379,6 +379,103 @@ async def save_generated_epic(conversation_id: str, epic: Dict[str, Any]) -> Non
     )
 
 
+async def save_generated_user_story(conversation_id: str, user_story: Dict[str, Any]) -> None:
+    """Persist a generated user story as a conversation message.
+
+    Expects payload: {title, description?, persona?, user_goal?, demographics?, acceptance_criteria?}
+    """
+    user_story_payload: Dict[str, Any] = {
+        "title": (user_story.get("title") or "User Story"),
+        "description": (user_story.get("description") or ""),
+    }
+
+    if isinstance(user_story.get("persona"), str) and user_story["persona"].strip():
+        user_story_payload["persona"] = user_story["persona"].strip()
+    if isinstance(user_story.get("user_goal"), str) and user_story["user_goal"].strip():
+        user_story_payload["user_goal"] = user_story["user_goal"].strip()
+    if isinstance(user_story.get("demographics"), str) and user_story["demographics"].strip():
+        user_story_payload["demographics"] = user_story["demographics"].strip()
+    if isinstance(user_story.get("acceptance_criteria"), list) and user_story["acceptance_criteria"]:
+        user_story_payload["acceptance_criteria"] = [
+            c.strip() if isinstance(c, str) else c 
+            for c in user_story["acceptance_criteria"] 
+            if c
+        ]
+
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "user_story",
+            "content": "",
+            "userStory": user_story_payload,
+        })
+    )
+
+
+async def save_generated_feature(conversation_id: str, feature: Dict[str, Any]) -> None:
+    """Persist a generated feature as a conversation message.
+
+    Expects payload: {feature_name, description?, problem_statement?, objective?, 
+                      success_criteria?, goals?, pain_points?, in_scope?, out_of_scope?,
+                      functional_requirements?, non_functional_requirements?}
+    """
+    feature_payload: Dict[str, Any] = {
+        "feature_name": (feature.get("feature_name") or "Feature"),
+        "description": (feature.get("description") or ""),
+    }
+
+    if isinstance(feature.get("problem_statement"), str) and feature["problem_statement"].strip():
+        feature_payload["problem_statement"] = feature["problem_statement"].strip()
+    if isinstance(feature.get("objective"), str) and feature["objective"].strip():
+        feature_payload["objective"] = feature["objective"].strip()
+    
+    # List fields
+    for field in ["success_criteria", "goals", "pain_points", "in_scope", "out_of_scope"]:
+        if isinstance(feature.get(field), list) and feature[field]:
+            feature_payload[field] = [
+                c.strip() if isinstance(c, str) else c 
+                for c in feature[field] 
+                if c
+            ]
+    
+    # Requirement lists (list of dicts)
+    for req_field in ["functional_requirements", "non_functional_requirements"]:
+        if isinstance(feature.get(req_field), list) and feature[req_field]:
+            feature_payload[req_field] = feature[req_field]
+
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "feature",
+            "content": "",
+            "feature": feature_payload,
+        })
+    )
+
+
+async def save_generated_project(conversation_id: str, project: Dict[str, Any]) -> None:
+    """Persist a generated project as a conversation message.
+
+    Expects payload: {project_name, project_id?, description?}
+    """
+    project_payload: Dict[str, Any] = {
+        "project_name": (project.get("project_name") or "Project"),
+        "description": (project.get("description") or ""),
+    }
+
+    if isinstance(project.get("project_id"), str) and project["project_id"].strip():
+        project_payload["project_id"] = project["project_id"].strip()
+
+    await append_message(
+        conversation_id,
+        _ensure_message_shape({
+            "type": "project",
+            "content": "",
+            "project": project_payload,
+        })
+    )
+
+
 async def update_message_reaction(
     conversation_id: str,
     message_id: str,

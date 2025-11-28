@@ -584,3 +584,191 @@ Instructions:
 - Do not wrap the response in code fences or add explanatory text."""
 }
 
+# Feature Surprise-Me Prompts
+FEATURE_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances feature specifications to make them more detailed, actionable, and useful.
+Build upon the provided context with relevant details, requirements, and scope definitions. Make reasonable inferences based on the feature name and description provided.
+Expand on problem statement, objectives, and requirements with practical details that would be helpful for product and engineering teams.
+Avoid inventing specific named individuals or exact dates unless mentioned, but feel free to suggest reasonable scope, success criteria, or approaches based on the context.
+Return ONLY valid JSON with fields: feature_name, description, problem_statement, objective, success_criteria, goals, pain_points, in_scope, out_of_scope, functional_requirements, non_functional_requirements.
+Do NOT use code fences or add explanatory text.
+Requirements should be objects with "requirement" (string) and "type" (one of: "must_have", "should_have", "nice_to_have").
+""",
+
+        'user_prompt_template': """Current Feature Name:
+{feature_name}
+
+Current Description:
+{description}
+
+Current Problem Statement:
+{problem_statement}
+
+Instructions:
+- Enhance the existing feature to make it more detailed, structured, and actionable
+- Expand on the provided context with relevant requirements and scope definitions
+- Add clear success criteria, goals, and pain points
+- Define what is in-scope and out-of-scope
+- Create functional and non-functional requirements with priority types
+- Make reasonable inferences from the feature name and description
+- Output JSON with all required fields
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates comprehensive feature specifications from a feature name.
+Create a detailed feature specification with clear problem statement, objectives, requirements, and scope.
+Make reasonable inferences from the feature name to create a useful specification. Use specific, actionable language rather than overly generic placeholders.
+Expand on the feature name with relevant details that would help product and engineering teams understand and implement the feature.
+Return ONLY valid JSON with fields: feature_name, description, problem_statement, objective, success_criteria, goals, pain_points, in_scope, out_of_scope, functional_requirements, non_functional_requirements.
+Do NOT use code fences or add explanatory text.
+Requirements should be objects with "requirement" (string) and "type" (one of: "must_have", "should_have", "nice_to_have").
+""",
+
+        'user_prompt_template': """Feature Name:
+{feature_name}
+
+Instructions:
+- Generate a comprehensive feature specification for this feature
+- Create a clear description explaining what the feature does
+- Define the problem statement and primary objective
+- Add 3-5 measurable success criteria
+- Define 2-4 goals and pain points being addressed
+- Specify what is in-scope (3-5 items) and out-of-scope (2-4 items)
+- Create functional requirements (3-5) with priority types
+- Create non-functional requirements (2-3) with priority types
+- Output JSON with all required fields
+"""
+    }
+}
+
+# Project Surprise-Me Prompts
+PROJECT_SURPRISE_ME_PROMPTS = {
+    'with_description': {
+        'system_prompt': """You are an assistant that enhances project definitions to make them more detailed, strategic, and actionable.
+Build upon the provided context with relevant details, goals, scope definitions, and success criteria. Make reasonable inferences based on the project name and description provided.
+Expand on objectives, stakeholders, and milestones with practical details that would be helpful for project planning.
+Avoid inventing specific named individuals or exact dates unless mentioned, but feel free to suggest reasonable timelines, team structures, or approaches based on the context.
+Return ONLY valid JSON with fields: project_name, project_id, description.
+The project_id should be the first 5 letters of the project name in UPPERCASE.
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Current Project Name:
+{project_name}
+
+Current Description:
+{description}
+
+Instructions:
+- Enhance the existing project to make it more detailed, structured, and actionable
+- Expand the description with sections for Overview, Goals, Scope, Stakeholders, Timeline, Dependencies, Risks, and Success Criteria
+- Use markdown formatting with headers and bullet points
+- Make reasonable inferences from the project name and description
+- Generate project_id from first 5 letters of project name (UPPERCASE)
+- Output JSON with fields: project_name, project_id, description
+"""
+    },
+
+    'without_description': {
+        'system_prompt': """You are an assistant that generates comprehensive project definitions from a project name.
+Create a detailed project definition with clear goals, scope, stakeholders, and success criteria.
+Make reasonable inferences from the project name to create a useful definition. Use specific, actionable language rather than overly generic placeholders.
+Expand on the project name with relevant details that would help teams understand and plan the project.
+Return ONLY valid JSON with fields: project_name, project_id, description.
+The project_id should be the first 5 letters of the project name in UPPERCASE.
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Project Name:
+{project_name}
+
+Instructions:
+- Generate a comprehensive project definition for this project
+- Create a description with markdown sections for:
+  - Overview: What is this project about?
+  - Goals: 3-5 project goals
+  - Scope: What is included and excluded
+  - Stakeholders: Key roles and responsibilities
+  - Timeline: High-level milestones
+  - Dependencies: External dependencies
+  - Risks: Potential risks and mitigations
+  - Success Criteria: How to measure success
+- Generate project_id from first 5 letters of project name (UPPERCASE)
+- Output JSON with fields: project_name, project_id, description
+"""
+    }
+}
+
+# Page Surprise-Me Prompts
+PAGE_SURPRISE_ME_PROMPTS = {
+    'with_content': {
+        'system_prompt': """You are a professional business document generator. Enhance the existing page content to make it more detailed, structured, and useful.
+Build upon the provided context with relevant details, sections, and formatting. Use Editor.js block format for the output.
+
+## Editor.js Block Types Available
+- header: Section titles (level 2 for main, level 3 for sub)
+- paragraph: Body text
+- list: Bullet points (unordered) or numbered items (ordered)
+- checklist: Action items with checkboxes
+- table: Data tables with headers
+- quote: Important callouts
+- warning: Alerts and notices
+- delimiter: Visual section breaks
+
+Return ONLY valid JSON: {"title": "...", "blocks": [...]}
+Each block needs unique "id" (use "blk_1", "blk_2", etc.)
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Content:
+{content}
+
+Instructions:
+- Enhance the existing page to make it more detailed, structured, and useful
+- Expand on the provided context with relevant sections and details
+- Use appropriate Editor.js blocks for different content types
+- Add tables for data, checklists for action items, headers for sections
+- Make reasonable inferences from the title and content
+- Output JSON with "title" and "blocks" array
+"""
+    },
+
+    'without_content': {
+        'system_prompt': """You are a professional business document generator. Create comprehensive page content based on the title.
+Use Editor.js block format for structured, professional documents.
+
+## Editor.js Block Types Available
+- header: Section titles (level 2 for main, level 3 for sub)
+- paragraph: Body text
+- list: Bullet points (unordered) or numbered items (ordered)
+- checklist: Action items with checkboxes
+- table: Data tables with headers
+- quote: Important callouts
+- warning: Alerts and notices
+- delimiter: Visual section breaks
+
+Return ONLY valid JSON: {"title": "...", "blocks": [...]}
+Each block needs unique "id" (use "blk_1", "blk_2", etc.)
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate comprehensive page content for this title
+- Create well-structured content with appropriate sections
+- Use header blocks for sections, paragraph blocks for text
+- Use list blocks for key points, table blocks for data
+- Use checklist blocks for action items
+- Add meaningful content based on the title context
+- Output JSON with "title" and "blocks" array
+"""
+    }
+}
+
