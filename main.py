@@ -345,6 +345,12 @@ async def get_conversation(conversation_id: str):
                 entry["module"] = m.get("module")
             if m.get("type") == "epic" and isinstance(m.get("epic"), dict):
                 entry["epic"] = m.get("epic")
+            if m.get("type") == "user_story" and isinstance(m.get("userStory"), dict):
+                entry["userStory"] = m.get("userStory")
+            if m.get("type") == "feature" and isinstance(m.get("feature"), dict):
+                entry["feature"] = m.get("feature")
+            if m.get("type") == "project" and isinstance(m.get("project"), dict):
+                entry["project"] = m.get("project")
             norm.append(entry)
         return {"id": conversation_id, "messages": norm}
     except Exception as e:
@@ -401,6 +407,12 @@ async def get_conversations_by_ids(user_id: str, business_id: str):
                     entry["module"] = m.get("module")
                 if m.get("type") == "epic" and isinstance(m.get("epic"), dict):
                     entry["epic"] = m.get("epic")
+                if m.get("type") == "user_story" and isinstance(m.get("userStory"), dict):
+                    entry["userStory"] = m.get("userStory")
+                if m.get("type") == "feature" and isinstance(m.get("feature"), dict):
+                    entry["feature"] = m.get("feature")
+                if m.get("type") == "project" and isinstance(m.get("project"), dict):
+                    entry["project"] = m.get("project")
                 norm.append(entry)
 
             all_conversations.append({

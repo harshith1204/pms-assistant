@@ -584,3 +584,74 @@ Instructions:
 - Do not wrap the response in code fences or add explanatory text."""
 }
 
+# Page Surprise-Me Prompts
+PAGE_SURPRISE_ME_PROMPTS = {
+    'with_content': {
+        'system_prompt': """You are a professional business document generator. Enhance the existing page content to make it more detailed, structured, and useful.
+Build upon the provided context with relevant details, sections, and formatting. Use Editor.js block format for the output.
+
+## Editor.js Block Types Available
+- header: Section titles (level 2 for main, level 3 for sub)
+- paragraph: Body text
+- list: Bullet points (unordered) or numbered items (ordered)
+- checklist: Action items with checkboxes
+- table: Data tables with headers
+- quote: Important callouts
+- warning: Alerts and notices
+- delimiter: Visual section breaks
+
+Return ONLY valid JSON: {"title": "...", "blocks": [...]}
+Each block needs unique "id" (use "blk_1", "blk_2", etc.)
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Current Title:
+{title}
+
+Current Content:
+{content}
+
+Instructions:
+- Enhance the existing page to make it more detailed, structured, and useful
+- Expand on the provided context with relevant sections and details
+- Use appropriate Editor.js blocks for different content types
+- Add tables for data, checklists for action items, headers for sections
+- Make reasonable inferences from the title and content
+- Output JSON with "title" and "blocks" array
+"""
+    },
+
+    'without_content': {
+        'system_prompt': """You are a professional business document generator. Create comprehensive page content based on the title.
+Use Editor.js block format for structured, professional documents.
+
+## Editor.js Block Types Available
+- header: Section titles (level 2 for main, level 3 for sub)
+- paragraph: Body text
+- list: Bullet points (unordered) or numbered items (ordered)
+- checklist: Action items with checkboxes
+- table: Data tables with headers
+- quote: Important callouts
+- warning: Alerts and notices
+- delimiter: Visual section breaks
+
+Return ONLY valid JSON: {"title": "...", "blocks": [...]}
+Each block needs unique "id" (use "blk_1", "blk_2", etc.)
+Do NOT use code fences or add explanatory text.
+""",
+
+        'user_prompt_template': """Title:
+{title}
+
+Instructions:
+- Generate comprehensive page content for this title
+- Create well-structured content with appropriate sections
+- Use header blocks for sections, paragraph blocks for text
+- Use list blocks for key points, table blocks for data
+- Use checklist blocks for action items
+- Add meaningful content based on the title context
+- Output JSON with "title" and "blocks" array
+"""
+    }
+}
+
