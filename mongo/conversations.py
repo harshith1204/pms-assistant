@@ -509,3 +509,56 @@ async def update_message_reaction(
     )
     return getattr(result, "modified_count", 0) > 0
 
+
+async def update_message_artifact_saved(
+    conversation_id: str,
+    message_id: str,
+    artifact_type: str,
+    is_saved: bool,
+    saved_data: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Update artifact saved state for a specific message in a conversation.
+
+    Updates the isSaved and savedData fields for the specified artifact type.
+    Returns True if a document was modified, False otherwise.
+    """
+    coll = await _get_collection()
+
+    # Map artifact type to the field name in the message
+    artifact_field_map = {
+        'work_item': 'workItem',
+        'page': 'page',
+        'cycle': 'cycle',
+        'module': 'module',
+        'epic': 'epic',
+        'user_story': 'userStory',
+        'feature': 'feature',
+        'project': 'project'
+    }
+
+    field_name = artifact_field_map.get(artifact_type)
+    if not field_name:
+        logger.warning(f"Unknown artifact type: {artifact_type}")
+        return False
+
+    update_doc: Dict[str, Any] = {}
+
+    if is_saved:
+        # Set isSaved to true and optionally savedData
+        set_fields = {f"messages.$.{field_name}.isSaved": True}
+        if saved_data is not None:
+            set_fields[f"messages.$.{field_name}.savedData"] = saved_data
+        update_doc["$set"] = set_fields
+    else:
+        # Set isSaved to false and clear savedData
+        update_doc["$set"] = {
+            f"messages.$.{field_name}.isSaved": False,
+            f"messages.$.{field_name}.savedData": None
+        }
+
+    result = await coll.update_one(
+        {"conversationId": conversation_id, "messages.id": message_id},
+        update_doc,
+    )
+    return getattr(result, "modified_count", 0) > 0
+

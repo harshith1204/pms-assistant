@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sparkles, LucideMenu } from "lucide-react";
 import Settings from "@/pages/Settings";
 import { useChatSocket, type ChatEvent } from "@/hooks/useChatSocket";
-import { getConversations, getConversationMessages, reactToMessage } from "@/api/conversations";
+import { getConversations, getConversationMessages, reactToMessage, markArtifactSaved, SavedArtifactData, RawConversationMessage } from "@/api/conversations";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,25 +32,35 @@ interface Message {
     projectIdentifier?: string;
     sequenceId?: string | number;
     link?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   page?: {
     title: string;
-    blocks: { blocks: any[] };
+    blocks: { blocks: { id?: string; type: string; data: Record<string, unknown> }[] };
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   cycle?: {
     title: string;
     description?: string;
     startDate?: string;
     endDate?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   module?: {
     title: string;
     description?: string;
     projectName?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   epic?: {
     title: string;
     description?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   userStory?: {
     title: string;
@@ -59,6 +69,8 @@ interface Message {
     userGoal?: string;
     demographics?: string;
     acceptanceCriteria?: string[];
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   feature?: {
     title: string;
@@ -72,11 +84,15 @@ interface Message {
     outOfScope?: string[];
     functionalRequirements?: Array<{ requirementId: string; priorityLevel: string; description: string }>;
     nonFunctionalRequirements?: Array<{ requirementId: string; priorityLevel: string; description: string }>;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   project?: {
     name: string;
     projectId?: string;
     description?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
 }
 
@@ -173,7 +189,7 @@ const Index = () => {
   };
 
   // Helper: transform backend messages to UI messages with internal actions grouped
-  const transformConversationMessages = useCallback((raw: Array<{ id: string; type: string; content: string; liked?: boolean; feedback?: string; workItem?: any; page?: any; cycle?: any; module?: any; epic?: any; userStory?: any; feature?: any; project?: any }>): Message[] => {
+  const transformConversationMessages = useCallback((raw: RawConversationMessage[]): Message[] => {
     const result: Message[] = [];
     let pendingActionBullets: string[] = [];
 
@@ -211,6 +227,9 @@ const Index = () => {
     };
 
     for (const m of raw || []) {
+      // Skip malformed messages without required fields
+      if (!m || !m.id) continue;
+      
       const type = (m.type || "").toLowerCase();
       if (type === "action") {
         const text = (m.content || "").trim();
@@ -224,8 +243,8 @@ const Index = () => {
           id: m.id,
           role: "assistant",
           content: m.content || "",
-          liked: (m as any).liked,
-          feedback: (m as any).feedback,
+          liked: m.liked,
+          feedback: m.feedback,
         };
         if (pendingActionBullets.length > 0) {
           assistantMsg.internalActivity = { summary: "Actions", bullets: [...pendingActionBullets], doneLabel: "Done" };
@@ -241,28 +260,33 @@ const Index = () => {
         continue;
       }
 
-      if (type === "work_item" && (m as any).workItem) {
-        result.push({ id: m.id, role: "assistant", content: "", workItem: (m as any).workItem });
+      if (type === "work_item" && m.workItem) {
+        const wi = m.workItem;
+        result.push({ id: m.id, role: "assistant", content: "", workItem: { ...wi, isSaved: wi.isSaved || m.isSaved, savedData: wi.savedData || m.savedData } });
         continue;
       }
-      if (type === "page" && (m as any).page) {
-        result.push({ id: m.id, role: "assistant", content: "", page: (m as any).page });
+      if (type === "page" && m.page) {
+        const pg = m.page;
+        result.push({ id: m.id, role: "assistant", content: "", page: { ...pg, blocks: { blocks: pg.blocks.blocks as { id?: string; type: string; data: Record<string, unknown> }[] }, isSaved: pg.isSaved || m.isSaved, savedData: pg.savedData || m.savedData } });
         continue;
       }
-      if (type === "cycle" && (m as any).cycle) {
-        result.push({ id: m.id, role: "assistant", content: "", cycle: (m as any).cycle });
+      if (type === "cycle" && m.cycle) {
+        const cy = m.cycle;
+        result.push({ id: m.id, role: "assistant", content: "", cycle: { ...cy, isSaved: cy.isSaved || m.isSaved, savedData: cy.savedData || m.savedData } });
         continue;
       }
-      if (type === "module" && (m as any).module) {
-        result.push({ id: m.id, role: "assistant", content: "", module: (m as any).module });
+      if (type === "module" && m.module) {
+        const md = m.module;
+        result.push({ id: m.id, role: "assistant", content: "", module: { ...md, isSaved: md.isSaved || m.isSaved, savedData: md.savedData || m.savedData } });
         continue;
       }
-      if (type === "epic" && (m as any).epic) {
-        result.push({ id: m.id, role: "assistant", content: "", epic: (m as any).epic });
+      if (type === "epic" && m.epic) {
+        const ep = m.epic;
+        result.push({ id: m.id, role: "assistant", content: "", epic: { ...ep, isSaved: ep.isSaved || m.isSaved, savedData: ep.savedData || m.savedData } });
         continue;
       }
-      if (type === "user_story" && (m as any).userStory) {
-        const us = (m as any).userStory;
+      if (type === "user_story" && m.userStory) {
+        const us = m.userStory;
         result.push({ 
           id: m.id, 
           role: "assistant", 
@@ -274,12 +298,14 @@ const Index = () => {
             userGoal: us.user_goal || us.userGoal || "",
             demographics: us.demographics || "",
             acceptanceCriteria: us.acceptance_criteria || us.acceptanceCriteria || [],
+            isSaved: us.isSaved || m.isSaved,
+            savedData: us.savedData || m.savedData,
           }
         });
         continue;
       }
-      if (type === "feature" && (m as any).feature) {
-        const ft = (m as any).feature;
+      if (type === "feature" && m.feature) {
+        const ft = m.feature;
         result.push({ 
           id: m.id, 
           role: "assistant", 
@@ -296,12 +322,14 @@ const Index = () => {
             outOfScope: ft.out_of_scope || ft.outOfScope || [],
             functionalRequirements: ft.functional_requirements || ft.functionalRequirements || [],
             nonFunctionalRequirements: ft.non_functional_requirements || ft.nonFunctionalRequirements || [],
+            isSaved: ft.isSaved || m.isSaved,
+            savedData: ft.savedData || m.savedData,
           }
         });
         continue;
       }
-      if (type === "project" && (m as any).project) {
-        const pj = (m as any).project;
+      if (type === "project" && m.project) {
+        const pj = m.project;
         result.push({ 
           id: m.id, 
           role: "assistant", 
@@ -310,12 +338,14 @@ const Index = () => {
             name: pj.project_name || pj.name || "",
             projectId: pj.project_id || pj.projectId || "",
             description: pj.description || "",
+            isSaved: pj.isSaved || m.isSaved,
+            savedData: pj.savedData || m.savedData,
           }
         });
         continue;
       }
-      if (type === "project_data_loaded" && (m as any).message) {
-        result.push({ id: m.id, role: "assistant", content: (m as any).message });
+      if (type === "project_data_loaded") {
+        result.push({ id: m.id, role: "assistant", content: m.content || "" });
         continue;
       }
       // Fallback: treat unknown types as assistant text
@@ -931,6 +961,50 @@ const Index = () => {
     }
   };
 
+  const handleArtifactSaved = async (messageId: string, artifactType: string, savedData?: SavedArtifactData) => {
+    if (!activeConversationId) return;
+    
+    // Update local message state to mark artifact as saved
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId) return m;
+        
+        // Update the appropriate artifact field with isSaved and savedData
+        const updatedMessage = { ...m };
+        if (artifactType === 'work_item' && m.workItem) {
+          updatedMessage.workItem = { ...m.workItem, isSaved: true, savedData };
+        } else if (artifactType === 'page' && m.page) {
+          updatedMessage.page = { ...m.page, isSaved: true, savedData };
+        } else if (artifactType === 'cycle' && m.cycle) {
+          updatedMessage.cycle = { ...m.cycle, isSaved: true, savedData };
+        } else if (artifactType === 'module' && m.module) {
+          updatedMessage.module = { ...m.module, isSaved: true, savedData };
+        } else if (artifactType === 'epic' && m.epic) {
+          updatedMessage.epic = { ...m.epic, isSaved: true, savedData };
+        } else if (artifactType === 'user_story' && m.userStory) {
+          updatedMessage.userStory = { ...m.userStory, isSaved: true, savedData };
+        } else if (artifactType === 'feature' && m.feature) {
+          updatedMessage.feature = { ...m.feature, isSaved: true, savedData };
+        } else if (artifactType === 'project' && m.project) {
+          updatedMessage.project = { ...m.project, isSaved: true, savedData };
+        }
+        return updatedMessage;
+      })
+    );
+    
+    // Persist to backend
+    try {
+      await markArtifactSaved({
+        conversationId: activeConversationId,
+        messageId,
+        artifactType,
+        savedData,
+      });
+    } catch {
+      // Ignore errors - the local state is already updated
+    }
+  };
+
   const submitFeedback = async () => {
     if (!activeConversationId || !feedbackTargetId) return;
     const text = feedbackText.trim();
@@ -1077,6 +1151,7 @@ const Index = () => {
                   conversationId={activeConversationId || undefined}
                   onLike={handleLike}
                   onDislike={handleDislike}
+                  onArtifactSaved={handleArtifactSaved}
                 />
               ))}
               <div ref={endRef} />

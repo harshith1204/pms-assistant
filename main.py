@@ -22,7 +22,7 @@ from websocket_handler import handle_chat_websocket, ws_manager,user_id_global,b
 from qdrant.initializer import RAGTool
 from mongo.conversations import ensure_conversation_client_connected
 from mongo.conversations import conversation_mongo_client, CONVERSATIONS_DB_NAME, CONVERSATIONS_COLLECTION_NAME ,TEMPLATES_COLLECTION_NAME
-from mongo.conversations import update_message_reaction
+from mongo.conversations import update_message_reaction, update_message_artifact_saved
 from mongo.constants import mongodb_tools, DATABASE_NAME
 # Pydantic models for API requests/responses
 class ChatRequest(BaseModel):
@@ -53,6 +53,13 @@ class ReactionRequest(BaseModel):
     message_id: str
     liked: Optional[bool] = None
     feedback: Optional[str] = None
+
+class ArtifactSavedRequest(BaseModel):
+    conversation_id: str
+    message_id: str
+    artifact_type: str
+    is_saved: bool
+    saved_data: Optional[Dict[str, Any]] = None
 
 class WorkItemCreateRequest(BaseModel):
     title: str
@@ -687,6 +694,26 @@ async def set_reaction(req: ReactionRequest):
             message_id=req.message_id,
             liked=req.liked,
             feedback=req.feedback,
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Message not found")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/conversations/artifact-saved")
+async def mark_artifact_saved(req: ArtifactSavedRequest):
+    """Mark an artifact as saved or unsaved for a conversation message."""
+    try:
+        ok = await update_message_artifact_saved(
+            conversation_id=req.conversation_id,
+            message_id=req.message_id,
+            artifact_type=req.artifact_type,
+            is_saved=req.is_saved,
+            saved_data=req.saved_data,
         )
         if not ok:
             raise HTTPException(status_code=404, detail="Message not found")

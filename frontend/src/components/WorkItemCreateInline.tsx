@@ -5,7 +5,7 @@ import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2, Briefcase } from "lucide-react";
+import { Calendar, Hash, Users, Tag, CalendarClock, CalendarDays, Shuffle, Boxes, Plus, Wand2, Briefcase, Check, ExternalLink } from "lucide-react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { cn } from "@/lib/utils";
 import ProjectSelector from "@/components/ProjectSelector";
@@ -23,6 +23,7 @@ import SubStateSelector from "@/components/SubStateSelector";
 import ModuleSelector from "@/components/ModuleSelector";
 import { getAllProjectData, sendProjectDataToConversation } from "@/api/projectData";
 import { getBusinessId } from "@/config";
+import { SavedArtifactData } from "@/api/conversations";
 
 export type WorkItemCreateInlineProps = {
   title?: string;
@@ -46,6 +47,8 @@ export type WorkItemCreateInlineProps = {
   className?: string;
   conversationId?: string;
   onProjectDataLoaded?: (message: string) => void;
+  isSaved?: boolean;
+  savedData?: SavedArtifactData;
 };
 
 const FieldChip: React.FC<React.PropsWithChildren<{ icon?: React.ReactNode; onClick?: () => void; className?: string }>> = ({ icon, children, onClick, className }) => (
@@ -83,11 +86,13 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   onDiscard,
   className,
   conversationId,
-  onProjectDataLoaded
+  onProjectDataLoaded,
+  isSaved = false,
+  savedData = null
 }) => {
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
-  const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
+  const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(!isSaved);
   const [selectedLabels, setSelectedLabels] = React.useState<ProjectLabel[]>([]);
 
   const handleSave = () => {
@@ -122,28 +127,34 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
     <Card className={cn("border-muted/70", className)}>
       <CardContent className="p-0">
         <div className="px-5 pt-4">
+          <Badge variant="secondary" className="mb-2 text-xs font-medium">
+            Work Item
+          </Badge>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Title"
             className="h-11 text-base"
+            disabled={isSaved}
           />
         </div>
 
         <div className="px-5 pt-4">
           <div className="relative" data-color-mode="light">
-          <MDEditor value={desc} onChange={(v) => setDesc(v || "")} height={260} preview={isEditingDesc ? "edit" : "preview"} hideToolbar={true} />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="absolute bottom-3 right-3 h-7 gap-1"
-              onClick={() => setIsEditingDesc((s) => !s)}
-              title={isEditingDesc ? "Preview" : "Edit"}
-            >
-              <Wand2 className="h-4 w-4" />
-              {isEditingDesc ? "Preview" : "Edit"}
-            </Button>
+          <MDEditor value={desc} onChange={(v) => !isSaved && setDesc(v || "")} height={260} preview={isSaved ? "preview" : (isEditingDesc ? "edit" : "preview")} hideToolbar={true} />
+            {!isSaved && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="absolute bottom-3 right-3 h-7 gap-1"
+                onClick={() => setIsEditingDesc((s) => !s)}
+                title={isEditingDesc ? "Preview" : "Edit"}
+              >
+                <Wand2 className="h-4 w-4" />
+                {isEditingDesc ? "Preview" : "Edit"}
+              </Button>
+            )}
           </div>
           {!isEditingDesc && (
             <div className="sr-only">
@@ -275,7 +286,27 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
 
         <div className="px-5 py-4 border-t flex items-center justify-end">
           <div className="flex items-center gap-2">
-            <Button onClick={handleSave}>Save</Button>
+            {isSaved ? (
+              <>
+                {savedData?.link && (
+                  <a
+                    href={savedData.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View
+                  </a>
+                )}
+                <Button disabled className="bg-green-600 hover:bg-green-600 text-white gap-1">
+                  <Check className="h-4 w-4" />
+                  Saved
+                </Button>
+              </>
+            ) : (
+              <Button onClick={handleSave}>Save</Button>
+            )}
           </div>
         </div>
       </CardContent>

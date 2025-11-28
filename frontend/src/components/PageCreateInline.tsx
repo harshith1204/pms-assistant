@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import EditorJS from '@editorjs/editorjs';
@@ -16,9 +17,10 @@ import Marker from '@editorjs/marker';
 import Delimiter from '@editorjs/delimiter';
 import Embed from '@editorjs/embed';
 import ImageTool from '@editorjs/image';
-import { Briefcase } from 'lucide-react';
+import { Briefcase, Check, ExternalLink } from 'lucide-react';
 import ProjectSelector from "@/components/ProjectSelector";
 import { type Project } from "@/api/projects";
+import { SavedArtifactData } from "@/api/conversations";
 
 export type PageCreateInlineProps = {
   initialEditorJs?: { blocks: Block[] };
@@ -27,6 +29,8 @@ export type PageCreateInlineProps = {
   onSave?: (values: { title: string; editorJs: { blocks: Block[] }; project?: Project | null }) => void;
   onDiscard?: () => void;
   className?: string;
+  isSaved?: boolean;
+  savedData?: SavedArtifactData;
 };
 
 interface Block {
@@ -61,7 +65,9 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
   onProjectSelect,
   onSave,
   onDiscard,
-  className
+  className,
+  isSaved = false,
+  savedData = null
 }) => {
   const editorRef = useRef<EditorJS | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
@@ -404,11 +410,16 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
       <CardContent className="p-0">
 
         <div className="px-8 pt-8 pb-4">
-          <div className="flex items-center justify-end gap-3">
-            <span className={cn("text-sm font-medium", !isPreview && "text-foreground", isPreview && "text-muted-foreground")}>Edit</span>
-            <Switch checked={isPreview} onCheckedChange={(v) => setIsPreview(Boolean(v))} />
-            <span className={cn("text-sm font-medium", isPreview && "text-foreground", !isPreview && "text-muted-foreground")}>Preview</span>
-          </div>
+          <Badge variant="secondary" className="mb-2 text-xs font-medium">
+            Page
+          </Badge>
+          {!isSaved && (
+            <div className="flex items-center justify-end gap-3">
+              <span className={cn("text-sm font-medium", !isPreview && "text-foreground", isPreview && "text-muted-foreground")}>Edit</span>
+              <Switch checked={isPreview} onCheckedChange={(v) => setIsPreview(Boolean(v))} />
+              <span className={cn("text-sm font-medium", isPreview && "text-foreground", !isPreview && "text-muted-foreground")}>Preview</span>
+            </div>
+          )}
           <div className="mt-6 relative">
             <div
               ref={editorContainerRef}
@@ -443,7 +454,27 @@ export const PageCreateInline: React.FC<PageCreateInlineProps> = ({
               </FieldChip>
             )}
           />
-          <Button onClick={handleSave} size="lg" className="px-8">Save Page</Button>
+          {isSaved ? (
+            <div className="flex items-center gap-2">
+              {savedData?.link && (
+                <a
+                  href={savedData.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  View
+                </a>
+              )}
+              <Button disabled size="lg" className="px-8 bg-green-600 hover:bg-green-600 text-white gap-1">
+                <Check className="h-4 w-4" />
+                Saved
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={handleSave} size="lg" className="px-8">Save Page</Button>
+          )}
         </div>
       </CardContent>
     </Card>

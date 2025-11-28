@@ -7,6 +7,7 @@ import { AgentActivity } from "@/components/AgentActivity";
 import { usePersonalization } from "@/context/PersonalizationContext";
 import { type Project } from "@/api/projects";
 import { DateRange } from "@/components/ui/date-range-picker";
+import { SavedArtifactData } from "@/api/conversations";
 
 interface ChatMessageProps {
   id: string;
@@ -16,6 +17,7 @@ interface ChatMessageProps {
   liked?: boolean;
   onLike?: (messageId: string) => void;
   onDislike?: (messageId: string) => void;
+  onArtifactSaved?: (messageId: string, artifactType: string, savedData?: SavedArtifactData) => void;
   internalActivity?: {
     summary: string;
     bullets?: string[];
@@ -28,21 +30,29 @@ interface ChatMessageProps {
     projectIdentifier?: string;
     sequenceId?: string | number;
     link?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   page?: {
     title: string;
-    blocks: { blocks: any[] };
+    blocks: { blocks: { id?: string; type: string; data: Record<string, unknown> }[] };
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   cycle?: {
     title: string;
     description?: string;
     startDate?: string;
     endDate?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   module?: {
     title: string;
     description?: string;
     projectName?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   epic?: {
     title: string;
@@ -54,6 +64,8 @@ interface ChatMessageProps {
     startDate?: string;
     dueDate?: string;
     link?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   userStory?: {
     title: string;
@@ -61,7 +73,7 @@ interface ChatMessageProps {
     persona?: string;
     userGoal?: string;
     demographics?: string;
-    acceptanceCriteria?: string;
+    acceptanceCriteria?: string[];
     priority?: string;
     state?: string;
     assignees?: string[];
@@ -71,6 +83,8 @@ interface ChatMessageProps {
     labels?: string[];
     startDate?: string;
     endDate?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   feature?: {
     title: string;
@@ -93,6 +107,8 @@ interface ChatMessageProps {
     labels?: string[];
     startDate?: string;
     endDate?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   project?: {
     name: string;
@@ -102,6 +118,8 @@ interface ChatMessageProps {
     icon?: string;
     access?: "PUBLIC" | "PRIVATE";
     leadName?: string;
+    isSaved?: boolean;
+    savedData?: SavedArtifactData;
   };
   conversationId?: string;
 }
@@ -138,56 +156,104 @@ import { type ProjectLabel } from "@/api/labels";
 import { toast } from "@/components/ui/use-toast";
 import { getBusinessId, getMemberId, getStaffName } from "@/config";
 import { invalidateProjectCache } from "@/api/projectData";
+import { useArtifactSelections } from "@/hooks/useArtifactSelections";
 
-export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, internalActivity, workItem, page, cycle, module, epic, userStory, feature, project, conversationId }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onLike, onDislike, onArtifactSaved, internalActivity, workItem, page, cycle, module, epic, userStory, feature, project, conversationId }: ChatMessageProps) => {
   const { settings } = usePersonalization();
   const [displayedContent, setDisplayedContent] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const canShowActions = role === "assistant" && !isStreaming && (displayedContent?.trim()?.length ?? 0) > 0;
-  const [savedWorkItem, setSavedWorkItem] = useState<null | { id: string; title: string; description: string; projectIdentifier?: string; sequenceId?: string | number; link?: string; cycle?: any }>(null);
+
+  // Track whether each artifact has been saved (initially from props, then from local save actions)
+  const [isWorkItemSaved, setIsWorkItemSaved] = useState(workItem?.isSaved ?? false);
+  const [isPageSaved, setIsPageSaved] = useState(page?.isSaved ?? false);
+  const [isCycleSaved, setIsCycleSaved] = useState(cycle?.isSaved ?? false);
+  const [isModuleSaved, setIsModuleSaved] = useState(module?.isSaved ?? false);
+  const [isEpicSaved, setIsEpicSaved] = useState(epic?.isSaved ?? false);
+  const [isUserStorySaved, setIsUserStorySaved] = useState(userStory?.isSaved ?? false);
+  const [isFeatureSaved, setIsFeatureSaved] = useState(feature?.isSaved ?? false);
+  const [isProjectSaved, setIsProjectSaved] = useState(project?.isSaved ?? false);
+
+  // Store saved data for display (link, etc.)
+  const [savedWorkItemData, setSavedWorkItemData] = useState<SavedArtifactData | null>(workItem?.savedData ?? null);
+  const [savedPageData, setSavedPageData] = useState<SavedArtifactData | null>(page?.savedData ?? null);
+  const [savedCycleData, setSavedCycleData] = useState<SavedArtifactData | null>(cycle?.savedData ?? null);
+  const [savedModuleData, setSavedModuleData] = useState<SavedArtifactData | null>(module?.savedData ?? null);
+  const [savedEpicData, setSavedEpicData] = useState<SavedArtifactData | null>(epic?.savedData ?? null);
+  const [savedUserStoryData, setSavedUserStoryData] = useState<SavedArtifactData | null>(userStory?.savedData ?? null);
+  const [savedFeatureData, setSavedFeatureData] = useState<SavedArtifactData | null>(feature?.savedData ?? null);
+  const [savedProjectData, setSavedProjectData] = useState<SavedArtifactData | null>(project?.savedData ?? null);
+
   const [saving, setSaving] = useState(false);
-  const [savedPage, setSavedPage] = useState<null | { id: string; title: string; content: string; link?: string }>(null);
-  const [savedCycle, setSavedCycle] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
-  const [savedModule, setSavedModule] = useState<null | { id: string; title: string; description: string; link?: string }>(null);
-  const [savedEpic, setSavedEpic] = useState<null | { id: string; title: string; description: string; priority?: string | null; state?: string | null; assignee?: string | null; labels?: string[]; link?: string | null }>(null);
-  const [savedUserStory, setSavedUserStory] = useState<null | { id: string; title: string; description: string; displayBugNo?: string; link?: string }>(null);
-  const [savedFeature, setSavedFeature] = useState<null | { id: string; title: string; description: string; displayBugNo?: string; link?: string }>(null);
-  const [savedProject, setSavedProject] = useState<null | { id: string; projectDisplayId: string; name: string; description: string; imageUrl?: string; icon?: string; access?: string; link?: string }>(null);
 
-  // Module sub-state selection state
-  const [selectedModuleSubState, setSelectedModuleSubState] = useState<SubState | null>(null);
+  // Use the artifact selections hook
+  const artifactSelections = useArtifactSelections({ workItem, page, cycle, module, epic, userStory, feature, project });
 
-  // Cycle selection state
-  const [selectedCycle, setSelectedCycle] = useState<any>(null);
-
-  // Project selection state
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-
-  // Member selection state
-  const [selectedAssignees, setSelectedAssignees] = useState<ProjectMember[]>([]);
-  const [selectedLead, setSelectedLead] = useState<ProjectMember | null>(null);
-  const [selectedMembers, setSelectedMembers] = useState<ProjectMember[]>([]);
-
-  // Date range selection state
-  const [selectedDateRange, setSelectedDateRange] = useState<DateRange | undefined>();
-
-  // Epic-specific selection state
-  const [selectedEpicPriority, setSelectedEpicPriority] = useState<string | null>(epic?.priority ?? null);
-  const [selectedEpicState, setSelectedEpicState] = useState<string | null>(epic?.state ?? null);
-  const [selectedEpicAssignee, setSelectedEpicAssignee] = useState<ProjectMember | null>(null);
-  const [selectedEpicLabels, setSelectedEpicLabels] = useState<ProjectLabel[]>([]);
-  const [selectedEpicDateRange, setSelectedEpicDateRange] = useState<DateRange | undefined>(
-    epic?.startDate || epic?.dueDate
-      ? {
-          from: epic?.startDate ? new Date(epic.startDate) : undefined,
-          to: epic?.dueDate ? new Date(epic.dueDate) : undefined,
-        }
-      : undefined
-  );
+  // Extract all the selection state and setters from the hook
+  const {
+    selectedModuleSubState,
+    setSelectedModuleSubState,
+    selectedCycle,
+    setSelectedCycle,
+    selectedProject,
+    setSelectedProject,
+    selectedAssignees,
+    setSelectedAssignees,
+    selectedLead,
+    setSelectedLead,
+    selectedMembers,
+    setSelectedMembers,
+    selectedDateRange,
+    setSelectedDateRange,
+    selectedEpicPriority,
+    setSelectedEpicPriority,
+    selectedEpicState,
+    setSelectedEpicState,
+    selectedEpicAssignee,
+    setSelectedEpicAssignee,
+    selectedEpicLabels,
+    setSelectedEpicLabels,
+    selectedEpicDateRange,
+    setSelectedEpicDateRange,
+    selectedSubState,
+    setSelectedSubState,
+    selectedModule,
+    setSelectedModule,
+    selectedUserStoryEpic,
+    setSelectedUserStoryEpic,
+    selectedUserStoryFeature,
+    setSelectedUserStoryFeature,
+    selectedUserStoryDateRange,
+    setSelectedUserStoryDateRange,
+    selectedUserStoryAssignees,
+    setSelectedUserStoryAssignees,
+    selectedUserStoryLabels,
+    setSelectedUserStoryLabels,
+    selectedUserStorySubState,
+    setSelectedUserStorySubState,
+    selectedUserStoryModule,
+    setSelectedUserStoryModule,
+    selectedUserStoryProject,
+    setSelectedUserStoryProject,
+    selectedFeatureEpic,
+    setSelectedFeatureEpic,
+    selectedFeatureDateRange,
+    setSelectedFeatureDateRange,
+    selectedFeatureAssignees,
+    setSelectedFeatureAssignees,
+    selectedFeatureLabels,
+    setSelectedFeatureLabels,
+    selectedFeatureSubState,
+    setSelectedFeatureSubState,
+    selectedFeatureModule,
+    setSelectedFeatureModule,
+    selectedFeatureProject,
+    setSelectedFeatureProject,
+  } = artifactSelections;
 
   useEffect(() => {
-    if (epic && !savedEpic) {
+    if (epic && !isEpicSaved) {
       setSelectedEpicPriority(epic.priority ?? null);
       setSelectedEpicState(epic.state ?? null);
       setSelectedEpicAssignee(null);
@@ -201,46 +267,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
           : undefined
       );
     }
-  }, [epic, savedEpic]);
-
-  // Sub-state selection state
-  const [selectedSubState, setSelectedSubState] = useState<SubState | null>(null);
-
-  // Module selection state
-  const [selectedModule, setSelectedModule] = useState<Module | null>(null);
-
-  // User Story selection state
-  const [selectedUserStoryEpic, setSelectedUserStoryEpic] = useState<Epic | null>(null);
-  const [selectedUserStoryFeature, setSelectedUserStoryFeature] = useState<Feature | null>(null);
-  const [selectedUserStoryDateRange, setSelectedUserStoryDateRange] = useState<DateRange | undefined>(
-    userStory?.startDate || userStory?.endDate
-      ? {
-          from: userStory?.startDate ? new Date(userStory.startDate) : undefined,
-          to: userStory?.endDate ? new Date(userStory.endDate) : undefined,
-        }
-      : undefined
-  );
-  const [selectedUserStoryAssignees, setSelectedUserStoryAssignees] = useState<ProjectMember[]>([]);
-  const [selectedUserStoryLabels, setSelectedUserStoryLabels] = useState<ProjectLabel[]>([]);
-  const [selectedUserStorySubState, setSelectedUserStorySubState] = useState<SubState | null>(null);
-  const [selectedUserStoryModule, setSelectedUserStoryModule] = useState<Module | null>(null);
-  const [selectedUserStoryProject, setSelectedUserStoryProject] = useState<Project | null>(null);
-
-  // Feature selection state
-  const [selectedFeatureEpic, setSelectedFeatureEpic] = useState<Epic | null>(null);
-  const [selectedFeatureDateRange, setSelectedFeatureDateRange] = useState<DateRange | undefined>(
-    feature?.startDate || feature?.endDate
-      ? {
-          from: feature?.startDate ? new Date(feature.startDate) : undefined,
-          to: feature?.endDate ? new Date(feature.endDate) : undefined,
-        }
-      : undefined
-  );
-  const [selectedFeatureAssignees, setSelectedFeatureAssignees] = useState<ProjectMember[]>([]);
-  const [selectedFeatureLabels, setSelectedFeatureLabels] = useState<ProjectLabel[]>([]);
-  const [selectedFeatureSubState, setSelectedFeatureSubState] = useState<SubState | null>(null);
-  const [selectedFeatureModule, setSelectedFeatureModule] = useState<Module | null>(null);
-  const [selectedFeatureProject, setSelectedFeatureProject] = useState<Project | null>(null);
+  }, [epic, isEpicSaved]);
 
   useEffect(() => {
     if (role === "assistant" && isStreaming) {
@@ -310,18 +337,6 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
           )}
 
           {workItem ? (
-            savedWorkItem ? (
-              <WorkItemCard
-                title={savedWorkItem.title}
-                description={savedWorkItem.description}
-                projectIdentifier={savedWorkItem.projectIdentifier}
-                sequenceId={savedWorkItem.sequenceId}
-                cycle={selectedCycle}
-                subState={selectedSubState}
-                link={savedWorkItem.link}
-                className="mt-1"
-              />
-            ) : (
               <WorkItemCreateInline
                 title={workItem.title}
                 description={workItem.description}
@@ -337,7 +352,10 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onCycleSelect={setSelectedCycle}
                 onSubStateSelect={setSelectedSubState}
                 onModuleSelect={setSelectedModule}
+                isSaved={isWorkItemSaved}
+                savedData={savedWorkItemData}
                 onSave={async ({ title, description, project, assignees, cycle, subState, module, startDate, endDate, labels }) => {
+                  if (isWorkItemSaved) return; // Already saved
                   try {
                     setSaving(true);
                     const businessId = getBusinessId();
@@ -363,7 +381,24 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       endDate,
                       createdBy: { id: memberId, name: "" }
                     });
-                    setSavedWorkItem(created);
+                    
+                    // Mark as saved locally
+                    setIsWorkItemSaved(true);
+                    const savedDataWithSelections = {
+                      ...created,
+                      selectedValues: {
+                        selectedProject,
+                        selectedAssignees,
+                        selectedDateRange,
+                        selectedCycle,
+                        selectedSubState,
+                        selectedModule,
+                      }
+                    };
+                    setSavedWorkItemData(savedDataWithSelections);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'work_item', savedDataWithSelections);
 
                     // Invalidate cache for the project since new data was created
                     if (project?.projectId) {
@@ -390,21 +425,15 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                   }
                 }}
               />
-            )
           ) : page ? (
-            savedPage ? (
-              <PageCard
-                title={savedPage.title}
-                content={savedPage.content}
-                link={savedPage.link}
-                className="mt-1"
-              />
-            ) : (
               <PageCreateInline
                 initialEditorJs={page.blocks}
                 selectedProject={selectedProject}
                 onProjectSelect={setSelectedProject}
+                isSaved={isPageSaved}
+                savedData={savedPageData}
                 onSave={async ({ title, editorJs, project }) => {
+                  if (isPageSaved) return; // Already saved
                   try {
                     setSaving(true);
                     const businessId = getBusinessId();
@@ -415,7 +444,19 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       projectId: project?.projectId,
                       createdBy: { id: memberId, name: "" }
                     });
-                    setSavedPage(created);
+                    
+                    // Mark as saved locally
+                    setIsPageSaved(true);
+                    const savedDataWithSelections = {
+                      ...created,
+                      selectedValues: {
+                        selectedProject,
+                      }
+                    };
+                    setSavedPageData(savedDataWithSelections);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'page', savedDataWithSelections);
 
                     // Invalidate cache for the project since new data was created
                     if (project?.projectId) {
@@ -432,16 +473,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
               />
-            )
           ) : cycle ? (
-            savedCycle ? (
-              <CycleCard
-                title={savedCycle.title}
-                description={savedCycle.description}
-                link={savedCycle.link}
-                className="mt-1"
-              />
-            ) : (
               <CycleCreateInline
                 title={cycle.title}
                 description={cycle.description}
@@ -449,7 +481,10 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 selectedDateRange={selectedDateRange}
                 onProjectSelect={setSelectedProject}
                 onDateSelect={setSelectedDateRange}
+                isSaved={isCycleSaved}
+                savedData={savedCycleData}
                 onSave={async ({ title, description, project, startDate, endDate }) => {
+                  if (isCycleSaved) return; // Already saved
                   try {
                     setSaving(true);
                     const created = await createCycle({
@@ -459,7 +494,20 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       startDate: startDate || cycle.startDate,
                       endDate: endDate || cycle.endDate
                     });
-                    setSavedCycle(created);
+                    
+                    // Mark as saved locally
+                    setIsCycleSaved(true);
+                    const savedDataWithSelections = {
+                      ...created,
+                      selectedValues: {
+                        selectedProject,
+                        selectedDateRange,
+                      }
+                    };
+                    setSavedCycleData(savedDataWithSelections);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'cycle', savedDataWithSelections);
 
                     // Invalidate cache for the project since new data was created
                     if (project?.projectId) {
@@ -486,17 +534,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                   }
                 }}
               />
-            )
           ) : module ? (
-            savedModule ? (
-              <ModuleCard
-                title={savedModule.title}
-                description={savedModule.description}
-                subState={selectedModuleSubState}
-                link={savedModule.link}
-                className="mt-1"
-              />
-            ) : (
               <ModuleCreateInline
                 title={module.title}
                 description={module.description}
@@ -510,7 +548,10 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onMembersSelect={setSelectedMembers}
                 onDateSelect={setSelectedDateRange}
                 onSubStateSelect={setSelectedModuleSubState}
+                isSaved={isModuleSaved}
+                savedData={savedModuleData}
                 onSave={async ({ title, description, project, lead, members, subState, startDate, endDate }) => {
+                  if (isModuleSaved) return; // Already saved
                   try {
                     setSaving(true);
                     const created = await createModuleWithMembers({
@@ -524,7 +565,23 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       startDate,
                       endDate
                     });
-                    setSavedModule(created);
+                    
+                    // Mark as saved locally
+                    setIsModuleSaved(true);
+                    const savedDataWithSelections = {
+                      ...created,
+                      selectedValues: {
+                        selectedProject,
+                        selectedLead,
+                        selectedMembers,
+                        selectedDateRange,
+                        selectedModuleSubState,
+                      }
+                    };
+                    setSavedModuleData(savedDataWithSelections);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'module', savedDataWithSelections);
 
                     // Invalidate cache for the project since new data was created
                     if (project?.projectId) {
@@ -551,20 +608,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                   }
                 }}
               />
-            )
           ) : epic ? (
-            savedEpic ? (
-              <EpicCard
-                title={savedEpic.title}
-                description={savedEpic.description}
-                priority={savedEpic.priority ?? epic.priority}
-                state={savedEpic.state ?? epic.state}
-                assigneeName={savedEpic.assignee ?? epic.assignee}
-                labels={savedEpic.labels ?? epic.labels ?? []}
-                link={savedEpic.link ?? epic.link}
-                className="mt-1"
-              />
-            ) : (
               <EpicCreateInline
                 title={epic.title}
                 description={epic.description}
@@ -580,24 +624,32 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onAssigneeSelect={setSelectedEpicAssignee}
                 onLabelsSelect={setSelectedEpicLabels}
                 onDateSelect={setSelectedEpicDateRange}
+                isSaved={isEpicSaved}
+                savedData={savedEpicData}
                 onSave={async ({ title, description, project, priority, state, assignee, labels, startDate, dueDate }) => {
+                  if (isEpicSaved) return; // Already saved
                   try {
                     setSaving(true);
-                    const labelNames = labels?.map((label) => label.label).filter(Boolean) ?? [];
-                    const created = await createEpic({
-                      title,
-                      description,
-                      projectId: project?.projectId,
-                      priority: priority ?? undefined,
-                      stateName: state ?? undefined,
-                      assigneeName: assignee ? (assignee.displayName || assignee.name) : undefined,
-                      labels: labelNames.length ? labelNames : undefined,
+                  const labelNames = labels?.map((label) => label.label).filter(Boolean) ?? [];
+                  const labelsForApi = labels?.map((label) => ({
+                    id: label.id,
+                    name: label.label,
+                    color: label.color
+                  })) ?? [];
+                  const created = await createEpic({
+                    title,
+                    description,
+                    projectId: project?.projectId,
+                    priority: priority ?? undefined,
+                    stateName: state ?? undefined,
+                    assignees: assignee ? [{ id: assignee.id, name: assignee.displayName || assignee.name }] : undefined,
+                    labels: labelsForApi.length ? labelsForApi : undefined,
                       startDate,
-                      dueDate,
-                      createdBy: getMemberId(),
+                      endDate: dueDate,
+                      createdBy: { id: getMemberId(), name: getStaffName() },
                     });
 
-                    setSavedEpic({
+                    const savedData = {
                       id: created.id,
                       title: created.title,
                       description: created.description,
@@ -606,7 +658,22 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       assignee: assignee ? assignee.displayName || assignee.name : null,
                       labels: labelNames,
                       link: created.link ?? null,
-                    });
+                      selectedValues: {
+                        selectedProject,
+                        selectedEpicPriority,
+                        selectedEpicState,
+                        selectedEpicAssignee,
+                        selectedEpicLabels,
+                        selectedEpicDateRange,
+                      }
+                    };
+
+                    // Mark as saved locally
+                    setIsEpicSaved(true);
+                    setSavedEpicData(savedData);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'epic', savedData);
 
                     if (project?.projectId) {
                       invalidateProjectCache(project.projectId);
@@ -631,35 +698,14 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                   }
                 }}
               />
-            )
           ) : userStory ? (
-            savedUserStory ? (
-              <UserStoryCard
-                title={savedUserStory.title}
-                description={savedUserStory.description}
-                displayBugNo={savedUserStory.displayBugNo}
-                persona={userStory.persona}
-                userGoal={userStory.userGoal}
-                demographics={userStory.demographics}
-                acceptanceCriteria={userStory.acceptanceCriteria}
-                priority={userStory.priority}
-                state={selectedUserStorySubState?.name ?? userStory.state}
-                assignees={selectedUserStoryAssignees.map(a => a.displayName || a.name)}
-                epic={selectedUserStoryEpic?.title ?? userStory.epicName}
-                feature={selectedUserStoryFeature?.basicInfo?.title ?? selectedUserStoryFeature?.title ?? userStory.featureName}
-                module={selectedUserStoryModule?.title ?? userStory.moduleName}
-                labels={selectedUserStoryLabels.map(l => l.label)}
-                link={savedUserStory.link}
-                className="mt-1"
-              />
-            ) : (
               <UserStoryCreateInline
                 title={userStory.title}
                 description={userStory.description}
                 persona={userStory.persona}
                 userGoal={userStory.userGoal}
                 demographics={userStory.demographics}
-                acceptanceCriteria={userStory.acceptanceCriteria}
+                acceptanceCriteria={userStory.acceptanceCriteria?.join('\n')}
                 selectedProject={selectedUserStoryProject}
                 selectedAssignees={selectedUserStoryAssignees}
                 selectedLabels={selectedUserStoryLabels}
@@ -676,7 +722,10 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onModuleSelect={setSelectedUserStoryModule}
                 onEpicSelect={setSelectedUserStoryEpic}
                 onFeatureSelect={setSelectedUserStoryFeature}
+                isSaved={isUserStorySaved}
+                savedData={savedUserStoryData}
                 onSave={async ({ title, description, persona, userGoal, demographics, acceptanceCriteria, project, assignees, labels, subState, module: mod, epic: ep, feature: feat, startDate, endDate }) => {
+                  if (isUserStorySaved) return; // Already saved
                   try {
                     setSaving(true);
                     const created = await createUserStory({
@@ -703,13 +752,30 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       createdBy: { id: getMemberId(), name: getStaffName() }
                     });
 
-                    setSavedUserStory({
+                    const savedData = {
                       id: created.id,
                       title: created.title,
                       description: created.description,
                       displayBugNo: created.displayBugNo,
-                      link: created.link
-                    });
+                      link: created.link,
+                      selectedValues: {
+                        selectedUserStoryProject,
+                        selectedUserStoryAssignees,
+                        selectedUserStoryLabels,
+                        selectedUserStoryDateRange,
+                        selectedUserStorySubState,
+                        selectedUserStoryModule,
+                        selectedUserStoryEpic,
+                        selectedUserStoryFeature,
+                      }
+                    };
+
+                    // Mark as saved locally
+                    setIsUserStorySaved(true);
+                    setSavedUserStoryData(savedData);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'user_story', savedData);
 
                     if (project?.projectId) {
                       invalidateProjectCache(project.projectId);
@@ -734,33 +800,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                   }
                 }}
               />
-            )
           ) : feature ? (
-            savedFeature ? (
-              <FeatureCard
-                title={savedFeature.title}
-                description={savedFeature.description}
-                displayBugNo={savedFeature.displayBugNo}
-                problemStatement={feature.problemStatement}
-                objective={feature.objective}
-                successCriteria={feature.successCriteria}
-                goals={feature.goals}
-                painPoints={feature.painPoints}
-                inScope={feature.inScope}
-                outOfScope={feature.outOfScope}
-                functionalRequirements={feature.functionalRequirements}
-                nonFunctionalRequirements={feature.nonFunctionalRequirements}
-                dependencies={feature.dependencies}
-                risks={feature.risks}
-                priority={feature.priority}
-                state={selectedFeatureSubState?.name ?? feature.state}
-                epic={selectedFeatureEpic?.title ?? feature.epicName}
-                module={selectedFeatureModule?.title ?? feature.moduleName}
-                labels={selectedFeatureLabels.map(l => l.label)}
-                link={savedFeature.link}
-                className="mt-1"
-              />
-            ) : (
               <FeatureCreateInline
                 title={feature.title}
                 description={feature.description}
@@ -789,7 +829,10 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onSubStateSelect={setSelectedFeatureSubState}
                 onModuleSelect={setSelectedFeatureModule}
                 onEpicSelect={setSelectedFeatureEpic}
+                isSaved={isFeatureSaved}
+                savedData={savedFeatureData}
                 onSave={async ({ title, description, problemStatement, objective, successCriteria, goals, painPoints, inScope, outOfScope, functionalRequirements, nonFunctionalRequirements, dependencies, risks, project, assignees, labels, subState, module: mod, epic: ep, startDate, endDate }) => {
+                  if (isFeatureSaved) return; // Already saved
                   try {
                     setSaving(true);
                     const created = await createFeature({
@@ -821,13 +864,29 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       createdBy: { id: getMemberId(), name: getStaffName() }
                     });
 
-                    setSavedFeature({
+                    const savedData = {
                       id: created.id,
                       title: created.title,
                       description: created.description,
                       displayBugNo: created.displayBugNo,
-                      link: created.link
-                    });
+                      link: created.link,
+                      selectedValues: {
+                        selectedFeatureProject,
+                        selectedFeatureAssignees,
+                        selectedFeatureLabels,
+                        selectedFeatureDateRange,
+                        selectedFeatureSubState,
+                        selectedFeatureModule,
+                        selectedFeatureEpic,
+                      }
+                    };
+
+                    // Mark as saved locally
+                    setIsFeatureSaved(true);
+                    setSavedFeatureData(savedData);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'feature', savedData);
 
                     if (project?.projectId) {
                       invalidateProjectCache(project.projectId);
@@ -852,21 +911,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                   }
                 }}
               />
-            )
           ) : project ? (
-            savedProject ? (
-              <ProjectCard
-                name={savedProject.name}
-                projectDisplayId={savedProject.projectDisplayId}
-                description={savedProject.description}
-                imageUrl={savedProject.imageUrl}
-                icon={savedProject.icon}
-                access={savedProject.access as "PUBLIC" | "PRIVATE"}
-                leadName={project.leadName}
-                link={savedProject.link}
-                className="mt-1"
-              />
-            ) : (
               <ProjectCreateInline
                 name={project.name}
                 projectId={project.projectId}
@@ -875,7 +920,10 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 icon={project.icon}
                 access={project.access}
                 leadName={project.leadName}
+                isSaved={isProjectSaved}
+                savedData={savedProjectData}
                 onSave={async ({ name, projectId, description, imageUrl, icon, access, leadId, leadName }) => {
+                  if (isProjectSaved) return; // Already saved
                   try {
                     setSaving(true);
                     const created = await createProject({
@@ -890,7 +938,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       createdBy: { id: getMemberId(), name: getStaffName() }
                     });
 
-                    setSavedProject({
+                    const savedData = {
                       id: created.id,
                       projectDisplayId: created.projectDisplayId,
                       name: created.name,
@@ -898,8 +946,18 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       imageUrl: created.imageUrl,
                       icon: created.icon,
                       access: created.access,
-                      link: created.link
-                    });
+                      link: created.link,
+                      selectedValues: {
+                        // Projects don't have many selectable fields, but keeping structure consistent
+                      }
+                    };
+
+                    // Mark as saved locally
+                    setIsProjectSaved(true);
+                    setSavedProjectData(savedData);
+
+                    // Notify parent to persist saved state in conversation
+                    onArtifactSaved?.(id, 'project', savedData);
 
                     toast({ title: "Project saved", description: "Your project has been created." });
                   } catch (e: any) {
@@ -911,7 +969,6 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onDiscard={() => { /* no-op for now */ }}
                 className="mt-1"
               />
-            )
           ) : (
             <SafeMarkdown
               content={displayedContent}
