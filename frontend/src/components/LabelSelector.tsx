@@ -178,7 +178,6 @@ export const LabelSelector: React.FC<LabelSelectorProps> = ({
                           {mode === "multiple" && (
                             <Checkbox
                               checked={isSelected}
-                              onChange={() => handleLabelToggle(label)}
                               className="mt-0.5"
                             />
                           )}

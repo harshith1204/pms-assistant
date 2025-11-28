@@ -67,7 +67,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   description = "",
   selectedProject = null,
   selectedAssignees = [],
-  selectedLabels = [],
+  // selectedLabels = [],
   selectedDateRange,
   selectedCycle = null,
   selectedSubState = null,
@@ -88,6 +88,7 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
   const [name, setName] = React.useState<string>(title);
   const [desc, setDesc] = React.useState<string>(description);
   const [isEditingDesc, setIsEditingDesc] = React.useState<boolean>(true);
+  const [selectedLabels, setSelectedLabels] = React.useState<ProjectLabel[]>([]);
 
   const handleSave = () => {
     const startDate = selectedDateRange?.from?.toISOString().split('T')[0];
@@ -210,18 +211,18 @@ export const WorkItemCreateInline: React.FC<WorkItemCreateInlineProps> = ({
               <LabelSelector
                 projectId={selectedProject.projectId}
                 selectedLabels={selectedLabels}
-                onLabelsSelect={onLabelsSelect || (() => {})}
+                onLabelsSelect={setSelectedLabels}
                 mode="multiple"
                 title="Select Labels"
                 placeholder="Labels"
                 trigger={
                   <FieldChip
                     icon={<Tag className="h-3.5 w-3.5" />}
-                    className={selectedLabels.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
+                    className={selectedLabels?.length > 0 ? "text-foreground border-primary/20 bg-primary/5" : undefined}
                   >
-                    {selectedLabels.length === 0 ? "Labels" :
-                     selectedLabels.length === 1 ? selectedLabels[0].label :
-                     `${selectedLabels.length} labels`}
+                    {selectedLabels?.length === 0 ? "Labels" :
+                     selectedLabels?.length === 1 ? selectedLabels[0].label :
+                     `${selectedLabels?.length} labels`}
                   </FieldChip>
                 }
               />

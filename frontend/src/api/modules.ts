@@ -35,10 +35,11 @@ export type CreateModuleRequest = {
   description?: string;
   projectId?: string;
   subStateId?: string;
+  subStateName?: string;
   startDate?: string;
   endDate?: string;
-  lead?: string;
-  members?: string[];
+  lead?: { id: string; name: string };
+  members?: { id: string; name: string }[];
 };
 
 export type CreateModuleWithMembersRequest = {
@@ -46,6 +47,8 @@ export type CreateModuleWithMembersRequest = {
   description?: string;
   projectId?: string;
   subStateId?: string;
+  subStateTitle?: string;
+  subStateName?: string;
   startDate?: string;
   endDate?: string;
   lead?: { id: string; name: string };
@@ -71,16 +74,10 @@ export async function createModule(payload: CreateModuleRequest): Promise<Create
       description: payload.description || "",
       state: payload.subStateId ? {
         id: payload.subStateId,
-        name: "" // Will be populated by backend
+        name: payload.subStateName || ""
       } : null,
-      lead: payload.lead ? {
-        id: payload.lead,
-        name: "" // Will be populated by backend
-      } : null,
-      assignee: payload.members ? payload.members.map(member => ({
-        id: member,
-        name: "" // Will be populated by backend
-      })) : [],
+      lead: payload.lead || null,
+      assignee: payload.members || [],
       startDate: payload.startDate,
       endDate: payload.endDate,
       business: {
@@ -140,7 +137,7 @@ export async function createModuleWithMembers(payload: CreateModuleWithMembersRe
       description: payload.description || "",
       state: payload.subStateId ? {
         id: payload.subStateId,
-        name: "" // Will be populated by backend
+        name: payload.subStateName || ""
       } : null,
       lead: payload.lead,
       assignee: payload.members?.map(member => ({

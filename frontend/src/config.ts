@@ -1,13 +1,21 @@
 //export const API_HTTP_URL = import.meta.env.VITE_API_HTTP_URL || "http://4.213.16.145:8000";
-export const API_HTTP_URL = import.meta.env.VITE_API_HTTP_URL || "http://localhost:8000";
+export const API_HTTP_URL = import.meta.env.VITE_API_HTTP_URL || "https://stage-aiplanboard.simpo.ai";
 export const API_WS_URL = import.meta.env.VITE_API_WS_URL || `${API_HTTP_URL.replace(/^http/, "ws")}/ws/chat`;
 
 // Stage Project API Configuration
-export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://dev-api.simpo.ai/pms";
+export const STAGE_API_BASE_URL = import.meta.env.VITE_STAGE_API_BASE_URL || "https://stage-api.simpo.ai/pms";
+
+// AI API Keys
+export const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY ;
+
+// Get staff and business details dynamically from postMessage/localStorage (set by parent wrapper)
+// Note: Hardcoded fallbacks are intentionally commented out to avoid accidental misuse
+// const DEFAULT_MEMBER_ID = '...';
+// const DEFAULT_BUSINESS_ID = '...';
 
 export const getMemberId = () => {
   // HARDCODED FOR TESTING - REMOVE AFTER
-   return '1eff7f64-08ea-6fdc-99d0-3f7ae8229af5';
+  return '1ef40e3e-9d31-6c18-80cd-6bd6e52fd604';
   
   // const stored = localStorage.getItem('staffId');
   // if (!stored) return '';
@@ -24,9 +32,9 @@ export const getMemberId = () => {
 
 export const getBusinessId = () => {
   // HARDCODED FOR TESTING - REMOVE AFTER
-   return '1eff7f64-09ef-670e-8c7c-2b9676f8dbb6';
+  return '1f0cc2a0-e33e-62c3-b7b8-957cffc16164';
   
-  // // First, try the bDetails key (for backward compatibility)
+  // First, try the bDetails key (for backward compatibility)
   // const raw = localStorage.getItem('bDetails');
   // if (raw) {
   //   try {

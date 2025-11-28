@@ -194,7 +194,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
         <div className="flex gap-4 flex-row-reverse">
           <div className="flex-1 text-right">
             <div className="flex justify-end">
-              <div className="inline-block max-w-[80%] px-5 py-2 rounded-full text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-primary/10  text-right">
+              <div className="inline-block max-w-[80%] md:px-5 px-2 py-2 rounded-lg text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-primary/10  text-right">
                 {displayedContent}
                 {isStreaming && currentIndex < content.length && (
                   <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse" />
@@ -244,7 +244,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                 onCycleSelect={setSelectedCycle}
                 onSubStateSelect={setSelectedSubState}
                 onModuleSelect={setSelectedModule}
-                onSave={async ({ title, description, project, assignees, cycle, subState, module, startDate, endDate }) => {
+                onSave={async ({ title, description, project, assignees, cycle, subState, module, startDate, endDate, labels }) => {
                   try {
                     setSaving(true);
                     const businessId = getBusinessId();
@@ -255,10 +255,17 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       projectId: project?.projectId,
                       projectIdentifier: workItem.projectIdentifier,
                       cycleId: cycle?.id,
+                      cycleTitle: cycle?.title,
                       subStateId: subState?.id,
+                      subStateTitle: subState?.name,
                       moduleId: module?.id,
+                      moduleTitle: module?.title,
                       assignees: assignees?.map(a => ({ id: a.id, name: a.displayName || a.name })),
-                      labels: [], // Empty labels for now, can be added later
+                      labels: labels?.map(l => ({
+                        id: l.id,
+                        name: l.label,
+                        color: l.color
+                      })) || [],
                       startDate,
                       endDate,
                       createdBy: { id: memberId, name: "" }
@@ -270,7 +277,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       invalidateProjectCache(project.projectId);
                     }
 
-                    toast({ title: "Work item saved", description: "Your work item has been created." });
+                    toast({ title: "Work item saved", description: "Your work item has been created.", duration: 3000  });
                   } catch (e: any) {
                     toast({ title: "Failed to save work item", description: String(e?.message || e), variant: "destructive" as any });
                   } finally {
@@ -366,7 +373,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       invalidateProjectCache(project.projectId);
                     }
 
-                    toast({ title: "Cycle saved", description: "Your cycle has been created." });
+                    toast({ title: "Cycle saved", description: "Your cycle has been created.", duration: 3000  });
                   } catch (e: any) {
                     toast({ title: "Failed to save cycle", description: String(e?.message || e), variant: "destructive" as any });
                   } finally {
@@ -418,7 +425,8 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       description,
                       projectId: project?.projectId,
                       subStateId: subState?.id,
-                      lead,
+                      subStateTitle: subState?.name,
+                      lead: { id: lead.id, name: lead.displayName || lead.name },
                       members: members?.map(m => ({ id: m.id, name: m.displayName || m.name })),
                       startDate,
                       endDate
@@ -430,7 +438,7 @@ export const ChatMessage = ({ id, role, content, isStreaming = false, liked, onL
                       invalidateProjectCache(project.projectId);
                     }
 
-                    toast({ title: "Module saved", description: "Your module has been created." });
+                    toast({ title: "Module saved", description: "Your module has been created.", duration: 3000  });
                   } catch (e: any) {
                     toast({ title: "Failed to save module", description: String(e?.message || e), variant: "destructive" as any });
                   } finally {

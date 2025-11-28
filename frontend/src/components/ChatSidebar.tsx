@@ -33,7 +33,7 @@ export const ChatSidebar = ({
     return conversations.filter((c) => c.title.toLowerCase().includes(q));
   }, [conversations, query]);
   return (
-    <div className="flex h-full flex-col bg-sidebar/95 backdrop-blur-xl border border-sidebar-border rounded-2xl shadow-2xl my-1 mx-4">
+    <div className="flex h-full flex-col bg-sidebar/95 backdrop-blur-xl border border-sidebar-border md:rounded-2xl shadow-2xl md:my-1 md:mx-4 md:m-0">
       <div className="p-4 border-b border-sidebar-border">
         <Button
           onClick={onNewChat}

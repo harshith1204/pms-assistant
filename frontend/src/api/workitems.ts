@@ -1,5 +1,5 @@
 import { WORKITEM_ENDPOINTS } from "@/api/endpoints";
-import { getBusinessId, getMemberId } from "@/config";
+import { getBusinessId, getMemberId, getStaffName } from "@/config";
 
 export type CreateWorkItemRequest = {
   title: string;
@@ -7,8 +7,11 @@ export type CreateWorkItemRequest = {
   projectIdentifier?: string;
   projectId?: string;
   cycleId?: string;
+  cycleTitle?: string;
   subStateId?: string;
+  subStateTitle?: string;
   moduleId?: string;
+  moduleTitle?: string;
   assignees?: { id: string; name: string }[];
   labels?: { id: string; name: string; color: string }[];
   startDate?: string;
@@ -25,9 +28,13 @@ export type CreateWorkItemWithMembersRequest = {
   description?: string;
   projectIdentifier?: string;
   projectId?: string;
+  projectName?: string;
   cycleId?: string;
+  cycleTitle?: string;
   subStateId?: string;
+  subStateTitle?: string;
   moduleId?: string;
+  moduleTitle?: string;
   assignees?: { id: string; name: string }[];
   labels?: { id: string; name: string; color: string }[];
   startDate?: string;
@@ -62,7 +69,7 @@ export async function createWorkItem(payload: CreateWorkItemRequest): Promise<Cr
       label: payload.labels || [],
       state: payload.subStateId ? {
         id: payload.subStateId,
-        name: "" // Will be populated by backend
+        name: payload.subStateTitle || ""
       } : null,
       createdBy: payload.createdBy || { id: getMemberId(), name: "" },
       priority: payload.priority || "NONE",
@@ -75,16 +82,16 @@ export async function createWorkItem(payload: CreateWorkItemRequest): Promise<Cr
       })) : [],
       modules: payload.moduleId ? {
         id: payload.moduleId,
-        name: "" // Will be populated by backend
+        name: payload.moduleTitle || ""
       } : null,
       cycle: payload.cycleId ? {
         id: payload.cycleId,
-        name: "" // Will be populated by backend
+        name: payload.cycleTitle || ""
       } : null,
       parent: null,
       project: {
         id: payload.projectId || "",
-        name: "" // Will be populated by backend
+        name: ""
       },
       business: {
         id: getBusinessId(),
@@ -113,9 +120,9 @@ export async function createWorkItemWithMembers(payload: CreateWorkItemWithMembe
       label: payload.labels || [],
       state: payload.subStateId ? {
         id: payload.subStateId,
-        name: "" // Will be populated by backend
+        name: payload.subStateTitle || ""
       } : null,
-      createdBy: payload.createdBy || { id: getMemberId(), name: "" },
+      createdBy: payload.createdBy || { id: getMemberId(), name: getStaffName() },
       priority: payload.priority || "NONE",
       estimate: payload.estimate,
       estimateSystem: payload.estimateSystem || "TIME",
@@ -126,20 +133,20 @@ export async function createWorkItemWithMembers(payload: CreateWorkItemWithMembe
       })) : [],
       modules: payload.moduleId ? {
         id: payload.moduleId,
-        name: "" // Will be populated by backend
+        name: payload.moduleTitle || ""
       } : null,
       cycle: payload.cycleId ? {
         id: payload.cycleId,
-        name: "" // Will be populated by backend
+        name: payload.cycleTitle || ""
       } : null,
       parent: null,
       project: {
         id: payload.projectId || "",
-        name: "" // Will be populated by backend
+        name: payload.projectName || ""
       },
       business: {
         id: getBusinessId(),
-        name: "" // Will be populated by backend
+        name: ""
       }
     }),
   });

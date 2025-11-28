@@ -20,11 +20,11 @@ const Settings = () => {
         </div>
 
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-3 md:p-6 p-4">
             <CardTitle>Memory</CardTitle>
             <CardDescription>Choose whether your agent should retain context across sessions.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 pt-0">
+          <CardContent className="space-y-3 md:p-6 p-4 pt-0">
             <div className="flex items-center justify-between">
               <div>
                 <Label htmlFor="remember">Remember context</Label>
@@ -44,7 +44,7 @@ const Settings = () => {
               </div>
             </div>
           )}
-          <CardHeader className={`pb-3 ${!settings.rememberLongTermContext ? "opacity-50" : ""}`}>
+          <CardHeader className={`pb-3 md:p-6 p-4 ${!settings.rememberLongTermContext ? "opacity-50" : ""}`}>
             <div className="flex items-center gap-2">
               <CardTitle className={!settings.rememberLongTermContext ? "text-muted-foreground" : ""}>
                  Context
@@ -63,12 +63,12 @@ const Settings = () => {
               }
             </CardDescription>
           </CardHeader>
-          <CardContent className={`space-y-3 pt-0 ${!settings.rememberLongTermContext ? "opacity-50" : ""}`}>
+          <CardContent className={`space-y-3 md:p-6 p-4 pt-0 ${!settings.rememberLongTermContext ? "opacity-50" : ""}`}>
             <Textarea
               value={settings.longTermContext}
               onChange={(e) => updateSettings({ longTermContext: e.target.value })}
               placeholder={!settings.rememberLongTermContext ? "Enable memory to edit context..." : "e.g., Our team prefers concise weekly updates; we use Jira and GitHub Projects; primary KPIs are activation and retention; tone should be professional but empathetic; we release on Thursdays."}
-              className="min-h-[100px]"
+              className="min-h-[120px]"
               disabled={!settings.rememberLongTermContext}
             />
             <div className="flex gap-2">
@@ -91,11 +91,11 @@ const Settings = () => {
         </Card>
 
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-3 md:p-6 p-4">
             <CardTitle>Memory & Context Features</CardTitle>
             <CardDescription>How these features enhance your AI agent's capabilities.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-1 pt-0">
+          <CardContent className="space-y-1 md:p-6 p-4 pt-0">
             <div className="bg-muted/30 rounded-lg p-2 space-y-1">
               <h4 className="font-medium text-sm">Key Benefits</h4>
               <div className="text-xs text-muted-foreground space-y-0.5">
