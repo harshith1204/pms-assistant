@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import asyncio
 import logging
@@ -174,6 +175,62 @@ async def generate_work_item_surprise_me(req: WorkItemSurpriseMeRequest) -> Gene
     return GenerateResponse(title=(req.title or "").strip(), description=generated_description)
 
 
+def extract_json_from_response(content: str) -> str:
+    """Extract JSON from LLM response, handling code fences and other wrappers."""
+    # Try to find JSON in code fences first (```json ... ``` or ``` ... ```)
+    code_fence_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+    matches = re.findall(code_fence_pattern, content)
+    if matches:
+        # Use the first match that looks like JSON
+        for match in matches:
+            if match.strip().startswith('{'):
+                content = match.strip()
+                break
+    
+    # Find the outermost JSON object
+    start = content.find("{")
+    if start == -1:
+        return ""
+    
+    # Count braces to find the matching closing brace
+    brace_count = 0
+    end = start
+    for i, char in enumerate(content[start:], start):
+        if char == '{':
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                end = i + 1
+                break
+    
+    return content[start:end] if end > start else ""
+
+
+def validate_editor_block(block: dict, index: int) -> dict:
+    """Validate and normalize an Editor.js block."""
+    if not isinstance(block, dict):
+        return None
+    
+    block_type = block.get("type")
+    data = block.get("data")
+    
+    if not block_type or not isinstance(data, dict):
+        return None
+    
+    # Ensure block has an ID
+    block_id = block.get("id") or f"blk_{index + 1}"
+    
+    # Normalize common block types
+    normalized = {
+        "id": block_id,
+        "type": block_type,
+        "data": data
+    }
+    
+    return normalized
+
+
 @router.post("/page", response_model=PageGenerateResponse)
 async def generate_page(req: GenerateRequest) -> PageGenerateResponse:
     """Generate page content in Editor.js blocks format."""
@@ -210,11 +267,11 @@ async def generate_page(req: GenerateRequest) -> PageGenerateResponse:
     blocks = []
     
     try:
-        # Extract JSON from response
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start != -1 and end > start:
-            parsed = json.loads(content[start:end])
+        # Extract JSON from response (handles code fences, nested braces, etc.)
+        json_str = extract_json_from_response(content)
+        
+        if json_str:
+            parsed = json.loads(json_str)
             
             if isinstance(parsed, dict):
                 title = parsed.get("title") or title
@@ -223,17 +280,24 @@ async def generate_page(req: GenerateRequest) -> PageGenerateResponse:
                 # Validate and clean blocks
                 if isinstance(raw_blocks, list):
                     for i, block in enumerate(raw_blocks):
-                        if isinstance(block, dict) and "type" in block and "data" in block:
-                            # Ensure block has an ID
-                            if "id" not in block:
-                                block["id"] = f"blk_{i+1}"
-                            blocks.append(block)
+                        validated = validate_editor_block(block, i)
+                        if validated:
+                            blocks.append(validated)
+                            
     except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:200]}")
+        logger.warning(f"Failed to parse JSON from Groq response: {e}. Content preview: {content[:300]}")
+    except Exception as e:
+        logger.warning(f"Error processing page response: {e}. Content preview: {content[:300]}")
 
-    # Fallback: if no valid blocks, create a simple paragraph block
+    # Fallback: if no valid blocks, create structured content from raw response
     if not blocks:
+        # Try to create meaningful content from the raw response
         fallback_text = content.strip() if content.strip() else "Content generation in progress. Please add your content here."
+        
+        # Clean up any JSON artifacts from fallback text
+        if fallback_text.startswith('{') or fallback_text.startswith('```'):
+            fallback_text = "Content generation in progress. Please add your content here."
+        
         blocks = [
             {
                 "id": "blk_1",
