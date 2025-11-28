@@ -192,20 +192,14 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
             <div className="flex gap-2">
               <Button
                 variant={accessType === "PUBLIC" ? "default" : "outline"}
-                className={cn(
-                  "flex-1 h-10",
-                  accessType === "PUBLIC" && "bg-purple-900 hover:bg-purple-800"
-                )}
+                className="flex-1 h-10"
                 onClick={() => setAccessType("PUBLIC")}
               >
                 Public
               </Button>
               <Button
                 variant={accessType === "PRIVATE" ? "default" : "outline"}
-                className={cn(
-                  "flex-1 h-10",
-                  accessType === "PRIVATE" && "bg-purple-900 hover:bg-purple-800"
-                )}
+                className="flex-1 h-10"
                 onClick={() => setAccessType("PRIVATE")}
               >
                 Private
@@ -221,7 +215,6 @@ export const ProjectCreateInline: React.FC<ProjectCreateInlineProps> = ({
             )}
             <Button 
               onClick={handleSave} 
-              className="bg-purple-900 hover:bg-purple-800"
               disabled={!projectName.trim() || !projectDisplayId.trim()}
             >
               Create Project

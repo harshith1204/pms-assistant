@@ -370,7 +370,7 @@ export const UserStoryCreateInline: React.FC<UserStoryCreateInlineProps> = ({
             {onDiscard && (
               <Button variant="ghost" onClick={onDiscard}>Discard</Button>
             )}
-            <Button onClick={handleSave} className="bg-purple-900 hover:bg-purple-800">Save</Button>
+            <Button onClick={handleSave}>Save</Button>
           </div>
         </div>
       </CardContent>
