@@ -1659,59 +1659,17 @@ async def generate_content(
     template_content: str = "",
     context: Optional[Dict[str, Any]] = None
 ) -> str:
-    """Generate work items, pages, cycles, modules, epics, user stories, features, or projects - sends content DIRECTLY to frontend, returns minimal confirmation.
-    
-    **CRITICAL TOKEN OPTIMIZATION**: 
-    - Full generated content is sent directly to the frontend via WebSocket
-    - Agent receives only a minimal success/failure signal (no content details)
-    - Prevents generated content from being sent back through the LLM
-    
-    Use this to create new content:
-    - Work items: bugs, tasks, features  
-    - Pages: documentation, meeting notes, project plans
-    - Cycles: sprints, iterations, development cycles
-    - Modules: feature modules, components, subsystems
-    - Epics: larger initiatives spanning multiple work items
-    - User Stories: user-centric requirements with persona, goal, and acceptance criteria
-    - Features: detailed feature specifications with requirements and scope
-    - Projects: complete project definitions with goals and structure
-    
-    **END-TO-END PROJECT DESIGN EXAMPLE**:
-    When asked to design a complete project, generate items in this order:
-    1. Project: Create the project first to establish context
-       generate_content(content_type="project", prompt="E-commerce Platform for small businesses")
-    2. Epics: Create high-level initiatives (3-5 epics)
-       generate_content(content_type="epic", prompt="User Authentication & Security Epic for E-commerce Platform")
-    3. Modules: Create functional modules that group related features
-       generate_content(content_type="module", prompt="Authentication Module - handles login, registration, password recovery")
-    4. Features: Create detailed feature specs within modules
-       generate_content(content_type="feature", prompt="Social Login Integration - Google and Facebook OAuth")
-    5. User Stories: Create user stories for each feature
-       generate_content(content_type="user_story", prompt="As a shopper, I want to login with Google so I can quickly access my account")
-    6. Cycles: Create sprints to organize work
-       generate_content(content_type="cycle", prompt="Sprint 1: Authentication Foundation - 2 weeks")
-    7. Work Items: Create specific tasks and bugs
-       generate_content(content_type="work_item", prompt="Implement OAuth2 callback handler for Google login")
+    """Generate project artifacts. Content sent to frontend, returns minimal confirmation.
     
     Args:
-        content_type: Type of content - 'work_item', 'page', 'cycle', 'module', 'epic', 'user_story', 'feature', or 'project'
-        prompt: User's instruction for what to generate
-        template_title: Optional template title to base generation on
-        template_content: Optional template content to use as structure
-        context: Optional context dict with additional parameters (pageId, projectId, etc.)
+        content_type: 'work_item', 'page', 'cycle', 'module', 'epic', 'user_story', 'feature', or 'project'
+        prompt: What to generate (e.g., "Bug: login fails on mobile")
+        template_title: Optional template title for structure
+        template_content: Optional template content for structure
+        context: Optional dict with pageId, projectId, etc.
     
-    Returns:
-        Minimal success/failure signal (NOT content details) - saves maximum tokens
-    
-    Examples:
-        generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
-        generate_content(content_type="page", prompt="Create API documentation")
-        generate_content(content_type="cycle", prompt="Q4 2024 Sprint")
-        generate_content(content_type="module", prompt="Authentication Module")
-        generate_content(content_type="epic", prompt="Customer Onboarding Epic")
-        generate_content(content_type="user_story", prompt="As a user, I want to reset my password via email")
-        generate_content(content_type="feature", prompt="Two-Factor Authentication feature with SMS and TOTP support")
-        generate_content(content_type="project", prompt="Mobile Banking App - secure banking for retail customers")
+    For complete project design, use hierarchy: project → epics → modules → features → user_stories → cycles → work_items
+    Call sequentially when generating multiple items.
     """
     import httpx
     
