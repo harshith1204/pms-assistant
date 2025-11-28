@@ -1659,42 +1659,52 @@ async def generate_content(
     template_content: str = "",
     context: Optional[Dict[str, Any]] = None
 ) -> str:
-    """Generate work items, pages, cycles, modules, or epics - sends content DIRECTLY to frontend, returns minimal confirmation.
-    
-    **CRITICAL TOKEN OPTIMIZATION**: 
+    """Generate project artifacts - sends content DIRECTLY to frontend, returns minimal confirmation.
+
+    **CRITICAL TOKEN OPTIMIZATION**:
     - Full generated content is sent directly to the frontend via WebSocket
     - Agent receives only a minimal success/failure signal (no content details)
     - Prevents generated content from being sent back through the LLM
-    
-    Use this to create new content:
-    - Work items: bugs, tasks, features  
-    - Pages: documentation, meeting notes, project plans
-    - Cycles: sprints, iterations, development cycles
-    - Modules: feature modules, components, subsystems
-    - Epics: larger initiatives spanning multiple work items
-    
+
+    Use this to create new content following the project hierarchy:
+    - Projects: Overall project definitions and charters
+    - Epics: Large initiatives spanning multiple features
+    - Modules: Feature modules, components, subsystems
+    - Features: Product features with detailed specifications
+    - User Stories: User-centric requirements with acceptance criteria
+    - Cycles: Sprints, iterations, development cycles
+    - Work Items: Bugs, tasks, features, user stories
+    - Pages: Documentation, meeting notes, project plans
+
     Args:
-        content_type: Type of content - 'work_item', 'page', 'cycle', 'module', or 'epic'
+        content_type: Type of content - 'work_item', 'page', 'cycle', 'module', 'epic', 'user_story', 'feature', or 'project'
         prompt: User's instruction for what to generate
         template_title: Optional template title to base generation on
         template_content: Optional template content to use as structure
         context: Optional context dict with additional parameters (pageId, projectId, etc.)
-    
+
     Returns:
         Minimal success/failure signal (NOT content details) - saves maximum tokens
-    
+
     Examples:
         generate_content(content_type="work_item", prompt="Bug: login fails on mobile")
-        generate_content(content_type="page", prompt="Create API documentation", context={...})
+        generate_content(content_type="page", prompt="Create API documentation")
         generate_content(content_type="cycle", prompt="Q4 2024 Sprint")
         generate_content(content_type="module", prompt="Authentication Module")
         generate_content(content_type="epic", prompt="Customer Onboarding Epic")
+        generate_content(content_type="user_story", prompt="As a user, I want to reset my password")
+        generate_content(content_type="feature", prompt="User Authentication System")
+        generate_content(content_type="project", prompt="E-commerce Platform")
+
+    For complete project design, use hierarchy: project → epics → modules → features → user_stories → cycles → work_items
+    Call sequentially when generating multiple items.
     """
     import httpx
     
     try:
-        if content_type not in ["work_item", "page", "cycle", "module", "epic"]:
-            return "❌ Invalid content type"
+        valid_types = ["work_item", "page", "cycle", "module", "epic", "user_story", "feature", "project"]
+        if content_type not in valid_types:
+            return f"❌ Invalid content type. Must be one of: {', '.join(valid_types)}"
         
         # Get API base URL from environment; require explicit configuration to avoid hardcoded defaults
         api_base = os.getenv("API_BASE_URL") or os.getenv("API_HTTP_URL")
@@ -1901,38 +1911,20 @@ async def generate_content(
 
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
-            
-        else:  # content_type == "page"
+
+        elif content_type == "page":
             # Call page generation endpoint
-            url = f"{api_base}/stream-page-content"
-            
-            # Build request context
-            page_context = context or {}
+            url = f"{api_base}/generate/page"
             payload = {
                 "prompt": prompt,
                 "template": {
                     "title": template_title or "Page",
                     "content": template_content or ""
-                },
-                "context": page_context.get("context", {
-                    "tenantId": "",
-                    "page": {"type": "DOCUMENTATION"},
-                    "subject": {},
-                    "timeScope": {},
-                    "retrieval": {},
-                    "privacy": {}
-                }),
-                "pageId": page_context.get("pageId", ""),
-                "projectId": page_context.get("projectId", ""),
-                "tenantId": page_context.get("tenantId", "")
+                }
             }
             
-            # Send as query param (matching the endpoint's expectation)
-            import json as json_lib
-            params = {"data": json_lib.dumps(payload)}
-            
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params)
+                response = await client.post(url, json=payload)
                 response.raise_for_status()
                 result = response.json()
             
@@ -1968,6 +1960,164 @@ async def generate_content(
             
             # Return MINIMAL confirmation to agent (no content details)
             return "✅ Content generated"
+
+        elif content_type == "user_story":
+            # Call user story generation endpoint
+            url = f"{api_base}/generate/user-story"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "User Story",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "user_story",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    logger.error(f"Could not send to websocket: {e}")
+
+            # Persist generated user story as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_user_story
+                    user_story_payload = {}
+                    if isinstance(result, dict):
+                        user_story_payload = {
+                            "title": result.get("title"),
+                            "description": result.get("description"),
+                            "persona": result.get("persona"),
+                            "user_goal": result.get("user_goal"),
+                            "demographics": result.get("demographics"),
+                            "acceptance_criteria": result.get("acceptance_criteria", []),
+                        }
+                    await save_generated_user_story(conv_id, user_story_payload)
+            except Exception as e:
+                logger.error(f"Failed to persist generated user story to conversation: {e}")
+
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+
+        elif content_type == "feature":
+            # Call feature generation endpoint
+            url = f"{api_base}/generate/feature"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Feature",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "feature",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    logger.error(f"Could not send to websocket: {e}")
+
+            # Persist generated feature as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_feature
+                    feature_payload = {}
+                    if isinstance(result, dict):
+                        feature_payload = {
+                            "feature_name": result.get("feature_name"),
+                            "description": result.get("description"),
+                            "problem_statement": result.get("problem_statement"),
+                            "objective": result.get("objective"),
+                            "success_criteria": result.get("success_criteria", []),
+                            "goals": result.get("goals", []),
+                            "pain_points": result.get("pain_points", []),
+                            "in_scope": result.get("in_scope", []),
+                            "out_of_scope": result.get("out_of_scope", []),
+                            "functional_requirements": result.get("functional_requirements", []),
+                            "non_functional_requirements": result.get("non_functional_requirements", []),
+                        }
+                    await save_generated_feature(conv_id, feature_payload)
+            except Exception as e:
+                logger.error(f"Failed to persist generated feature to conversation: {e}")
+
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+
+        elif content_type == "project":
+            # Call project generation endpoint
+            url = f"{api_base}/generate/project"
+            payload = {
+                "prompt": prompt,
+                "template": {
+                    "title": template_title or "Project",
+                    "content": template_content or ""
+                }
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            
+            # Send full content directly to frontend (bypass agent)
+            websocket = get_generation_websocket()
+            if websocket:
+                try:
+                    await websocket.send_json({
+                        "type": "content_generated",
+                        "content_type": "project",
+                        "data": result,  # Full content to frontend
+                        "success": True
+                    })
+                except Exception as e:
+                    logger.error(f"Could not send to websocket: {e}")
+
+            # Persist generated project as a conversation message (best-effort)
+            try:
+                conv_id = get_generation_conversation_id()
+                if conv_id:
+                    from mongo.conversations import save_generated_project
+                    project_payload = {}
+                    if isinstance(result, dict):
+                        project_payload = {
+                            "project_name": result.get("project_name"),
+                            "project_id": result.get("project_id"),
+                            "description": result.get("description"),
+                        }
+                    await save_generated_project(conv_id, project_payload)
+            except Exception as e:
+                logger.error(f"Failed to persist generated project to conversation: {e}")
+
+            # Return MINIMAL confirmation to agent (no content details)
+            return "✅ Content generated"
+        
+        else:
+            return f"❌ Unknown content type: {content_type}"
             
     except httpx.HTTPStatusError as e:
         error_msg = f"API error: {e.response.status_code}"
