@@ -227,6 +227,9 @@ const Index = () => {
     };
 
     for (const m of raw || []) {
+      // Skip malformed messages without required fields
+      if (!m || !m.id) continue;
+      
       const type = (m.type || "").toLowerCase();
       if (type === "action") {
         const text = (m.content || "").trim();
@@ -308,17 +311,17 @@ const Index = () => {
           role: "assistant", 
           content: "", 
           feature: {
-            title: ft.title || "",
+            title: ft.feature_name || ft.title || "",
             description: ft.description || "",
-            problemStatement: ft.problemStatement || "",
+            problemStatement: ft.problem_statement || ft.problemStatement || "",
             objective: ft.objective || "",
-            successCriteria: ft.successCriteria || [],
+            successCriteria: ft.success_criteria || ft.successCriteria || [],
             goals: ft.goals || [],
-            painPoints: ft.painPoints || [],
-            inScope: ft.inScope || [],
-            outOfScope: ft.outOfScope || [],
-            functionalRequirements: ft.functionalRequirements || [],
-            nonFunctionalRequirements: ft.nonFunctionalRequirements || [],
+            painPoints: ft.pain_points || ft.painPoints || [],
+            inScope: ft.in_scope || ft.inScope || [],
+            outOfScope: ft.out_of_scope || ft.outOfScope || [],
+            functionalRequirements: ft.functional_requirements || ft.functionalRequirements || [],
+            nonFunctionalRequirements: ft.non_functional_requirements || ft.nonFunctionalRequirements || [],
             isSaved: ft.isSaved || m.isSaved,
             savedData: ft.savedData || m.savedData,
           }
@@ -332,8 +335,8 @@ const Index = () => {
           role: "assistant", 
           content: "", 
           project: {
-            name: pj.name || "",
-            projectId: pj.projectId || "",
+            name: pj.project_name || pj.name || "",
+            projectId: pj.project_id || pj.projectId || "",
             description: pj.description || "",
             isSaved: pj.isSaved || m.isSaved,
             savedData: pj.savedData || m.savedData,
@@ -958,7 +961,7 @@ const Index = () => {
     }
   };
 
-  const handleArtifactSaved = async (messageId: string, artifactType: string, savedData?: any) => {
+  const handleArtifactSaved = async (messageId: string, artifactType: string, savedData?: SavedArtifactData) => {
     if (!activeConversationId) return;
     
     // Update local message state to mark artifact as saved
